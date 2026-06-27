@@ -44,30 +44,52 @@ namespace EndlessShapes2
 
             string profileRoot = Get.ProfilePaths.ProfileRootDir().ToString();
             string constructName = SanitizeFileName(mainConstruct.GetBlueprintName(), "Construct");
-            string outputFolder = Path.Combine(
+            string finalFolder = FindAvailableDirectory(Path.Combine(
                 profileRoot,
-                $"{constructName}-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
-            outputFolder = FindAvailableDirectory(outputFolder);
-            string textureFolder = Path.Combine(outputFolder, "Textures");
-            Directory.CreateDirectory(textureFolder);
+                $"{constructName}-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}"));
+            CommitStagedDirectory(finalFolder, stagingFolder =>
+            {
+                string textureFolder = Path.Combine(stagingFolder, "Textures");
+                Directory.CreateDirectory(textureFolder);
+                Dictionary<Material, MaterialDefinition> materialLookup = BuildMaterialLookup();
+                var usedMaterials = new Dictionary<Guid, MaterialDefinition>();
 
-            WriteMaterials(textureFolder, outputFolder);
+                var constructs = new List<AllConstruct>();
+                mainConstruct.AllBasicsRestricted.GetAllConstructsBelowUsAndIncludingUs(constructs);
+                foreach (AllConstruct construct in constructs)
+                {
+                    ExportConstruct(
+                        construct,
+                        stagingFolder,
+                        materialLookup,
+                        usedMaterials);
+                }
 
-            var constructs = new List<AllConstruct>();
-            mainConstruct.AllBasicsRestricted.GetAllConstructsBelowUsAndIncludingUs(constructs);
-            foreach (AllConstruct construct in constructs)
-                ExportConstruct(construct, outputFolder);
-
-            return outputFolder;
+                WriteMaterials(
+                    usedMaterials.Values.OrderBy(MaterialName),
+                    textureFolder,
+                    stagingFolder);
+            });
+            return finalFolder;
         }
 
-        private static void WriteMaterials(string textureFolder, string outputFolder)
+        private static Dictionary<Material, MaterialDefinition> BuildMaterialLookup()
         {
-            IEnumerable<MaterialDefinition> materials = Configured.i.Materials.Components
-                .Where(material => material != null)
-                .GroupBy(material => material.ComponentId.Guid)
-                .Select(group => group.First());
+            var result = new Dictionary<Material, MaterialDefinition>();
+            foreach (MaterialDefinition definition in Configured.i.Materials.Components)
+            {
+                if (definition?.Material != null && !result.ContainsKey(definition.Material))
+                    result.Add(definition.Material, definition);
+            }
+            return result;
+        }
 
+        private static void WriteMaterials(
+            IEnumerable<MaterialDefinition> materials,
+            string textureFolder,
+            string outputFolder)
+        {
+            var exportedTextures = new Dictionary<Guid, string>();
             using (var writer = CreateWriter(Path.Combine(outputFolder, MaterialFileName)))
             {
                 foreach (MaterialDefinition material in materials)
@@ -84,26 +106,36 @@ namespace EndlessShapes2
 
                     try
                     {
-                        string textureName = TextureName(texture);
-                        byte[] encoded = ForcedEncodeToJpg(texture.Texture.GetTexture());
-                        File.WriteAllBytes(
-                            Path.Combine(textureFolder, textureName + ".jpg"),
-                            encoded);
+                        string textureName = GetOrAddTextureName(
+                            exportedTextures,
+                            texture.ComponentId.Guid,
+                            () => TextureName(texture),
+                            out bool writeTexture);
+                        if (writeTexture)
+                        {
+                            byte[] encoded = ForcedEncodeToJpg(texture.Texture.GetTexture());
+                            File.WriteAllBytes(
+                                Path.Combine(textureFolder, textureName + ".jpg"),
+                                encoded);
+                        }
                         writer.WriteLine("map_Kd Textures/" + textureName + ".jpg");
                     }
                     catch (Exception exception)
                     {
-                        AdvLogger.LogException(
-                            $"[EndlessShapes Unlimited] Could not export texture '{texture.FilenameOrUrl}'",
-                            exception,
-                            LogOptions._AlertDevInGame);
+                        throw new IOException(
+                            $"Could not export texture '{texture.FilenameOrUrl}'.",
+                            exception);
                     }
                     writer.WriteLine();
                 }
             }
         }
 
-        private static void ExportConstruct(AllConstruct construct, string outputFolder)
+        private static void ExportConstruct(
+            AllConstruct construct,
+            string outputFolder,
+            IReadOnlyDictionary<Material, MaterialDefinition> materialLookup,
+            IDictionary<Guid, MaterialDefinition> usedMaterials)
         {
             var meshMerger = construct.Chunks as ConstructableMeshMerger;
             if (meshMerger == null)
@@ -119,21 +151,35 @@ namespace EndlessShapes2
                 {
                     MeshRenderer renderer = carried.ObjectItself.GetComponent<MeshRenderer>();
                     MeshFilter filter = carried.ObjectItself.GetComponent<MeshFilter>();
-                    if (renderer == null || filter == null || filter.sharedMesh == null)
+                    Mesh shared = filter?.sharedMesh;
+                    if (renderer == null || shared == null)
                         continue;
 
-                    MaterialDefinition material = Configured.i.Materials.Components
-                        .FirstOrDefault(candidate => candidate.Material == renderer.sharedMaterial);
-                    if (material == null)
-                        continue;
-
-                    Mesh clone = UnityEngine.Object.Instantiate(filter.sharedMesh);
-                    ownedSourceMeshes.Add(clone);
-                    clone.SetVertices(clone.vertices
+                    Material[] materials = renderer.sharedMaterials;
+                    List<Vector3> transformedVertices = shared.vertices
                         .Select(vertex => filter.transform.localToWorldMatrix.MultiplyPoint(vertex))
                         .Select(vertex => construct.myTransform.worldToLocalMatrix.MultiplyPoint(vertex))
-                        .ToList());
-                    AddMesh(meshesByMaterial, material, clone);
+                        .ToList();
+                    Vector2[] textureCoordinates = shared.uv;
+
+                    foreach (SubMeshBinding<Material> binding in
+                             BindSubMeshes(shared.subMeshCount, materials))
+                    {
+                        Material runtimeMaterial = binding.Material;
+                        if (runtimeMaterial == null ||
+                            !materialLookup.TryGetValue(runtimeMaterial, out MaterialDefinition definition))
+                        {
+                            continue;
+                        }
+
+                        Mesh extracted = CreateSubMesh(
+                            shared,
+                            binding.SubMesh,
+                            transformedVertices,
+                            textureCoordinates);
+                        ownedSourceMeshes.Add(extracted);
+                        AddMesh(meshesByMaterial, definition, extracted);
+                    }
                 }
 
                 foreach (KeyValuePair<int, List<ChunkMesh>> chunks in meshMerger.D)
@@ -141,8 +187,12 @@ namespace EndlessShapes2
                     MaterialDefinition material = Configured.i.Materials.FindUsingTheRuntimeId(
                         chunks.Key,
                         out bool found);
-                    if (!found || chunks.Value.Count == 0 || chunks.Value.All(chunk => chunk.VertCount == 0))
+                    if (!found || material == null || chunks.Value.Count == 0 ||
+                        chunks.Value.All(chunk => chunk.VertCount == 0))
+                    {
                         continue;
+                    }
+
                     foreach (ChunkMesh chunk in chunks.Value)
                         AddMesh(meshesByMaterial, material, chunk.GetMesh());
                 }
@@ -166,7 +216,14 @@ namespace EndlessShapes2
                         subConstructPosition,
                         subConstructRotation);
                     if (merged != null)
+                    {
                         outputMeshes.Add(merged);
+                        TrackIfEmitted(
+                            usedMaterials,
+                            group.Key.ComponentId.Guid,
+                            group.Key,
+                            emitted: true);
+                    }
                 }
 
                 string fileName = construct.PersistentSubConstructIndex == -1
@@ -183,15 +240,31 @@ namespace EndlessShapes2
             }
         }
 
+        private static Mesh CreateSubMesh(
+            Mesh source,
+            int subMesh,
+            List<Vector3> transformedVertices,
+            Vector2[] textureCoordinates)
+        {
+            var extracted = new Mesh
+            {
+                indexFormat = UnityEngine.Rendering.IndexFormat.UInt32
+            };
+            extracted.SetVertices(transformedVertices);
+            if (textureCoordinates.Length == transformedVertices.Count)
+                extracted.SetUVs(0, textureCoordinates.ToList());
+            extracted.SetTriangles(source.GetTriangles(subMesh), 0);
+            return extracted;
+        }
+
         private static Mesh MergeMeshes(
             MaterialDefinition material,
-            List<Mesh> sources,
+            IEnumerable<Mesh> sources,
             bool isSubConstruct,
             Vector3 subConstructPosition,
             Quaternion subConstructRotation)
         {
             var vertices = new List<Vector3>();
-            var normals = new List<Vector3>();
             var textureCoordinates = new List<Vector2>();
             var triangles = new List<int>();
 
@@ -199,8 +272,6 @@ namespace EndlessShapes2
             {
                 int offset = vertices.Count;
                 vertices.AddRange(source.vertices);
-                if (source.normals.Length == source.vertexCount)
-                    normals.AddRange(source.normals);
                 if (source.uv.Length == source.vertexCount)
                     textureCoordinates.AddRange(source.uv);
                 triangles.AddRange(source.triangles.Select(index => index + offset));
@@ -221,8 +292,6 @@ namespace EndlessShapes2
                 name = MaterialName(material)
             };
             merged.SetVertices(vertices);
-            if (normals.Count == vertices.Count)
-                merged.SetNormals(normals);
             if (textureCoordinates.Count == vertices.Count)
                 merged.SetUVs(0, textureCoordinates);
             merged.SetTriangles(triangles, 0);
@@ -288,18 +357,15 @@ namespace EndlessShapes2
                             writer.WriteLine($"vt {Number(uv.x)} {Number(uv.y)}");
                     }
 
-                    for (int subMesh = 0; subMesh < mesh.subMeshCount; subMesh++)
+                    int[] triangles = mesh.triangles;
+                    for (int index = 0; index < triangles.Length; index += 3)
                     {
-                        int[] triangles = mesh.GetTriangles(subMesh);
-                        for (int index = 0; index < triangles.Length; index += 3)
-                        {
-                            int a = triangles[index] + vertexOffset;
-                            int b = triangles[index + 1] + vertexOffset;
-                            int c = triangles[index + 2] + vertexOffset;
-                            writer.WriteLine(hasTextureCoordinates
-                                ? $"f {a}/{a} {b}/{b} {c}/{c}"
-                                : $"f {a} {b} {c}");
-                        }
+                        int a = triangles[index] + vertexOffset;
+                        int b = triangles[index + 1] + vertexOffset;
+                        int c = triangles[index + 2] + vertexOffset;
+                        writer.WriteLine(hasTextureCoordinates
+                            ? $"f {a}/{a} {b}/{b} {c}/{c}"
+                            : $"f {a} {b} {c}");
                     }
 
                     vertexOffset += mesh.vertexCount;
@@ -346,7 +412,7 @@ namespace EndlessShapes2
             };
         }
 
-        private static string MaterialName(MaterialDefinition material)
+        internal static string MaterialName(MaterialDefinition material)
         {
             TextureDefinition texture = Configured.i.Textures.Find(
                 material.ColorTextureReference.Reference.Guid);
@@ -354,14 +420,70 @@ namespace EndlessShapes2
             return prefix + "-" + material.ComponentId.Guid.ToString("N").Substring(0, 8);
         }
 
-        private static string TextureName(TextureDefinition texture)
+        internal static string TextureName(TextureDefinition texture)
         {
             string raw = $"{texture.Source}-{texture.FilenameOrUrl}";
-            return SanitizeFileName(raw.Replace('\\', '-').Replace('/', '-'),
-                "Texture-" + texture.ComponentId.Guid.ToString("N"));
+            return AssetNameWithGuid(raw.Replace('\\', '-').Replace('/', '-'), texture.ComponentId.Guid, "Texture");
         }
 
-        private static string SanitizeFileName(string value, string fallback)
+        internal static string AssetNameWithGuid(string raw, Guid guid, string fallback)
+        {
+            string prefix = SanitizeFileName(raw, fallback);
+            if (prefix.Length > 67)
+                prefix = prefix.Substring(0, 67);
+            return prefix + "-" + guid.ToString("N");
+        }
+
+        internal static string GetOrAddTextureName(
+            IDictionary<Guid, string> registry,
+            Guid textureGuid,
+            Func<string> createName,
+            out bool added)
+        {
+            if (registry == null)
+                throw new ArgumentNullException(nameof(registry));
+            if (createName == null)
+                throw new ArgumentNullException(nameof(createName));
+            if (registry.TryGetValue(textureGuid, out string existing))
+            {
+                added = false;
+                return existing;
+            }
+
+            string created = createName();
+            registry.Add(textureGuid, created);
+            added = true;
+            return created;
+        }
+
+        internal static IReadOnlyList<SubMeshBinding<TMaterial>> BindSubMeshes<TMaterial>(
+            int subMeshCount,
+            IReadOnlyList<TMaterial> materials)
+        {
+            if (subMeshCount < 0)
+                throw new ArgumentOutOfRangeException(nameof(subMeshCount));
+            if (materials == null)
+                throw new ArgumentNullException(nameof(materials));
+            int count = Math.Min(subMeshCount, materials.Count);
+            var bindings = new List<SubMeshBinding<TMaterial>>(count);
+            for (int index = 0; index < count; index++)
+                bindings.Add(new SubMeshBinding<TMaterial>(index, materials[index]));
+            return bindings;
+        }
+
+        internal static void TrackIfEmitted<TKey, TValue>(
+            IDictionary<TKey, TValue> used,
+            TKey key,
+            TValue value,
+            bool emitted)
+        {
+            if (used == null)
+                throw new ArgumentNullException(nameof(used));
+            if (emitted)
+                used[key] = value;
+        }
+
+        internal static string SanitizeFileName(string value, string fallback)
         {
             var invalid = new HashSet<char>(Path.GetInvalidFileNameChars());
             var builder = new StringBuilder();
@@ -371,10 +493,10 @@ namespace EndlessShapes2
                     builder.Append(character);
             }
 
-            string sanitized = builder.ToString().Trim().TrimEnd('.');
+            string sanitized = builder.ToString().Trim().TrimEnd(new[] { '.' });
             if (string.IsNullOrWhiteSpace(sanitized))
                 sanitized = fallback;
-            return sanitized.Length <= 120 ? sanitized : sanitized.Substring(0, 120);
+            return sanitized.Length <= 100 ? sanitized : sanitized.Substring(0, 100);
         }
 
         private static string FindAvailableDirectory(string preferred)
@@ -390,9 +512,61 @@ namespace EndlessShapes2
             throw new IOException("Could not allocate a unique OBJ export folder.");
         }
 
-        private static string Number(float value)
+        internal static void CommitStagedDirectory(string finalFolder, Action<string> populate)
         {
+            if (string.IsNullOrWhiteSpace(finalFolder))
+                throw new ArgumentException("The final export folder is required.", nameof(finalFolder));
+            if (populate == null)
+                throw new ArgumentNullException(nameof(populate));
+
+            string stagingFolder = finalFolder + ".partial-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                Directory.CreateDirectory(stagingFolder);
+                populate(stagingFolder);
+                Directory.Move(stagingFolder, finalFolder);
+            }
+            catch
+            {
+                TryDeleteDirectory(stagingFolder);
+                throw;
+            }
+        }
+
+        internal static string Number(float value)
+        {
+            if (!FlexibleFloatParser.IsFinite(value))
+                throw new InvalidDataException("OBJ export encountered a non-finite number.");
             return value.ToString("R", CultureInfo.InvariantCulture);
         }
+
+        private static void TryDeleteDirectory(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                    Directory.Delete(path, recursive: true);
+            }
+            catch (Exception exception)
+            {
+                AdvLogger.LogException(
+                    $"[EndlessShapes Unlimited] Could not remove partial export '{path}'",
+                    exception,
+                    LogOptions._AlertDevInGame);
+            }
+        }
+    }
+
+    internal readonly struct SubMeshBinding<TMaterial>
+    {
+        internal SubMeshBinding(int subMesh, TMaterial material)
+        {
+            SubMesh = subMesh;
+            Material = material;
+        }
+
+        internal int SubMesh { get; }
+
+        internal TMaterial Material { get; }
     }
 }

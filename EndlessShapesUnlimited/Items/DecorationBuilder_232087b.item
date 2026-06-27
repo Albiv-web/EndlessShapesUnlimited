@@ -210,5 +210,5 @@
     "Guid": "232087b9-90de-4eb8-9680-ccb876edfe4f",
     "Name": "DecorationBuilder"
   },
-  "Description": ""
+  "Description": "Imports OBJ geometry and generates matching FTD decorations with optional texture palette mapping, tether placement, and cancellable animation."
 }

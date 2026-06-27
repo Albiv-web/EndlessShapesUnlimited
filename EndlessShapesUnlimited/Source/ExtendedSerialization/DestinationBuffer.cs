@@ -45,6 +45,21 @@ namespace DecoLimitLifter.ExtendedSerialization
             return grown;
         }
 
+        internal static void VerifyAutoSyncTarget()
+        {
+            if (AutoSyncBufferField == null)
+            {
+                throw new MissingFieldException(
+                    "BrilliantSkies.DataManagement.Synching.AutoSyncroniser",
+                    "fullArray");
+            }
+            if (AutoSyncBufferField.FieldType != typeof(byte[]))
+            {
+                throw new InvalidOperationException(
+                    "AutoSyncroniser.fullArray is not a byte array in this FTD version.");
+            }
+        }
+
         private static bool IsCurrentAutoSyncBuffer(byte[] buffer)
         {
             if (AutoSyncBufferField == null)

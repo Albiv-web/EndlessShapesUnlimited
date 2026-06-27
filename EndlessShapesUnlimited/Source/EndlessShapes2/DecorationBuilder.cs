@@ -22,24 +22,21 @@ namespace EndlessShapes2
     public class DecorationBuilder : Block
     {
         private const long MaxTextureBytes = 64L * 1024L * 1024L;
+        private const float MinimumScale = 0.000001f;
 
         private readonly List<PolygonData> _polygonDataList = new List<PolygonData>();
-        private readonly List<Color> _colorPalette = new List<Color>(32);
         private readonly List<Decoration> _createdDuringRun = new List<Decoration>();
         private readonly List<PlaceBlockCommand> _placedDuringRun = new List<PlaceBlockCommand>();
 
-        private Texture2D _texture;
         private AllConstruct _myAllConstruct;
         private AllConstructDecorations _decorations;
-        private ItemDefinition _itemDefinition;
-        private bool _itemDefinitionFound;
+        private GenerationRun _run;
+        private GenerationLease _generationLease;
         private List<PolygonData> _buildQueue;
+        private int _buildIndex;
         private float _buildCredit;
         private bool _buildRegistered;
         private bool _generationActive;
-        private ConnectionRules _connectionRules;
-        private bool _previousMasterSwitch;
-        private bool _previousRequestSwitch;
 
         public DecorationBuilderData Data { get; set; } = new DecorationBuilderData(1U);
 
@@ -52,6 +49,19 @@ namespace EndlessShapes2
         public OBJ_Mesh SelectMesh { get; private set; }
 
         public int PolygonDataListCount => _polygonDataList.Count;
+
+        public bool IsGenerationActive => _generationActive;
+
+        public float GenerationProgress
+        {
+            get
+            {
+                if (!_generationActive || _polygonDataList.Count == 0)
+                    return 0f;
+                int completed = _buildQueue == null ? _createdDuringRun.Count : _buildIndex;
+                return Mathf.Clamp01(completed / (float)_polygonDataList.Count);
+            }
+        }
 
         protected override void AppendToolTip(ProTip tip)
         {
@@ -92,7 +102,13 @@ namespace EndlessShapes2
 
         public void SetSelectMesh(OBJ_Mesh mesh)
         {
-            SelectMesh = mesh;
+            if (_generationActive)
+            {
+                InfoStore.Add("Cancel the active decoration build before selecting another mesh.");
+                return;
+            }
+
+            SelectMesh = null;
             _polygonDataList.Clear();
 
             if (mesh == null || !Meshes.Contains(mesh))
@@ -110,53 +126,28 @@ namespace EndlessShapes2
 
             try
             {
-                var transformedVertices = new List<Vector3>(Vertices.Count);
-                bool isMain = construct.IsMain;
-                Vector3 subConstructOffset = Vector3.zero;
-                Quaternion subConstructRotation = Quaternion.identity;
-
-                if (!isMain)
-                {
-                    Transform constructTransform = construct.myTransform;
-                    Transform mainTransform = construct.Main.myTransform;
-                    Quaternion mainInverse = Quaternion.Inverse(mainTransform.rotation);
-                    subConstructOffset = mainInverse *
-                                         (constructTransform.position - mainTransform.position);
-                    subConstructRotation = Quaternion.Inverse(
-                        mainInverse * constructTransform.rotation);
-                }
-
-                for (int index = 0; index < Vertices.Count; index++)
-                {
-                    Vector3 vertex = Vector3.Scale(Vertices[index], Data.Scaling.Us);
-                    vertex = Quaternion.Euler(Data.Orientation.Us) * vertex;
-
-                    if (Data.LocalOrigin)
-                    {
-                        vertex += Data.Positioning.Us;
-                        if (!isMain)
-                            vertex = subConstructRotation * (vertex - subConstructOffset);
-                    }
-                    else
-                    {
-                        vertex += Data.Positioning.Us + LocalPosition;
-                    }
-
-                    transformedVertices.Add(vertex);
-                }
-
+                ValidateTransformSettings();
+                var transformedVertices = TransformVertices(construct);
                 PolygonDataControl.PolygonClassify(
                     _polygonDataList,
                     mesh.FaceDatas,
                     mesh.LineDatas,
                     transformedVertices,
-                    UVs);
+                    UVs,
+                    mesh.FaceSourceLines,
+                    mesh.LineSourceLines,
+                    AllConstructDecorations._limitPerPacketManager);
 
+                if (_polygonDataList.Count == 0)
+                    throw new InvalidDataException("The selected mesh produces no decorations.");
+
+                SelectMesh = mesh;
                 InfoStore.Add(
                     $"Selected '{mesh.Name}': {_polygonDataList.Count:N0} decorations will be generated.");
             }
             catch (Exception exception)
             {
+                SelectMesh = null;
                 _polygonDataList.Clear();
                 ReportFailure("OBJ mesh conversion failed", exception);
             }
@@ -177,20 +168,25 @@ namespace EndlessShapes2
                 if (!BeginGeneration())
                     return;
 
+                synchronous = !_run.BuildAnimation;
                 if (!synchronous)
                 {
                     _buildQueue = new List<PolygonData>(_polygonDataList);
+                    _buildIndex = 0;
                     _buildCredit = 0f;
                     MainConstruct.SchedulerRestricted.RegisterForFixedUpdate(BuildAnimation);
                     _buildRegistered = true;
+                    InfoStore.Add($"Animated generation started: {_buildQueue.Count:N0} decorations queued.");
                     return;
                 }
 
                 foreach (PolygonData polygonData in _polygonDataList)
                 {
                     if (!Generate(polygonData))
+                    {
                         throw new InvalidOperationException(
                             "The game rejected a block or decoration during generation.");
+                    }
                 }
 
                 success = true;
@@ -209,6 +205,19 @@ namespace EndlessShapes2
                 if (synchronous && _generationActive)
                     CompleteGeneration(success);
             }
+        }
+
+        public void CancelGeneration()
+        {
+            if (!_generationActive)
+            {
+                InfoStore.Add("No decoration build is active.");
+                return;
+            }
+
+            int generated = _createdDuringRun.Count;
+            CompleteGeneration(success: false);
+            InfoStore.Add($"Decoration build cancelled; rolled back {generated:N0} decorations.");
         }
 
         private bool BeginGeneration()
@@ -236,8 +245,8 @@ namespace EndlessShapes2
                 return false;
             }
 
-            _connectionRules = _myAllConstruct.Main.ConnectionRules as ConnectionRules;
-            if (_connectionRules == null)
+            var connectionRules = _myAllConstruct.Main.ConnectionRules as ConnectionRules;
+            if (connectionRules == null)
             {
                 InfoStore.Add("The construct connection rules are unavailable.");
                 return false;
@@ -245,75 +254,128 @@ namespace EndlessShapes2
 
             _createdDuringRun.Clear();
             _placedDuringRun.Clear();
-            _itemDefinition = null;
-            _itemDefinitionFound = false;
-            if (Data.TP_BlockPlacement.Us &&
-                Guid.TryParse(Data.TP_BlockGUID.Us, out Guid guid))
+            _run = CreateGenerationRun();
+
+            if (!GenerationLease.TryAcquire(
+                    _myAllConstruct.Main,
+                    connectionRules,
+                    out _generationLease))
             {
-                _itemDefinition = Configured.i
-                    .Get<ModificationComponentContainerItem>()
-                    .Find(guid, out _itemDefinitionFound);
+                _run.Dispose();
+                _run = null;
+                InfoStore.Add("Another Decoration Builder is already running on this main construct.");
+                return false;
             }
 
-            PreparePaletteAndTexture();
-
-            MADCD_PolygonInput.NormalReversal = false;
-            MADCD_PolygonInput.FaceThickness = Data.FaceThickness.Us;
-            MADCD_PolygonInput.LineThickness = Data.LineThickness.Us;
-            MADCD_PolygonInput.SBType = Data.SBType.Us;
-            MADCD_PolygonInput.ColorSetting = ColorSetting;
-
-            _previousMasterSwitch = _connectionRules.Data.MasterSwitch.Us;
-            _previousRequestSwitch = _connectionRules.Data.RequestSwitch.Us;
-            _connectionRules.Data.MasterSwitch.Us = false;
-            _connectionRules.Data.RequestSwitch.Us = false;
             _generationActive = true;
             return true;
         }
 
-        private void PreparePaletteAndTexture()
+        private GenerationRun CreateGenerationRun()
         {
-            _colorPalette.Clear();
-            for (int index = 0; index < 32; index++)
-                _colorPalette.Add(_myAllConstruct.Main.ColorsRestricted.GetColor(index));
+            ValidateGenerationSettings();
 
-            DestroyTexture();
-            string texturePath = Data.TexturePath.Us;
+            ItemDefinition itemDefinition = null;
+            if (Data.TP_BlockPlacement.Us)
+            {
+                if (!Guid.TryParse(Data.TP_BlockGUID.Us, out Guid guid))
+                    throw new InvalidDataException("Tether block GUID is not a valid GUID.");
+                itemDefinition = Configured.i
+                    .Get<ModificationComponentContainerItem>()
+                    .Find(guid, out bool found);
+                if (!found || itemDefinition == null)
+                    throw new InvalidDataException("The configured tether block GUID is unavailable.");
+            }
+
+            var palette = new Color[32];
+            for (int index = 0; index < palette.Length; index++)
+                palette[index] = _myAllConstruct.Main.ColorsRestricted.GetColor(index);
+
+            Texture2D texture = null;
+            try
+            {
+                texture = LoadTexture(Data.TexturePath.Us);
+                return new GenerationRun(
+                    new PolygonDecorationSettings(
+                        normalReversal: false,
+                        Data.FaceThickness.Us,
+                        Data.LineThickness.Us,
+                        Data.SBType.Us),
+                    Mathf.Clamp(Data.DefaultColorIndex.Us, 0, 31),
+                    Data.TP_AutoTetherPoint.Us,
+                    Data.TP_NormalOffset.Us,
+                    Data.TP_DistanceToShift.Us,
+                    Data.TP_BlockPlacement.Us,
+                    itemDefinition,
+                    Data.BuildAnimation.Us,
+                    Data.BA_Speed.Us,
+                    palette,
+                    texture);
+            }
+            catch
+            {
+                if (texture != null)
+                    UnityEngine.Object.Destroy(texture);
+                throw;
+            }
+        }
+
+        private static Texture2D LoadTexture(string texturePath)
+        {
             if (string.IsNullOrWhiteSpace(texturePath))
-                return;
+                return null;
 
             var file = new FileInfo(texturePath);
             if (!file.Exists)
                 throw new FileNotFoundException("The selected texture file does not exist.", texturePath);
             if (file.Length > MaxTextureBytes)
+            {
                 throw new InvalidDataException(
                     $"Texture is {file.Length:N0} bytes; the limit is {MaxTextureBytes:N0} bytes.");
+            }
 
-            _texture = new Texture2D(2, 2);
-            if (!ImageConversion.LoadImage(_texture, File.ReadAllBytes(texturePath)))
-                throw new InvalidDataException("Unity could not decode the selected texture.");
-            _texture.Compress(false);
+            ImageDimensions dimensions = ImagePreflight.ReadAndValidate(texturePath);
+            var texture = new Texture2D(2, 2);
+            try
+            {
+                if (!ImageConversion.LoadImage(texture, File.ReadAllBytes(texturePath)))
+                    throw new InvalidDataException("Unity could not decode the selected texture.");
+                if (texture.width != dimensions.Width || texture.height != dimensions.Height)
+                    throw new InvalidDataException("Decoded texture dimensions do not match its file header.");
+                return texture;
+            }
+            catch
+            {
+                UnityEngine.Object.Destroy(texture);
+                throw;
+            }
         }
 
         private void BuildAnimation(ITimeStep timeStep)
         {
             try
             {
-                float speed = Math.Max(0.1f, Data.BA_Speed.Us);
-                _buildCredit += timeStep.DeltaTime * speed;
-                int count = Mathf.FloorToInt(_buildCredit);
-                _buildCredit -= count;
+                double credit = _buildCredit + (double)timeStep.DeltaTime * _run.AnimationSpeed;
+                if (double.IsNaN(credit) || double.IsInfinity(credit) || credit < 0d)
+                    throw new InvalidOperationException("Animated generation produced invalid build timing.");
+                int remaining = _buildQueue.Count - _buildIndex;
+                int count = credit >= remaining
+                    ? remaining
+                    : Math.Max(0, (int)Math.Floor(credit));
+                _buildCredit = count == remaining ? 0f : (float)(credit - count);
 
-                for (int index = 0; index < count && _buildQueue.Count > 0; index++)
+                int stop = Math.Min(_buildIndex + count, _buildQueue.Count);
+                while (_buildIndex < stop)
                 {
-                    PolygonData next = _buildQueue[0];
-                    _buildQueue.RemoveAt(0);
+                    PolygonData next = _buildQueue[_buildIndex++];
                     if (!Generate(next))
+                    {
                         throw new InvalidOperationException(
                             "The game rejected a block or decoration during animated generation.");
+                    }
                 }
 
-                if (_buildQueue.Count == 0)
+                if (_buildIndex == _buildQueue.Count)
                 {
                     InfoStore.Add($"Generated {_createdDuringRun.Count:N0} decorations.");
                     CompleteGeneration(success: true);
@@ -329,43 +391,45 @@ namespace EndlessShapes2
         private bool Generate(PolygonData polygonData)
         {
             var decorationData = new MimicAndDecorationCommonData();
-            MADCD_PolygonInput.Start(decorationData, polygonData);
+            MADCD_PolygonInput.Start(
+                decorationData,
+                polygonData,
+                _run.PolygonSettings,
+                _run.ColorFor(polygonData));
 
             Vector3i tetherPosition = LocalPosition;
-            if (Data.TP_AutoTetherPoint.Us)
+            if (_run.AutoTetherPoint)
             {
                 Vector3 roundedPosition = Vector3Int.RoundToInt(decorationData.Positioning);
-                if (Data.TP_NormalOffset.Us)
+                if (_run.NormalOffset)
                 {
                     Vector3 original = roundedPosition;
                     Vector3Int roundedOriginal = Vector3Int.RoundToInt(original);
-                    roundedPosition = original -
-                                      polygonData.NormalVector * Data.TP_DistanceToShift.Us;
+                    roundedPosition = original - polygonData.NormalVector * _run.DistanceToShift;
 
-                    if (roundedOriginal.x == 0 ||
-                        Mathf.Sign(original.x) != Mathf.Sign(roundedPosition.x))
+                    if (roundedOriginal.x == 0 || Mathf.Sign(original.x) != Mathf.Sign(roundedPosition.x))
                         roundedPosition.x = 0;
-                    if (roundedOriginal.y == 0 ||
-                        Mathf.Sign(original.y) != Mathf.Sign(roundedPosition.y))
+                    if (roundedOriginal.y == 0 || Mathf.Sign(original.y) != Mathf.Sign(roundedPosition.y))
                         roundedPosition.y = 0;
-                    if (roundedOriginal.z == 0 ||
-                        Mathf.Sign(original.z) != Mathf.Sign(roundedPosition.z))
+                    if (roundedOriginal.z == 0 || Mathf.Sign(original.z) != Mathf.Sign(roundedPosition.z))
                         roundedPosition.z = 0;
                 }
 
+                EnsureFinite(roundedPosition, "automatic tether position");
                 tetherPosition = (Vector3i)roundedPosition;
             }
 
             decorationData.Positioning -= tetherPosition;
+            EnsureFinite(decorationData.Positioning, "generated decoration positioning");
 
-            if (_itemDefinitionFound &&
+            if (_run.BlockPlacement &&
                 _myAllConstruct.AllBasics.GetBlockViaLocalPosition(tetherPosition) == null)
             {
                 var placeCommand = new PlaceBlockCommand(
                     _myAllConstruct,
                     tetherPosition,
                     Quaternion.identity,
-                    _itemDefinition,
+                    _run.ItemDefinition,
                     0,
                     MirrorInfo.none);
                 placeCommand.Apply();
@@ -389,73 +453,89 @@ namespace EndlessShapes2
             return true;
         }
 
-        private int ColorSetting(PolygonData polygonData)
-        {
-            int colorIndex = Mathf.Clamp(Data.DefaultColorIndex.Us, 0, 31);
-            if (_texture == null || polygonData.PolyType == PolygonType.Line)
-                return colorIndex;
-
-            Color pixel = _texture.GetPixelBilinear(polygonData.UV.x, polygonData.UV.y);
-            float difference = float.MaxValue;
-            for (int index = 0; index < _colorPalette.Count; index++)
-            {
-                Color palette = _colorPalette[index];
-                float candidate = new Vector3(
-                        palette.r - pixel.r,
-                        palette.g - pixel.g,
-                        palette.b - pixel.b).magnitude +
-                    Math.Abs(palette.a - pixel.a);
-                if (candidate < difference)
-                {
-                    difference = candidate;
-                    colorIndex = index;
-                }
-            }
-
-            return colorIndex;
-        }
-
         private void CompleteGeneration(bool success)
         {
+            if (!_generationActive && _generationLease == null && _run == null)
+                return;
+
+            _generationActive = false;
+            var errors = new List<Exception>();
+
             if (_buildRegistered)
             {
-                _myAllConstruct?.Main?.SchedulerRestricted.UnregisterForFixedUpdate(BuildAnimation);
+                try
+                {
+                    _myAllConstruct?.Main?.SchedulerRestricted.UnregisterForFixedUpdate(BuildAnimation);
+                }
+                catch (Exception exception)
+                {
+                    errors.Add(exception);
+                }
                 _buildRegistered = false;
             }
 
             if (!success)
-                RollbackGeneratedContent();
+                RollbackGeneratedContent(errors);
 
-            if (_connectionRules != null)
+            try
             {
-                _connectionRules.Data.MasterSwitch.Us = _previousMasterSwitch;
-                _connectionRules.Data.RequestSwitch.Us = _previousRequestSwitch;
+                _generationLease?.Release(errors);
+            }
+            catch (Exception exception)
+            {
+                errors.Add(exception);
             }
 
-            DestroyTexture();
+            try
+            {
+                _run?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                errors.Add(exception);
+            }
+
             _createdDuringRun.Clear();
             _placedDuringRun.Clear();
             _buildQueue = null;
-            _connectionRules = null;
+            _buildIndex = 0;
+            _generationLease = null;
+            _run = null;
             _decorations = null;
             _myAllConstruct = null;
-            _generationActive = false;
+
+            if (errors.Count > 0)
+                ReportCleanupFailures(errors);
         }
 
-        private void RollbackGeneratedContent()
+        private void RollbackGeneratedContent(ICollection<Exception> errors)
         {
             for (int index = _createdDuringRun.Count - 1; index >= 0; index--)
             {
-                Decoration decoration = _createdDuringRun[index];
-                if (decoration != null && !decoration.IsDeleted)
-                    decoration.Delete();
+                try
+                {
+                    Decoration decoration = _createdDuringRun[index];
+                    if (decoration != null && !decoration.IsDeleted)
+                        decoration.Delete();
+                }
+                catch (Exception exception)
+                {
+                    errors.Add(exception);
+                }
             }
 
             for (int index = _placedDuringRun.Count - 1; index >= 0; index--)
             {
-                PlaceBlockCommand command = _placedDuringRun[index];
-                if (command?.Success == true)
-                    command.Undo();
+                try
+                {
+                    PlaceBlockCommand command = _placedDuringRun[index];
+                    if (command?.Success == true)
+                        command.Undo();
+                }
+                catch (Exception exception)
+                {
+                    errors.Add(exception);
+                }
             }
         }
 
@@ -467,13 +547,110 @@ namespace EndlessShapes2
 
         private void ClearFailedPreparation()
         {
-            DestroyTexture();
+            var errors = new List<Exception>();
+            try
+            {
+                _generationLease?.Release(errors);
+            }
+            catch (Exception exception)
+            {
+                errors.Add(exception);
+            }
+            try
+            {
+                _run?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                errors.Add(exception);
+            }
+
             _createdDuringRun.Clear();
             _placedDuringRun.Clear();
             _buildQueue = null;
-            _connectionRules = null;
+            _generationLease = null;
+            _run = null;
             _decorations = null;
             _myAllConstruct = null;
+            if (errors.Count > 0)
+                ReportCleanupFailures(errors);
+        }
+
+        private List<Vector3> TransformVertices(AllConstruct construct)
+        {
+            var transformed = new List<Vector3>(Vertices.Count);
+            bool isMain = construct.IsMain;
+            Vector3 subConstructOffset = Vector3.zero;
+            Quaternion subConstructRotation = Quaternion.identity;
+
+            if (!isMain)
+            {
+                Transform constructTransform = construct.myTransform;
+                Transform mainTransform = construct.Main.myTransform;
+                Quaternion mainInverse = Quaternion.Inverse(mainTransform.rotation);
+                subConstructOffset = mainInverse * (constructTransform.position - mainTransform.position);
+                subConstructRotation = Quaternion.Inverse(mainInverse * constructTransform.rotation);
+            }
+
+            for (int index = 0; index < Vertices.Count; index++)
+            {
+                Vector3 vertex = Vector3.Scale(Vertices[index], Data.Scaling.Us);
+                vertex = Quaternion.Euler(Data.Orientation.Us) * vertex;
+                if (Data.LocalOrigin.Us)
+                {
+                    vertex += Data.Positioning.Us;
+                    if (!isMain)
+                        vertex = subConstructRotation * (vertex - subConstructOffset);
+                }
+                else
+                {
+                    vertex += Data.Positioning.Us + LocalPosition;
+                }
+
+                EnsureFinite(vertex, "transformed vertex");
+                transformed.Add(vertex);
+            }
+            return transformed;
+        }
+
+        private void ValidateTransformSettings()
+        {
+            EnsureFinite(Data.Positioning.Us, "positioning");
+            EnsureFinite(Data.Scaling.Us, "scaling");
+            EnsureFinite(Data.Orientation.Us, "orientation");
+            Vector3 scale = Data.Scaling.Us;
+            if (Mathf.Abs(scale.x) < MinimumScale ||
+                Mathf.Abs(scale.y) < MinimumScale ||
+                Mathf.Abs(scale.z) < MinimumScale)
+            {
+                throw new InvalidDataException("Scaling cannot collapse an axis to zero.");
+            }
+        }
+
+        private void ValidateGenerationSettings()
+        {
+            new PolygonDecorationSettings(
+                false,
+                Data.FaceThickness.Us,
+                Data.LineThickness.Us,
+                Data.SBType.Us).Validate(0);
+            if (!FlexibleFloatParser.IsFinite(Data.TP_DistanceToShift.Us) ||
+                Data.TP_DistanceToShift.Us < 0f)
+            {
+                throw new InvalidDataException("Tether normal-offset distance must be finite and non-negative.");
+            }
+            if (!FlexibleFloatParser.IsFinite(Data.BA_Speed.Us) || Data.BA_Speed.Us <= 0f)
+                throw new InvalidDataException("Build animation speed must be finite and greater than zero.");
+        }
+
+        private static void EnsureFinite(Vector3 value, string name)
+        {
+            if (!FlexibleFloatParser.IsFinite(value.x) ||
+                !FlexibleFloatParser.IsFinite(value.y) ||
+                !FlexibleFloatParser.IsFinite(value.z))
+            {
+                throw new InvalidDataException($"{name} must contain only finite numbers.");
+            }
         }
 
         private void ClearLoadedModel()
@@ -485,14 +662,6 @@ namespace EndlessShapes2
             UVs.Clear();
         }
 
-        private void DestroyTexture()
-        {
-            if (_texture == null)
-                return;
-            UnityEngine.Object.Destroy(_texture);
-            _texture = null;
-        }
-
         private static void ReportFailure(string context, Exception exception)
         {
             InfoStore.Add($"{context}: {exception.Message}");
@@ -502,10 +671,115 @@ namespace EndlessShapes2
                 LogOptions._AlertDevAndCustomerInGame);
         }
 
-        public void OnDestroy()
+        private static void ReportCleanupFailures(IReadOnlyCollection<Exception> errors)
         {
-            CancelActiveGeneration(rollback: true);
-            DestroyTexture();
+            var aggregate = new AggregateException("One or more cleanup operations failed.", errors);
+            InfoStore.Add("Decoration cleanup encountered errors; see the log for details.");
+            AdvLogger.LogException(
+                "[EndlessShapes Unlimited] Decoration cleanup failed",
+                aggregate,
+                LogOptions._AlertDevAndCustomerInGame);
+        }
+
+        public override void PrepForDelete()
+        {
+            try
+            {
+                CancelActiveGeneration(rollback: true);
+                ClearFailedPreparation();
+            }
+            catch (Exception exception)
+            {
+                ReportFailure("Decoration Builder deletion cleanup failed", exception);
+            }
+            finally
+            {
+                base.PrepForDelete();
+            }
+        }
+
+        private sealed class GenerationRun : IDisposable
+        {
+            private Texture2D _texture;
+
+            internal GenerationRun(
+                PolygonDecorationSettings polygonSettings,
+                int defaultColorIndex,
+                bool autoTetherPoint,
+                bool normalOffset,
+                float distanceToShift,
+                bool blockPlacement,
+                ItemDefinition itemDefinition,
+                bool buildAnimation,
+                float animationSpeed,
+                Color[] palette,
+                Texture2D texture)
+            {
+                PolygonSettings = polygonSettings;
+                DefaultColorIndex = defaultColorIndex;
+                AutoTetherPoint = autoTetherPoint;
+                NormalOffset = normalOffset;
+                DistanceToShift = distanceToShift;
+                BlockPlacement = blockPlacement;
+                ItemDefinition = itemDefinition;
+                BuildAnimation = buildAnimation;
+                AnimationSpeed = animationSpeed;
+                Palette = palette;
+                _texture = texture;
+            }
+
+            internal PolygonDecorationSettings PolygonSettings { get; }
+
+            internal int DefaultColorIndex { get; }
+
+            internal bool AutoTetherPoint { get; }
+
+            internal bool NormalOffset { get; }
+
+            internal float DistanceToShift { get; }
+
+            internal bool BlockPlacement { get; }
+
+            internal ItemDefinition ItemDefinition { get; }
+
+            internal bool BuildAnimation { get; }
+
+            internal float AnimationSpeed { get; }
+
+            internal Color[] Palette { get; }
+
+            internal int ColorFor(PolygonData polygonData)
+            {
+                int colorIndex = DefaultColorIndex;
+                if (_texture == null || polygonData.PolyType == PolygonType.Line)
+                    return colorIndex;
+
+                Color pixel = _texture.GetPixelBilinear(polygonData.UV.x, polygonData.UV.y);
+                float difference = float.MaxValue;
+                for (int index = 0; index < Palette.Length; index++)
+                {
+                    Color palette = Palette[index];
+                    float candidate = new Vector3(
+                            palette.r - pixel.r,
+                            palette.g - pixel.g,
+                            palette.b - pixel.b).magnitude +
+                        Math.Abs(palette.a - pixel.a);
+                    if (candidate < difference)
+                    {
+                        difference = candidate;
+                        colorIndex = index;
+                    }
+                }
+                return colorIndex;
+            }
+
+            public void Dispose()
+            {
+                if (_texture == null)
+                    return;
+                UnityEngine.Object.Destroy(_texture);
+                _texture = null;
+            }
         }
     }
 }

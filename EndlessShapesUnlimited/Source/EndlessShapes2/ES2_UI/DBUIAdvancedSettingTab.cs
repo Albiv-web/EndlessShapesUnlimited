@@ -3,6 +3,8 @@ using BrilliantSkies.Ui.Consoles;
 using BrilliantSkies.Ui.Consoles.Getters;
 using BrilliantSkies.Ui.Consoles.Interpretters;
 using BrilliantSkies.Ui.Consoles.Interpretters.Simple;
+using BrilliantSkies.Ui.Consoles.Interpretters.Subjective;
+using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Buttons;
 using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Choices;
 using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Texts;
 using BrilliantSkies.Ui.Consoles.Segments;
@@ -78,24 +80,59 @@ namespace EndlessShapes2.UI
                 }
             }
 
-            /*
             CreateHeader("Others", null);
 
             ScreenSegmentStandard screenSegment_2 = CreateStandardSegment();
             screenSegment_2.SpaceAbove = 10f;
             screenSegment_2.SpaceBelow = 10f;
 
-            screenSegment_2.AddInterpretter(SubjectiveToggle<DecorationBuilder>.Quick(_focus, "Build animation", null, (I, b) => { I.Data.BuildAnimation.Us = b; TriggerScreenRebuild(); }, I => I.Data.BuildAnimation.Us));
-
-            if (_focus.Data.BuildAnimation.Us)
+            if (_focus.IsGenerationActive)
             {
-                screenSegment_2.AddInterpretter(SimpleFloatInput<DecorationBuilder>.Quick(_focus, M.m<DecorationBuilder>(I => I.Data.BA_Speed.Us), null, (I, i) => I.Data.BA_Speed.Us = i, M.m<DecorationBuilder>(I => "Build animation speed")));
+                screenSegment_2.AddInterpretter(SubjectiveDisplay<DecorationBuilder>.Quick(
+                    _focus,
+                    M.m<DecorationBuilder>(I => $"Build progress: {I.GenerationProgress:P1}")));
+                screenSegment_2.AddInterpretter(SubjectiveButton<DecorationBuilder>.Quick(
+                    _focus,
+                    "Cancel and roll back build",
+                    null,
+                    I =>
+                    {
+                        I.CancelGeneration();
+                        TriggerScreenRebuild();
+                    }));
+            }
+            else
+            {
+                screenSegment_2.AddInterpretter(SubjectiveToggle<DecorationBuilder>.Quick(
+                    _focus,
+                    "Build animation",
+                    null,
+                    (I, b) =>
+                    {
+                        I.Data.BuildAnimation.Us = b;
+                        TriggerScreenRebuild();
+                    },
+                    I => I.Data.BuildAnimation.Us));
+
+                if (_focus.Data.BuildAnimation.Us)
+                {
+                    screenSegment_2.AddInterpretter(SimpleFloatInput<DecorationBuilder>.Quick(
+                        _focus,
+                        M.m<DecorationBuilder>(I => I.Data.BA_Speed.Us),
+                        null,
+                        (I, i) => I.Data.BA_Speed.Us = i,
+                        M.m<DecorationBuilder>(I => "Build animation speed ")));
+                }
             }
 
             screenSegment_2.AddInterpretter(new Empty());
 
-            screenSegment_2.AddInterpretter(SubjectiveToggle<DecorationBuilder>.Quick(_focus, "Local origin projection", new ToolTip("Generates a 3D model relative to the local origin."), (I, b) => I.Data.LocalOrigin.Us = b, I => I.Data.LocalOrigin.Us));
-            */
+            screenSegment_2.AddInterpretter(SubjectiveToggle<DecorationBuilder>.Quick(
+                _focus,
+                "Local origin projection",
+                new ToolTip("Generates a 3D model relative to the construct local origin."),
+                (I, b) => I.Data.LocalOrigin.Us = b,
+                I => I.Data.LocalOrigin.Us));
         }
     }
 }

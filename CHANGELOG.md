@@ -12,12 +12,25 @@ First EndlessShapes Unlimited release candidate.
 - Replaced private decoration/material reflection with current public FTD APIs.
 - Added validated, invariant-culture OBJ parsing with negative-index and common
   face-format support.
-- Added transactional decoration generation, connection-rule restoration,
-  animation cleanup, texture cleanup, and command success checks.
-- Hardened tether moves and OBJ export path, resource, mesh, and number handling.
-- Unified startup under one Harmony owner with all-or-nothing patch validation.
+- Added per-main-construct generation leases, immutable run snapshots, restored
+  animation/local-origin controls, progress, cancellation, and best-effort
+  rollback through `Block.PrepForDelete()`.
+- Replaced quadratic face/build queues, removed shared UV state, added source-line
+  geometry diagnostics and final plan caps, and preflighted PNG/JPEG dimensions.
+- Made UI float input locale-safe without thousands parsing or invalid-text
+  writes; palette input is constrained to indexes 0 through 31.
+- Made tether movement validate the source GUID, preflight every linked
+  decoration, and atomically undo properties and both block commands on failure.
+- Made export filter unused materials, preserve carried-object submesh materials,
+  deduplicate textures, suffix filenames with GUIDs, and publish only a complete
+  staged directory.
+- Unified startup under one Harmony owner with exact constructor-hook and
+  `AutoSyncroniser.fullArray` verification plus decoration-limit rollback.
+- Made reusable serializer pools idempotent and zero-length loader buffers safe.
+- Made packaging Release-only, manifest-versioned, deterministic, allowlisted,
+  stale-DLL checked, and privacy/secret scanned.
 - Retained both MIT copyright notices and added third-party provenance.
-- Expanded automated verification from 44 to 61 checks.
+- Expanded automated verification from 44 to 111 checks.
 
 ## Imported baseline
 

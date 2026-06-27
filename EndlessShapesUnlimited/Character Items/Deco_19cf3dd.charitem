@@ -33,5 +33,5 @@
     "Guid": "19cf3dd2-86fc-4b97-9e69-23e34cc3f198",
     "Name": "Deco"
   },
-  "Description": "New description"
+  "Description": "Moves an EndlessShapes tether block by one camera-relative grid step and atomically retethers its linked decorations."
 }

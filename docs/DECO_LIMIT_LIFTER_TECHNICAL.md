@@ -30,9 +30,9 @@ The combined `Plugin` is the only runtime entry point. It is a
 flowchart TD
     A["GamePlugin_PostLoad.OnLoad"] --> B["Harmony.PatchAll"]
     B --> C["Ensure ByteStore and reusable pools"]
-    C --> D["Verify required Harmony owners and targets"]
-    D -->|success| E["Set decoration limit to 100,000"]
-    D -->|failure| F["Unpatch owner"]
+    C --> D["Verify exact Harmony methods and AutoSyncroniser.fullArray"]
+    D -->|success| E["Capture and set decoration limit to 100,000"]
+    D -->|failure| F["Restore limit and unpatch owner"]
     E --> G["Report successful load"]
     F --> H["Report in-game startup failure"]
 ```
@@ -43,14 +43,18 @@ Required verification covers:
 - `SuperSaver.ConvertToReader`;
 - `SuperSaver.WriteHeader`;
 - the `SuperSaver` constructor;
+- the exact `SuperSaverBuffersPatch.ConstructorPrefix` and
+  `ByteStorePatch.AfterSuperSaverConstructor` methods;
 - every matching `SuperLoader.Deserialise(byte[], ref uint, byte)` overload;
 - the concrete `IVariableWriteHelp.ByIdHelpWrite(uint, uint)` implementation; and
-- the EndlessShapes `GeneralTab.Mesh` patch target.
+- the EndlessShapes `GeneralTab.Mesh` patch target; and
+- private static `AutoSyncroniser.fullArray` with type `byte[]`.
 
-The decoration cap is assigned only after these checks pass. If patching or
-verification fails, every Harmony patch with this owner is removed. Buffer arrays
-that were safely enlarged during startup are not shrunk again, but no partial
-serializer method replacement is left active.
+The decoration cap is assigned only after these checks pass and its preceding
+value is captured. If a later startup step fails, rollback restores that value
+and independently removes every Harmony patch with this owner. Buffer arrays that
+were safely enlarged during startup are not shrunk. Success logging occurs after
+commit and cannot turn a completed startup into a failed one.
 
 `AfterAllPluginsLoaded` returns `true`; the plugin has no persistent plugin-level
 state to write in `OnSave`.
@@ -64,7 +68,7 @@ state to write in `OnSave`.
 | `SuperSaver_ConvertToReader_BufferPatch` | `SuperSaver.ConvertToReader` | Replaces the fixed temporary buffer with an exact format-aware conversion |
 | `SuperSaver_WriteHeader_Guard` | `SuperSaver.WriteHeader` | Ensures seven bytes of header capacity before the game writes |
 | `SuperSaver_ByIdHelpWrite_Guard` | Concrete variable-write helper | Ensures record capacity before the game writes sorted data |
-| `SuperSaverBuffersPatch` | `SuperSaver` constructor prefix plus explicit boot call | Initializes reusable header/data pools once |
+| `SuperSaverBuffersPatch` | `SuperSaver` constructor prefix plus explicit boot call | Idempotently ensures reusable header/data pool capacities |
 | `ByteStorePatch` | `SuperSaver` constructor postfix plus explicit boot call | Keeps global output scratch storage at least 20 MB |
 | `DecoLimitsPatch.ApplyLimit` | Direct static assignment | Raises the per-manager decoration cap without patching hot decoration methods |
 
@@ -206,9 +210,10 @@ updated. An unknown destination that is too small throws an actionable
 `IndexOutOfRangeException`; the mod does not guess how an arbitrary caller stores
 its replacement array.
 
-`AutoSyncroniser.fullArray` is located once through Harmony reflection. If the
-type or field cannot be resolved, ordinary saves still work, but an oversized
-unknown multiplayer buffer cannot be replaced by this path.
+`AutoSyncroniser.fullArray` is located once through Harmony reflection and
+verified during startup. A missing or differently typed field fails the startup
+transaction, because silently losing only the multiplayer growth path would be a
+partial installation.
 
 ## Load path and corruption checks
 
@@ -223,7 +228,8 @@ loader state:
 5. Validate configured length ceilings and seven-byte header divisibility.
 6. Require the complete declared header plus data payload.
 7. Validate every header's `SortedStart` before allocation or state mutation.
-8. Reuse or grow loader buffers and copy the complete payload.
+8. Reuse or grow loader buffers and copy the complete payload. Zero-length
+   regions still receive non-null empty buffers.
 9. Commit ID, arrays, header count, total length, data cursor, and initial reader
    segment length.
 10. Advance the caller's cursor only after successful reconstruction.
@@ -387,8 +393,11 @@ per-record debug spam.
 
 ## Verification coverage
 
-The verification host applies the serializer patch classes explicitly and checks
-44 serializer behaviors, including:
+The verification host applies serializer patch classes explicitly. The combined
+111-check suite retains all original 44 serializer compatibility/corruption
+checks and adds startup rollback, exact constructor methods, required
+`AutoSyncroniser` resolution, sequential shared-buffer growth, unknown-buffer
+rejection, and zero-length loader coverage. Core serializer checks include:
 
 - required Harmony target ownership;
 - byte-for-byte legacy output;
@@ -414,6 +423,7 @@ Paths are relative to the runtime package directory `EndlessShapesUnlimited/`.
 | Area | Source |
 | --- | --- |
 | Runtime entry and patch verification | `Source/Plugin.cs` |
+| Startup rollback transaction | `Source/StartupTransaction.cs` |
 | Constants and ceilings | `Source/Patches/DecoLimits.cs` |
 | Decoration cap assignment | `Source/Patches/DecoLimitsPatch.cs` |
 | Exact format/layout calculation | `Source/ExtendedSerialization/SuperSerialisationLayout.cs` |

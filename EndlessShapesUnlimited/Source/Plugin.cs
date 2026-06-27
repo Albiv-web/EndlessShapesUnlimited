@@ -22,6 +22,8 @@ namespace DecoLimitLifter
         public void OnLoad()
         {
             Harmony harmony = null;
+            var startup = new StartupTransaction(
+                () => harmony?.UnpatchAll(HarmonyId));
             try
             {
                 harmony = new Harmony(HarmonyId);
@@ -30,22 +32,55 @@ namespace DecoLimitLifter
                 Patches.ByteStorePatch.EnsureMegaBytes();
                 Patches.SuperSaverBuffersPatch.OnBootEnsurePools();
                 VerifyRequiredPatches();
-                Patches.DecoLimitsPatch.ApplyLimit();
+                ExtendedSerialization.DestinationBuffer.VerifyAutoSyncTarget();
+                int previousDecorationLimit = Patches.DecoLimitsPatch.ApplyLimit();
+                startup.TrackDecorationLimit(
+                    previousDecorationLimit,
+                    Patches.DecoLimitsPatch.RestoreLimit);
+                startup.Commit();
+            }
+            catch (Exception exception)
+            {
+                // Rollback actions are independent and cannot hide the startup failure.
+                IReadOnlyList<Exception> rollbackErrors = startup.Rollback();
+                Exception logged = rollbackErrors.Count == 0
+                    ? exception
+                    : new AggregateException(
+                        "Startup failed and rollback encountered additional errors.",
+                        new[] { exception }.Concat(rollbackErrors));
+                try
+                {
+                    AdvLogger.LogException(
+                        "[EndlessShapes Unlimited] Failed to install required patches",
+                        logged,
+                        LogOptions._AlertDevAndCustomerInGame);
+                }
+                catch
+                {
+                    // Logging must never leave a failed startup partially installed.
+                }
+                return;
+            }
 
+            try
+            {
                 AdvLogger.LogInfo(
                     $"[EndlessShapes Unlimited] v{version} loaded. " +
                     $"Decoration limit={DecoLimits.MaxDecorations}; OBJ tools active.");
             }
             catch (Exception exception)
             {
-                // Do not leave a partially patched serializer active.
-                try { harmony?.UnpatchAll(HarmonyId); }
-                catch { /* preserve the original startup failure */ }
-
-                AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Failed to install required patches",
-                    exception,
-                    LogOptions._AlertDevAndCustomerInGame);
+                try
+                {
+                    AdvLogger.LogException(
+                        "[EndlessShapes Unlimited] Loaded, but the success message could not be written",
+                        exception,
+                        LogOptions._AlertDevInGame);
+                }
+                catch
+                {
+                    // Startup is already committed; logging cannot change that state.
+                }
             }
         }
 
@@ -98,6 +133,33 @@ namespace DecoLimitLifter
             if (missing.Length > 0)
                 throw new InvalidOperationException(
                     "Required Harmony patches are missing: " + string.Join(", ", missing));
+
+            MethodBase constructor = AccessTools.Constructor(typeof(SuperSaver), Type.EmptyTypes);
+            VerifyExactPatch(
+                constructor,
+                AccessTools.Method(
+                    typeof(Patches.SuperSaverBuffersPatch),
+                    "ConstructorPrefix"),
+                prefix: true);
+            VerifyExactPatch(
+                constructor,
+                AccessTools.Method(
+                    typeof(Patches.ByteStorePatch),
+                    "AfterSuperSaverConstructor"),
+                prefix: false);
+        }
+
+        private static void VerifyExactPatch(MethodBase target, MethodInfo patchMethod, bool prefix)
+        {
+            HarmonyLib.Patches patchInfo = target == null ? null : Harmony.GetPatchInfo(target);
+            IEnumerable<Patch> patches = prefix ? patchInfo?.Prefixes : patchInfo?.Postfixes;
+            if (target == null || patchMethod == null ||
+                patches?.Any(patch => patch.owner == HarmonyId && patch.PatchMethod == patchMethod) != true)
+            {
+                throw new InvalidOperationException(
+                    $"Required Harmony {(prefix ? "prefix" : "postfix")} is missing: " +
+                    $"{patchMethod?.DeclaringType?.FullName}.{patchMethod?.Name}");
+            }
         }
 
         public bool AfterAllPluginsLoaded() => true;

@@ -7,20 +7,13 @@ namespace DecoLimitLifter.Patches
     internal static class SuperSaverBuffersPatch
     {
         private static readonly object InitLock = new object();
-        private static bool _initialized;
 
-        internal static void OnBootEnsurePools() => EnsurePoolsOnce();
+        internal static void OnBootEnsurePools() => EnsurePools();
 
-        private static void EnsurePoolsOnce()
+        private static void EnsurePools()
         {
-            if (_initialized)
-                return;
-
             lock (InitLock)
             {
-                if (_initialized)
-                    return;
-
                 var data = SuperSaverReusableByteArray.DataSorted;
                 SuperSaverReusableByteArray.DataSorted = BufferGrowth.GrowPreserving(
                     data,
@@ -39,12 +32,11 @@ namespace DecoLimitLifter.Patches
                     "SuperSaver reusable header pool",
                     exact: true);
 
-                _initialized = true;
             }
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(typeof(SuperSaver), MethodType.Constructor)]
-        private static void ConstructorPrefix() => EnsurePoolsOnce();
+        private static void ConstructorPrefix() => EnsurePools();
     }
 }

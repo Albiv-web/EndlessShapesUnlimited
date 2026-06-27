@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 
@@ -7,271 +8,641 @@ namespace EndlessShapes2.Polygon
 {
     public static class PolygonDataControl
     {
-        private static float[] _cv = new float[] { 0f, 0.382683f, 0.707107f, 0.923880f, 1f };
+        private const float GeometryEpsilon = 0.000001f;
 
-        private static Vector3[] _circleValue = new Vector3[]
+        private static readonly float[] CircleComponents =
+            { 0f, 0.382683f, 0.707107f, 0.923880f, 1f };
+
+        private static readonly Vector3[] CircleValues =
         {
-            new Vector3(0,  _cv[0],  _cv[4]), new Vector3(0,  _cv[1],  _cv[3]), new Vector3(0,  _cv[2],  _cv[2]), new Vector3(0,  _cv[3],  _cv[1]),
-            new Vector3(0,  _cv[4], -_cv[0]), new Vector3(0,  _cv[3], -_cv[1]), new Vector3(0,  _cv[2], -_cv[2]), new Vector3(0,  _cv[1], -_cv[3]),
-            new Vector3(0, -_cv[0], -_cv[4]), new Vector3(0, -_cv[1], -_cv[3]), new Vector3(0, -_cv[2], -_cv[2]), new Vector3(0, -_cv[3], -_cv[1]),
-            new Vector3(0, -_cv[4],  _cv[0]), new Vector3(0, -_cv[3],  _cv[1]), new Vector3(0, -_cv[2],  _cv[2]), new Vector3(0, -_cv[1],  _cv[3])
+            new Vector3(0, CircleComponents[0], CircleComponents[4]),
+            new Vector3(0, CircleComponents[1], CircleComponents[3]),
+            new Vector3(0, CircleComponents[2], CircleComponents[2]),
+            new Vector3(0, CircleComponents[3], CircleComponents[1]),
+            new Vector3(0, CircleComponents[4], -CircleComponents[0]),
+            new Vector3(0, CircleComponents[3], -CircleComponents[1]),
+            new Vector3(0, CircleComponents[2], -CircleComponents[2]),
+            new Vector3(0, CircleComponents[1], -CircleComponents[3]),
+            new Vector3(0, -CircleComponents[0], -CircleComponents[4]),
+            new Vector3(0, -CircleComponents[1], -CircleComponents[3]),
+            new Vector3(0, -CircleComponents[2], -CircleComponents[2]),
+            new Vector3(0, -CircleComponents[3], -CircleComponents[1]),
+            new Vector3(0, -CircleComponents[4], CircleComponents[0]),
+            new Vector3(0, -CircleComponents[3], CircleComponents[1]),
+            new Vector3(0, -CircleComponents[2], CircleComponents[2]),
+            new Vector3(0, -CircleComponents[1], CircleComponents[3])
         };
-
-        private static bool _uvReadable = false;
 
         public static float AllowableError_length { get; set; } = 0.001f;
 
-        public static bool UV_Load { get; set; } = true;
-
-        public static void PolygonClassify(List<PolygonData> polygonDataList, List<int[][]> faceDatas, List<int[]> lineDatas, List<Vector3> vertices, List<Vector2> uvs = null)
+        [Obsolete("UV availability is determined independently per face; this compatibility property has no effect.")]
+        public static bool UV_Load
         {
-            if (polygonDataList == null) throw new ArgumentNullException(nameof(polygonDataList));
-            if (vertices == null) throw new ArgumentNullException(nameof(vertices));
+            get => true;
+            set { }
+        }
 
-            List<int[][]> faces = new List<int[][]>(faceDatas);
-            faces.Sort((a, b) => b.Length - a.Length);
+        public static void PolygonClassify(
+            List<PolygonData> polygonDataList,
+            List<int[][]> faceDatas,
+            List<int[]> lineDatas,
+            List<Vector3> vertices,
+            List<Vector2> uvs = null)
+        {
+            PolygonClassify(
+                polygonDataList,
+                faceDatas,
+                lineDatas,
+                vertices,
+                uvs,
+                null,
+                null,
+                int.MaxValue);
+        }
 
-            _uvReadable = UV_Load && faces.Count > 0 && faces[0].Length > 0 &&
-                          faces[0][0].Length >= 2 && uvs != null;
+        internal static void PolygonClassify(
+            List<PolygonData> polygonDataList,
+            IReadOnlyList<int[][]> faceDatas,
+            IReadOnlyList<int[]> lineDatas,
+            List<Vector3> vertices,
+            List<Vector2> uvs,
+            IReadOnlyList<int> faceSourceLines,
+            IReadOnlyList<int> lineSourceLines,
+            int maximumDecorations)
+        {
+            if (polygonDataList == null)
+                throw new ArgumentNullException(nameof(polygonDataList));
+            if (faceDatas == null)
+                throw new ArgumentNullException(nameof(faceDatas));
+            if (lineDatas == null)
+                throw new ArgumentNullException(nameof(lineDatas));
+            if (vertices == null)
+                throw new ArgumentNullException(nameof(vertices));
+            if (maximumDecorations < 1)
+                throw new ArgumentOutOfRangeException(nameof(maximumDecorations));
 
-            while (faces.Count > 0)
+            var comparer = Comparer<int>.Create((left, right) => right.CompareTo(left));
+            var workBySize = new SortedDictionary<int, FaceBucket>(comparer);
+            int pendingFaces = 0;
+
+            for (int index = 0; index < faceDatas.Count; index++)
             {
-                int[][] face = faces[0];
-                int vertexCount = face.Length;
+                int sourceLine = SourceLine(faceSourceLines, index);
+                EnqueueFace(
+                    workBySize,
+                    new FaceWork(faceDatas[index], sourceLine),
+                    polygonDataList.Count,
+                    ref pendingFaces,
+                    maximumDecorations);
+            }
 
-                switch (vertexCount)
+            while (pendingFaces > 0)
+            {
+                KeyValuePair<int, FaceBucket> bucket = workBySize.First();
+                FaceWork work = bucket.Value.Dequeue();
+                pendingFaces--;
+                if (!bucket.Value.HasItems)
+                    workBySize.Remove(bucket.Key);
+
+                ValidateFaceGeometry(work.Face, vertices, work.SourceLine);
+                switch (work.Face.Length)
                 {
                     case 3:
-                        TriangleClassify(polygonDataList, face, vertices, uvs);
-
+                        TriangleClassify(
+                            polygonDataList,
+                            work.Face,
+                            vertices,
+                            uvs,
+                            work.SourceLine,
+                            maximumDecorations);
                         break;
                     case 4:
-                        if (!RectangleClassify(polygonDataList, face, vertices, uvs))
+                        if (!RectangleClassify(
+                                polygonDataList,
+                                work.Face,
+                                vertices,
+                                uvs,
+                                work.SourceLine,
+                                maximumDecorations))
                         {
-                            NgonDisassembly(faces, face);
+                            EnqueueFan(
+                                workBySize,
+                                work,
+                                polygonDataList.Count,
+                                ref pendingFaces,
+                                maximumDecorations);
                         }
-
                         break;
                     case 16:
-                        if (!EllipseClassify(polygonDataList, face, vertices, uvs))
+                        if (!EllipseClassify(
+                                polygonDataList,
+                                work.Face,
+                                vertices,
+                                uvs,
+                                work.SourceLine,
+                                maximumDecorations))
                         {
-                            NgonDisassembly(faces, face);
+                            EnqueueFan(
+                                workBySize,
+                                work,
+                                polygonDataList.Count,
+                                ref pendingFaces,
+                                maximumDecorations);
                         }
-
                         break;
                     default:
-                        NgonDisassembly(faces, face);
-
+                        EnqueueFan(
+                            workBySize,
+                            work,
+                            polygonDataList.Count,
+                            ref pendingFaces,
+                            maximumDecorations);
                         break;
                 }
-
-                faces.RemoveAt(0);
-
-                if (faces.Count > 0 && vertexCount != faces[0].Length)
-                {
-                    faces.Sort((a, b) => b.Length - a.Length);
-                }
             }
 
-            foreach (int[] temp_0 in lineDatas)
+            for (int lineIndex = 0; lineIndex < lineDatas.Count; lineIndex++)
             {
-                List<int[]> lineList = new List<int[]>();
-
-                for (int index = 1; index < temp_0.Length; ++index)
+                int[] line = lineDatas[lineIndex];
+                int sourceLine = SourceLine(lineSourceLines, lineIndex);
+                for (int index = 1; index < line.Length; index++)
                 {
-                    lineList.Add(new int[] { temp_0[index - 1], temp_0[index] });
-                }
-
-                foreach (int[] temp_1 in lineList)
-                {
-                    LineClassify(polygonDataList, temp_1, vertices);
+                    int[] segment = { line[index - 1], line[index] };
+                    ValidateLineGeometry(segment, vertices, sourceLine);
+                    AddChecked(
+                        polygonDataList,
+                        new PolygonData(PolygonType.Line, segment, vertices, Vector2.zero, sourceLine),
+                        maximumDecorations,
+                        sourceLine);
                 }
             }
         }
 
-        public static void TriangleClassify(List<PolygonData> polygonDataList, int[][] faceData, List<Vector3> vertices, List<Vector2> uvs)
+        public static void TriangleClassify(
+            List<PolygonData> polygonDataList,
+            int[][] faceData,
+            List<Vector3> vertices,
+            List<Vector2> uvs)
         {
-            Vector2 UV_Mid = UV_Midpoint(faceData, uvs);
+            TriangleClassify(
+                polygonDataList,
+                faceData,
+                vertices,
+                uvs,
+                0,
+                int.MaxValue);
+        }
 
-            int[] V_indexs = faceData.Select(I => I[0]).ToArray();
-
-            SideData[] sides = GenerateSides(V_indexs, vertices);
-            SideData[] sidesLengthSort = sides.OrderByDescending((SideData s) => s.Length).ToArray();
-
+        private static void TriangleClassify(
+            List<PolygonData> polygonDataList,
+            int[][] faceData,
+            List<Vector3> vertices,
+            List<Vector2> uvs,
+            int sourceLine,
+            int maximumDecorations)
+        {
+            Vector2 uvMidpoint = UvMidpoint(faceData, uvs, sourceLine);
+            int[] vertexIndexes = faceData.Select(point => point[0]).ToArray();
+            SideData[] sides = GenerateSides(vertexIndexes, vertices);
+            SideData[] sorted = sides.OrderByDescending(side => side.Length).ToArray();
             int[] next = { 1, 2, 0 };
-            float variable_0 = Mathf.Abs(Vector3.Angle(sidesLengthSort[1].SideVector, sidesLengthSort[2].SideVector) - 90f);
-            bool flag0 = sidesLengthSort[0].Length * Mathf.Sin(variable_0 * Mathf.Deg2Rad) < AllowableError_length;
 
-            if (flag0)
+            float angleError = Mathf.Abs(Vector3.Angle(sorted[1].SideVector, sorted[2].SideVector) - 90f);
+            bool right = sorted[0].Length * Mathf.Sin(angleError * Mathf.Deg2Rad) < AllowableError_length;
+            if (right)
             {
-                int startSideIndex = sidesLengthSort[0].SideIndex;
-                int[] newIndexs = new int[] { V_indexs[startSideIndex], V_indexs[next[startSideIndex]], V_indexs[next[next[startSideIndex]]] };
-
-                polygonDataList.Add(new PolygonData(PolygonType.RightTriangle, newIndexs, vertices, UV_Mid));
+                int start = sorted[0].SideIndex;
+                int[] reordered =
+                    { vertexIndexes[start], vertexIndexes[next[start]], vertexIndexes[next[next[start]]] };
+                AddChecked(
+                    polygonDataList,
+                    new PolygonData(PolygonType.RightTriangle, reordered, vertices, uvMidpoint, sourceLine),
+                    maximumDecorations,
+                    sourceLine);
+                return;
             }
-            else
+
+            bool shortestPairEqual = Mathf.Abs(sorted[1].Length - sorted[2].Length) < AllowableError_length;
+            bool longestPairEqual = Mathf.Abs(sorted[0].Length - sorted[1].Length) < AllowableError_length;
+            int startingSide = sorted[shortestPairEqual ? 0 : longestPairEqual ? 2 : 0].SideIndex;
+            int[] indexes =
             {
-                bool flag1 = Mathf.Abs(sidesLengthSort[1].Length - sidesLengthSort[2].Length) < AllowableError_length;
-                bool flag2 = Mathf.Abs(sidesLengthSort[0].Length - sidesLengthSort[1].Length) < AllowableError_length;
+                vertexIndexes[startingSide],
+                vertexIndexes[next[startingSide]],
+                vertexIndexes[next[next[startingSide]]]
+            };
 
-                if (flag1 || flag2)
-                {
-                    int startSideIndex = sidesLengthSort[flag1 ? 0 : 2].SideIndex;
-                    int[] newIndexs = new int[] { V_indexs[startSideIndex], V_indexs[next[startSideIndex]], V_indexs[next[next[startSideIndex]]] };
-
-                    polygonDataList.Add(new PolygonData(PolygonType.IsoscelesTriangle, newIndexs, vertices, UV_Mid));
-                }
-                else
-                {
-                    int startSideIndex = sidesLengthSort[0].SideIndex;
-                    int[] newIndexs = new int[] { V_indexs[startSideIndex], V_indexs[next[startSideIndex]], V_indexs[next[next[startSideIndex]]] };
-
-                    polygonDataList.Add(new PolygonData(PolygonType.OtherTriangle_F, newIndexs, vertices, UV_Mid));
-                    polygonDataList.Add(new PolygonData(PolygonType.OtherTriangle_B, newIndexs, vertices, UV_Mid));
-                }
+            if (shortestPairEqual || longestPairEqual)
+            {
+                AddChecked(
+                    polygonDataList,
+                    new PolygonData(PolygonType.IsoscelesTriangle, indexes, vertices, uvMidpoint, sourceLine),
+                    maximumDecorations,
+                    sourceLine);
+                return;
             }
+
+            AddChecked(
+                polygonDataList,
+                new PolygonData(PolygonType.OtherTriangle_F, indexes, vertices, uvMidpoint, sourceLine),
+                maximumDecorations,
+                sourceLine);
+            AddChecked(
+                polygonDataList,
+                new PolygonData(PolygonType.OtherTriangle_B, indexes, vertices, uvMidpoint, sourceLine),
+                maximumDecorations,
+                sourceLine);
         }
 
-        public static bool RectangleClassify(List<PolygonData> polygonDataList, int[][] faceData, List<Vector3> vertices, List<Vector2> uvs)
+        public static bool RectangleClassify(
+            List<PolygonData> polygonDataList,
+            int[][] faceData,
+            List<Vector3> vertices,
+            List<Vector2> uvs)
         {
-            int[] V_indexs = faceData.Select(I => I[0]).ToArray();
+            return RectangleClassify(
+                polygonDataList,
+                faceData,
+                vertices,
+                uvs,
+                0,
+                int.MaxValue);
+        }
 
-            SideData[] sides = GenerateSides(V_indexs, vertices);
-            SideData[] sidesLengthSort = sides.OrderByDescending((SideData s) => s.Length).ToArray();
+        private static bool RectangleClassify(
+            List<PolygonData> polygonDataList,
+            int[][] faceData,
+            List<Vector3> vertices,
+            List<Vector2> uvs,
+            int sourceLine,
+            int maximumDecorations)
+        {
+            int[] vertexIndexes = faceData.Select(point => point[0]).ToArray();
+            SideData[] sides = GenerateSides(vertexIndexes, vertices);
+            float longest = sides.Max(side => side.Length);
+            for (int index = 0; index < sides.Length; index++)
+            {
+                float error = Mathf.Abs(
+                    Vector3.Angle(sides[index].SideVector, sides[(index + 1) % sides.Length].SideVector) - 90f);
+                if (longest * Mathf.Sin(error * Mathf.Deg2Rad) >= AllowableError_length)
+                    return false;
+            }
 
-            float LongestSideLength = sidesLengthSort[0].Length;
-
-            float variable_0 = Mathf.Abs(Vector3.Angle(sides[0].SideVector, sides[1].SideVector) - 90f);
-            bool flag0 = LongestSideLength * Mathf.Sin(variable_0 * Mathf.Deg2Rad) < AllowableError_length;
-            if (!flag0) return false;
-
-            float variable_1 = Mathf.Abs(Vector3.Angle(sides[1].SideVector, sides[2].SideVector) - 90f);
-            bool flag1 = LongestSideLength * Mathf.Sin(variable_1 * Mathf.Deg2Rad) < AllowableError_length;
-            if (!flag1) return false;
-
-            float variable_2 = Mathf.Abs(Vector3.Angle(sides[2].SideVector, sides[3].SideVector) - 90f);
-            bool flag2 = LongestSideLength * Mathf.Sin(variable_2 * Mathf.Deg2Rad) < AllowableError_length;
-            if (!flag2) return false;
-
-            float variable_3 = Mathf.Abs(Vector3.Angle(sides[3].SideVector, sides[0].SideVector) - 90f);
-            bool flag3 = LongestSideLength * Mathf.Sin(variable_3 * Mathf.Deg2Rad) < AllowableError_length;
-            if (!flag3) return false;
-
-            Vector2 UV_Mid = UV_Midpoint(faceData, uvs);
-            polygonDataList.Add(new PolygonData(PolygonType.Rectangle, V_indexs, vertices, UV_Mid));
+            AddChecked(
+                polygonDataList,
+                new PolygonData(
+                    PolygonType.Rectangle,
+                    vertexIndexes,
+                    vertices,
+                    UvMidpoint(faceData, uvs, sourceLine),
+                    sourceLine),
+                maximumDecorations,
+                sourceLine);
             return true;
         }
 
-        public static bool EllipseClassify(List<PolygonData> polygonDataList, int[][] faceData, List<Vector3> vertices, List<Vector2> uvs)
+        public static bool EllipseClassify(
+            List<PolygonData> polygonDataList,
+            int[][] faceData,
+            List<Vector3> vertices,
+            List<Vector2> uvs)
         {
-            int[] V_indexs = faceData.Select(I => I[0]).ToArray();
+            return EllipseClassify(
+                polygonDataList,
+                faceData,
+                vertices,
+                uvs,
+                0,
+                int.MaxValue);
+        }
 
-            SideData[] sides = GenerateSides(V_indexs, vertices);
-            SideData[] sidesLengthSort = sides.OrderByDescending((SideData s) => s.Length).ToArray();
-
+        private static bool EllipseClassify(
+            List<PolygonData> polygonDataList,
+            int[][] faceData,
+            List<Vector3> vertices,
+            List<Vector2> uvs,
+            int sourceLine,
+            int maximumDecorations)
+        {
+            int[] vertexIndexes = faceData.Select(point => point[0]).ToArray();
+            SideData[] sides = GenerateSides(vertexIndexes, vertices);
             Vector3 center = Vector3.zero;
-            Array.ForEach(sides, I => center += I.OriginPosition);
-            center /= 16;
+            foreach (SideData side in sides)
+                center += side.OriginPosition;
+            center /= 16f;
 
-            SideData[] tempSort = sides.OrderByDescending((SideData s) => (s.OriginPosition - center).sqrMagnitude).ToArray();
+            SideData[] distanceSorted = sides
+                .OrderByDescending(side => (side.OriginPosition - center).sqrMagnitude)
+                .ToArray();
+            int mainIndex = distanceSorted[0].SideIndex;
+            SideData secondMain = sides[(mainIndex + 4) % 16];
+            Vector3 forward = distanceSorted[0].OriginPosition - center;
+            Vector3 up = secondMain.OriginPosition - center;
+            if (forward.sqrMagnitude <= GeometryEpsilon || up.sqrMagnitude <= GeometryEpsilon)
+                return false;
 
-            List<int> order = Enumerable.Range(0, 16).ToList();
-            List<int> next = new List<int>(order);
-            next.RemoveAt(0);
-            next.Add(0);
+            Vector3 forwardAxis = forward.normalized;
+            Vector3 upAxis = up.normalized;
+            if (Mathf.Abs(Vector3.Dot(forwardAxis, upAxis)) >= 0.0001f)
+                return false;
+            float forwardRadius = forward.magnitude;
+            float upRadius = up.magnitude;
 
-            SideData mainSide_0 = tempSort[0];
-            SideData mainSide_1 = sides[next[next[next[next[mainSide_0.SideIndex]]]]];
-
-            Vector3 fv = mainSide_0.OriginPosition - center;
-            Vector3 uv = mainSide_1.OriginPosition - center;
-            Quaternion q = Quaternion.Inverse(Quaternion.LookRotation(fv, uv));
-
-            float a = (mainSide_0.OriginPosition - center).magnitude;
-            float b = (mainSide_1.OriginPosition - center).magnitude;
-            Vector3 scale = new Vector3(0, b, a);
-            Vector3[] newCircleValue = _circleValue.Select(I => Vector3.Scale(I, scale)).ToArray();
-
-
-
-            int nextIndex = mainSide_0.SideIndex;
-            bool flag_1 = true;
-
-            for (int i = 0; i < 16; ++i)
+            for (int index = 0; index < 16; index++)
             {
-                Vector3 temp_3 = q * (sides[nextIndex].OriginPosition - center);
-                Vector3 temp_4 = temp_3 - newCircleValue[i];
-
-                bool flag_0 = Mathf.Abs(temp_4.x) < AllowableError_length && Mathf.Abs(temp_4.y) < AllowableError_length && Mathf.Abs(temp_4.z) < AllowableError_length;
-
-                if (!flag_0)
+                int sideIndex = (mainIndex + index) % 16;
+                Vector3 template = CircleValues[index];
+                Vector3 expected = center +
+                                   upAxis * (template.y * upRadius) +
+                                   forwardAxis * (template.z * forwardRadius);
+                if ((sides[sideIndex].OriginPosition - expected).magnitude >= AllowableError_length)
                 {
-                    flag_1 = false;
-                    break;
+                    return false;
                 }
-
-                nextIndex = next[nextIndex];
             }
 
-            if (flag_1)
-            {
-                List<int> newIndexs = new List<int>();
-                int nextIndex_1 = mainSide_0.SideIndex;
-
-                for (int i = 0; i < 16; ++i)
-                {
-                    newIndexs.Add(V_indexs[nextIndex_1]);
-                    nextIndex_1 = next[nextIndex_1];
-                }
-
-                Vector2 UV_Mid = UV_Midpoint(faceData, uvs);
-                polygonDataList.Add(new PolygonData(PolygonType.Ellipse, newIndexs.ToArray(), vertices, UV_Mid));
-            }
-
-            return flag_1;
+            int[] reordered = Enumerable.Range(0, 16)
+                .Select(index => vertexIndexes[(mainIndex + index) % 16])
+                .ToArray();
+            AddChecked(
+                polygonDataList,
+                new PolygonData(
+                    PolygonType.Ellipse,
+                    reordered,
+                    vertices,
+                    UvMidpoint(faceData, uvs, sourceLine),
+                    sourceLine),
+                maximumDecorations,
+                sourceLine);
+            return true;
         }
 
-        public static void LineClassify(List<PolygonData> polygonDataList, int[] indexs, List<Vector3> vertices)
+        public static void LineClassify(
+            List<PolygonData> polygonDataList,
+            int[] indexes,
+            List<Vector3> vertices)
         {
-            polygonDataList.Add(new PolygonData(PolygonType.Line, indexs, vertices, Vector2.zero));
+            ValidateLineGeometry(indexes, vertices, 0);
+            polygonDataList.Add(new PolygonData(PolygonType.Line, indexes, vertices, Vector2.zero));
         }
 
-        private static Vector2 UV_Midpoint(int[][] faceData, List<Vector2> uvs)
+        private static Vector2 UvMidpoint(int[][] faceData, List<Vector2> uvs, int sourceLine)
         {
-            Vector2 result = Vector2.zero;
-
-            if (!_uvReadable || uvs == null ||
+            if (uvs == null ||
                 faceData.Any(point => point.Length < 2 || point[1] < 0 || point[1] >= uvs.Count))
-                return result;
-
-            int[] UV_indexs = faceData.Select(I => I[1]).ToArray();
-            Vector2 temp_0 = Vector2.zero;
-
-            foreach (int index in UV_indexs)
             {
-                temp_0 += uvs[index];
+                return Vector2.zero;
             }
 
-            result = temp_0 / UV_indexs.Length;
-
-            return result;
+            double totalX = 0d;
+            double totalY = 0d;
+            foreach (int[] point in faceData)
+            {
+                Vector2 uv = uvs[point[1]];
+                if (!IsFinite(uv.x) || !IsFinite(uv.y))
+                    throw GeometryError(sourceLine, "face contains a non-finite texture coordinate");
+                totalX += uv.x;
+                totalY += uv.y;
+            }
+            double averageX = totalX / faceData.Length;
+            double averageY = totalY / faceData.Length;
+            if (double.IsNaN(averageX) || double.IsInfinity(averageX) ||
+                double.IsNaN(averageY) || double.IsInfinity(averageY) ||
+                Math.Abs(averageX) > float.MaxValue || Math.Abs(averageY) > float.MaxValue)
+            {
+                throw GeometryError(sourceLine, "face texture-coordinate average is not finite");
+            }
+            return new Vector2((float)averageX, (float)averageY);
         }
 
-        public static SideData[] GenerateSides(int[] indexs, List<Vector3> vertices)
+        public static SideData[] GenerateSides(int[] indexes, List<Vector3> vertices)
         {
-            List<int> order = Enumerable.Range(0, indexs.Length).ToList();
-            List<int> next = new List<int>(order);
-            next.RemoveAt(0);
-            next.Add(0);
-
-            return order.Select(I => new SideData(I, indexs[I], indexs[next[I]], vertices)).ToArray();
+            var sides = new SideData[indexes.Length];
+            for (int index = 0; index < indexes.Length; index++)
+            {
+                sides[index] = new SideData(
+                    index,
+                    indexes[index],
+                    indexes[(index + 1) % indexes.Length],
+                    vertices);
+            }
+            return sides;
         }
 
         public static void NgonDisassembly(List<int[][]> faces, int[][] face)
         {
-            for (int index = 0; index < face.Length - 2; ++index)
+            for (int index = 0; index < face.Length - 2; index++)
+                faces.Add(new[] { face[0], face[1 + index], face[2 + index] });
+        }
+
+        private static void EnqueueFan(
+            SortedDictionary<int, FaceBucket> workBySize,
+            FaceWork work,
+            int outputCount,
+            ref int pendingFaces,
+            int maximumDecorations)
+        {
+            int triangles = work.Face.Length - 2;
+            if ((long)outputCount + pendingFaces + triangles > maximumDecorations)
+                throw GeometryError(work.SourceLine, $"expanded plan exceeds {maximumDecorations:N0} decorations");
+
+            for (int index = 0; index < triangles; index++)
             {
-                faces.Add(new int[][] { face[0], face[1 + index], face[2 + index] });
+                EnqueueFace(
+                    workBySize,
+                    new FaceWork(
+                        new[] { work.Face[0], work.Face[index + 1], work.Face[index + 2] },
+                        work.SourceLine),
+                    outputCount,
+                    ref pendingFaces,
+                    maximumDecorations);
+            }
+        }
+
+        private static void EnqueueFace(
+            IDictionary<int, FaceBucket> workBySize,
+            FaceWork work,
+            int outputCount,
+            ref int pendingFaces,
+            int maximumDecorations)
+        {
+            if ((long)outputCount + pendingFaces + 1 > maximumDecorations)
+                throw GeometryError(work.SourceLine, $"expanded plan exceeds {maximumDecorations:N0} decorations");
+            if (!workBySize.TryGetValue(work.Face.Length, out FaceBucket queue))
+            {
+                queue = new FaceBucket();
+                workBySize.Add(work.Face.Length, queue);
+            }
+            queue.Enqueue(work);
+            pendingFaces++;
+        }
+
+        private static void AddChecked(
+            ICollection<PolygonData> target,
+            PolygonData polygon,
+            int maximumDecorations,
+            int sourceLine)
+        {
+            if (target.Count >= maximumDecorations)
+                throw GeometryError(sourceLine, $"expanded plan exceeds {maximumDecorations:N0} decorations");
+            target.Add(polygon);
+        }
+
+        private static void ValidateLineGeometry(int[] indexes, IReadOnlyList<Vector3> vertices, int sourceLine)
+        {
+            if (indexes == null || indexes.Length != 2)
+                throw GeometryError(sourceLine, "line segment must contain exactly two points");
+            if (indexes[0] < 0 || indexes[0] >= vertices.Count ||
+                indexes[1] < 0 || indexes[1] >= vertices.Count)
+            {
+                throw GeometryError(sourceLine, "line segment references a vertex outside the available range");
+            }
+            Vector3 first = vertices[indexes[0]];
+            Vector3 second = vertices[indexes[1]];
+            EnsureFinite(first, sourceLine);
+            EnsureFinite(second, sourceLine);
+            Vector3 difference = second - first;
+            EnsureFinite(difference, sourceLine);
+            float squaredLength = difference.sqrMagnitude;
+            if (!IsFinite(squaredLength))
+                throw GeometryError(sourceLine, "line segment length is not finite after transformation");
+            if (squaredLength <= GeometryEpsilon * GeometryEpsilon)
+                throw GeometryError(sourceLine, "line segment has zero length after transformation");
+        }
+
+        private static void ValidateFaceGeometry(int[][] face, IReadOnlyList<Vector3> vertices, int sourceLine)
+        {
+            if (face == null || face.Length < 3)
+                throw GeometryError(sourceLine, "face must contain at least three points");
+
+            var points = new Vector3[face.Length];
+            var seen = new HashSet<int>();
+            for (int index = 0; index < face.Length; index++)
+            {
+                if (face[index] == null || face[index].Length == 0)
+                    throw GeometryError(sourceLine, "face contains a malformed point reference");
+                int vertexIndex = face[index][0];
+                if (vertexIndex < 0 || vertexIndex >= vertices.Count)
+                    throw GeometryError(sourceLine, "face references a vertex outside the available range");
+                if (!seen.Add(vertexIndex))
+                    throw GeometryError(sourceLine, "face contains a repeated vertex index");
+                points[index] = vertices[vertexIndex];
+                EnsureFinite(points[index], sourceLine);
+            }
+
+            for (int index = 0; index < points.Length; index++)
+            {
+                Vector3 edge = points[(index + 1) % points.Length] - points[index];
+                EnsureFinite(edge, sourceLine);
+                float squaredLength = edge.sqrMagnitude;
+                if (!IsFinite(squaredLength))
+                    throw GeometryError(sourceLine, "face edge length is not finite after transformation");
+                if (squaredLength <= GeometryEpsilon * GeometryEpsilon)
+                    throw GeometryError(sourceLine, "face contains a zero-length edge after transformation");
+            }
+
+            Vector3 normal = Vector3.zero;
+            for (int index = 0; index < points.Length; index++)
+            {
+                Vector3 current = points[index];
+                Vector3 next = points[(index + 1) % points.Length];
+                normal.x += (current.y - next.y) * (current.z + next.z);
+                normal.y += (current.z - next.z) * (current.x + next.x);
+                normal.z += (current.x - next.x) * (current.y + next.y);
+            }
+            EnsureFinite(normal, sourceLine);
+            float normalMagnitude = normal.sqrMagnitude;
+            if (!IsFinite(normalMagnitude))
+                throw GeometryError(sourceLine, "face normal is not finite after transformation");
+            if (normalMagnitude <= GeometryEpsilon * GeometryEpsilon)
+                throw GeometryError(sourceLine, "face has zero area or is collinear after transformation");
+            normal.Normalize();
+
+            float extent = 0f;
+            foreach (Vector3 point in points)
+            {
+                Vector3 difference = point - points[0];
+                EnsureFinite(difference, sourceLine);
+                float distance = difference.magnitude;
+                if (!IsFinite(distance))
+                    throw GeometryError(sourceLine, "face extent is not finite after transformation");
+                extent = Math.Max(extent, distance);
+            }
+            float tolerance = Math.Max(AllowableError_length, extent * 0.00001f);
+            foreach (Vector3 point in points)
+            {
+                float planeDistance = Vector3.Dot(point - points[0], normal);
+                if (!IsFinite(planeDistance))
+                    throw GeometryError(sourceLine, "face planarity is not finite after transformation");
+                if (Mathf.Abs(planeDistance) > tolerance)
+                    throw GeometryError(sourceLine, "face is not planar after transformation");
+            }
+
+            float windingSign = 0f;
+            for (int index = 0; index < points.Length; index++)
+            {
+                Vector3 previous = points[(index + points.Length - 1) % points.Length];
+                Vector3 current = points[index];
+                Vector3 next = points[(index + 1) % points.Length];
+                float turn = Vector3.Dot(Vector3.Cross(current - previous, next - current), normal);
+                if (!IsFinite(turn))
+                    throw GeometryError(sourceLine, "face corner orientation is not finite after transformation");
+                if (Mathf.Abs(turn) <= GeometryEpsilon)
+                    throw GeometryError(sourceLine, "face contains a collinear corner");
+                float sign = Mathf.Sign(turn);
+                if (windingSign == 0f)
+                    windingSign = sign;
+                else if (sign != windingSign)
+                    throw GeometryError(sourceLine, "face is concave or self-intersecting");
+            }
+        }
+
+        private static void EnsureFinite(Vector3 value, int sourceLine)
+        {
+            if (!IsFinite(value.x) || !IsFinite(value.y) || !IsFinite(value.z))
+                throw GeometryError(sourceLine, "transformed geometry contains a non-finite coordinate");
+        }
+
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
+        private static int SourceLine(IReadOnlyList<int> sourceLines, int index)
+        {
+            return sourceLines != null && index < sourceLines.Count ? sourceLines[index] : 0;
+        }
+
+        private static InvalidDataException GeometryError(int sourceLine, string message)
+        {
+            string prefix = sourceLine > 0 ? $"OBJ line {sourceLine}" : "OBJ geometry";
+            return new InvalidDataException($"{prefix}: {message}.");
+        }
+
+        private sealed class FaceWork
+        {
+            internal FaceWork(int[][] face, int sourceLine)
+            {
+                Face = face ?? throw new ArgumentNullException(nameof(face));
+                SourceLine = sourceLine;
+            }
+
+            internal int[][] Face { get; }
+
+            internal int SourceLine { get; }
+        }
+
+        private sealed class FaceBucket
+        {
+            private readonly List<FaceWork> _items = new List<FaceWork>();
+            private int _next;
+
+            internal bool HasItems => _next < _items.Count;
+
+            internal void Enqueue(FaceWork work) => _items.Add(work);
+
+            internal FaceWork Dequeue()
+            {
+                if (!HasItems)
+                    throw new InvalidOperationException("The face work bucket is empty.");
+                return _items[_next++];
             }
         }
     }

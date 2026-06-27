@@ -45,15 +45,12 @@ tab. Its secondary interaction opens two FTD console windows:
    color, texture path, and OBJ path. **Load** parses the OBJ and adds one button
    per `o` or `g` mesh group.
 2. **Advanced Setting** configures position, non-uniform scale, Euler rotation,
-   and automatic tether behavior.
+   automatic tether behavior, build animation/speed, and local-origin projection.
 3. Selecting a mesh converts it into an in-memory decoration plan and opens the
    confirmation window.
 4. The confirmation window reports face count, line count, and the actual number
-   of decorations that will be created. **Build** starts generation.
-
-The serialized build-animation and local-origin options still exist, but their UI
-controls are commented out in `DBUIAdvancedSettingTab`. Existing data can retain
-those values, and the runtime paths remain implemented.
+   of decorations that will be created. **Build** starts generation. An animated
+   run reports progress and exposes an explicit cancel-and-rollback action.
 
 ```mermaid
 flowchart LR
@@ -92,6 +89,11 @@ must not be reordered or reused.
 | 15 | `BA_Speed` | `40` | Animated decorations per second |
 | 16 | `LocalOrigin` | `false` | Use the construct-local-origin projection path |
 
+Float fields commit on Enter or focus loss. Parsing allows current-locale decimal
+commas and invariant decimal points, disables thousands separators, and requires
+finite complete text. Invalid or incomplete input is reverted without writing a
+zero into the data package. The palette slider is limited to indexes 0 through 31.
+
 ## OBJ parser
 
 `ObjParser` is independent of Unity, which allows it to run in the verification
@@ -108,9 +110,9 @@ Supported records:
 - blank lines, comments, inline comments, spaces, and tabs.
 
 Positive OBJ indexes become zero-based indexes. Negative indexes are resolved
-relative to the vertices or UVs already parsed. Index zero and out-of-range
-indexes are rejected with an OBJ line number. Forward references are therefore
-not supported.
+relative to the vertices or UVs already parsed. Index zero, out-of-range indexes,
+repeated face points, and adjacent duplicate polyline points are rejected with an
+OBJ line number. Forward references are therefore not supported.
 
 Normals are accepted syntactically in face points but are not read or validated.
 Material libraries, `usemtl`, smoothing groups, vertex colors, and other OBJ
@@ -189,15 +191,22 @@ The right-angle tests scale angular error by the longest side and compare it to
 maps to one decoration. A general scalene triangle maps to two complementary
 slope decorations, `OtherTriangle_F` and `OtherTriangle_B`.
 
-`PolygonData` stores ordered sides, an average UV sample, and a normal computed
-as:
+`PolygonData` stores ordered sides, an average UV sample, its OBJ source line,
+and a winding-aware Newell normal computed across every edge:
 
 ```text
-normalize(cross(side[0], side[1]))
+normalize(NewellSum(all ordered vertices))
 ```
 
-Lines have a zero normal. A face gets an average UV only if every face point has
-a valid texture-coordinate index; otherwise its UV is `(0,0)`.
+Lines have a zero normal. UV readability is evaluated independently per face: a
+face gets an average UV only if all points have valid texture-coordinate indexes;
+otherwise its UV is `(0,0)`.
+
+Before classification, geometry must be finite, planar, convex, non-collapsed,
+and free of repeated vertices, zero-length edges, and collinear corners. Invalid
+geometry rejects the selected mesh with its OBJ source line. Largest-face-first
+processing uses append-only buckets and indexes, and triangulation checks the
+final expanded decoration cap before the plan can exceed it.
 
 ## Polygon-to-decoration mapping
 
@@ -239,8 +248,9 @@ FTD decorations use construct palette indexes rather than arbitrary per-item
 colors. At generation start the builder snapshots all 32 colors from
 `Main.ColorsRestricted`.
 
-An optional texture file is limited to 64 MiB on disk, loaded into a Unity
-`Texture2D`, and compressed. For each face, `GetPixelBilinear` samples the face's
+An optional PNG/JPEG is limited to 64 MiB encoded, 8,192 pixels per dimension,
+and 16,777,216 total pixels. Dimensions are parsed before Unity decoding and
+checked again after decoding. For each face, `GetPixelBilinear` samples the
 average UV. The builder selects the palette entry with the smallest:
 
 ```text
@@ -254,35 +264,43 @@ cancellation, reload, or block destruction.
 ## Generation transaction
 
 `BeginGeneration` refuses to start without a selected non-empty mesh, a construct
-decoration manager, connection rules, or sufficient exact remaining capacity.
-Although `NewDecoration` is called with `forceEvenIfMaxReached: true`, the exact
-capacity preflight is the controlling safety check.
+decoration manager, connection rules, valid finite settings, a usable optional
+tether GUID/texture, or sufficient exact remaining capacity. Although
+`NewDecoration` is called with `forceEvenIfMaxReached: true`, FTD 4.3.3 still
+checks the 100,000 manager limit first; the flag only bypasses the separate
+200-decorations-per-voxel limit.
 
 Before writing content, the builder:
 
 - clears its per-run decoration and block-command journals;
 - resolves the optional tether block item definition;
-- loads the palette and texture;
-- copies thickness, material, and color behavior into the polygon adapter; and
-- saves then disables the main construct's connection-rule master and request
-  switches.
+- loads and snapshots the palette and texture;
+- captures every setting in an immutable run context; and
+- acquires an exclusive lease for the main construct, then saves and disables
+  its connection-rule master and request switches.
+
+A second build on the same main construct is rejected. Builds on different main
+constructs have independent leases and can proceed concurrently. Animated code
+never rereads live `DecorationBuilderData` or shared polygon-adapter state.
 
 Synchronous mode iterates the full plan immediately. Animated mode registers a
 fixed-update callback and accumulates fractional build credit:
 
 ```text
-credit += deltaTime * max(0.1, configuredSpeed)
+credit += deltaTime * configuredSpeed
 count = floor(credit)
 credit -= count
 ```
 
-Each completed unit is removed from the queue and generated once.
+An index advances through the immutable queue, so generation is linear instead
+of repeatedly shifting a list.
 
-On success, generated content remains, while connection switches, callbacks,
-texture, and transient references are cleaned up. On any exception, game command
-rejection, reload, or block destruction, generated decorations are deleted in
-reverse order and every successful auto-placement command is undone. This avoids
-leaving a known partial build.
+On success, generated content remains while transient state is restored. On any
+exception, command rejection, explicit cancel, reload, or `Block.PrepForDelete`,
+generated decorations are deleted in reverse order and successful auto-placement
+commands are undone. Callback removal, content rollback, connection restoration,
+and texture disposal are independently best-effort so one cleanup exception does
+not prevent the remaining cleanup or the base FTD deletion path.
 
 ## Tether selection during generation
 
@@ -300,8 +318,8 @@ decoration.Positioning -= tetherPosition
 
 If automatic block placement is enabled, the builder places the configured item
 only when the target grid position is empty. A rejected `PlaceBlockCommand`
-aborts and rolls back the build. An invalid or unresolved block GUID does not
-abort generation; it disables auto-placement for that run.
+aborts and rolls back the build. An invalid or unresolved block GUID fails
+preflight before any construct state changes.
 
 The actual decoration is created through the public
 `AllConstructDecorations.NewDecoration` API. The calculated common data is copied
@@ -310,9 +328,9 @@ change notifications.
 
 ## Tether movement character item
 
-`DecorationTetherMove` registers a player-time callback while enabled and caches
-the currently pointed block. Left click moves in the camera-forward direction;
-right click uses camera-backward.
+`DecorationTetherMove` owns its pointed block and callback registration per item
+instance. Enable/equip registration and disable/finish cleanup are idempotent.
+Left click moves in the camera-forward direction; right click uses camera-backward.
 
 The camera direction is transformed into construct-local space. The largest
 absolute component selects a deterministic one-cell X, Y, or Z shift, with X then
@@ -320,22 +338,21 @@ Y winning exact ties.
 
 Movement is ordered as follows:
 
-1. Resolve the hard-coded tether block item GUID.
-2. Place that item at `oldPosition + shift` and require command success.
-3. Remove the pointed block at the old position and require success. If removal
-   fails, undo the newly placed block.
-4. Read a public decoration-list snapshot with `TryGetDecorationsList`.
-5. For each decoration whose adjusted positioning remains within ±10 on every
-   axis, increment `TetherPoint` and subtract the shift from `Positioning`.
+1. Require the pointed block's component GUID to match the configured tether.
+2. Read a public decoration-list snapshot with `TryGetDecorationsList` and
+   journal every original tether and positioning value.
+3. Preflight every result; if any position is non-finite or outside +/-10, abort
+   the complete move before block commands.
+4. Place the destination and remove the source, requiring both command success.
+5. Apply every journaled tether/position pair.
 
 Changing both values preserves the decoration's construct-space location while
 moving its grid tether. Assigning `TetherPoint.Us` goes through FTD's normal
 change path, keeping the decoration position index synchronized.
 
-The tool assumes the pointed block is intended to become or remain the configured
-tether type; it does not verify the original block's item definition. Once both
-block commands succeed, skipped or failed decoration updates are not wrapped in a
-second transaction.
+Any command or property failure restores attempted decorations in reverse order,
+then undoes source removal and destination placement. Each rollback action is
+best-effort and cannot prevent the following actions.
 
 ## OBJ export Harmony patch
 
@@ -355,17 +372,18 @@ Export creates a unique directory under the FTD profile root:
 ```
 
 File names remove platform-invalid and control characters, trim trailing dots,
-use fallbacks for empty names, and are limited to 120 characters. OBJ numbers use
-the invariant round-trip float format, so exports are not corrupted by a
-comma-decimal Windows locale.
+use fallbacks for empty names, and are limited to 100 characters. Texture names
+include GUID suffixes to prevent collisions. OBJ numbers use the invariant
+round-trip float format, so exports are not corrupted by a comma-decimal locale.
 
 For every main construct and subconstruct, the exporter collects:
 
 - runtime chunk meshes from `ConstructableMeshMerger.D`, resolved through the
   public material runtime-ID collection; and
-- carried-object meshes whose renderer material matches a configured material.
+- carried-object submeshes whose matching `sharedMaterials` entry resolves to a
+  configured material.
 
-Carried-object shared meshes are cloned and transformed from carried-object local
+Carried-object submeshes are extracted and transformed from carried-object local
 space through world space into construct-local space. Subconstruct vertices are
 then transformed into main-construct coordinates. Meshes are grouped and merged
 by `MaterialDefinition`, using 32-bit Unity mesh indexes.
@@ -375,11 +393,13 @@ normals are recalculated. OBJ output contains `v`, optional `vt`, `f`, `g`, and
 `usemtl`; it does not emit `vn` records. If any source in a material group lacks a
 complete UV set, that merged group is written without UV references.
 
-`Materials.mtl` declares every distinct configured FTD material. File/resources
-textures are copied through a temporary render target and encoded as JPEG.
-Material names include an eight-character material GUID suffix. Temporary render
-textures, readable texture copies, carried-object clones, and merged output
-meshes are released in `finally` blocks.
+`Materials.mtl` declares only materials referenced by emitted geometry.
+File/resources textures are copied through a temporary render target, encoded as
+JPEG, and deduplicated by texture GUID. Material names include an eight-character
+material GUID suffix. Export occurs in a `.partial-<GUID>` directory; it is
+renamed only after all OBJ, MTL, and texture writes succeed and is removed on
+failure. Temporary render textures, readable copies, extracted submeshes, and
+merged output meshes are released in `finally` blocks.
 
 ## Resource ownership and failure reporting
 
@@ -393,36 +413,25 @@ run. It never rolls back decorations or blocks that existed before generation.
 
 ## Known constraints and maintenance risks
 
-- `MADCD_PolygonInput` stores thickness, material, normal direction, and the color
-  callback in static properties. Separate Decoration Builder instances can start
-  simultaneously, so overlapping animated builds can overwrite each other's
-  generation settings.
-- The 64 MiB texture limit covers the encoded file, not the decoded Unity texture
-  footprint. A highly compressed, very large image can consume substantially more
-  memory after decoding.
 - Import ignores OBJ normals and materials. Color comes only from the optional
   single texture path and UV averages.
-- Fan triangulation assumes a suitable polygon ordering and does not repair
-  concave or self-intersecting n-gons.
+- Invalid, concave, self-intersecting, or transform-collapsed geometry rejects the
+  selected mesh. The importer deliberately does not repair or skip primitives.
 - The 16-point ellipse recognizer is deliberately narrow; most circular meshes
   are triangulated instead of becoming one pole decoration.
-- The tether movement item does not verify that the pointed source block is the
-  tether block type before replacing it.
-- Export writes all configured materials, not only materials used by the selected
-  construct. JPEG export is lossy and does not preserve alpha.
-- `SimpleFloatInput` uses the current process culture and turns invalid text into
-  zero. This does not affect the invariant OBJ parser/exporter, but it does affect
-  values typed into the builder UI.
+- JPEG export is lossy and does not preserve alpha.
 - The General-tab patch is coupled to the private method name `GeneralTab.Mesh`.
   Startup validation prevents a silent partial install after an FTD UI refactor,
   but a game update can still require a new target.
 
 ## Verification boundary
 
-Automated checks cover OBJ grammar, negative indexes, winding, limits, public
-class/asset bindings, package assets, and resolution of the current
-`GeneralTab.Mesh` target. The non-Unity verification host cannot safely initialize
-the complete current FTD UI, so the UI postfix is resolved but not applied there.
+Automated checks cover OBJ grammar, locale input, source-line geometry rejection,
+all polygon classes, final plan limits, a 100,000-entry linear run, tether
+transactions, exporter material/texture/staging rules, public class/asset
+bindings, package assets, and resolution of `GeneralTab.Mesh`. The non-Unity host
+cannot initialize the complete FTD UI, so the UI postfix is resolved but not
+applied there.
 
 The following remain in-game acceptance tests: UI navigation, Unity texture
 decoding, geometry appearance, animated cancellation, automatic tether block
@@ -436,6 +445,8 @@ Paths are relative to the runtime package directory `EndlessShapesUnlimited/`.
 | Area | Source |
 | --- | --- |
 | Builder lifecycle | `Source/EndlessShapes2/DecorationBuilder.cs` |
+| Generation lease | `Source/EndlessShapes2/GenerationCoordinator.cs` |
+| Float and texture preflight | `Source/EndlessShapes2/FlexibleFloatParser.cs`, `ImagePreflight.cs` |
 | Serialized settings | `Source/EndlessShapes2/DecorationBuilderData.cs` |
 | OBJ parser | `Source/EndlessShapes2/ObjParser.cs` |
 | Geometry classification | `Source/EndlessShapes2/ES2_Polygon/PolygonDataControl.cs` |
@@ -444,5 +455,6 @@ Paths are relative to the runtime package directory `EndlessShapesUnlimited/`.
 | Material mesh GUIDs | `Source/EndlessShapes2/ES2_Polygon/StructureBlockGUID.cs` |
 | Builder UI | `Source/EndlessShapes2/ES2_UI` |
 | Tether tool | `Source/EndlessShapes2/DecorationTetherMove.cs` |
+| Tether transaction | `Source/EndlessShapes2/TetherMoveTransaction.cs` |
 | OBJ export | `Source/EndlessShapes2/OBJ_FileCreation.cs` |
 | General-tab patch | `Source/EndlessShapes2/EndlessShapes2Patch.cs` |

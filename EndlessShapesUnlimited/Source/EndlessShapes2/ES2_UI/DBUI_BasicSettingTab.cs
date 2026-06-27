@@ -87,7 +87,7 @@ namespace EndlessShapes2.UI
             screenSegment_0.AddInterpretter(SimpleFloatInput<DecorationBuilder>.Quick(_focus, M.m<DecorationBuilder>(I => I.Data.FaceThickness.Us), null, (I, f) => I.Data.FaceThickness.Us = f, M.m<DecorationBuilder>(I => "FaceThickness : ")));
             screenSegment_0.AddInterpretter(SimpleFloatInput<DecorationBuilder>.Quick(_focus, M.m<DecorationBuilder>(I => I.Data.LineThickness.Us), null, (I, f) => I.Data.LineThickness.Us = f, M.m<DecorationBuilder>(I => "LineThickness : ")));
             screenSegment_0.AddInterpretter(new DropDown<DecorationBuilder, StructureBlockType>(_focus, _SBGUID_DropDownMenuAlt, (I, s) => I.Data.SBType.Us.Equals(s), (I, s) => I.Data.SBType.Us = s));
-            screenSegment_0.AddInterpretter(SubjectiveFloatClampedWithBar<DecorationBuilder>.Quick(_focus, 0f, 32f, 1f, M.m<DecorationBuilder>(I => I.Data.DefaultColorIndex.Us), "Color {0}", (I, f) => I.Data.DefaultColorIndex.Us = Mathf.RoundToInt(f), null));
+            screenSegment_0.AddInterpretter(SubjectiveFloatClampedWithBar<DecorationBuilder>.Quick(_focus, 0f, 31f, 1f, M.m<DecorationBuilder>(I => I.Data.DefaultColorIndex.Us), "Color {0}", (I, f) => I.Data.DefaultColorIndex.Us = Mathf.RoundToInt(f), null));
             screenSegment_0.AddInterpretter(new Blank(20f));
             screenSegment_0.AddInterpretter(TextInput<DecorationBuilder>.Quick(_focus, M.m<DecorationBuilder>(I => I.Data.TexturePath.Us), "TexturePath", null, (I, s) => I.Data.TexturePath.Us = s));
             screenSegment_0.AddInterpretter(new Blank(5f));

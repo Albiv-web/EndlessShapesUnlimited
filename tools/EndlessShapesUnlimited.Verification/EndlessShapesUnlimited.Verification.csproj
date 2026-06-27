@@ -24,5 +24,25 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\DataManagement.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Modding">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Modding.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FtD">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\FtD.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Ui">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Ui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>

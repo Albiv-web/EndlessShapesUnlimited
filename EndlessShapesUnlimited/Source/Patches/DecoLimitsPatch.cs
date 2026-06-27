@@ -7,10 +7,17 @@ namespace DecoLimitLifter.Patches
     // is sufficient and avoids patching several hot decoration methods.
     internal static class DecoLimitsPatch
     {
-        internal static void ApplyLimit()
+        internal static int ApplyLimit()
         {
+            int previous = AllConstructDecorations._limitPerPacketManager;
             if (AllConstructDecorations._limitPerPacketManager < DecoLimits.MaxDecorations)
                 AllConstructDecorations._limitPerPacketManager = DecoLimits.MaxDecorations;
+            return previous;
+        }
+
+        internal static void RestoreLimit(int previous)
+        {
+            AllConstructDecorations._limitPerPacketManager = previous;
         }
     }
 }

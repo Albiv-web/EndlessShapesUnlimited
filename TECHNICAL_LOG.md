@@ -19,9 +19,10 @@ Detailed subsystem references:
 
 One `GamePlugin_PostLoad` entry point installs every Harmony patch with owner
 `alb.endlessshapesunlimited`. Startup verifies the serializer hooks and the
-private `GeneralTab.Mesh` UI target. Any missing target causes all patches owned
-by the mod to be removed before an in-game error is reported. The decoration
-limit is raised only after verification succeeds.
+private `GeneralTab.Mesh` UI target. Startup also verifies the exact constructor
+prefix/postfix methods and `AutoSyncroniser.fullArray`. Any missing dependency
+removes all owned patches and restores the preceding decoration limit. A failure
+to write the success log cannot invalidate a completed startup.
 
 ## Serializer behavior
 
@@ -55,26 +56,29 @@ It rejects zero/out-of-range indices, non-finite numbers, malformed primitives,
 files above 256 MiB, more than 2,000,000 vertices, or more than 100,000 face/line
 records.
 
-Generation transforms the selected mesh on the main thread, preflights exact
-decoration capacity, captures connection-rule state, and uses
-`AllConstructDecorations.NewDecoration`. Synchronous failures and interrupted
-animated builds delete generated decorations, undo auto-placed tether blocks,
-restore connection switches, unregister scheduler callbacks, and release the
-texture. Successful builds keep content and still restore transient state.
+Generation rejects malformed or collapsed geometry with OBJ source lines and
+uses bounded largest-face-first queues. A per-main-construct lease prevents two
+builders from mutating the same connection rules while allowing separate main
+constructs to run concurrently. Each run snapshots its settings, palette, and
+texture. Synchronous failures, explicit cancellation, and `Block.PrepForDelete`
+delete generated decorations, undo auto-placed tether blocks, restore connection
+switches, unregister callbacks, and release texture state independently.
 
 ## Tether and export tools
 
-The tether tool uses `TryGetDecorationsList` instead of reading the private
-three-dimensional dictionary. It resolves a deterministic dominant camera axis,
-requires destination placement and source removal to succeed, then retethers a
-snapshot of nearby decorations. `TetherPoint` change callbacks keep FTD's
+The tether tool uses `TryGetDecorationsList`, verifies the pointed block GUID,
+and preflights every linked decoration before issuing commands. Destination
+placement, source removal, and property updates execute as one journaled
+transaction. Failure restores attempted decorations and undoes source removal
+and destination placement in reverse order. `TetherPoint` callbacks keep FTD's
 position index synchronized.
 
-OBJ export uses the public material collection rather than the private
-`DictionaryOfComponents`. Output folder/file names are sanitized, numbers use
-invariant round-trip formatting, OBJ is streamed rather than accumulated in one
-large string, and temporary render textures, texture copies, carried-object mesh
-clones, and merged meshes are released in `finally` blocks.
+OBJ export uses the public material collection and caches runtime-material
+lookups. Carried-object submeshes bind to matching `sharedMaterials` entries.
+Only emitted materials and referenced textures are written; shared textures are
+encoded once and GUID suffixes prevent filename collisions. Output is written to
+a temporary directory and renamed only after every OBJ, MTL, and texture write
+succeeds. Owned Unity resources are released in `finally` blocks.
 
 ## Compatibility contract
 
@@ -95,9 +99,11 @@ The .NET Framework verification host patches only serializer classes because
 initializing the current FTD UI under that non-Unity runtime calls APIs it does
 not implement. It still resolves the exact `GeneralTab.Mesh` metadata target.
 
-Automated result: 61 passing checks. Coverage includes all original serializer
-checks plus OBJ parsing, input ceilings, UI target resolution, manifest identity,
-legacy class/asset bindings, and runtime asset presence.
+Automated result: 111 passing checks. Coverage includes the original serializer
+compatibility suite plus exact startup hooks, rollback, shared-buffer growth,
+zero-length loaders, locale parsing, image ceilings, every polygon class,
+degenerate/cap rejection, a 100,000-entry run, atomic tether rollback, exporter
+material/texture/staging behavior, package identity, and runtime assets.
 
 Remaining manual acceptance work must be performed inside FTD: plugin startup,
 legacy construct loading, textured import, animated generation/cancellation,
@@ -109,8 +115,8 @@ multiplayer session where every peer uses version 1.0.0.
 The new repository uses a GitHub noreply commit identity and clean history.
 Tracked source/package content excludes `.vs`, `bin`, `obj`, `.user`, PDB,
 selector DLLs, local paths, and original compiled EndlessShapes binaries. Release
-packaging stages an explicit runtime allowlist and scans the resulting DLL/ZIP
-before publication.
+packaging stages an explicit runtime allowlist, rejects stale assemblies, scans
+tracked and staged content, and creates a deterministic manifest-versioned ZIP.
 
 The upstream Harmony 2.3.5 binary retains its publisher's CodeView build path.
 This is third-party provenance, not either mod author's local data.

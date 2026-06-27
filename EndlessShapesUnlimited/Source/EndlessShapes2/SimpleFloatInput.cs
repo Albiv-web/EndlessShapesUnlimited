@@ -8,6 +8,7 @@ using BrilliantSkies.Ui.Displayer;
 using BrilliantSkies.Ui.Tips;
 using System;
 using System.Collections.Generic;
+using EndlessShapes2;
 using UnityEngine;
 
 namespace AdvancedMimicUi
@@ -59,7 +60,8 @@ namespace AdvancedMimicUi
         {
             float currentNum = _fnGetStringCurrently.GetFromSubject(Subject);
 
-            if (myText == null || (preNum != currentNum && float.TryParse(myText, out _)))
+            if (myText == null ||
+                (preNum != currentNum && FlexibleFloatParser.TryParse(myText, out _)))
             {
                 preNum = currentNum;
                 myText = currentNum.ToString();
@@ -117,28 +119,24 @@ namespace AdvancedMimicUi
 
 
 
-            float num = StringToFloat(myText);
-
-            void ApplyFloat()
+            bool ApplyFloat()
             {
                 myText = this._stringCleaner(myText);
+                if (!FlexibleFloatParser.TryParse(myText, out float parsed) ||
+                    this._stringChecker(base.Subject, myText) != null)
+                    return false;
 
-                if (this._stringChecker(base.Subject, myText) == null)
-                {
-                    this._actionToDo(base.Subject, num);
-                }
-
-                preNum = num;
+                this._actionToDo(base.Subject, parsed);
+                preNum = parsed;
+                return true;
             }
-            ;
 
             if (controlName == GUI.GetNameOfFocusedControl())
             {
-                ApplyFloat();
-
-                if (GuiDisplayer.GetSingleton().EventWrapper.CheckKeyPressInTextBox(KeyCode.Return, controlName))
+                if (GuiDisplayer.GetSingleton().EventWrapper.CheckKeyPressInTextBox(KeyCode.Return, controlName) &&
+                    ApplyFloat())
                 {
-                    myText = num.ToString();
+                    myText = preNum.ToString();
                 }
 
                 isFocused = true;
@@ -147,9 +145,10 @@ namespace AdvancedMimicUi
             {
                 if (isFocused)
                 {
-                    ApplyFloat();
-
-                    myText = num.ToString();
+                    if (ApplyFloat())
+                        myText = preNum.ToString();
+                    else
+                        myText = currentNum.ToString();
                 }
 
                 isFocused = false;
@@ -210,10 +209,16 @@ namespace AdvancedMimicUi
                 bool flag2 = this._stringChecker(base.Subject, text) == null;
                 if (flag2)
                 {
-                    outcome = this._effectOfAction(base.Subject, text);
+                    if (!FlexibleFloatParser.TryParse(text, out float parsed))
+                    {
+                        outcome = "Enter a finite number.";
+                        return false;
+                    }
+
+                    outcome = this._effectOfAction?.Invoke(base.Subject, text) ?? string.Empty;
                     if (apply)
                     {
-                        this._actionToDo(base.Subject, StringToFloat(text));
+                        this._actionToDo(base.Subject, parsed);
                     }
                     result = true;
                 }
@@ -226,14 +231,5 @@ namespace AdvancedMimicUi
             return result;
         }
 
-        private float StringToFloat(string s)
-        {
-            if (float.TryParse(s, out float num))
-            {
-                return num;
-            }
-
-            return 0f;
-        }
     }
 }

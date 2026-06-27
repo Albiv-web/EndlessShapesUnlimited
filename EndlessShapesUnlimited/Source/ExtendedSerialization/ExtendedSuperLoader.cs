@@ -148,7 +148,7 @@ namespace DecoLimitLifter.ExtendedSerialization
         private static byte[] EnsureBuffer(byte[] current, uint required, int maximum, string name)
         {
             if (required == 0U)
-                return current;
+                return current ?? Array.Empty<byte>();
             if (required > maximum)
                 throw new FormatException($"{name} requires {required} bytes, above the configured maximum.");
             if (current != null && (uint)current.Length >= required)

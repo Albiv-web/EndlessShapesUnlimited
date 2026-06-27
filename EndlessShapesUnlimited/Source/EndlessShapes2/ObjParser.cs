@@ -130,7 +130,12 @@ namespace EndlessShapes2
                         var face = new int[parts.Length - 1][];
                         for (int index = 1; index < parts.Length; index++)
                             face[parts.Length - 1 - index] = ParseFacePoint(parts[index], result, lineNumber);
+                        Require(
+                            HasUniqueFaceVertices(face),
+                            lineNumber,
+                            "face contains a repeated vertex index");
                         currentMesh.FaceDatas.Add(face);
+                        currentMesh.FaceSourceLines.Add(lineNumber);
                         break;
 
                     case "l":
@@ -148,8 +153,11 @@ namespace EndlessShapes2
                                 result.Vertices.Count,
                                 lineNumber,
                                 "vertex");
+                            if (index > 1 && indices[index - 1] == indices[index - 2])
+                                throw Error(lineNumber, "line contains a zero-length segment");
                         }
                         currentMesh.LineDatas.Add(indices);
+                        currentMesh.LineSourceLines.Add(lineNumber);
                         break;
                 }
             }
@@ -197,6 +205,17 @@ namespace EndlessShapes2
             }
 
             return new[] { vertex, texture };
+        }
+
+        private static bool HasUniqueFaceVertices(int[][] face)
+        {
+            var seen = new HashSet<int>();
+            for (int index = 0; index < face.Length; index++)
+            {
+                if (!seen.Add(face[index][0]))
+                    return false;
+            }
+            return true;
         }
 
         private static int ResolveIndex(int value, int count, int lineNumber, string kind)
