@@ -100,6 +100,17 @@ EndlessShapes2 bindings.
 Automated checks do not replace the required in-game acceptance pass for UI,
 Unity rendering, construct import/export, multiplayer, and save/load behavior.
 
+## Technical documentation
+
+- [`docs/ENDLESS_SHAPES_TECHNICAL.md`](docs/ENDLESS_SHAPES_TECHNICAL.md) explains
+  OBJ parsing, coordinate conversion, polygon classification, decoration
+  generation, palette mapping, tether movement, and OBJ export.
+- [`docs/DECO_LIMIT_LIFTER_TECHNICAL.md`](docs/DECO_LIMIT_LIFTER_TECHNICAL.md)
+  explains FTD's serializer model, every Harmony patch, legacy and sentinel wire
+  formats, buffer growth, corruption checks, limits, and multiplayer constraints.
+- [`TECHNICAL_LOG.md`](TECHNICAL_LOG.md) records the combined integration and
+  verification status.
+
 ## Source provenance and licenses
 
 - Combined project: MIT, see `LICENSE`.

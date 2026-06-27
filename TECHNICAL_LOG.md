@@ -4,6 +4,11 @@ Audit date: 2026-06-27
 
 Target: From The Depths 4.3.3, .NET Standard 2.1, Harmony 2.3.5.
 
+Detailed subsystem references:
+
+- [`docs/ENDLESS_SHAPES_TECHNICAL.md`](docs/ENDLESS_SHAPES_TECHNICAL.md)
+- [`docs/DECO_LIMIT_LIFTER_TECHNICAL.md`](docs/DECO_LIMIT_LIFTER_TECHNICAL.md)
+
 ## Runtime architecture
 
 `EndlessShapesUnlimited.dll` contains two deliberately preserved code domains:
