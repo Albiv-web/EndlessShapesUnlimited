@@ -1,18 +1,23 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Threading;
 using BrilliantSkies.Core.Serialisation.Bytes;
 using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.DataManagement.Serialisation.VariableTypes;
 using DecoLimitLifter.ExtendedSerialization;
+using EndlessShapes2;
 using HarmonyLib;
 
 internal static class Program
 {
-    private const string Owner = "alb.decolimitlifter.verification";
+    private const string Owner = "alb.endlessshapesunlimited.verification";
     private static PropertyInfo _headerCountProperty;
+    private static string _managedDirectory;
     private static int _passed;
 
     private static int Main()
@@ -24,11 +29,11 @@ internal static class Program
             return 2;
         }
 
-        string managedDirectory = Path.Combine(gameDirectory, "From_The_Depths_Data", "Managed");
+        _managedDirectory = Path.Combine(gameDirectory, "From_The_Depths_Data", "Managed");
         AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
         {
             var name = new AssemblyName(args.Name);
-            string candidate = Path.Combine(managedDirectory, name.Name + ".dll");
+            string candidate = Path.Combine(_managedDirectory, name.Name + ".dll");
             return File.Exists(candidate)
                 ? Assembly.LoadFrom(candidate)
                 : null;
@@ -57,7 +62,7 @@ internal static class Program
         var harmony = new Harmony(Owner);
         try
         {
-            harmony.PatchAll(typeof(ExtendedSuperSaver).Assembly);
+            ApplySerializerPatches(harmony);
             VerifyPatchInstallation();
             VerifyVanillaLegacyCompatibility(vanillaLegacyFixture);
             VerifyLegacyRoundTrip();
@@ -77,6 +82,10 @@ internal static class Program
             VerifyInvalidHeaderOffsetRejected();
             VerifyConfiguredSerializerCeilings();
             VerifyObjectIdWidthValidation();
+            VerifyObjParser();
+            VerifyObjParserLimits();
+            VerifyUiPatchTarget();
+            VerifyPackageIdentityAndAssets();
 
             Console.WriteLine($"PASS: {_passed} verification checks completed.");
             return 0;
@@ -84,6 +93,27 @@ internal static class Program
         finally
         {
             harmony.UnpatchAll(Owner);
+        }
+    }
+
+    private static void ApplySerializerPatches(Harmony harmony)
+    {
+        string[] patchTypeNames =
+        {
+            "DecoLimitLifter.Patches.ByteStorePatch",
+            "DecoLimitLifter.Patches.SuperLoader_Deserialise_All_Patch",
+            "DecoLimitLifter.Patches.SuperSaverBuffersPatch",
+            "DecoLimitLifter.Patches.SuperSaver_ConvertToReader_BufferPatch",
+            "DecoLimitLifter.Patches.SuperSaver_WriteHeader_Guard",
+            "DecoLimitLifter.Patches.SuperSaver_ByIdHelpWrite_Guard",
+            "DecoLimitLifter.Patches.SuperSaver_Serialise_Patch"
+        };
+
+        Assembly modAssembly = typeof(ExtendedSuperSaver).Assembly;
+        foreach (string patchTypeName in patchTypeNames)
+        {
+            Type patchType = modAssembly.GetType(patchTypeName, throwOnError: true);
+            harmony.CreateClassProcessor(patchType).Patch();
         }
     }
 
@@ -446,6 +476,147 @@ internal static class Program
             uint cursor = 0U;
             saver.Serialise(new byte[64], ref cursor, 256UL, 1);
         }, "Object IDs that do not fit the requested width are rejected.");
+    }
+
+    private static void VerifyObjParser()
+    {
+        const string obj = @"
+# invariant decimals, extra whitespace, and negative indices
+v  1.5  0  0
+v 0 2.25 0
+v 0 0 3.75
+vt 0.1 0.2
+vt 0.3 0.4
+vt 0.5 0.6
+o Example mesh
+f -3/-3 -2/-2 -1/-1
+l 1 2 3
+";
+
+        CultureInfo originalCulture = Thread.CurrentThread.CurrentCulture;
+        try
+        {
+            Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            ObjParseResult result = ObjParser.Parse(new StringReader(obj));
+            Assert(result.Vertices.Count == 3, "OBJ parser reads invariant-culture vertices.");
+            Assert(result.TextureCoordinates.Count == 3,
+                "OBJ parser reads texture coordinates.");
+            Assert(result.Meshes.Count == 1 && result.Meshes[0].Name == "Example mesh",
+                "OBJ parser preserves mesh names.");
+            Assert(result.Meshes[0].FaceDatas.Count == 1 &&
+                   result.Meshes[0].FaceDatas[0][0][0] == 2 &&
+                   result.Meshes[0].FaceDatas[0][2][0] == 0,
+                "OBJ parser resolves negative indices and preserves mirrored winding.");
+            Assert(result.Meshes[0].LineDatas.Single().SequenceEqual(new[] { 0, 1, 2 }),
+                "OBJ parser reads line primitives.");
+        }
+        finally
+        {
+            Thread.CurrentThread.CurrentCulture = originalCulture;
+        }
+
+        const string commonFaceForms = @"
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vn 0 0 1
+f 1//1 2//1 3//1
+";
+        ObjParseResult defaultGroup = ObjParser.Parse(new StringReader(commonFaceForms));
+        Assert(defaultGroup.Meshes.Count == 1 && defaultGroup.Meshes[0].Name == "Default",
+            "OBJ parser creates a default group and accepts v//vn faces.");
+
+        Expect<InvalidDataException>(() => ObjParser.Parse(new StringReader(@"
+v 0 0 0
+v 1 0 0
+v 0 1 0
+f 0 2 3
+")), "OBJ parser rejects zero indices with a format error.");
+    }
+
+    private static void VerifyObjParserLimits()
+    {
+        Assert(ObjParser.MaxFileBytes == 256L * 1024L * 1024L,
+            "OBJ input has a 256 MiB file ceiling.");
+        Assert(ObjParser.MaxVertices == 2_000_000,
+            "OBJ input has a two-million-vertex ceiling.");
+        Assert(ObjParser.MaxTextureCoordinates == 2_000_000,
+            "OBJ input has a two-million-UV ceiling.");
+        Assert(ObjParser.MaxPrimitives == 100_000,
+            "OBJ input is capped at the decoration limit.");
+    }
+
+    private static void VerifyUiPatchTarget()
+    {
+        Assembly ftd = Assembly.LoadFrom(Path.Combine(_managedDirectory, "FtD.dll"));
+        Type generalTab = ftd.GetType(
+            "BrilliantSkies.Ftd.Constructs.UI.GeneralTab",
+            throwOnError: true);
+        MethodInfo mesh = generalTab.GetMethod(
+            "Mesh",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(mesh != null && EndlessShapes2Patch.ResolveTarget() == mesh,
+            "Current FTD GeneralTab.Mesh target resolves for the OBJ export patch.");
+    }
+
+    private static void VerifyPackageIdentityAndAssets()
+    {
+        string root = FindRepositoryRoot();
+        string package = Path.Combine(root, "EndlessShapesUnlimited");
+        string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
+        Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
+               manifest.Contains("\"version\": \"1.0.0\"") &&
+               manifest.Contains("EndlessShapesUnlimited.dll") &&
+               manifest.Contains("\"DecoLimitLifter\"") &&
+               manifest.Contains("\"EndlessShapes2\""),
+            "Package manifest has the combined identity and standalone-mod conflicts.");
+
+        string item = File.ReadAllText(Path.Combine(
+            package,
+            "Items",
+            "DecorationBuilder_232087b.item"));
+        string characterItem = File.ReadAllText(Path.Combine(
+            package,
+            "Character Items",
+            "Deco_19cf3dd.charitem"));
+        Assert(item.Contains("\"ClassName\": \"DecorationBuilder\"") &&
+               item.Contains("232087b9-90de-4eb8-9680-ccb876edfe4f"),
+            "Decoration Builder class binding and asset GUID are preserved.");
+        Assert(characterItem.Contains("\"ClassName\": \"DecorationTetherMove\"") &&
+               characterItem.Contains("19cf3dd2-86fc-4b97-9e69-23e34cc3f198"),
+            "Tether tool class binding and asset GUID are preserved.");
+        Assert(File.Exists(Path.Combine(package, "Assets", "StereoscopicHologram.obj")) &&
+               File.Exists(Path.Combine(package, "Meshes", "StereoscopicHologram_057bd9b.mesh")),
+            "EndlessShapes runtime mesh assets are packaged.");
+
+        string sourceDirectory = Path.Combine(package, "Source", "EndlessShapes2");
+        string builderSource = File.ReadAllText(Path.Combine(
+            sourceDirectory,
+            "DecorationBuilder.cs"));
+        string dataSource = File.ReadAllText(Path.Combine(
+            sourceDirectory,
+            "DecorationBuilderData.cs"));
+        string tetherSource = File.ReadAllText(Path.Combine(
+            sourceDirectory,
+            "DecorationTetherMove.cs"));
+        Assert(builderSource.Contains("namespace EndlessShapes2") &&
+               builderSource.Contains("public class DecorationBuilder") &&
+               dataSource.Contains("public class DecorationBuilderData") &&
+               tetherSource.Contains("public class DecorationTetherMove"),
+            "Legacy EndlessShapes2 public type declarations remain available.");
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        while (current != null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "EndlessShapesUnlimited", "plugin.json")))
+                return current.FullName;
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the repository root.");
     }
 
     private static SuperSaver NewSaver(uint headerCount, uint dataBytes)

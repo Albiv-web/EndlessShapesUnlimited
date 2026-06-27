@@ -5,17 +5,19 @@ using System.Reflection;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.DataManagement.Serialisation.VariableTypes;
+using BrilliantSkies.Ftd.Constructs.UI;
 using BrilliantSkies.Modding;
+using EndlessShapes2;
 using HarmonyLib;
 
 namespace DecoLimitLifter
 {
     public sealed class Plugin : GamePlugin_PostLoad
     {
-        private const string HarmonyId = "alb.decolimitlifter";
+        private const string HarmonyId = "alb.endlessshapesunlimited";
 
-        public string name => "DecoLimitLifter";
-        public Version version => new Version(1, 1, 0, 0);
+        public string name => "EndlessShapes Unlimited";
+        public Version version => new Version(1, 0, 0, 0);
 
         public void OnLoad()
         {
@@ -31,7 +33,8 @@ namespace DecoLimitLifter
                 Patches.DecoLimitsPatch.ApplyLimit();
 
                 AdvLogger.LogInfo(
-                    $"[DecoLimitLifter] v{version} loaded. Decoration limit={DecoLimits.MaxDecorations}.");
+                    $"[EndlessShapes Unlimited] v{version} loaded. " +
+                    $"Decoration limit={DecoLimits.MaxDecorations}; OBJ tools active.");
             }
             catch (Exception exception)
             {
@@ -40,7 +43,7 @@ namespace DecoLimitLifter
                 catch { /* preserve the original startup failure */ }
 
                 AdvLogger.LogException(
-                    "[DecoLimitLifter] Failed to install required patches",
+                    "[EndlessShapes Unlimited] Failed to install required patches",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
             }
@@ -53,7 +56,8 @@ namespace DecoLimitLifter
                 AccessTools.Method(typeof(SuperSaver), nameof(SuperSaver.Serialise)),
                 AccessTools.Method(typeof(SuperSaver), nameof(SuperSaver.ConvertToReader)),
                 AccessTools.Method(typeof(SuperSaver), nameof(SuperSaver.WriteHeader)),
-                AccessTools.Constructor(typeof(SuperSaver), Type.EmptyTypes)
+                AccessTools.Constructor(typeof(SuperSaver), Type.EmptyTypes),
+                EndlessShapes2Patch.ResolveTarget()
             };
 
             required.AddRange(typeof(SuperLoader)

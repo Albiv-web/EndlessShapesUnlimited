@@ -1,22 +1,26 @@
 # Changelog
 
-## 1.1.0 - 2026-06-27
+## 1.0.0 - 2026-06-27
 
-- Fixed startup patch installation; required Harmony targets now install as one verified set.
-- Set the game's static decoration limit to 100,000 after serializer verification succeeds.
-- Removed the obsolete `BlueprintConverter` transpiler.
-- Added exact shared sizing for legacy and sentinel containers.
-- Preserved existing bytes when header, data, `ByteStore`, or multiplayer buffers grow.
-- Reused enlarged header/data pools across later saver instances.
-- Added strict length, structure, truncation, ceiling, and object-ID validation.
-- Fixed `ConvertToReader` sizing for sentinel payloads and exact 65,535-byte multiples.
-- Added fail-closed startup behavior to avoid leaving partial Harmony patches active.
-- Added an installed-game verification executable with 44 regression checks.
-- Made game assembly hint paths use `FTD_DIR` and automated Release DLL packaging.
-- Disabled Release PDB generation and bumped the mod/assembly version to 1.1.0.
+First EndlessShapes Unlimited release candidate.
 
-Compatibility remains unchanged: legacy payloads load in vanilla; sentinel payloads require version 1.1.0 on every reader or multiplayer peer.
+- Combined the hardened DecoLimitLifter serializer with EndlessShapes2 0.2.2.
+- Ported the current EndlessShapes2 4.2.9 source to FTD 4.3.3.
+- Preserved the original `EndlessShapes2` public types, data IDs, and asset GUIDs.
+- Removed the historical multi-version selector, Steam polling, prebuilt binaries,
+  IDE caches, and private-path build configuration.
+- Replaced private decoration/material reflection with current public FTD APIs.
+- Added validated, invariant-culture OBJ parsing with negative-index and common
+  face-format support.
+- Added transactional decoration generation, connection-rule restoration,
+  animation cleanup, texture cleanup, and command success checks.
+- Hardened tether moves and OBJ export path, resource, mesh, and number handling.
+- Unified startup under one Harmony owner with all-or-nothing patch validation.
+- Retained both MIT copyright notices and added third-party provenance.
+- Expanded automated verification from 44 to 61 checks.
 
-## 1.0.0 - 2025-11-01
+## Imported baseline
 
-- Initial public release.
+The serialization core comes from the unreleased DecoLimitLifter 1.1 hardening
+work: byte-compatible legacy output, safe sentinel parsing, preserving buffer
+growth, exact boundary calculations, and startup patch ownership checks.

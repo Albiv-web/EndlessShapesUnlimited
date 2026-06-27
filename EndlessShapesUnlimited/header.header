@@ -1,0 +1,9 @@
+{
+  "Authors": "Albiv-web and huwahuwa",
+  "Version": "00000000-0000-0000-0000-000000000000",
+  "ComponentId": {
+    "Guid": "894c1227-cdcd-4c8e-8025-5d8c9efaf074",
+    "Name": "EndlessShapes Unlimited"
+  },
+  "Description": "Expanded decoration limits with OBJ import, conversion, tethering, and export tools."
+}
