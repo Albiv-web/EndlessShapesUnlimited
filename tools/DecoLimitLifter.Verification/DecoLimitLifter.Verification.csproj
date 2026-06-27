@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>..\..\DecoLimitless\0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="DecoLimitLifter">
+      <HintPath>..\..\DecoLimitless\DecoLimitLifter.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Core">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="DataManagement">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\DataManagement.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

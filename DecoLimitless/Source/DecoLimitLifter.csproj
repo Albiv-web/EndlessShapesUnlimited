@@ -1,0 +1,121 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Patches\DebugPatches.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Always present -->
+    <Reference Include="0Harmony">
+      <HintPath>..\0Harmony.dll</HintPath>
+      <Private>false</Private>
+      <SpecificVersion>false</SpecificVersion>
+    </Reference>
+    <Reference Include="DataManagement">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\DataManagement.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Modding">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Modding.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="netstandard" />
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <Reference Include="Core">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Common">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FtD">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\FtD.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Ui">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Ui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Core">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Data">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Drawing">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.IO.Compression.FileSystem">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Numerics">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Runtime.Serialization">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Xml">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="System.Xml.Linq">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <Target Name="CopyReleaseAssemblyToModFolder"
+          AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\.." />
+  </Target>
+</Project>

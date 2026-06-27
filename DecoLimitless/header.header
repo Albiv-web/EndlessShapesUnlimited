@@ -1,0 +1,9 @@
+{
+  "Authors": "Authors include New",
+  "Version": "00000000-0000-0000-0000-000000000000",
+  "ComponentId": {
+    "Guid": "285757cd-05a1-4886-8c37-356b07603b6d",
+    "Name": "DecoLimitless"
+  },
+  "Description": "New description"
+}
