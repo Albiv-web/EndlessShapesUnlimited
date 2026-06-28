@@ -5,6 +5,7 @@ namespace DecoLimitLifter
     {
         public const int VanillaDataSortedBytes = 2_000_000;
         public const int VanillaHeaderBytes = 70_000;
+        public const int VanillaSaveBufferBytes = 10_000_000;
 
         public const int MaxDataSortedBytes = 64 * 1024 * 1024;
         public const int MaxHeaderBytes = 4 * 1024 * 1024;

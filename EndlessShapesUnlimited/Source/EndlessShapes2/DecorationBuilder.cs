@@ -83,7 +83,9 @@ namespace EndlessShapes2
 
             try
             {
-                ObjParseResult parsed = ObjParser.ParseFile(Data.OBJ_FilePath.Us);
+                string objPath = FilePathInput.Normalize(Data.OBJ_FilePath.Us);
+                Data.OBJ_FilePath.Us = objPath;
+                ObjParseResult parsed = ObjParser.ParseFile(objPath);
                 Meshes.AddRange(parsed.Meshes);
                 foreach (ObjVector3 vertex in parsed.Vertices)
                     Vertices.Add(new Vector3(-vertex.X, vertex.Y, vertex.Z));
@@ -92,6 +94,15 @@ namespace EndlessShapes2
 
                 InfoStore.Add(
                     $"Loaded {Meshes.Count:N0} OBJ mesh group(s) and {Vertices.Count:N0} vertices.");
+            }
+            catch (Exception exception) when (FilePathInput.IsExpectedInputFailure(exception))
+            {
+                ClearLoadedModel();
+                ReportInputFailure(
+                    "OBJ import failed",
+                    exception,
+                    FilePathInput.Normalize(Data.OBJ_FilePath.Us),
+                    "OBJ");
             }
             catch (Exception exception)
             {
@@ -322,6 +333,7 @@ namespace EndlessShapes2
 
         private static Texture2D LoadTexture(string texturePath)
         {
+            texturePath = FilePathInput.Normalize(texturePath);
             if (string.IsNullOrWhiteSpace(texturePath))
                 return null;
 
@@ -669,6 +681,19 @@ namespace EndlessShapes2
                 $"[EndlessShapes Unlimited] {context}",
                 exception,
                 LogOptions._AlertDevAndCustomerInGame);
+        }
+
+        private static void ReportInputFailure(
+            string context,
+            Exception exception,
+            string path,
+            string kind)
+        {
+            string message = exception is FileNotFoundException
+                ? FilePathInput.MissingFileMessage(kind, path)
+                : exception.Message;
+            InfoStore.Add($"{context}: {message}");
+            AdvLogger.LogInfo($"[EndlessShapes Unlimited] {context}: {message}");
         }
 
         private static void ReportCleanupFailures(IReadOnlyCollection<Exception> errors)

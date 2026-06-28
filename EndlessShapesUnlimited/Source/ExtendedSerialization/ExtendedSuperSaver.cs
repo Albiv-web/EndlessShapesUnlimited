@@ -1,6 +1,7 @@
 using System;
 using BrilliantSkies.Core.Serialisation.Bytes;
 using BrilliantSkies.DataManagement.Serialisation;
+using DecoLimitLifter.SerializationHud;
 
 namespace DecoLimitLifter.ExtendedSerialization
 {
@@ -53,6 +54,8 @@ namespace DecoLimitLifter.ExtendedSerialization
             if (startByte != expectedEnd)
                 throw new InvalidOperationException(
                     $"Internal serializer size mismatch: expected cursor {expectedEnd}, reached {startByte}.");
+
+            SerializationTelemetry.RecordSavedContainer(self, layout);
         }
 
         private static void ValidateSourceBuffers(SuperSaver self, SuperSerialisationLayout layout)

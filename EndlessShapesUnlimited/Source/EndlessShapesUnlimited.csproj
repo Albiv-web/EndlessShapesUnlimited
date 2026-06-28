@@ -43,6 +43,14 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
@@ -66,6 +74,26 @@
     </Reference>
     <Reference Include="Ui">
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Ui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PlayerProfiles">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\PlayerProfiles.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Localisation">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Localisation.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="InControl">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\InControl.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NetInfrastructure">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\NetInfrastructure.dll</HintPath>
       <Private>false</Private>
     </Reference>
 

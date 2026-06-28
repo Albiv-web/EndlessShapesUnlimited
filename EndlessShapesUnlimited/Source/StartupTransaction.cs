@@ -6,7 +6,7 @@ namespace DecoLimitLifter
     internal sealed class StartupTransaction
     {
         private readonly Action _unpatch;
-        private Action _restoreDecorationLimit;
+        private readonly List<Action> _rollbackActions = new List<Action>();
         private bool _committed;
         private bool _rolledBack;
 
@@ -19,15 +19,22 @@ namespace DecoLimitLifter
         {
             if (restore == null)
                 throw new ArgumentNullException(nameof(restore));
-            if (_restoreDecorationLimit != null)
-                throw new InvalidOperationException("The decoration limit is already tracked.");
-            _restoreDecorationLimit = () => restore(previousValue);
+            TrackRollback(() => restore(previousValue));
+        }
+
+        internal void TrackRollback(Action action)
+        {
+            if (action == null)
+                throw new ArgumentNullException(nameof(action));
+            if (_committed || _rolledBack)
+                throw new InvalidOperationException("The startup transaction is no longer active.");
+            _rollbackActions.Add(action);
         }
 
         internal void Commit()
         {
             _committed = true;
-            _restoreDecorationLimit = null;
+            _rollbackActions.Clear();
         }
 
         internal IReadOnlyList<Exception> Rollback()
@@ -37,12 +44,12 @@ namespace DecoLimitLifter
                 return errors;
             _rolledBack = true;
 
-            if (_restoreDecorationLimit != null)
+            for (int i = _rollbackActions.Count - 1; i >= 0; i--)
             {
-                try { _restoreDecorationLimit(); }
+                try { _rollbackActions[i](); }
                 catch (Exception exception) { errors.Add(exception); }
-                _restoreDecorationLimit = null;
             }
+            _rollbackActions.Clear();
 
             try { _unpatch(); }
             catch (Exception exception) { errors.Add(exception); }

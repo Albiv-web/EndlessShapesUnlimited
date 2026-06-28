@@ -6,17 +6,27 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.Serialization;
 using System.Text;
 using System.Threading;
+using BrilliantSkies.Core.Types;
 using BrilliantSkies.Core.Serialisation.Bytes;
 using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.DataManagement.Serialisation.VariableTypes;
+using BrilliantSkies.Ftd.Avatar.Build;
+using BrilliantSkies.Ftd.Avatar.Build.UndoRedo;
+using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
+using BrilliantSkies.Modding.Types;
 using DecoLimitLifter;
+using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.ExtendedSerialization;
 using DecoLimitLifter.Patches;
+using DecoLimitLifter.SerializationHud;
+using DecoLimitLifter.SmartBuildMode;
 using EndlessShapes2;
 using EndlessShapes2.Polygon;
 using HarmonyLib;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 internal static class Program
@@ -95,6 +105,8 @@ internal static class Program
             VerifyObjectIdWidthValidation();
             VerifyObjParser();
             VerifyObjParserLimits();
+            VerifyOptionalExternalObj();
+            VerifyFilePathInput();
             VerifyFlexibleFloatParsing();
             VerifyImagePreflight();
             VerifyGeometryClassification();
@@ -104,6 +116,17 @@ internal static class Program
             VerifyTetherTransaction();
             VerifyExporterFormatting();
             VerifyUiPatchTarget();
+            VerifyActiveStatusApi();
+            VerifySerializationHudTargets();
+            VerifySerializationTelemetryAggregation();
+            VerifyBlueprintSerializationUsageAnalyzer();
+            VerifyBlueprintSerializationUsageSampleFiles();
+            VerifySerializationForecasting();
+            VerifySerializationTelemetryScopes();
+            VerifySerializationHudProfiles();
+            VerifyDecorationEditModeMvp();
+            VerifySmartBlockBuilder();
+            VerifyBeamificationBundle();
             VerifyPackageIdentityAndAssets();
 
             Console.WriteLine($"PASS: {_passed} verification checks completed.");
@@ -125,7 +148,11 @@ internal static class Program
             "DecoLimitLifter.Patches.SuperSaver_ConvertToReader_BufferPatch",
             "DecoLimitLifter.Patches.SuperSaver_WriteHeader_Guard",
             "DecoLimitLifter.Patches.SuperSaver_ByIdHelpWrite_Guard",
-            "DecoLimitLifter.Patches.SuperSaver_Serialise_Patch"
+            "DecoLimitLifter.Patches.SuperSaver_Serialise_Patch",
+            "DecoLimitLifter.SerializationHud.BlueprintConverter_SaveTelemetry_Patch",
+            "DecoLimitLifter.SerializationHud.BlueprintConverter_LoadTelemetry_Patch",
+            "DecoLimitLifter.SerializationHud.Decoration_SaveTelemetry_Patch",
+            "DecoLimitLifter.SerializationHud.DecorationManager_LoadTelemetry_Patch"
         };
 
         Assembly modAssembly = typeof(ExtendedSuperSaver).Assembly;
@@ -147,6 +174,10 @@ internal static class Program
         };
 
         var requiredMethods = required.ToList();
+        requiredMethods.Add(Plugin.ResolveBlueprintSaveTarget());
+        requiredMethods.Add(Plugin.ResolveBlueprintLoadTarget());
+        requiredMethods.Add(Plugin.ResolveDecorationSaveTarget());
+        requiredMethods.Add(Plugin.ResolveDecorationLoadTarget());
         InterfaceMapping writeMap = typeof(SuperSaver).GetInterfaceMap(typeof(IVariableWriteHelp));
         for (int i = 0; i < writeMap.InterfaceMethods.Length; i++)
         {
@@ -180,6 +211,41 @@ internal static class Program
             AccessTools.Method(typeof(ByteStorePatch), "AfterSuperSaverConstructor"),
             prefix: false,
             "ByteStore constructor postfix is the exact required method.");
+
+        MethodBase blueprintSave = Plugin.ResolveBlueprintSaveTarget();
+        VerifyExactPatch(
+            blueprintSave,
+            AccessTools.Method(
+                typeof(BlueprintConverter_SaveTelemetry_Patch),
+                nameof(BlueprintConverter_SaveTelemetry_Patch.Prefix)),
+            prefix: true,
+            "Blueprint save telemetry prefix is the exact required method.");
+        VerifyExactPatch(
+            blueprintSave,
+            AccessTools.Method(
+                typeof(BlueprintConverter_SaveTelemetry_Patch),
+                nameof(BlueprintConverter_SaveTelemetry_Patch.Postfix)),
+            prefix: false,
+            "Blueprint save telemetry postfix is the exact required method.");
+        VerifyExactFinalizer(
+            blueprintSave,
+            AccessTools.Method(
+                typeof(BlueprintConverter_SaveTelemetry_Patch),
+                nameof(BlueprintConverter_SaveTelemetry_Patch.Finalizer)),
+            "Blueprint save telemetry finalizer is the exact required method.");
+        VerifyExactFinalizer(
+            Plugin.ResolveBlueprintLoadTarget(),
+            AccessTools.Method(
+                typeof(BlueprintConverter_LoadTelemetry_Patch),
+                nameof(BlueprintConverter_LoadTelemetry_Patch.Finalizer)),
+            "Blueprint load telemetry finalizer is the exact required method.");
+        Assert(Plugin.ResolveDecorationEditorHudTarget("DrawRhs") != null &&
+               Plugin.ResolveDecorationEditorHudTarget("DrawInteractionIcon") != null &&
+               Plugin.ResolveDecorationEditorHudTarget("DrawWeaponInfo") != null &&
+               Plugin.ResolveDecorationEditorHudTarget("DisplayCorrectToolBar") != null &&
+               Plugin.ResolveDecorationEditorBuildUpdateTarget() != null &&
+               Plugin.ResolveDecorationEditorCameraUpdateTarget() != null,
+            "Decoration editor HUD/input Harmony targets resolve without installing UI patches in the non-Unity verifier.");
     }
 
     private static void VerifyExactPatch(
@@ -194,6 +260,20 @@ internal static class Program
             target != null &&
             patchMethod != null &&
             patches?.Any(patch => patch.owner == Owner && patch.PatchMethod == patchMethod) == true,
+            description);
+    }
+
+    private static void VerifyExactFinalizer(
+        MethodBase target,
+        MethodInfo patchMethod,
+        string description)
+    {
+        HarmonyLib.Patches patchInfo = Harmony.GetPatchInfo(target);
+        Assert(
+            target != null &&
+            patchMethod != null &&
+            patchInfo?.Finalizers?.Any(
+                patch => patch.owner == Owner && patch.PatchMethod == patchMethod) == true,
             description);
     }
 
@@ -533,6 +613,21 @@ internal static class Program
         Assert(committed.Rollback().Count == 0 &&
                committedLimit == DecoLimits.MaxDecorations && !committedUnpatch,
             "A committed startup cannot be invalidated by later success-reporting failure.");
+
+        var rollbackOrder = new List<int>();
+        var ordered = new StartupTransaction(() => rollbackOrder.Add(0));
+        ordered.TrackRollback(() => rollbackOrder.Add(1));
+        ordered.TrackRollback(() => rollbackOrder.Add(2));
+        ordered.Rollback();
+        Assert(rollbackOrder.SequenceEqual(new[] { 2, 1, 0 }),
+            "Startup registrations roll back in reverse order before Harmony is removed.");
+
+        bool laterCleanupRan = false;
+        var independent = new StartupTransaction(() => { });
+        independent.TrackRollback(() => laterCleanupRan = true);
+        independent.TrackRollback(() => throw new InvalidOperationException("test"));
+        Assert(independent.Rollback().Count == 1 && laterCleanupRan,
+            "A failed HUD cleanup cannot prevent the remaining startup rollback actions.");
     }
 
     private static FieldInfo ResolveAutoSyncBufferField()
@@ -700,6 +795,56 @@ f 0 2 3
             "OBJ input has a two-million-UV ceiling.");
         Assert(ObjParser.MaxPrimitives == 100_000,
             "OBJ input is capped at the decoration limit.");
+    }
+
+    private static void VerifyOptionalExternalObj()
+    {
+        string path = Environment.GetEnvironmentVariable("ESU_VERIFY_OBJ");
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        ObjParseResult result = ObjParser.ParseFile(path);
+        int faces = result.Meshes.Sum(mesh => mesh.FaceDatas.Count);
+        int lines = result.Meshes.Sum(mesh => mesh.LineDatas.Count);
+        var vertices = result.Vertices
+            .Select(vertex => new Vector3(-vertex.X, vertex.Y, vertex.Z))
+            .ToList();
+        var uvs = result.TextureCoordinates
+            .Select(uv => new Vector2(uv.X, uv.Y))
+            .ToList();
+        int decorations = 0;
+        foreach (OBJ_Mesh mesh in result.Meshes)
+        {
+            var plan = new List<PolygonData>();
+            PolygonDataControl.PolygonClassify(
+                plan,
+                mesh.FaceDatas,
+                mesh.LineDatas,
+                vertices,
+                uvs,
+                mesh.FaceSourceLines,
+                mesh.LineSourceLines,
+                100_000 - decorations);
+            decorations += plan.Count;
+        }
+        Console.WriteLine(
+            $"PASS: External OBJ parsed: {result.Vertices.Count:N0} vertices, " +
+            $"{faces:N0} faces, {lines:N0} lines, {result.Meshes.Count:N0} mesh groups, " +
+            $"{decorations:N0} planned decorations.");
+    }
+
+    private static void VerifyFilePathInput()
+    {
+        string normalized = FilePathInput.Normalize(
+            "  \"C:\\Models With Spaces\\ship.obj\"  ");
+        Assert(normalized == "C:\\Models With Spaces\\ship.obj",
+            "Pasted file paths preserve spaces while trimming whitespace and matching quotes.");
+
+        string missing = FilePathInput.MissingFileMessage(
+            "OBJ",
+            "C:\\Private Profile\\Downloads\\ship.obj");
+        Assert(missing.Contains("ship.obj") && !missing.Contains("Private Profile"),
+            "Missing-file feedback names the file without exposing its full local path in an alert.");
     }
 
     private static void VerifyFlexibleFloatParsing()
@@ -1121,6 +1266,1305 @@ f 0 2 3
             "Current FTD GeneralTab.Mesh target resolves for the OBJ export patch.");
     }
 
+    private static void VerifyActiveStatusApi()
+    {
+        Assembly modding = Assembly.LoadFrom(Path.Combine(_managedDirectory, "Modding.dll"));
+        Type modProblems = modding.GetType(
+            "BrilliantSkies.Modding.ModProblems",
+            throwOnError: true);
+        MethodInfo addProblem = modProblems.GetMethod(
+            "AddModProblem",
+            BindingFlags.Public | BindingFlags.Static,
+            null,
+            new[] { typeof(string), typeof(string), typeof(string), typeof(bool) },
+            null);
+        MemberInfo allProblems = modProblems.GetMember(
+            "AllModProblems",
+            BindingFlags.Public | BindingFlags.Static).SingleOrDefault();
+
+        Assert(addProblem != null && allProblems != null,
+            "Current FTD active-mod status APIs resolve without forcing GUI activation during boot.");
+    }
+
+    private static void VerifySerializationHudTargets()
+    {
+        MethodBase[] targets =
+        {
+            Plugin.ResolveBlueprintSaveTarget(),
+            Plugin.ResolveBlueprintLoadTarget(),
+            Plugin.ResolveDecorationSaveTarget(),
+            Plugin.ResolveDecorationLoadTarget(),
+            Plugin.ResolveSerializationHudTarget()
+        };
+        Assert(targets.All(target => target != null),
+            "Current FTD blueprint, decoration-manager, and native HUD targets resolve exactly.");
+
+        Assert(
+            targets[0].GetParameters().Select(parameter => parameter.ParameterType)
+                .SequenceEqual(new[] { typeof(MainConstruct), typeof(bool) }) &&
+            targets[4].GetParameters().Select(parameter => parameter.ParameterType)
+                .SequenceEqual(new[]
+                {
+                    typeof(MainConstruct),
+                    Type.GetType("BrilliantSkies.Ftd.Avatar.HUD.Rectum, FtD", throwOnError: true)
+                }),
+            "Serialization HUD verification selects the intended overloads, not name-only matches.");
+    }
+
+    private static void VerifySerializationTelemetryAggregation()
+    {
+        var emptyUsage = new DecorationUsageSnapshot(
+            Array.Empty<DecorationManagerUsage>(),
+            0L,
+            0);
+        var containers = new[]
+        {
+            new SerializationContainerSample(
+                new object(),
+                50_000U,
+                100U,
+                SerializationWireFormat.Legacy),
+            new SerializationContainerSample(
+                new object(),
+                100U,
+                7_000_000U,
+                SerializationWireFormat.Sentinel)
+        };
+        CraftSerializationSnapshot snapshot = CraftSerializationSnapshotFactory.Create(
+            SerializationOperationKind.Save,
+            containers,
+            7UL,
+            emptyUsage);
+        Assert(snapshot.PeakHeaderBytes == 50_000U && snapshot.PeakDataBytes == 7_000_000U,
+            "HUD telemetry reports independent peak-container header and data usage instead of sums.");
+        Assert(snapshot.Format == SerializationWireFormat.Sentinel &&
+               snapshot.SentinelContainerCount == 1 && snapshot.ContainerCount == 2,
+            "One sentinel container classifies the complete blueprint serialization as sentinel.");
+        Assert(snapshot.TotalHeaderBytes == 50_100UL &&
+               snapshot.TotalDataBytes == 7_000_100UL &&
+               snapshot.TotalWireBytes == 7_050_200UL &&
+               snapshot.PeakContainerWireBytes == 7_000_100UL,
+            "HUD telemetry keeps aggregate wire/header/data totals separate from peak-container limits.");
+    }
+
+    private static void VerifyBlueprintSerializationUsageAnalyzer()
+    {
+        byte[] legacy = SerialiseFixture(headerCount: 1U, dataBytes: 4U, objectId: 42UL, objectIdBytes: 3);
+        byte[] sentinel = SerialiseFixture(headerCount: 9_363U, dataBytes: 0U, objectId: 43UL, objectIdBytes: 8);
+        Blueprint blueprint = NewBlueprintForUsageTest();
+        blueprint.BlockData = legacy;
+        blueprint.VehicleData = sentinel;
+        blueprint.BLP = new Vector3[2];
+        blueprint.BLR = new int[2];
+        blueprint.BCI = new int[2];
+        blueprint.SCs = new List<Blueprint>();
+
+        BlueprintSerializationUsage usage =
+            BlueprintSerializationUsageAnalyzer.Analyze(blueprint);
+        Assert(usage.BlockDataBytes == (ulong)legacy.Length &&
+               usage.VehicleDataBytes == (ulong)sentinel.Length &&
+               usage.PayloadBytes == (ulong)(legacy.Length + sentinel.Length),
+            "Blueprint usage analyzer reports exact raw BlockData and VehicleData byte-array sizes.");
+        Assert(usage.ContainerCount == 2 &&
+               usage.SentinelContainerCount == 1 &&
+               usage.TotalWireBytes == usage.PayloadBytes &&
+               usage.PeakHeaderBytes == 9_363UL * 7UL,
+            "Blueprint usage analyzer parses mixed legacy/sentinel container streams without copying payloads.");
+        Assert(!usage.RequiresModBuffer &&
+               !usage.AggregatePayloadExceedsVanillaBuffer &&
+               usage.StructuralEntries >= 6UL,
+            "Blueprint usage analyzer distinguishes ordinary payloads from ESU-buffer-sized payloads.");
+
+        byte[] splitA = SerialiseFixture(
+            headerCount: 1U,
+            dataBytes: 5_100_000U,
+            objectId: 44UL,
+            objectIdBytes: 3);
+        byte[] splitB = SerialiseFixture(
+            headerCount: 1U,
+            dataBytes: 5_100_000U,
+            objectId: 45UL,
+            objectIdBytes: 3);
+        Blueprint splitChild = NewBlueprintForUsageTest();
+        splitChild.BlockData = splitB;
+        splitChild.VehicleData = Array.Empty<byte>();
+        splitChild.SCs = new List<Blueprint>();
+        Blueprint splitParent = NewBlueprintForUsageTest();
+        splitParent.BlockData = splitA;
+        splitParent.VehicleData = Array.Empty<byte>();
+        splitParent.SCs = new List<Blueprint> { splitChild };
+        BlueprintSerializationUsage splitUsage =
+            BlueprintSerializationUsageAnalyzer.Analyze(splitParent);
+        Assert(splitUsage.PayloadBytes > (ulong)DecoLimits.VanillaSaveBufferBytes &&
+               splitUsage.LargestStreamBytes < (ulong)DecoLimits.VanillaSaveBufferBytes &&
+               splitUsage.AggregatePayloadExceedsVanillaBuffer &&
+               !splitUsage.RequiresModBuffer &&
+               splitUsage.SentinelContainerCount == 0,
+            "Blueprint usage analyzer treats split vanilla-sized streams as vanilla buffer compatible even when aggregate payload exceeds 10 MB.");
+
+        Blueprint largeBlueprint = NewBlueprintForUsageTest();
+        largeBlueprint.BlockData = new byte[DecoLimits.VanillaSaveBufferBytes + 1];
+        largeBlueprint.VehicleData = Array.Empty<byte>();
+        largeBlueprint.SCs = new List<Blueprint>();
+        BlueprintSerializationUsage largeUsage =
+            BlueprintSerializationUsageAnalyzer.Analyze(largeBlueprint);
+        Assert(largeUsage.RequiresModBuffer &&
+               largeUsage.AggregatePayloadExceedsVanillaBuffer,
+            "Blueprint usage analyzer flags individual streams that exceed vanilla ByteStore capacity.");
+    }
+
+    private static void VerifyBlueprintSerializationUsageSampleFiles()
+    {
+        string folder = Path.Combine(
+            "F:\\",
+            "FTD saves",
+            "From The Depths",
+            "Player Profiles",
+            "New",
+            "Constructables");
+        VerifyBlueprintSampleIfPresent(
+            Path.Combine(folder, "OneBlockTest.blueprint"),
+            expectedVehicleDataBytes: 652UL,
+            expectedBlockDataBytes: 0UL,
+            expectedSavedBlocks: 1,
+            expectedBlockIds: 1);
+        VerifyBlueprintSampleIfPresent(
+            Path.Combine(folder, "TwoBlockTest.blueprint"),
+            expectedVehicleDataBytes: 659UL,
+            expectedBlockDataBytes: 0UL,
+            expectedSavedBlocks: 2,
+            expectedBlockIds: 2);
+        VerifyBlueprintSampleIfPresent(
+            Path.Combine(folder, "OneBlockTestWithOneDeco.blueprint"),
+            expectedVehicleDataBytes: 741UL,
+            expectedBlockDataBytes: 0UL,
+            expectedSavedBlocks: 1,
+            expectedBlockIds: 1);
+        VerifyBlueprintSampleIfPresent(
+            Path.Combine(folder, "4004 Gun Ironclad Super Heavy 1st Rate AA.blueprint"),
+            expectedVehicleDataBytes: 16_207UL,
+            expectedBlockDataBytes: 17_473_046UL,
+            expectedSavedBlocks: 3_257_602,
+            expectedBlockIds: 3_219_209,
+            expectedFileBytes: 100_353_303L,
+            expectedBlockDataContainers: 407_216,
+            expectedVehicleDataContainers: 18);
+    }
+
+    private static void VerifyBlueprintSampleIfPresent(
+        string path,
+        ulong expectedVehicleDataBytes,
+        ulong expectedBlockDataBytes,
+        int expectedSavedBlocks,
+        int expectedBlockIds,
+        long? expectedFileBytes = null,
+        int? expectedBlockDataContainers = null,
+        int? expectedVehicleDataContainers = null)
+    {
+        if (!File.Exists(path))
+        {
+            Pass("Optional blueprint sample is absent: " + Path.GetFileName(path));
+            return;
+        }
+
+        JObject root = JObject.Parse(File.ReadAllText(path));
+        JObject blueprintJson = (JObject)root["Blueprint"];
+        byte[] blockData = Convert.FromBase64String((string)blueprintJson["BlockData"] ?? string.Empty);
+        byte[] vehicleData = Convert.FromBase64String((string)blueprintJson["VehicleData"] ?? string.Empty);
+        Blueprint blueprint = NewBlueprintForUsageTest();
+        blueprint.BlockData = blockData;
+        blueprint.VehicleData = vehicleData;
+        blueprint.SCs = new List<Blueprint>();
+        BlueprintSerializationUsage usage =
+            BlueprintSerializationUsageAnalyzer.Analyze(blueprint);
+
+        Assert(usage.BlockDataBytes == expectedBlockDataBytes &&
+               usage.VehicleDataBytes == expectedVehicleDataBytes,
+            "Blueprint sample raw payload bytes match expected values for " + Path.GetFileName(path));
+        Assert((int)root["SavedTotalBlockCount"] == expectedSavedBlocks &&
+               ((JArray)blueprintJson["BlockIds"]).Count == expectedBlockIds,
+            "Blueprint sample block counters match expected values for " + Path.GetFileName(path));
+        if (expectedFileBytes.HasValue)
+        {
+            Assert(new FileInfo(path).Length == expectedFileBytes.Value &&
+                   usage.RequiresModBuffer &&
+                   usage.LargestStreamBytes > (ulong)DecoLimits.VanillaSaveBufferBytes,
+                "Large blueprint sample confirms a legacy wire stream can still require ESU save buffers.");
+        }
+        if (expectedBlockDataContainers.HasValue || expectedVehicleDataContainers.HasValue)
+        {
+            Blueprint blockOnlyBlueprint = NewBlueprintForUsageTest();
+            blockOnlyBlueprint.BlockData = blockData;
+            blockOnlyBlueprint.VehicleData = Array.Empty<byte>();
+            blockOnlyBlueprint.SCs = new List<Blueprint>();
+            Blueprint vehicleOnlyBlueprint = NewBlueprintForUsageTest();
+            vehicleOnlyBlueprint.BlockData = Array.Empty<byte>();
+            vehicleOnlyBlueprint.VehicleData = vehicleData;
+            vehicleOnlyBlueprint.SCs = new List<Blueprint>();
+            BlueprintSerializationUsage blockOnly =
+                BlueprintSerializationUsageAnalyzer.Analyze(blockOnlyBlueprint);
+            BlueprintSerializationUsage vehicleOnly =
+                BlueprintSerializationUsageAnalyzer.Analyze(vehicleOnlyBlueprint);
+            Assert(blockOnly.ContainerCount == expectedBlockDataContainers.GetValueOrDefault() &&
+                   vehicleOnly.ContainerCount == expectedVehicleDataContainers.GetValueOrDefault() &&
+                   blockOnly.SentinelContainerCount == 0 &&
+                   vehicleOnly.SentinelContainerCount == 0,
+                "Large blueprint sample exact containers remain legacy while the largest stream requires ESU.");
+        }
+    }
+
+    private static void VerifySerializationForecasting()
+    {
+        var manager = new DecorationManager(10U, 11U, 12U);
+        var savedUsage = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(manager, 90) },
+            90L,
+            90);
+        var container = new SerializationContainerSample(
+            new object(),
+            1_000U,
+            20_000U,
+            SerializationWireFormat.Legacy);
+        container.Calibrations.Add(new DecorationManagerCalibration(
+            manager,
+            90,
+            1_000U,
+            20_000U,
+            700U,
+            9_000U,
+            contributionMeasured: true));
+        CraftSerializationSnapshot saved = CraftSerializationSnapshotFactory.Create(
+            SerializationOperationKind.Save,
+            new[] { container },
+            25UL,
+            savedUsage);
+
+        SerializationForecast exact = SerializationForecastCalculator.Calculate(
+            25UL,
+            savedUsage,
+            loaded: null,
+            saved);
+        Assert(exact.Exact && exact.PeakHeaderBytes == 1_000U &&
+               exact.PeakDataBytes == 20_000U,
+            "An unchanged craft keeps the exact captured serializer measurements.");
+
+        var changedUsage = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(manager, 100) },
+            100L,
+            100);
+        SerializationForecast forecast = SerializationForecastCalculator.Calculate(
+            26UL,
+            changedUsage,
+            loaded: null,
+            saved);
+        Assert(!forecast.Exact && forecast.PeakHeaderBytes == 1_070U,
+            "Live header forecasting applies the deterministic seven-byte decoration delta.");
+        Assert(forecast.PeakDataBytes == 21_000U && !forecast.Uncalibrated,
+            "Live data forecasting uses the measured decoration bytes-per-item calibration.");
+
+        var unknownManager = new DecorationManager(20U, 21U, 22U);
+        var unknownUsage = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(unknownManager, 100) },
+            100L,
+            100);
+        SerializationForecast uncalibrated = SerializationForecastCalculator.Calculate(
+            1UL,
+            unknownUsage,
+            loaded: null,
+            saved: null);
+        Assert(uncalibrated.Uncalibrated &&
+               uncalibrated.PeakHeaderBytes ==
+                   SerializationForecastCalculator.FallbackHeaderRecords * 7UL + 700UL &&
+               uncalibrated.PeakDataBytes ==
+                   SerializationForecastCalculator.FallbackFixedDataBytes + 16_000UL,
+            "A craft without telemetry uses the documented conservative forecast baseline.");
+
+        var sentinelUsage = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(unknownManager, 10_000) },
+            10_000L,
+            10_000);
+        Assert(SerializationForecastCalculator.Calculate(
+                   1UL,
+                   sentinelUsage,
+                   null,
+                   null).Format == SerializationWireFormat.Sentinel,
+            "Forecasting identifies the sentinel wire format before the next save.");
+
+        var overLimitUsage = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(unknownManager, DecoLimits.MaxDecorations + 1) },
+            DecoLimits.MaxDecorations + 1L,
+            DecoLimits.MaxDecorations + 1);
+        Assert(SerializationForecastCalculator.Calculate(
+                   1UL,
+                   overLimitUsage,
+                   null,
+                   null).Format == SerializationWireFormat.OverLimit,
+            "Forecasting distinguishes a hard-limit violation from ordinary sentinel output.");
+    }
+
+    private static void VerifySerializationTelemetryScopes()
+    {
+        SerializationTelemetry.ResetForTests();
+        var outer = SerializationTelemetry.Begin(SerializationOperationKind.Save);
+        var inner = SerializationTelemetry.Begin(SerializationOperationKind.Load);
+        Assert(SerializationTelemetry.CurrentDepthForTests == 2,
+            "Nested blueprint telemetry scopes retain the complete operation stack.");
+        inner.Dispose();
+        Assert(SerializationTelemetry.CurrentDepthForTests == 1,
+            "Completing an inner telemetry scope restores its parent operation.");
+
+        int otherThreadInitialDepth = -1;
+        int otherThreadActiveDepth = -1;
+        var thread = new Thread(() =>
+        {
+            otherThreadInitialDepth = SerializationTelemetry.CurrentDepthForTests;
+            using (SerializationTelemetry.Begin(SerializationOperationKind.Load))
+                otherThreadActiveDepth = SerializationTelemetry.CurrentDepthForTests;
+        });
+        thread.Start();
+        thread.Join();
+        Assert(otherThreadInitialDepth == 0 && otherThreadActiveDepth == 1 &&
+               SerializationTelemetry.CurrentDepthForTests == 1,
+            "Blueprint telemetry operation state is isolated per serialization thread.");
+        outer.Dispose();
+        Assert(SerializationTelemetry.CurrentDepthForTests == 0,
+            "Telemetry scope disposal leaves no state for unrelated multiplayer serialization.");
+
+        var baselineSaver = NewSaver(1U, 4U);
+        var measuredSaver = NewSaver(1U, 4U);
+        ByteConversion.ConvertIn(baselineSaver.Header, 0U, 3, 55U);
+        ByteConversion.ConvertIn(measuredSaver.Header, 0U, 3, 55U);
+        baselineSaver.DataSorted[0] = measuredSaver.DataSorted[0] = 1;
+        baselineSaver.DataSorted[1] = measuredSaver.DataSorted[1] = 2;
+        baselineSaver.DataSorted[2] = measuredSaver.DataSorted[2] = 3;
+        baselineSaver.DataSorted[3] = measuredSaver.DataSorted[3] = 4;
+        var baselineBytes = new byte[128];
+        var measuredBytes = new byte[128];
+        uint baselineCursor = 0U;
+        uint measuredCursor = 0U;
+        baselineSaver.Serialise(baselineBytes, ref baselineCursor, 9UL, 1);
+        using (SerializationTelemetry.Begin(SerializationOperationKind.Save))
+            measuredSaver.Serialise(measuredBytes, ref measuredCursor, 9UL, 1);
+        Assert(baselineCursor == measuredCursor &&
+               baselineBytes.Take((int)baselineCursor)
+                   .SequenceEqual(measuredBytes.Take((int)measuredCursor)),
+            "Active HUD telemetry does not change any serializer output byte.");
+    }
+
+    private static void VerifySerializationHudProfiles()
+    {
+        var data = new SerializationHudProfile.ProfileData();
+        Assert(!data.Enabled,
+            "The serialization HUD is disabled by default for a new profile.");
+
+        PropertyInfo filename = typeof(SerializationHudProfile).GetProperty(
+            "FilenameAndExtension",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        PropertyInfo keyFilename = typeof(SerializationHudKeyMap).GetProperty(
+            "FilenameAndExtension",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(GetSingleStringLiteral(filename?.GetMethod) ==
+                   "profile.endlessshapesunlimited" &&
+               GetSingleStringLiteral(keyFilename?.GetMethod) ==
+                   "profile.keymappingendlessshapesunlimited",
+            "HUD visibility and key mapping use repository-specific profile files.");
+
+        string profileSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudProfile.cs"));
+        Assert(profileSource.Contains("Q(Key.F8)") &&
+               profileSource.Contains("MeasureUsage") &&
+               profileSource.Contains("Q(Key.Shift, Key.F8)"),
+            "The configurable serialization HUD toggle defaults to F8 and exact measurement defaults to Shift+F8.");
+        Assert(SerializationHudRenderer.FormatName(SerializationWireFormat.Legacy) == "LEGACY WIRE" &&
+               SerializationHudRenderer.FormatBytes(1024UL) == "1 KiB",
+            "Serialization HUD labels use readable invariant wire-format and byte text.");
+
+        string rendererSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudRenderer.cs"));
+        Assert(rendererSource.Contains("Payload total:") &&
+               rendererSource.Contains("Largest stream:") &&
+               rendererSource.Contains("Save buffer:") &&
+               rendererSource.Contains("Vanilla OK") &&
+               rendererSource.Contains("10 MB") &&
+               rendererSource.Contains("GetRuntimeIcon"),
+            "Serialization HUD shows split aggregate/stream buffer rows without generated fallback HUD icons.");
+        Assert(SerializationHudRenderer.FormatSaveBuffer(BlueprintSerializationUsage.Empty) == "unknown" &&
+               SerializationHudRenderer.FormatHeaderLimit(34UL * 1024UL) == "64 KiB legacy" &&
+               SerializationHudRenderer.FormatHeaderLimit(70_000UL) == "4 MiB ESU" &&
+               SerializationHudRenderer.FormatDataLimit(540UL * 1024UL) == "6.25 MiB legacy" &&
+               SerializationHudRenderer.FormatDataLimit(7_000_000UL) == "64 MiB ESU",
+            "Serialization HUD labels vanilla legacy limits and ESU sentinel ceilings explicitly.");
+    }
+
+    private static void VerifyDecorationEditModeMvp()
+    {
+        Assert(DecorationEditMath.Snap(0.076f) == 0.1f &&
+               DecorationEditMath.Snap(0.024f) == 0f &&
+               DecorationEditMath.IsWithinPositionLimit(new Vector3(10f, -10f, 0f)) &&
+               !DecorationEditMath.IsWithinPositionLimit(new Vector3(10.01f, 0f, 0f)) &&
+               !DecorationEditMath.IsWithinPositionLimit(new Vector3(float.NaN, 0f, 0f)),
+            "Decoration Edit Mode movement snaps to 0.05m and enforces finite +/-10 bounds.");
+
+        DecorationEditAxis picked = DecorationEditMath.PickAxis(
+            new Vector2(50f, 2f),
+            Vector2.zero,
+            new Vector2(100f, 0f),
+            new Vector2(0f, 100f),
+            new Vector2(-100f, 0f),
+            10f);
+        float projected = DecorationEditMath.ProjectMouseDeltaToAxis(
+            new Vector2(25f, 0f),
+            Vector2.zero,
+            new Vector2(100f, 0f),
+            1f);
+        Assert(picked == DecorationEditAxis.X && Math.Abs(projected - 0.25f) < 0.001f,
+            "Decoration Edit Mode picks the nearest screen-space axis and converts drag pixels to local-axis motion.");
+
+        string root = FindRepositoryRoot();
+        string profileSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudProfile.cs"));
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string historySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditHistory.cs"));
+        string historySourceNormalized = historySource.Replace("\r\n", "\n");
+        string decorationBehaviourSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditModeBehaviour.cs"));
+        string inputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorInputScope.cs"));
+        string buildModeInputGateSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuBuildModeInputGate.cs"));
+        string vanillaInputBridgeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuVanillaInputBridge.cs"));
+        string registrationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditModeRegistration.cs"));
+        string pointerProbeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationPointerProbe.cs"));
+        string transactionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditTransactionSet.cs"));
+        string viewControllerSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorViewModeController.cs"));
+        string previewSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationMeshPreviewRenderer.cs"));
+        string overlaySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorOverlay.cs"));
+        string serializationHudSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudRenderer.cs"));
+        string technicalLogSource = File.ReadAllText(Path.Combine(
+            root,
+            "TECHNICAL_LOG.md"));
+        string inGameTestPlanSource = File.ReadAllText(Path.Combine(
+            root,
+            "docs",
+            "IN_GAME_TEST_PLAN.md"));
+        string builderUiSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EndlessShapes2",
+            "ES2_UI",
+            "DBUI_BasicSettingTab.cs"));
+        string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
+        string inspectorSource = ExtractMethodSource(sessionSource, "DrawInspector");
+        int toolButtonSignature = sessionSource.IndexOf(
+            "private void ToolButton(",
+            StringComparison.Ordinal);
+        string toolButtonSource = toolButtonSignature >= 0
+            ? ExtractMethodSource(sessionSource.Substring(toolButtonSignature), "ToolButton").Replace("\r\n", "\n")
+            : string.Empty;
+        Assert(profileSource.Contains("ToggleDecorationEditMode") &&
+               profileSource.Contains("Q(Key.Control, Key.D)") &&
+               profileSource.Contains("SwitchEsuBuildMode") &&
+               profileSource.Contains("Q(Key.Tab)") &&
+               profileSource.Contains("UndoDecorationEdit") &&
+               profileSource.Contains("Q(Key.Control, Key.Z)") &&
+               profileSource.Contains("RedoDecorationEdit") &&
+               profileSource.Contains("Q(Key.Control, Key.Y)") &&
+               decorationBehaviourSource.Contains("ConsumeDecorationEditToggleDown") &&
+               !decorationBehaviourSource.Contains("SerializationHudKeyInput.ToggleDecorationEditMode") &&
+               registrationSource.Contains("SmartBuildModeRegistration.Active") &&
+               registrationSource.Contains("CanOpenFromModeSwitch") &&
+               registrationSource.Contains("ignoreSmartBuildMode") &&
+               registrationSource.Contains("Close Smart Block Builder before opening Decoration Edit Mode.") &&
+               buildModeInputGateSource.Contains("_decorationEditToggleRequiresRelease") &&
+               buildModeInputGateSource.Contains("ReadDecorationEditToggleDown") &&
+               buildModeInputGateSource.Contains("IsDecorationEditToggleDefaultHeld"),
+            "Decoration Edit Mode has repository-profile keybinds, rejects direct opens over Smart Builder, and uses the shared one-press Ctrl+D input gate.");
+        Assert(sessionSource.Contains("SetGameControlOptions(") &&
+                !sessionSource.Contains("gameDisableKeys: true") &&
+                sessionSource.Contains("GUI.ModalWindow") &&
+                sessionSource.Contains("ApplyEditorViewMode") &&
+                sessionSource.Contains("_previousWireframe") &&
+                sessionSource.Contains("DecorationList") &&
+                sessionSource.Contains("NewDecoration(") &&
+                sessionSource.Contains("_selectedCreatedInSession") &&
+                sessionSource.Contains("_transactions.Cancel()") &&
+               inputScopeSource.Contains("ClaimBuildInputForFrames") &&
+               inputScopeSource.Contains("Time.frameCount <= _buildInputClaimUntilFrame") &&
+               inputScopeSource.Contains("ForceResetIfActive") &&
+               sessionSource.Contains("DecorationEditorInputScope.End();") &&
+               !inputScopeSource.Contains("SuppressBuildInput() => _active") &&
+                inputScopeSource.Contains("HudBuildCommands") &&
+                inputScopeSource.Contains("DrawInsideBuildMode") &&
+                inputScopeSource.Contains("cBuild") &&
+                inputScopeSource.Contains("BuildCameraMode"),
+            "Decoration Edit Mode uses modal focus without disabling camera keys, scoped build-input claims, safe decoration wireframe, public decoration enumeration/creation APIs, native HUD/input suppression, and transaction rollback.");
+        Assert(inputScopeSource.Contains("DrawRhs") &&
+               inputScopeSource.Contains("DrawInteractionIcon") &&
+               inputScopeSource.Contains("DrawWeaponInfo") &&
+               serializationHudSource.Contains("DecorationEditorInputScope.Active"),
+            "Decoration Edit Mode suppresses the native RHS HUD, hovered-block paint/interaction hints, weapon HUD, and ESU serialization HUD while active.");
+        Assert(builderUiSource.Contains("Decoration Edit Mode") &&
+               builderUiSource.Contains("DecorationEditModeRegistration.ToggleFromUi"),
+            "Decoration Builder exposes a visible Decoration Edit Mode button.");
+
+        Assert(!sessionSourceNormalized.Contains("if (_placingMesh != null ||\n                _dragAxis") &&
+               sessionSource.Contains("return current.type == EventType.MouseDown &&") &&
+               sessionSource.Contains("PlaceSelectedMeshAtPointer") &&
+               inputScopeSource.Contains("ScrollWheelOverEditorUi") &&
+               inputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&
+               inputScopeSource.Contains("OwnsCameraInputThisFrame") &&
+               inputScopeSource.Contains("ClaimCameraInputForFrames") &&
+               !inputScopeSource.Contains("MouseOverEditorUi || SmartBuildInputScope.SuppressCameraInput()"),
+            "Decoration Edit Mode keeps camera input alive during idle hover/mesh placement, but claims FTD mouse-wheel/camera input for ESU-owned panel scrolls.");
+
+        var definitions = DecorationEditorIconCatalog.Definitions;
+        Assert(definitions.Any(icon => icon.Key == "move" &&
+                                       icon.Guid == new Guid("68419445-57e1-41ac-89c9-7683976ddcff")) &&
+               definitions.Any(icon => icon.Key == "select" &&
+                                       icon.Guid == new Guid("f417ee2c-2aa4-4fb2-ab9f-de4c59b94e45")) &&
+               definitions.Any(icon => icon.Key == "outliner" && icon.Guid == Guid.Empty),
+            "Decoration Edit Mode icon catalog records FTD runtime icon GUIDs and ESU-owned fallback concepts.");
+
+        string themeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorTheme.cs"));
+        Assert(themeSource.Contains("PanelColor") &&
+               themeSource.Contains("ToolButton") &&
+               !sessionSource.Contains("DimTextureFor(_viewMode)") &&
+               !sessionSource.Contains("GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height)") &&
+               themeSource.Contains("DecorationEditorViewMode") &&
+               themeSource.Contains("FTD") == false,
+            "Decoration Edit Mode has an ESU-owned native-style theme layer without copied FTD texture data or a full-screen dark overlay.");
+
+        Assert(sessionSource.Contains("DrawEditorShell") &&
+               sessionSource.Contains("DrawTopToolbar") &&
+               sessionSource.Contains("DrawAnchorMenu") &&
+               sessionSource.Contains("AnchorMenuRect") &&
+               sessionSource.Contains("_anchorMenuOpen") &&
+               sessionSource.Contains("DrawOutliner") &&
+               sessionSource.Contains("DrawInspector") &&
+               sessionSource.Contains("DrawMeshPalette") &&
+               sessionSource.Contains("DrawBottomPanel") &&
+               sessionSource.Contains("DrawPaletteDetails(Rect rect)") &&
+               sessionSource.Contains("Rect anchorRect") &&
+               sessionSource.Contains("DrawAnchorContext(anchorRect.height)") &&
+               sessionSource.Contains("DrawCompactAnchorHeader") &&
+               sessionSource.Contains("GUILayoutUtility.GetRect(1f, 22f") &&
+               sessionSource.Contains("16f, 16f") &&
+               !sessionSource.Contains("new GUIContent(\" Selected anchor\", DecorationEditorIconCatalog.Get(\"anchor\"))") &&
+               sessionSource.Contains("const float countHeight = 18f") &&
+               sessionSource.Contains("Rect countRect") &&
+               sessionSource.Contains("GUI.Label(countRect, MeshCountText(rows.Count)") &&
+               sessionSource.Contains("total meshes") &&
+               sessionSource.Contains("search: ") &&
+               sessionSource.Contains("InspectorPanelButton") &&
+               sessionSource.Contains("AnchorPanelButton") &&
+               sessionSource.Contains("Rect listRect") &&
+               sessionSource.Contains("Rect detailsRect") &&
+               sessionSource.Contains("GUI.BeginGroup(listRect)") &&
+               sessionSource.Contains("alwaysShowHorizontal: false") &&
+               sessionSource.Contains("CompactText") &&
+                sessionSource.Contains("480f, 1050f") &&
+                sessionSource.Contains("const float topLimit = 44f") &&
+                sessionSource.Contains("1170f") &&
+               !themeSource.Contains("DecorationEditorPaletteTab") &&
+               !sessionSource.Contains("PaletteDetailTab") &&
+               !sessionSource.Contains("DecorationEditorPaletteTab.Anchor") &&
+               !sessionSource.Contains("DecorationEditorBottomTab") &&
+               sessionSource.Contains("PanelToggle(\"mesh\"") &&
+               sessionSource.Contains("PanelToggle(\"outliner\"") &&
+               !sessionSource.Contains("PanelToggle(\"settings\"") &&
+               !sessionSource.Contains("PanelToggle(\"anchor\""),
+            "Decoration Edit Mode renders the native shell with compact toolbar, outliner plus right-panel anchor details, taller Inspector-only mesh palette, bottom status strip, and panel toggles.");
+
+        Assert(!sessionSource.Contains("Mesh/Add") &&
+               !sessionSource.Contains("Add here") &&
+               !sessionSource.Contains("Add deco here") &&
+               !sessionSource.Contains("AddDecorationHere") &&
+               !sessionSource.Contains("DrawSelectionControls") &&
+               !sessionSource.Contains("ToolButton(DecorationEditorTool.Mesh"),
+            "Decoration Edit Mode removed the dedicated Mesh/Add toolbar button and Add Here button; mesh placement starts from palette selection.");
+
+        Assert(sessionSource.Contains("DrawViewModeMenu") &&
+               sessionSource.Contains("DrawAnchorMenu(toolbarRect)") &&
+               sessionSource.Contains("SelectViewMode") &&
+               sessionSource.Contains("toolbarRect.xMax - width") &&
+               sessionSource.Contains("private static bool s_anchorMenuOpen") &&
+               sessionSource.Contains("private bool _anchorMenuOpen = s_anchorMenuOpen") &&
+               sessionSource.Contains("s_anchorMenuOpen = _anchorMenuOpen") &&
+               toolButtonSource.Contains("_anchorMenuOpen = !_anchorMenuOpen") &&
+               toolButtonSource.Contains("else\n                {\n                    _tool = tool;\n                }") &&
+               !toolButtonSource.Contains("_anchorMenuOpen = false") &&
+               !sessionSourceNormalized.Contains("_viewModeMenuOpen = false;\n            ApplyEditorViewMode();") &&
+               sessionSource.Contains("DecorationEditorViewMode.Mixed") &&
+               sessionSource.Contains("DecorationEditorViewMode.Wireframe") &&
+               sessionSource.Contains("DecorationEditorViewMode.DecorationOnly") &&
+               sessionSource.Contains("DecorationEditorViewMode.Mass") &&
+               sessionSource.Contains("DecorationEditorViewMode.Drag") &&
+               sessionSource.Contains("DecorationEditorViewMode.Cost") &&
+               sessionSource.Contains("DecorationEditorViewMode.Surface") &&
+               sessionSource.Contains("DecorationEditorViewMode.Important") &&
+               viewControllerSource.Contains("RunMimicView") &&
+               viewControllerSource.Contains("ShowForceVisualisations") &&
+               viewControllerSource.Contains("SetSpecialView") &&
+               viewControllerSource.Contains("SpecialBuildView.Weight") &&
+               viewControllerSource.Contains("SpecialBuildView.Mimic"),
+            "Decoration Edit Mode supports ESU/native view modes for mixed, wireframe, deco-only, mass, drag, cost, surface, important, and normal editing.");
+
+        Assert(!sessionSource.Contains("MaxSearchRows") &&
+               !sessionSource.Contains("Showing first 70") &&
+               sessionSource.Contains("MeshPreviewGridRowHeight = 90f") &&
+               sessionSource.Contains("MeshPreviewGridColumns = 4") &&
+               sessionSource.Contains("MeshPreviewGridCardWidth = 112f") &&
+               sessionSource.Contains("MeshPreviewGridCardHeight = 86f") &&
+               sessionSource.Contains("CompactText(entry.Name, 18)") &&
+               sessionSource.Contains("DrawMeshListRows(rows, listRect.height, mouseInListViewport)") &&
+               sessionSource.Contains("DrawMeshPreviewGrid(rows, listRect.height, mouseInListViewport)") &&
+               sessionSource.Contains("MaxMeshGridPreviewRendersPerFrame") &&
+               sessionSource.Contains("Mathf.CeilToInt((_meshScroll.y + viewportHeight) / MeshPreviewGridRowHeight)") &&
+               sessionSource.Contains("EventType.Repaint") &&
+               sessionSource.Contains("GetCachedPreview(entry, MeshPreviewGridTexturePixels)") &&
+               previewSource.Contains("GetCachedPreview") &&
+               !sessionSource.Contains("FloorToInt(_meshScroll.y / MeshPreviewGridRowHeight) - 2") &&
+               !sessionSource.Contains("visibleRows = Mathf.CeilToInt(viewportHeight / MeshPreviewGridRowHeight) + 4"),
+            "Decoration Edit Mode mesh palette virtualizes the full filtered mesh catalog and lazily renders only visible 4-column 3D grid thumbnails.");
+
+        Assert(sessionSource.Contains("DrawMeshPreviewCard") &&
+               previewSource.Contains("RenderTexture") &&
+               previewSource.Contains("TryGetUnityMesh") &&
+               previewSource.Contains("BuildGeneratedMesh") &&
+               previewSource.Contains("SafeMeshBase") &&
+               sessionSource.Contains("_hoveredMesh = null") &&
+               sessionSource.Contains("bool mouseInListViewport = listRect.Contains(Event.current.mousePosition)") &&
+               sessionSource.Contains("mouseInListViewport && row.Contains(Event.current.mousePosition)") &&
+               sessionSource.Contains("mouseInListViewport && card.Contains(Event.current.mousePosition)") &&
+               !sessionSource.Contains("DrawHoveredMeshPreview") &&
+               !sessionSource.Contains("DrawPaletteDetails(detailsHeight)") &&
+               !sessionSource.Contains("PaletteDetailTab") &&
+               !sessionSource.Contains("BeginScrollView(_inspectorScroll, GUILayout.Height"),
+            "Decoration Edit Mode uses a clipped foreground RenderTexture mesh preview path and keeps Inspector details out of mesh-row hover hit testing.");
+
+        Assert(sessionSource.Contains("StartMeshPlacement") &&
+               sessionSource.Contains("PlaceSelectedMeshAtPointer") &&
+               sessionSource.Contains("DrawPlacementGhost") &&
+               sessionSource.Contains("UpdatePlacementGhost") &&
+               sessionSource.Contains("new GameObject(\"ESU Decoration Placement Ghost\")") &&
+               sessionSource.Contains("ShadowCastingMode.Off") &&
+               sessionSource.Contains("DestroyPlacementGhost") &&
+               previewSource.Contains("internal Mesh GetMesh") &&
+               !sessionSource.Contains("GetHoveredBlockPosition") &&
+               pointerProbeSource.Contains("ScreenPointToRay") &&
+               pointerProbeSource.Contains("Physics.Raycast") &&
+               pointerProbeSource.Contains("GetBlockViaLocalPosition"),
+            "Decoration Edit Mode supports KSP-style mouse-ray mesh placement with a runtime mesh ghost anchored to the pointed craft block, not the build cursor.");
+
+        Assert(sessionSource.Contains("TryPickAnchorHandle") &&
+               sessionSource.Contains("TryUpdateAnchorDrag") &&
+               sessionSource.Contains("TryPreviewAnchorShift") &&
+               sessionSource.Contains("ApplyAnchorShift") &&
+               sessionSource.Contains("TryAutoFollowAnchor") &&
+               sessionSource.Contains("TryFindAnchorFollowTarget") &&
+               sessionSource.Contains("AnchorFollowMinimumDistance") &&
+               sessionSource.Contains("AnchorFollowMaximumSearchRadius") &&
+               sessionSource.Contains("Follow: on") &&
+               sessionSource.Contains("Anchor follow range") &&
+               sessionSource.Contains("DrawAnchorGizmo") &&
+               sessionSource.Contains("DrawBlockWireframe") &&
+               sessionSource.Contains("oldCenter - ToVector3(newTether)") &&
+               sessionSource.Contains("GetBlockViaLocalPosition"),
+            "Decoration Edit Mode has a viewport anchor gizmo and optional anchor-follow retethering that snap to real tether blocks while preserving visual position.");
+
+        Assert(sessionSource.Contains("ToolButton(DecorationEditorTool.Move") &&
+               sessionSource.IndexOf("ToolButton(DecorationEditorTool.Move", StringComparison.Ordinal) <
+               sessionSource.IndexOf("ToolButton(DecorationEditorTool.Rotate", StringComparison.Ordinal) &&
+               sessionSource.IndexOf("ToolButton(DecorationEditorTool.Rotate", StringComparison.Ordinal) <
+               sessionSource.IndexOf("ToolButton(DecorationEditorTool.Scale", StringComparison.Ordinal) &&
+               sessionSource.Contains("OrientationToggleButton") &&
+               sessionSource.Contains("DecorationTransformOrientation") &&
+               sessionSource.Contains("s_transformOrientation") &&
+               sessionSource.Contains("ActiveTransformAxisVector") &&
+               sessionSource.Contains("_rotateStartQuaternion * Quaternion.AngleAxis") &&
+               sessionSource.Contains("TryUpdateRotate") &&
+               sessionSource.Contains("CommitRotateEdit") &&
+               sessionSource.Contains("DrawRotateGizmo") &&
+               sessionSource.Contains("TryUpdateScale") &&
+               sessionSource.Contains("CommitScaleEdit") &&
+               sessionSource.Contains("DrawScaleGizmo"),
+            "Decoration Edit Mode implements move, rotate, and scale toolbar tools in Blender-style transform order.");
+
+        Assert(sessionSource.Contains("DecorationEditAxis.Free") &&
+               sessionSource.Contains("TryPickMoveHandle") &&
+               sessionSource.Contains("PrepareFreeDragFrame") &&
+               sessionSource.Contains("_freeDragCameraRight") &&
+               sessionSource.Contains("_freeDragMetresPerPixel") &&
+               sessionSource.Contains("TryPickRotateRing") &&
+               sessionSource.Contains("DistanceToSegment(mouse, previous, projected)") &&
+               sessionSource.Contains("Vector2.SignedAngle"),
+            "Decoration Edit Mode keeps XYZ move vectors while adding center freeform movement and projected-ring rotate picking.");
+
+        Assert(sessionSource.Contains("_showTetherPins") &&
+               sessionSource.Contains("_collapsedConstructs") &&
+               sessionSource.Contains("ToggleConstructCollapse") &&
+               sessionSource.Contains("ForDecoration(") &&
+               sessionSource.Contains("depth)") &&
+               sessionSource.Contains("DrawAnchorContext") &&
+               sessionSource.Contains("DrawAnchorContext(anchorRect.height)") &&
+               sessionSource.Contains("SelectedAnchorDecorations") &&
+               sessionSource.Contains("DrawSelectedAnchorConnections") &&
+               sessionSource.Contains("_tool != DecorationEditorTool.Anchor"),
+            "Decoration Edit Mode outliner defaults to construct-grouped decoration rows with optional tether pins, collapsible constructs, right-panel selected-anchor context, anchor connection lines, and anchor-mode click selection.");
+
+        Assert(historySource.Contains("DecorationEditHistory") &&
+               historySource.Contains("DecorationSnapshotCommand") &&
+               historySource.Contains("DecorationCreateCommand") &&
+               transactionSource.Contains("DecorationEditTransactionSet") &&
+               transactionSource.Contains("MarkCreated") &&
+               transactionSource.Contains("TrackEdit") &&
+               sessionSource.Contains("UndoEdit") &&
+               sessionSource.Contains("RedoEdit") &&
+               sessionSource.Contains("Ctrl+Shift+Z") &&
+               historySource.Contains("IDecorationEditCommand command = _undo.Peek();") &&
+               historySource.Contains("IDecorationEditCommand command = _redo.Peek();") &&
+               historySourceNormalized.Contains("if (!command.Undo(session))\n                return false;\n\n            _undo.Pop();") &&
+               historySourceNormalized.Contains("if (!command.Redo(session))\n                return false;\n\n            _redo.Pop();"),
+            "Decoration Edit Mode has session-scoped undo/redo history, preserves failed history entries, and transaction rollback for snapshots and created decorations.");
+
+        Assert(sessionSource.Contains("HashSet<Decoration> _selection") &&
+                sessionSource.Contains("MaxOutlinerDrawRows") &&
+                sessionSource.Contains("DecorationOutlinerRowKind") &&
+                sessionSource.Contains("GroupBy(decoration => FormatTether") &&
+                !sessionSource.Contains("before changing selection"),
+            "Decoration Edit Mode stores selection in a future-multi-select shape, builds a virtualized outliner, and allows selection changes while dirty.");
+
+        Assert(sessionSource.Contains("SerializationForecastCalculator.Calculate") &&
+               sessionSource.Contains("FlexibleFloatParser.TryParse") &&
+               sessionSource.Contains("Mathf.Clamp(color, 0, 31)") &&
+               sessionSource.Contains("ApplyScaleFromInspector") &&
+               sessionSource.Contains("BuildMaterialCatalog") &&
+               sessionSource.Contains("SetSelectedMaterial") &&
+               sessionSource.Contains("MaterialOverrideButtonLabel") &&
+               sessionSource.Contains("MaterialCountText(materials.Count)") &&
+               sessionSource.Contains("total materials") &&
+               sessionSource.Contains("\"Material override: \" + CompactText(MaterialDisplayName(materialOverride), 46)") &&
+               sessionSource.Contains("hasMaterialOverride") &&
+               sessionSourceNormalized.Contains("GUILayout.Label(\n                    MaterialOverrideButtonLabel(materialOverride)") &&
+               sessionSourceNormalized.Contains("GUILayout.Button(\n                    \"Clear\"") &&
+               sessionSource.Contains("DrawBottomTransformEditors") &&
+               sessionSource.Contains("DrawBottomVectorEditor") &&
+               sessionSource.Contains("DrawBottomVectorComponent") &&
+               sessionSource.Contains("Mode: Deco | Tab to Build when clean") &&
+               sessionSource.Contains("GUILayout.Label(\"Mode: Deco | Tab to Build when clean\", DecorationEditorTheme.Body)") &&
+               sessionSource.Contains("const float width = 386f") &&
+               sessionSource.Contains("const float fieldWidth = 72f") &&
+               sessionSource.Contains("float x = row.xMax - totalWidth") &&
+               sessionSource.Contains("RefreshLiveTransformFields") &&
+               sessionSourceNormalized.Contains("HandleSceneInput();\n            RefreshLiveTransformFields();") &&
+               sessionSource.Contains("Mathf.Clamp(Screen.height * 0.105f, 88f, 112f)") &&
+               !inspectorSource.Contains("DrawVectorEditor(\"Position\"") &&
+               !inspectorSource.Contains("DrawVectorEditor(\"Rotation\"") &&
+               !inspectorSource.Contains("DrawVectorEditor(\"Scale\"") &&
+               sessionSource.Contains("Paint color") &&
+               sessionSource.IndexOf("DrawColorEditor()", StringComparison.Ordinal) <
+               sessionSource.IndexOf("LabelRow(\"Owner\"", StringComparison.Ordinal) &&
+               sessionSource.IndexOf("DrawMaterialEditor()", StringComparison.Ordinal) <
+               sessionSource.IndexOf("LabelRow(\"Owner\"", StringComparison.Ordinal) &&
+               sessionSourceNormalized.IndexOf("\"Position\",\n                _positionText", StringComparison.Ordinal) <
+               sessionSourceNormalized.IndexOf("\"Rotation\",\n                _orientationText", StringComparison.Ordinal) &&
+               sessionSourceNormalized.IndexOf("\"Rotation\",\n                _orientationText", StringComparison.Ordinal) <
+               sessionSourceNormalized.IndexOf("\"Scale\",\n                _scaleText", StringComparison.Ordinal),
+            "Decoration Edit Mode inspector uses color/material controls, while the bottom panel hosts live Position/Rotation/Scale transform editing.");
+
+        Assert(!sessionSource.Contains("color = Color.white;") &&
+               !sessionSource.Contains("VectorLines.i.Current") &&
+               overlaySource.Contains("Hidden/Internal-Colored") &&
+               overlaySource.Contains("CompareFunction.Always") &&
+               overlaySource.Contains("\"_ZWrite\", 0") &&
+               overlaySource.Contains("GL.QUADS") &&
+               overlaySource.Contains("ScreenToWorldPoint") &&
+               sessionSource.Contains("float width = _dragAxis == axis ? 4.5f : 3f") &&
+               sessionSource.Contains("float width = _anchorDragAxis == axis && _anchorDragSign == sign ? 4f : 2.5f"),
+            "Decoration Edit Mode transform and anchor axes use ESU unlit overlay drawing with stable RGB hues across native view modes.");
+
+        Assert(inputScopeSource.Contains("TipDisplayer") &&
+               inputScopeSource.Contains("SetTip") &&
+               inputScopeSource.Contains("!DecorationEditorInputScope.Active &&") &&
+               inputScopeSource.Contains("!SmartBuildInputScope.Active") &&
+               inputScopeSource.Contains("InfoStore") &&
+               inputScopeSource.Contains("Colored with paint"),
+            "ESU modal build tools suppress hovered-block paint/tool tips while active.");
+        Assert(technicalLogSource.Contains("EsuBuildModeInputGate") &&
+               technicalLogSource.Contains("Ctrl+Shift+B") &&
+               inGameTestPlanSource.Contains("Ctrl+Shift+B") &&
+               inGameTestPlanSource.Contains("remains open after the first frame"),
+            "Smart Builder/build-mode input-gate fix is documented and covered by in-game smoke tests.");
+
+        string inputStateSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuInputState.cs"));
+        Assert(!registrationSource.Contains("ChatGUI.Instance") &&
+               !inputStateSource.Contains("ChatGUI.Instance") &&
+               inputStateSource.Contains("AccessTools.Field(typeof(ChatGUI), \"_instance\")"),
+            "ESU hotkey guards inspect an existing ChatGUI instance without constructing ChatGUI/FtdKeyMap during boot.");
+
+        Assert(serializationHudSource.Contains("DecorationEditorIconCatalog.GetRuntimeIcon(icon)") &&
+               serializationHudSource.Contains("\"count\"") &&
+               serializationHudSource.Contains("\"mesh\"") &&
+               serializationHudSource.Contains("\"risk\""),
+            "Serialization HUD rows use runtime icons outside Decoration Edit Mode without generated fallback tiles.");
+
+        string nativeUiDoc = File.ReadAllText(Path.Combine(
+            root,
+            "docs",
+            "DECORATION_EDITOR_NATIVE_UI.md"));
+        Assert(nativeUiDoc.Contains("StreamingAssets/Mods/UI/Ui Elements") &&
+               nativeUiDoc.Contains("editButton") &&
+               nativeUiDoc.Contains("ESU-owned fallback icons") &&
+               nativeUiDoc.Contains("does not package copied FTD texture files"),
+            "Decoration Edit Mode native UI and FTD icon catalog are documented.");
+
+        string[] copiedTextureExtensions = { ".png", ".jpg", ".jpeg", ".texture", ".uielements" };
+        bool copiedIconAsset = Directory
+            .EnumerateFiles(Path.Combine(root, "EndlessShapesUnlimited"), "*", SearchOption.AllDirectories)
+            .Any(path => copiedTextureExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase));
+        Assert(!copiedIconAsset,
+            "Decoration Edit Mode packages no copied FTD icon texture or UI-element assets.");
+    }
+
+    private static void VerifySmartBlockBuilder()
+    {
+        var line = new SmartBuildVolume(
+            construct: null,
+            origin: new Vector3i(0, 0, 0),
+            axisU: SmartBuildAxis.X,
+            axisV: SmartBuildAxis.Y,
+            axisN: SmartBuildAxis.Z,
+            lengthU: 10,
+            lengthV: 1,
+            thickness: 1);
+        SmartBuildPlan beamLine = SmartBuildPlanner.BuildPlan(
+            line,
+            SmartBlockFamily.ForTests(1, 2, 3, 4),
+            _ => false);
+        Assert(beamLine.CanCommit &&
+               beamLine.Placements.Select(placement => placement.Length)
+                   .SequenceEqual(new[] { 4, 4, 2 }),
+            "Smart Block Builder packs a 10-cell beam line as 4+4+2 when legal variants exist.");
+
+        var sheet = new SmartBuildVolume(
+            construct: null,
+            origin: new Vector3i(0, 0, 0),
+            axisU: SmartBuildAxis.X,
+            axisV: SmartBuildAxis.Y,
+            axisN: SmartBuildAxis.Z,
+            lengthU: 10,
+            lengthV: 5,
+            thickness: 1);
+        SmartBuildPlan sheetPlan = SmartBuildPlanner.BuildPlan(
+            sheet,
+            SmartBlockFamily.ForTests(1, 2, 3, 4),
+            _ => false);
+        Vector3i[] covered = sheetPlan.Placements
+            .SelectMany(placement => placement.CoveredCells())
+            .ToArray();
+        Assert(sheetPlan.CanCommit &&
+               sheetPlan.CoveredCellCount == 50 &&
+               covered.Distinct().Count() == 50,
+            "Smart Block Builder covers a 10x5 sheet exactly once per target cell.");
+
+        SmartBuildPlan singles = SmartBuildPlanner.BuildPlan(
+            line,
+            SmartBlockFamily.ForTests(1),
+            _ => false);
+        Assert(singles.CanCommit && singles.Placements.Count == 10 &&
+               singles.Placements.All(placement => placement.Length == 1),
+            "Smart Block Builder falls back to repeated 1x1x1 placements when no variants exist.");
+
+        SmartBuildPlan unsupported = SmartBuildPlanner.BuildPlan(
+            line,
+            SmartBlockFamily.Unsupported("unsupported test item", "unsupported multi-cell seed"),
+            _ => false);
+        Assert(!unsupported.CanCommit &&
+               unsupported.FailureReason.Contains("unsupported multi-cell seed"),
+            "Smart Block Builder refuses unsupported multi-cell selected items with a clear reason.");
+
+        Vector3i occupiedCell = new Vector3i(2, 0, 0);
+        SmartBuildPlan blocked = SmartBuildPlanner.BuildPlan(
+            line,
+            SmartBlockFamily.ForTests(1),
+            cell => cell.Equals(occupiedCell));
+        SmartBuildPlan skipped = SmartBuildPlanner.BuildPlan(
+            line,
+            SmartBlockFamily.ForTests(1),
+            cell => cell.Equals(occupiedCell),
+            new SmartBuildPlannerOptions
+            {
+                SkipOccupiedCells = true
+            });
+        Assert(!blocked.CanCommit &&
+               skipped.CanCommit &&
+               skipped.SkippedCells.Count == 1 &&
+               skipped.CoveredCellCount == 9,
+            "Smart Block Builder can either fail on occupied cells or skip them according to planner options.");
+
+        SmartBuildDraft draft = SmartBuildDraft.CreateSeed(
+            construct: null,
+            origin: new Vector3i(3, 4, 5),
+            drawPlane: SmartBuildDrawPlane.Camera);
+        SmartBuildVolume seedVolume = draft.ToVolume();
+        Assert(seedVolume.Origin.Equals(new Vector3i(3, 4, 5)) &&
+               seedVolume.CellCount == 1 &&
+               seedVolume.AxisU == SmartBuildAxis.X &&
+               seedVolume.AxisV == SmartBuildAxis.Y &&
+               seedVolume.AxisN == SmartBuildAxis.Z,
+            "Smart Block Builder can create a 1x1x1 runtime draft without an existing block-face drag.");
+
+        draft.MoveBy(new Vector3i(2, -1, 0));
+        draft.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 4);
+        draft.ResizeFromHandle(DecorationEditAxis.Y, sign: -1, delta: -2);
+        SmartBuildVolume editedVolume = draft.ToVolume();
+        Assert(editedVolume.Origin.Equals(new Vector3i(5, 1, 5)) &&
+               editedVolume.LengthU == 5 &&
+               editedVolume.LengthV == 3 &&
+               editedVolume.Thickness == 1,
+            "Smart Block Builder runtime drafts move and scale by whole focused-grid cells before commit.");
+
+        SmartBuildPlan overCap = SmartBuildPlanner.BuildPlan(
+            line,
+            SmartBlockFamily.ForTests(1),
+            _ => false,
+            new SmartBuildPlannerOptions
+            {
+                HardPlacementCap = 9
+            });
+        Assert(!overCap.CanCommit &&
+               overCap.FailureReason.Contains("hard cap"),
+            "Smart Block Builder blocks commits above the placement hard cap.");
+
+        ConstructorInfo placeBlockConstructor = AccessTools.Constructor(
+            typeof(PlaceBlockCommand),
+            new[]
+            {
+                typeof(AllConstruct),
+                typeof(Vector3i),
+                typeof(Quaternion),
+                typeof(ItemDefinition),
+                typeof(int),
+                typeof(MirrorInfo)
+            });
+        PropertyInfo buildingWith = typeof(cBuild).GetProperty("BuildingWith");
+        PropertyInfo selectedItem = buildingWith?.PropertyType.GetProperty("Item");
+        Assert(placeBlockConstructor != null &&
+               buildingWith != null &&
+               selectedItem?.PropertyType == typeof(ItemDefinition),
+            "Smart Block Builder integration targets resolve: selected build item and PlaceBlockCommand constructor.");
+
+        string root = FindRepositoryRoot();
+        string profileSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudProfile.cs"));
+        string pluginSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
+        string registrationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildModeRegistration.cs"));
+        string behaviourSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildModeBehaviour.cs"));
+        string decorationBehaviourSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditModeBehaviour.cs"));
+        string buildModeInputGateSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuBuildModeInputGate.cs"));
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildSession.cs"));
+        string draftSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildDraft.cs"));
+        string smartInputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildInputScope.cs"));
+        string overlaySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorOverlay.cs"));
+        string selectionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildSelectionResolver.cs"));
+        string catalogSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBlockFamilyCatalog.cs"));
+        string committerSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildCommitter.cs"));
+        string inputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorInputScope.cs"));
+        string vanillaInputBridgeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuVanillaInputBridge.cs"));
+        string technicalLogSource = File.ReadAllText(Path.Combine(
+            root,
+            "TECHNICAL_LOG.md"));
+        string inGameTestPlanSource = File.ReadAllText(Path.Combine(
+            root,
+            "docs",
+            "IN_GAME_TEST_PLAN.md"));
+        Assert(profileSource.Contains("ToggleSmartBuildMode") &&
+               profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
+               profileSource.Contains("SwitchEsuBuildMode") &&
+               profileSource.Contains("Q(Key.Tab)") &&
+               pluginSource.Contains("SmartBuildModeRegistration.Register") &&
+               registrationSource.Contains("DecorationEditModeRegistration.Active") &&
+               registrationSource.Contains("CanOpenFromModeSwitch") &&
+               registrationSource.Contains("ignoreDecorationEditMode") &&
+               registrationSource.Contains("TrySwitchToDecorationEdit") &&
+               behaviourSource.Contains("ReadSwitchModeKeyDown") &&
+               behaviourSource.Contains("CanOpenFromModeSwitch") &&
+               behaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
+               behaviourSource.Contains("ConsumeSmartBuildToggleDown") &&
+               behaviourSource.Contains("ConsumeSwitchModeDown") &&
+               decorationBehaviourSource.Contains("ConsumeDecorationEditToggleDown") &&
+               decorationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
+               buildModeInputGateSource.Contains("_switchModeRequiresRelease") &&
+               buildModeInputGateSource.Contains("_decorationEditToggleRequiresRelease") &&
+               buildModeInputGateSource.Contains("_smartBuildToggleRequiresRelease") &&
+               buildModeInputGateSource.Contains("Time.frameCount") &&
+               buildModeInputGateSource.Contains("IsDecorationEditToggleDefaultHeld") &&
+               buildModeInputGateSource.Contains("IsSmartBuildToggleDefaultHeld"),
+            "Smart Block Builder registers at startup, defaults to Ctrl+Shift+B, rejects direct opens over Decoration Edit Mode, and shares one-press input gates for Tab/Ctrl+D/Ctrl+Shift+B handoffs.");
+        Assert(selectionSource.Contains("build.BuildingWith?.Item") &&
+               catalogSource.Contains("3cc75979-18ac-46c4-9a5b-25b327d99410") &&
+               catalogSource.Contains("ModificationComponentContainerItem") &&
+               committerSource.Contains("PlaceBlockCommand") &&
+               committerSource.Contains("MirrorInfo.none"),
+            "Smart Block Builder resolves the selected FTD block, knows Beamification armor families, and commits vanilla block commands.");
+        Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
+               inputScopeSource.Contains("!SmartBuildInputScope.Active") &&
+               vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
+               vanillaInputBridgeSource.Contains("KeyInputsFtd.Freeze") &&
+               pluginSource.Contains("ResolveBuildFreezeTarget"),
+            "Smart Block Builder shares the modal build input guard and ESU has a one-frame vanilla freeze fallback for Caps Lock while ESU owns the HUD.");
+        Assert(draftSource.Contains("SmartBuildDraft") &&
+               draftSource.Contains("SmartBuildDrawPlane") &&
+               draftSource.Contains("SmartBuildOccupancyMode") &&
+               sessionSource.Contains("TrySeedFromDrawPlane") &&
+               sessionSource.Contains("TrySeedFromPointedBlock") &&
+               sessionSource.Contains("CreatePreviewAtSeed") &&
+               sessionSource.Contains("CanPlaceDraftOrigin") &&
+               sessionSource.Contains("_tool = SmartBuildTool.Scale") &&
+               sessionSource.Contains("Smart Builder origin is occupied. Pick an empty cell.") &&
+               sessionSource.Contains("PlanTouchesExistingConstruct") &&
+               sessionSource.Contains("The Smart Builder preview must touch an existing block before Apply.") &&
+               committerSource.Contains("TryOrderPlacementsForCommit") &&
+               committerSource.Contains("PlacementTouchesConstructOrPlacedCells") &&
+               committerSource.Contains("remaining planned blocks are disconnected") &&
+               sessionSource.Contains("SmartBuildOccupancyMode.SkipOccupied") &&
+               sessionSource.Contains("Input.GetMouseButtonDown(2)") &&
+               !behaviourSource.Contains("AllGameControlsEnabled") &&
+               sessionSource.Contains("DecorationEditorTheme") &&
+               sessionSource.Contains("DecorationEditorOverlay.Quad") &&
+               overlaySource.Contains("OverlayQuad"),
+            "Smart Block Builder uses a runtime draft, rejects occupied draw origins, switches Draw to Scale, commits connected placements first, tolerates middle-mouse cursor input, and draws native-styled translucent voxel previews.");
+        Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
+               smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
+               smartInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&
+               smartInputScopeSource.Contains("SuppressCameraInput() =>") &&
+               !smartInputScopeSource.Contains("MouseOverUi ||") &&
+               !sessionSource.Contains("if (_draft != null)\r\n                SmartBuildInputScope.ClaimBuildInputForFrames") &&
+               sessionSource.Contains("ShouldConsumeGuiEvent(Event.current)") &&
+               sessionSource.Contains("SwitchToDecorationEditRequested") &&
+               sessionSource.Contains("CanSwitchToDecorationEdit"),
+            "Smart Block Builder leaves camera/WASD live while idle and only suppresses camera input for handle drags or panel scrolls.");
+        Assert(technicalLogSource.Contains("SmartBuildDraft") &&
+               technicalLogSource.Contains("Middle mouse may") &&
+               technicalLogSource.Contains("show the FTD cursor without closing Smart Builder") &&
+               inGameTestPlanSource.Contains("click empty space") &&
+               inGameTestPlanSource.Contains("middle mouse shows the FTD cursor without closing"),
+            "Smart Block Builder editable-preview workflow is documented for implementation notes and in-game smoke testing.");
+        Assert(!registrationSource.Contains("ChatGUI.Instance"),
+            "Smart Block Builder hotkey/open guards do not construct ChatGUI during boot.");
+    }
+
+    private static void VerifyBeamificationBundle()
+    {
+        string root = FindRepositoryRoot();
+        string beamification = Path.Combine(root, "tools", "Beamification");
+        string licensePath = Path.Combine(root, "LICENSES", "FtD_Beamification-MIT.txt");
+        string mainPath = Path.Combine(beamification, "__main__.py");
+        string technicalDoc = Path.Combine(root, "docs", "BEAMIFICATION_TECHNICAL.md");
+
+        Assert(File.Exists(mainPath) &&
+               File.Exists(Path.Combine(beamification, "requirements.txt")) &&
+               File.Exists(Path.Combine(beamification, "src", "beamification.py")) &&
+               File.Exists(Path.Combine(beamification, "src", "blueprint.py")) &&
+               File.Exists(Path.Combine(beamification, "src", "s_field.py")) &&
+               File.Exists(Path.Combine(beamification, "src", "make_result.py")),
+            "FtD Beamification source files are bundled as optional tools.");
+
+        string license = File.ReadAllText(licensePath);
+        Assert(license.Contains("MIT License") &&
+               license.Contains("Copyright (c) 2025 Delta Epsilon"),
+            "Delta Epsilon's FtD Beamification MIT notice is retained.");
+
+        string main = File.ReadAllText(mainPath);
+        string readme = File.ReadAllText(Path.Combine(beamification, "README.md"));
+        string build = File.ReadAllText(Path.Combine(root, "build.ps1"));
+        Assert(main.Contains("debeamify = args.procedure == \"debeamify\"") &&
+               readme.Contains("a0aaa63010c460563909cc8eb73f2c0aac2bf5ea") &&
+               readme.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787"),
+            "The bundled Beamification copy documents provenance and keeps ESU's CLI debeamify fix.");
+        Assert(build.Contains("tools\\Beamification") &&
+               build.Contains("'Tools'"),
+            "Release packaging includes the Beamification tool folder.");
+
+        string rootNotice = File.ReadAllText(Path.Combine(root, "THIRD_PARTY_NOTICES.md"));
+        string packageNotice = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "THIRD_PARTY_NOTICES.md"));
+        string doc = File.ReadAllText(technicalDoc);
+        Assert(rootNotice.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787") &&
+               packageNotice.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787") &&
+               rootNotice.Contains("Wengh / Weng Haoyu") &&
+               packageNotice.Contains("Wengh / Weng Haoyu") &&
+               rootNotice.Contains("BuildingTools source files") &&
+               packageNotice.Contains("BuildingTools source files") &&
+               doc.Contains("mixed-integer") &&
+               doc.Contains("Tools/Beamification"),
+            "Beamification credits, BuildingTools reference attribution, and technical documentation are present.");
+    }
+
+    private static string GetSingleStringLiteral(MethodInfo method)
+    {
+        byte[] body = method?.GetMethodBody()?.GetILAsByteArray();
+        if (body == null || body.Length < 5 || body[0] != 0x72)
+            return null;
+        int token = BitConverter.ToInt32(body, 1);
+        return method.Module.ResolveString(token);
+    }
+
     private static void VerifyPackageIdentityAndAssets()
     {
         string root = FindRepositoryRoot();
@@ -1288,6 +2732,32 @@ f 0 2 3
         return saver;
     }
 
+    private static byte[] SerialiseFixture(
+        uint headerCount,
+        uint dataBytes,
+        ulong objectId,
+        byte objectIdBytes)
+    {
+        SuperSaver saver = NewSaver(headerCount, dataBytes);
+        if (headerCount > 0U)
+            ByteConversion.ConvertIn(saver.Header, 0U, 3, 123U);
+        int bytesToWrite = checked((int)dataBytes);
+        for (int i = 0; i < bytesToWrite; i++)
+            saver.DataSorted[i] = (byte)(i + 1);
+
+        SuperSerialisationLayout layout =
+            SuperSerialisationLayout.Create(headerCount, dataBytes, objectIdBytes);
+        var bytes = new byte[layout.TotalBytes];
+        uint cursor = 0U;
+        saver.Serialise(bytes, ref cursor, objectId, objectIdBytes);
+        if (cursor != (uint)bytes.Length)
+            throw new InvalidOperationException("Fixture serializer did not fill the expected byte count.");
+        return bytes;
+    }
+
+    private static Blueprint NewBlueprintForUsageTest() =>
+        (Blueprint)FormatterServices.GetUninitializedObject(typeof(Blueprint));
+
     private static void SetHeaderCount(SuperSaver saver, uint value) =>
         _headerCountProperty.SetValue(saver, value, null);
 
@@ -1305,6 +2775,56 @@ f 0 2 3
         }
 
         throw new InvalidOperationException("Expected " + typeof(TException).Name + ": " + description);
+    }
+
+    private static string ExtractMethodSource(string source, string methodName)
+    {
+        string needle = " " + methodName + "(";
+        int signature = -1;
+        int search = 0;
+        while (search < source.Length)
+        {
+            int candidate = source.IndexOf(needle, search, StringComparison.Ordinal);
+            if (candidate < 0)
+                break;
+
+            int lineStart = source.LastIndexOf('\n', Math.Max(0, candidate - 1));
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+            string prefix = source.Substring(lineStart, candidate - lineStart);
+            if (prefix.Contains("private ") ||
+                prefix.Contains("internal ") ||
+                prefix.Contains("public ") ||
+                prefix.Contains("protected "))
+            {
+                signature = candidate;
+                break;
+            }
+
+            search = candidate + needle.Length;
+        }
+
+        if (signature < 0)
+            return string.Empty;
+
+        int open = source.IndexOf('{', signature);
+        if (open < 0)
+            return string.Empty;
+
+        int depth = 0;
+        for (int index = open; index < source.Length; index++)
+        {
+            char current = source[index];
+            if (current == '{')
+                depth++;
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                    return source.Substring(signature, index - signature + 1);
+            }
+        }
+
+        return source.Substring(signature);
     }
 
     private static void Assert(bool condition, string description)

@@ -1,0 +1,314 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using BrilliantSkies.Core.Types;
+using BrilliantSkies.Ftd.Avatar.Build;
+using BrilliantSkies.Modding.Types;
+using UnityEngine;
+
+namespace DecoLimitLifter.SmartBuildMode
+{
+    internal sealed class SmartBlockCandidate
+    {
+        internal SmartBlockCandidate(
+            string displayName,
+            int length,
+            ItemDefinition definition)
+        {
+            DisplayName = string.IsNullOrWhiteSpace(displayName)
+                ? "Selected block"
+                : displayName;
+            Length = Math.Max(1, length);
+            Definition = definition;
+        }
+
+        internal string DisplayName { get; }
+
+        internal int Length { get; }
+
+        internal ItemDefinition Definition { get; }
+
+        internal static SmartBlockCandidate ForTests(int length) =>
+            new SmartBlockCandidate(length + "m test block", length, null);
+    }
+
+    internal sealed class SmartBlockFamily
+    {
+        internal SmartBlockFamily(
+            string displayName,
+            IEnumerable<SmartBlockCandidate> candidates,
+            string unsupportedReason = null)
+        {
+            DisplayName = displayName ?? "Selected block";
+            Candidates = candidates?
+                .Where(candidate => candidate != null)
+                .OrderByDescending(candidate => candidate.Length)
+                .ToArray() ?? Array.Empty<SmartBlockCandidate>();
+            UnsupportedReason = unsupportedReason;
+        }
+
+        internal string DisplayName { get; }
+
+        internal IReadOnlyList<SmartBlockCandidate> Candidates { get; }
+
+        internal string UnsupportedReason { get; }
+
+        internal bool IsSupported => Candidates.Count > 0 && string.IsNullOrWhiteSpace(UnsupportedReason);
+
+        internal bool HasSingleCell => Candidates.Any(candidate => candidate.Length == 1);
+
+        internal static SmartBlockFamily ForTests(params int[] lengths) =>
+            new SmartBlockFamily(
+                "test family",
+                lengths.Select(SmartBlockCandidate.ForTests));
+
+        internal static SmartBlockFamily Unsupported(string displayName, string reason) =>
+            new SmartBlockFamily(displayName, Array.Empty<SmartBlockCandidate>(), reason);
+    }
+
+    internal sealed class SmartBuildPlannerOptions
+    {
+        internal bool SkipOccupiedCells { get; set; }
+
+        internal int WarningPlacementCap { get; set; } = 1_000;
+
+        internal int HardPlacementCap { get; set; } = 10_000;
+    }
+
+    internal sealed class SmartBuildPlacement
+    {
+        internal SmartBuildPlacement(
+            Vector3i position,
+            SmartBlockCandidate candidate,
+            SmartBuildAxis axis)
+        {
+            Position = position;
+            Candidate = candidate;
+            Axis = axis;
+            Rotation = RotationForAxis(axis);
+        }
+
+        internal Vector3i Position { get; }
+
+        internal SmartBlockCandidate Candidate { get; }
+
+        internal SmartBuildAxis Axis { get; }
+
+        internal Quaternion Rotation { get; }
+
+        internal int Length => Candidate.Length;
+
+        private static Quaternion RotationForAxis(SmartBuildAxis axis)
+        {
+            const float halfSqrt = 0.70710678118f;
+            switch (axis)
+            {
+                case SmartBuildAxis.X:
+                    return new Quaternion(0f, halfSqrt, 0f, halfSqrt);
+                case SmartBuildAxis.Y:
+                    return new Quaternion(-halfSqrt, 0f, 0f, halfSqrt);
+                default:
+                    return new Quaternion(0f, 0f, 0f, 1f);
+            }
+        }
+
+        internal IEnumerable<Vector3i> CoveredCells()
+        {
+            for (int index = 0; index < Length; index++)
+                yield return Position + SmartBuildAxisHelper.ToVector3i(Axis, index);
+        }
+    }
+
+    internal sealed class SmartBuildPlan
+    {
+        internal SmartBuildPlan(
+            SmartBuildVolume volume,
+            IReadOnlyList<SmartBuildPlacement> placements,
+            IReadOnlyList<Vector3i> skippedCells,
+            IReadOnlyList<string> warnings,
+            bool canCommit,
+            string failureReason)
+        {
+            Volume = volume;
+            Placements = placements ?? Array.Empty<SmartBuildPlacement>();
+            SkippedCells = skippedCells ?? Array.Empty<Vector3i>();
+            Warnings = warnings ?? Array.Empty<string>();
+            CanCommit = canCommit;
+            FailureReason = failureReason;
+        }
+
+        internal SmartBuildVolume Volume { get; }
+
+        internal IReadOnlyList<SmartBuildPlacement> Placements { get; }
+
+        internal IReadOnlyList<Vector3i> SkippedCells { get; }
+
+        internal IReadOnlyList<string> Warnings { get; }
+
+        internal bool CanCommit { get; }
+
+        internal string FailureReason { get; }
+
+        internal int EstimatedBlockCount => Placements.Count;
+
+        internal int CoveredCellCount => Placements.Sum(placement => placement.Length);
+
+        internal static SmartBuildPlan Failed(
+            SmartBuildVolume volume,
+            string reason,
+            IEnumerable<Vector3i> skippedCells = null,
+            IEnumerable<string> warnings = null) =>
+            new SmartBuildPlan(
+                volume,
+                Array.Empty<SmartBuildPlacement>(),
+                (skippedCells ?? Array.Empty<Vector3i>()).ToArray(),
+                (warnings ?? Array.Empty<string>()).ToArray(),
+                canCommit: false,
+                failureReason: reason);
+    }
+
+    internal static class SmartBuildPlanner
+    {
+        internal static SmartBuildPlan BuildPlan(
+            SmartBuildVolume volume,
+            SmartBlockFamily family,
+            Func<Vector3i, bool> isOccupied,
+            SmartBuildPlannerOptions options = null)
+        {
+            options ??= new SmartBuildPlannerOptions();
+            if (volume == null)
+                return SmartBuildPlan.Failed(null, "No preview volume is active.");
+            if (family == null || !family.IsSupported)
+                return SmartBuildPlan.Failed(
+                    volume,
+                    family?.UnsupportedReason ?? "The selected item cannot be used by Smart Block Builder.");
+            if (!family.HasSingleCell)
+                return SmartBuildPlan.Failed(
+                    volume,
+                    "The selected family has no 1m fallback block.");
+
+            var target = new HashSet<Vector3i>();
+            var skipped = new List<Vector3i>();
+            foreach (Vector3i cell in volume.EnumerateCells())
+            {
+                if (isOccupied != null && isOccupied(cell))
+                {
+                    if (!options.SkipOccupiedCells)
+                        return SmartBuildPlan.Failed(
+                            volume,
+                            "The preview intersects existing blocks.",
+                            new[] { cell });
+                    skipped.Add(cell);
+                    continue;
+                }
+
+                target.Add(cell);
+            }
+
+            if (target.Count == 0)
+                return SmartBuildPlan.Failed(
+                    volume,
+                    "No empty cells are available in the preview.",
+                    skipped);
+
+            var placements = new List<SmartBuildPlacement>();
+            var covered = new HashSet<Vector3i>();
+            SmartBuildAxis grain = volume.GrainAxis;
+            SmartBlockCandidate[] candidates = family.Candidates
+                .Where(candidate => candidate.Length >= 1)
+                .OrderByDescending(candidate => candidate.Length)
+                .ToArray();
+
+            foreach (Vector3i cell in SortForPacking(target, grain))
+            {
+                if (covered.Contains(cell))
+                    continue;
+
+                SmartBlockCandidate chosen = null;
+                foreach (SmartBlockCandidate candidate in candidates)
+                {
+                    if (CanCover(cell, grain, candidate.Length, target, covered))
+                    {
+                        chosen = candidate;
+                        break;
+                    }
+                }
+
+                if (chosen == null)
+                    return SmartBuildPlan.Failed(
+                        volume,
+                        "The planner could not cover every target cell with legal blocks.",
+                        skipped);
+
+                var placement = new SmartBuildPlacement(cell, chosen, grain);
+                placements.Add(placement);
+                foreach (Vector3i coveredCell in placement.CoveredCells())
+                    covered.Add(coveredCell);
+            }
+
+            var warnings = new List<string>();
+            if (placements.Count > options.HardPlacementCap)
+                return new SmartBuildPlan(
+                    volume,
+                    placements,
+                    skipped,
+                    warnings,
+                    canCommit: false,
+                    failureReason:
+                    $"The plan needs {placements.Count:N0} placements, above the {options.HardPlacementCap:N0} hard cap.");
+
+            if (placements.Count > options.WarningPlacementCap)
+                warnings.Add(
+                    $"Large plan: {placements.Count:N0} placements. Commit may hitch.");
+
+            return new SmartBuildPlan(
+                volume,
+                placements,
+                skipped,
+                warnings,
+                canCommit: true,
+                failureReason: null);
+        }
+
+        private static IEnumerable<Vector3i> SortForPacking(
+            IEnumerable<Vector3i> cells,
+            SmartBuildAxis grain)
+        {
+            switch (grain)
+            {
+                case SmartBuildAxis.X:
+                    return cells
+                        .OrderBy(cell => cell.y)
+                        .ThenBy(cell => cell.z)
+                        .ThenBy(cell => cell.x);
+                case SmartBuildAxis.Y:
+                    return cells
+                        .OrderBy(cell => cell.x)
+                        .ThenBy(cell => cell.z)
+                        .ThenBy(cell => cell.y);
+                default:
+                    return cells
+                        .OrderBy(cell => cell.x)
+                        .ThenBy(cell => cell.y)
+                        .ThenBy(cell => cell.z);
+            }
+        }
+
+        private static bool CanCover(
+            Vector3i start,
+            SmartBuildAxis axis,
+            int length,
+            HashSet<Vector3i> target,
+            HashSet<Vector3i> covered)
+        {
+            for (int index = 0; index < length; index++)
+            {
+                Vector3i cell = start + SmartBuildAxisHelper.ToVector3i(axis, index);
+                if (!target.Contains(cell) || covered.Contains(cell))
+                    return false;
+            }
+
+            return true;
+        }
+    }
+}

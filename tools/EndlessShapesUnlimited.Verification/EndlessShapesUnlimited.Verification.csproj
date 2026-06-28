@@ -40,6 +40,22 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="PlayerProfiles">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\PlayerProfiles.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Localisation">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Localisation.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="InControl">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\InControl.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>

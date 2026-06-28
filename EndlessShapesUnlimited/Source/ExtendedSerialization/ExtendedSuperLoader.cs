@@ -2,6 +2,7 @@ using System;
 using BrilliantSkies.Core.Serialisation.Bytes;
 using BrilliantSkies.DataManagement.Serialisation;
 using DecoLimitLifter.Patches;
+using DecoLimitLifter.SerializationHud;
 
 namespace DecoLimitLifter.ExtendedSerialization
 {
@@ -20,6 +21,7 @@ namespace DecoLimitLifter.ExtendedSerialization
             if (objectIdBytes < 1 || objectIdBytes > 8)
                 throw new ArgumentOutOfRangeException(nameof(objectIdBytes), "Object IDs must use between one and eight bytes.");
 
+            uint containerStart = startFrom;
             uint cursor = startFrom;
             Require(packet, cursor, objectIdBytes, "object ID");
             ulong objectId = ByteConversion.ConvertOutAnUnsignedInt(packet, cursor, objectIdBytes);
@@ -88,6 +90,13 @@ namespace DecoLimitLifter.ExtendedSerialization
                     $"Loader path={(sentinel ? "SENTINEL" : "LEGACY")} id={objectId} " +
                     $"headers={headerBytes / 7U} data={dataBytes} next={startFrom}");
             }
+
+            SerializationTelemetry.RecordLoadedContainer(
+                self,
+                sentinel,
+                headerBytes,
+                dataBytes,
+                cursor - containerStart);
 
             return objectId;
         }

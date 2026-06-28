@@ -9,6 +9,7 @@ using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Texts;
 using BrilliantSkies.Ui.Consoles.Segments;
 using BrilliantSkies.Ui.Displayer;
 using BrilliantSkies.Ui.Layouts.DropDowns;
+using DecoLimitLifter.DecorationEditMode;
 using EndlessShapes2.Polygon;
 using UnityEngine;
 
@@ -94,6 +95,11 @@ namespace EndlessShapes2.UI
             screenSegment_0.AddInterpretter(TextInput<DecorationBuilder>.Quick(_focus, M.m<DecorationBuilder>(I => I.Data.OBJ_FilePath.Us), "FilePath", null, (I, s) => I.Data.OBJ_FilePath.Us = s));
             screenSegment_0.AddInterpretter(new Blank(5f));
             screenSegment_0.AddInterpretter(SubjectiveButton<DecorationBuilder>.Quick(_focus, "Load", null, I => { I.Load(); TriggerScreenRebuild(); }));
+            screenSegment_0.AddInterpretter(SubjectiveButton<DecorationBuilder>.Quick(
+                _focus,
+                "Decoration Edit Mode",
+                null,
+                I => DecorationEditModeRegistration.ToggleFromUi()));
             screenSegment_0.AddInterpretter(new Blank(20f));
 
             foreach (OBJ_Mesh meshes in _focus.Meshes)
