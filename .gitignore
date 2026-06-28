@@ -6,3 +6,6 @@
 .vs/
 *.user
 *.suo
+
+# Release staging
+artifacts/
