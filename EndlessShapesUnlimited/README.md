@@ -1,12 +1,5 @@
 # EndlessShapes Unlimited
 
-WIP
-WIP
-WIP
-WIP
-WIP
-WIP
-
 EndlessShapes Unlimited is a From The Depths mod that combines the hardened
 DecoLimitLifter serializer with the OBJ import/export and decoration-building
 tools from EndlessShapes2.

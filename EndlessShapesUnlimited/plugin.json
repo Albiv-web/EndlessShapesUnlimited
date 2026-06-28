@@ -1,0 +1,8 @@
+{
+  "name": "EndlessShapes Unlimited",
+  "version": "1.0.0",
+  "filename": "0Harmony.dll,EndlessShapesUnlimited.dll",
+  "gameversion": "4.3.3",
+  "depends": [],
+  "conflicts": ["DecoLimitLifter", "EndlessShapes2"]
+}
