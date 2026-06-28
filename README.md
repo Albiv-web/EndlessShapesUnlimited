@@ -1,5 +1,12 @@
 # EndlessShapes Unlimited
 
+WIP
+WIP
+WIP
+WIP
+WIP
+WIP
+
 EndlessShapes Unlimited is a From The Depths mod that combines the hardened
 DecoLimitLifter serializer with the OBJ import/export and decoration-building
 tools from EndlessShapes2.
@@ -207,29 +214,6 @@ EndlessShapes2 bindings.
 
 Automated checks do not replace the required in-game acceptance pass for UI,
 Unity rendering, construct import/export, multiplayer, and save/load behavior.
-
-## Technical documentation
-
-- [`docs/ENDLESS_SHAPES_TECHNICAL.md`](docs/ENDLESS_SHAPES_TECHNICAL.md) explains
-  OBJ parsing, coordinate conversion, polygon classification, decoration
-  generation, palette mapping, tether movement, and OBJ export.
-- [`docs/DECO_LIMIT_LIFTER_TECHNICAL.md`](docs/DECO_LIMIT_LIFTER_TECHNICAL.md)
-  explains FTD's serializer model, every Harmony patch, legacy and sentinel wire
-  formats, buffer growth, corruption checks, limits, and multiplayer constraints.
-- [`docs/SERIALIZATION_HUD_TECHNICAL.md`](docs/SERIALIZATION_HUD_TECHNICAL.md)
-  explains native HUD integration, exact telemetry scopes, decoration
-  calibration, live forecasts, profile persistence, and lifecycle rollback.
-- [`docs/DECORATION_EDITOR_NATIVE_UI.md`](docs/DECORATION_EDITOR_NATIVE_UI.md)
-  documents the native Decoration Edit Mode shell, focus-view behavior, FTD icon
-  catalog, and ESU-owned fallback icons.
-- [`docs/BEAMIFICATION_TECHNICAL.md`](docs/BEAMIFICATION_TECHNICAL.md) explains
-  the bundled Python blueprint converter, GUID mapping, voxel field
-  construction, mixed-integer beam packing, blueprint emission, and ESU's local
-  CLI fix.
-- [`TECHNICAL_LOG.md`](TECHNICAL_LOG.md) records the combined integration and
-  verification status.
-- [`docs/IN_GAME_TEST_PLAN.md`](docs/IN_GAME_TEST_PLAN.md) is the ordered FTD
-  acceptance checklist required before merge or release.
 
 ## Source provenance and licenses
 
