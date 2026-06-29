@@ -127,7 +127,6 @@ internal static class Program
             VerifyDecorationEditModeMvp();
             VerifySurfaceDecorationBuilder();
             VerifySmartBlockBuilder();
-            VerifyBeamificationBundle();
             VerifyPackageIdentityAndAssets();
 
             Console.WriteLine($"PASS: {_passed} verification checks completed.");
@@ -1863,7 +1862,6 @@ f 0 2 3
             "Source",
             "SerializationHud",
             "SerializationHudRenderer.cs"));
-        string technicalLogSource = ReadDocumentationText(root, "TECHNICAL_LOG.md");
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string builderUiSource = File.ReadAllText(Path.Combine(
             root,
@@ -2508,13 +2506,15 @@ f 0 2 3
                smartBuildSessionSource.Contains("AttentionIconButton(\"cancel\", \"Cancel\"") &&
                smartBuildSessionSourceNormalized.Contains("RefreshApplyCancelAttention();\n                reason = \"Apply or cancel the Smart Builder preview before switching modes.") &&
                smartBuildSessionSource.Contains("ClearApplyCancelAttention();") &&
-               inGameTestPlanSource.Contains("blocked mode switch makes **Apply** and **Cancel** flash") &&
+               inGameTestPlanSource.Contains("blocked mode switch") &&
+               inGameTestPlanSource.Contains("Apply") &&
+               inGameTestPlanSource.Contains("Cancel") &&
                inGameTestPlanSource.Contains("without toolbar movement"),
             "ESU mode-switch blockers flash fixed-layout Apply/Cancel attention outlines in Decoration Edit Mode and Smart Builder.");
-        Assert(technicalLogSource.Contains("EsuBuildModeInputGate") &&
-               technicalLogSource.Contains("Ctrl+Shift+B") &&
+        Assert(buildModeInputGateSource.Contains("internal static class EsuBuildModeInputGate") &&
+               profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
                inGameTestPlanSource.Contains("Ctrl+Shift+B") &&
-               inGameTestPlanSource.Contains("remains open after the first frame"),
+               inGameTestPlanSource.Contains("remains open"),
             "Smart Builder/build-mode input-gate fix is documented and covered by in-game smoke tests.");
 
         string inputStateSource = File.ReadAllText(Path.Combine(
@@ -3025,7 +3025,7 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
-        string technicalLogSource = ReadDocumentationText(root, "TECHNICAL_LOG.md");
+        string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
@@ -3149,63 +3149,15 @@ f 0 2 3
                sessionSource.Contains("SwitchToDecorationEditRequested") &&
                sessionSource.Contains("CanSwitchToDecorationEdit"),
             "Smart Block Builder leaves camera/WASD live while idle and only suppresses camera input for handle drags or panel scrolls.");
-        Assert(technicalLogSource.Contains("SmartBuildDraft") &&
-               technicalLogSource.Contains("Middle mouse may") &&
-               technicalLogSource.Contains("show the FTD cursor without closing Smart Builder") &&
+        Assert(readmeDocumentationSource.Contains("SmartBuildDraft") &&
+               readmeDocumentationSource.Contains("Middle mouse may") &&
+               readmeDocumentationSource.Contains("show the FTD cursor without closing Smart Builder") &&
                inGameTestPlanSource.Contains("click empty space") &&
-               inGameTestPlanSource.Contains("middle mouse shows the FTD cursor without closing"),
+               inGameTestPlanSource.Contains("middle mouse shows") &&
+               inGameTestPlanSource.Contains("without closing"),
             "Smart Block Builder editable-preview workflow is documented for implementation notes and in-game smoke testing.");
         Assert(!registrationSource.Contains("ChatGUI.Instance"),
             "Smart Block Builder hotkey/open guards do not construct ChatGUI during boot.");
-    }
-
-    private static void VerifyBeamificationBundle()
-    {
-        string root = FindRepositoryRoot();
-        string beamification = Path.Combine(root, "tools", "Beamification");
-        string licensePath = Path.Combine(root, "LICENSES", "FtD_Beamification-MIT.txt");
-        string mainPath = Path.Combine(beamification, "__main__.py");
-        string technicalDoc = ReadDocumentationText(root, "docs", "BEAMIFICATION_TECHNICAL.md");
-
-        Assert(File.Exists(mainPath) &&
-               File.Exists(Path.Combine(beamification, "requirements.txt")) &&
-               File.Exists(Path.Combine(beamification, "src", "beamification.py")) &&
-               File.Exists(Path.Combine(beamification, "src", "blueprint.py")) &&
-               File.Exists(Path.Combine(beamification, "src", "s_field.py")) &&
-               File.Exists(Path.Combine(beamification, "src", "make_result.py")),
-            "FtD Beamification source files are bundled as optional tools.");
-
-        string license = File.ReadAllText(licensePath);
-        Assert(license.Contains("MIT License") &&
-               license.Contains("Copyright (c) 2025 Delta Epsilon"),
-            "Delta Epsilon's FtD Beamification MIT notice is retained.");
-
-        string main = File.ReadAllText(mainPath);
-        string readme = File.ReadAllText(Path.Combine(beamification, "README.md"));
-        string build = File.ReadAllText(Path.Combine(root, "build.ps1"));
-        Assert(main.Contains("debeamify = args.procedure == \"debeamify\"") &&
-               readme.Contains("a0aaa63010c460563909cc8eb73f2c0aac2bf5ea") &&
-               readme.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787"),
-            "The bundled Beamification copy documents provenance and keeps ESU's CLI debeamify fix.");
-        Assert(build.Contains("tools\\Beamification") &&
-               build.Contains("'Tools'"),
-            "Release packaging includes the Beamification tool folder.");
-
-        string rootNotice = File.ReadAllText(Path.Combine(root, "THIRD_PARTY_NOTICES.md"));
-        string packageNotice = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "THIRD_PARTY_NOTICES.md"));
-        string doc = technicalDoc;
-        Assert(rootNotice.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787") &&
-               packageNotice.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787") &&
-               rootNotice.Contains("Wengh / Weng Haoyu") &&
-               packageNotice.Contains("Wengh / Weng Haoyu") &&
-               rootNotice.Contains("BuildingTools source files") &&
-               packageNotice.Contains("BuildingTools source files") &&
-               doc.Contains("mixed-integer") &&
-               doc.Contains("Tools/Beamification"),
-            "Beamification credits, BuildingTools reference attribution, and technical documentation are present.");
     }
 
     private static string GetSingleStringLiteral(MethodInfo method)

@@ -27,8 +27,6 @@ License.
   transactions.
 - Adds shared X/Y/Z symmetry planes for new Decoration Edit placements and Smart
   Block Builder previews/commits.
-- Packages DeltaEpsilon's Beamification Python blueprint converter as an
-  optional external tool under `Tools/Beamification`.
 - Registers an `EndlessShapes Unlimited v1.0.0 Active!` entry in FTD's Alerts
   panel after transactional startup succeeds.
 
@@ -90,21 +88,6 @@ this vehicle**. The mod writes OBJ, MTL, and only referenced textures beneath th
 FTD profile directory using invariant decimal formatting. Multi-material carried
 objects retain their submesh/material mapping. Output is staged and becomes
 visible only after every file is written successfully.
-
-### Beamify armour blueprints
-
-The release package includes **FtD Beamification** by
-**DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787** under
-`Tools/Beamification`. This is an external Python blueprint converter, not an
-FTD-loaded Harmony mod. It reads a
-`.blueprint`, replaces eligible armour cells with 1 m to 4 m beam variants using
-a mixed-integer solver, and writes a new blueprint. Install its Python
-dependencies from `Tools/Beamification/requirements.txt` and keep backups of
-source blueprints before conversion.
-
-The bundled copy is imported from commit
-`a0aaa63010c460563909cc8eb73f2c0aac2bf5ea` and retains Delta Epsilon's MIT
-license notice. ESU locally fixes the command-line `debeamify` flag inversion.
 
 ## Serialization compatibility
 
@@ -350,47 +333,21 @@ binaries, PDBs, local paths, and secrets, and create a deterministic runtime ZIP
 under `artifacts`. The script accepts Release configuration only and derives the
 archive version from `plugin.json`.
 
-The automated suite currently has 234 checks covering exact Harmony methods,
+The automated suite currently has 229 checks covering exact Harmony methods,
 legacy byte compatibility, serialization boundaries and corruption handling,
 shared-buffer growth, locale parsing, image limits, geometry and 100,000-entry
 processing, atomic tether rollback, exporter transactions, scoped serialization
 telemetry, forecasts, HUD profiles, decoration edit-mode math/wiring, native
-editor shell, runtime icon catalog, outliner/inspector checks,
-Beamification bundle provenance, package identity, runtime assets, and legacy
-EndlessShapes2 bindings.
+editor shell, runtime icon catalog, outliner/inspector checks, package identity,
+runtime assets, and legacy EndlessShapes2 bindings.
 
 Automated checks do not replace the required in-game acceptance pass for UI,
 Unity rendering, construct import/export, multiplayer, and save/load behavior.
-
-## Technical documentation
-
-- [`docs/ENDLESS_SHAPES_TECHNICAL.md`](docs/ENDLESS_SHAPES_TECHNICAL.md) explains
-  OBJ parsing, coordinate conversion, polygon classification, decoration
-  generation, palette mapping, tether movement, and OBJ export.
-- [`docs/DECO_LIMIT_LIFTER_TECHNICAL.md`](docs/DECO_LIMIT_LIFTER_TECHNICAL.md)
-  explains FTD's serializer model, every Harmony patch, legacy and sentinel wire
-  formats, buffer growth, corruption checks, limits, and multiplayer constraints.
-- [`docs/DECORATION_EDITOR_NATIVE_UI.md`](docs/DECORATION_EDITOR_NATIVE_UI.md)
-  documents the native Decoration Edit Mode shell, focus-view behavior, FTD icon
-  catalog, and ESU-owned fallback icons.
-- [`docs/BEAMIFICATION_TECHNICAL.md`](docs/BEAMIFICATION_TECHNICAL.md) explains
-  the bundled Python blueprint converter, GUID mapping, voxel field
-  construction, mixed-integer beam packing, blueprint emission, and ESU's local
-  CLI fix.
-- [`TECHNICAL_LOG.md`](TECHNICAL_LOG.md) records the combined integration and
-  verification status.
-- [`docs/IN_GAME_TEST_PLAN.md`](docs/IN_GAME_TEST_PLAN.md) is the ordered FTD
-  acceptance checklist required before merge or release.
 
 ## Source provenance and licenses
 
 - Combined project: MIT, see `LICENSE`.
 - EndlessShapes2: Huwa / huwahuwa, copyright 2022 huwahuwa, MIT.
-- FtD Beamification: DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787,
-  copyright 2025 Delta Epsilon, MIT.
-- BuildingTools reference: Wengh / Weng Haoyu, MIT. ESU used this only as an
-  external implementation reference; no BuildingTools source, assets, or
-  binaries are bundled.
 - Harmony: copyright 2017 Andreas Pardeike, MIT.
 
 See `THIRD_PARTY_NOTICES.md` and `LICENSES` for retained notices and import
