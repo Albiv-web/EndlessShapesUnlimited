@@ -135,6 +135,20 @@ than misleading sums. `~` and `EST` identify a forecast after the craft changes;
 loaded/saved labels remain exact observations. Sentinel is informational and
 means this mod is required to load the extended container.
 
+Serialization HUD fields:
+
+- **Decorations** shows the total decoration count on the focused craft,
+  including subconstructs.
+- **Manager max** shows the busiest single decoration manager against the
+  100,000 ESU manager limit.
+- **Header/Data peaks** show the largest predicted serialized header and sorted
+  data buffers for any one saved container.
+- **Wire format** shows whether the next save is expected to remain
+  vanilla-compatible, require ESU sentinel loading, or exceed ESU's configured
+  limits.
+- **Loaded/Saved** show exact observed formats from the last load/save; forecast
+  rows are estimates until the craft is serialized again.
+
 ### Decoration Edit Mode
 
 Press `Ctrl+D` in build mode, or use the Decoration Builder's
@@ -152,6 +166,50 @@ stable mode/notification slot across Decoration Edit, Surface Builder, and Smart
 Builder; notification text has no icon, the slot stays fixed-height, and long
 messages show a **Details** button without changing top-panel padding. A blocked
 mode switch makes **Apply** and **Cancel** flash without toolbar movement.
+
+Decoration Edit Mode HUD reference:
+
+- **Deco** is the first toolbar slot and indicates Decoration Edit Mode. Press it
+  or `Tab` while clean to switch into Surface Builder.
+- **Select** selects decorations from the viewport or outliner.
+- **Move** shows snapped X/Y/Z movement handles plus center freeform movement.
+- **Rotate** shows projected rotation rings and snaps edits to 5 degrees.
+- **Scale** shows X/Y/Z scale handles and snaps edits to 0.05.
+- **Local/Global** changes transform handles between decoration-local axes and
+  construct/global axes.
+- **X**, **Y**, and **Z** toggle construct-local symmetry planes for new
+  placement and matched existing-decoration edits.
+- **Anchor** opens anchor retether tools. Retethering moves the tether block
+  while preserving the decoration's visual world position.
+- **Paint** enables viewport click painting and material/color replacement.
+- **View** opens the ESU/native view menu for mixed, wireframe, decoration-only,
+  mass, drag, cost, surface, important, and normal views.
+- **Warning/Details** is the fixed notification slot. Short messages appear
+  inline; long messages open through **Details**.
+- **Pal**, **Out**, **Insp**, and **Anch** toggle the Mesh Palette, Outliner,
+  Inspector, and Selected Anchor panels.
+- **U/R** undo and redo un-applied editor actions.
+- **Apply** commits previewed decoration edits, **Cancel** restores the current
+  preview, and **Close** exits the mode.
+
+Decoration Edit panels and bottom strip:
+
+- **Mesh Palette** lists every available mesh. **List** is a cheap searchable
+  text list; **3D grid** renders only visible preview cards. **All**, **Items**,
+  **Objects**, and **Recent** filter the catalog. Clicking a mesh starts
+  placement, or swaps the selected decoration's mesh/material context.
+- **Outliner** groups decorations by construct and subconstruct. Row clicks
+  select decorations, **Pins off/on** toggles tether pins, and **Refresh**
+  rebuilds the visible list.
+- **Inspector** edits the selected decoration's color, material override, mesh,
+  owner details, and exact transform fields that are not handled by the bottom
+  quick strip.
+- **Selected anchor** lists decorations sharing the selected tether block and is
+  used with anchor follow/retether workflows.
+- **Bottom status strip** shows mode, current view/tool, selection, dirty state,
+  undo/redo counts, save-format forecast, decoration count, manager peak, and
+  the live Position/Rotation/Scale X/Y/Z editors. **Anchor follow: on/off**
+  mirrors the anchor menu follow toggle.
 
 The current pass edits one active decoration at a time. Select a decoration in
 the viewport or outliner, use **Move** for snapped XYZ handles or center
@@ -190,6 +248,34 @@ vanilla vehicle-control overlay; `Ctrl+Shift+B` remains open after the first
 frame; Surface Builder Ctrl-click behavior still works; and a long ESU warning
 opens through **Details** without changing top-panel padding.
 
+### Surface Builder
+
+Press `Tab` from a clean Decoration Edit Mode session to open Surface Builder.
+This mode creates freeform triangular decoration surfaces from points clicked on
+craft block faces, then converts the draft into EndlessShapes polygon
+decorations when placed.
+
+Surface Builder HUD reference:
+
+- **Surf** is the first toolbar slot and indicates Surface Builder. Press `Tab`
+  while clean to continue to Smart Block Builder.
+- **Preview** rebuilds the generated decoration preview from the current draft.
+- **Place** commits the previewed surface decorations to the craft.
+- **Clear** removes the current surface draft.
+- **Delete** removes the selected draft point, edge, or face.
+- **Material** arrows cycle the generated decoration material.
+- **Thickness** sets surface thickness; the `0.025`, `0.05`, and `0.1` buttons
+  are quick presets.
+- **Color** sets the generated paint index; `-` and `+` step the value.
+- **Normal flip** reverses the decoration thickness direction.
+- **Nearest anchor** chooses whether generated decorations attach to nearby
+  existing craft blocks instead of only the exact clicked surface.
+- **Draft** lists the current point/edge/face draft state. Click three block
+  surface points to seed a triangle, select an edge and click another point to
+  extend it, or Ctrl-click existing points to create a face from any three.
+- The shared **Out**, **Anch**, **Apply**, **Cancel**, **Close**, notification
+  slot, and bottom status strip behave the same as Decoration Edit Mode.
+
 ### Smart Block Builder
 
 Press `Ctrl+Shift+B` in build mode, or press `Tab` from a clean Surface Builder
@@ -201,6 +287,36 @@ preview on the selected draw plane. Its left panel shares the ESU auto-scale
 settings, can be resized independently from Decoration Edit Mode panels, and has
 an internal material picker for Wood, Stone, Metal, Alloy, Glass, Lead, Heavy
 armour, and Rubber.
+
+Smart Block Builder HUD reference:
+
+- **Build** is the first toolbar slot and indicates Smart Builder. Press it or
+  `Tab` when clean to return to Decoration Edit Mode.
+- **Draw** seeds a new runtime-only 1x1x1 draft from a pointed block face or the
+  active free-space draw plane.
+- **Move** moves the draft by whole focused-grid cells.
+- **Scale** resizes the draft. Drag X/Y/Z handles or any of the six highlighted
+  preview faces; the opposite face stays anchored and the size never drops below
+  one cell.
+- **Plane Cam/X/Y/Z** selects the draw plane for free-space seeding.
+- **Skip/Block** chooses occupancy behavior. **Skip** omits occupied cells from
+  the placement plan; **Block** makes any occupied cell invalidate Apply.
+- **Material** cycles Wood, Stone, Metal, Alloy, Glass, Lead, Heavy armour, and
+  Rubber. The left panel arrows expose the same picker.
+- **X**, **Y**, and **Z** mirror the preview and final placement plan across
+  construct-local symmetry planes.
+- **Apply** places the planned blocks atomically, **Cancel** removes the runtime
+  preview, and **Close** exits Smart Builder.
+
+Smart Builder panel and preview behavior:
+
+- The left panel shows material, active tool, draw plane, occupancy mode,
+  symmetry state, preview origin, size, cell count, and planned placements.
+- Large previews render as one lightweight outer corner/edge wireframe, not as a
+  translucent cube for every cell. Hovered or dragged faces get a temporary
+  highlight.
+- The bottom status strip reports draft size, placement count, invalid material
+  or occupancy reasons, and whether the builder is ready to apply.
 
 The preview is not saved and does not place blocks until **Apply**. Use **Move**
 and **Scale** handles, or drag any preview face in **Scale**, to adjust the
