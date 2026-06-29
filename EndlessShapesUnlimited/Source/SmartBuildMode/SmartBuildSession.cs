@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using BrilliantSkies.Core.Logger;
@@ -12,7 +13,7 @@ namespace DecoLimitLifter.SmartBuildMode
 {
     internal sealed class SmartBuildSession
     {
-        private const float ToolbarHeight = 48f;
+        private const float ToolbarHeight = 54f;
         private const float StatusHeight = 30f;
         private const float LeftPanelWidth = 392f;
         private const float LeftPanelMinHeight = 292f;
@@ -21,6 +22,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private const int MaxPreviewCellsWithFaces = 768;
 
         private static Rect s_leftPanelRect = new Rect(18f, 110f, LeftPanelWidth, 390f);
+        private static int s_layoutGeneration = -1;
 
         private readonly cBuild _build;
         private readonly DecorationPointerProbe _pointerProbe;
@@ -35,6 +37,11 @@ namespace DecoLimitLifter.SmartBuildMode
         private string _sourceReason;
         private SmartBuildDraft _draft;
         private SmartBuildPlan _plan;
+        private IReadOnlyList<Vector3i> _previewCells = Array.Empty<Vector3i>();
+        private IReadOnlyList<IReadOnlyList<Vector3i>> _previewCellSets =
+            Array.Empty<IReadOnlyList<Vector3i>>();
+        private IReadOnlyList<SmartBuildVolume> _previewVolumes =
+            Array.Empty<SmartBuildVolume>();
         private SmartBuildTool _tool = SmartBuildTool.Draw;
         private SmartBuildDrawPlane _drawPlane = SmartBuildDrawPlane.Camera;
         private SmartBuildOccupancyMode _occupancyMode = SmartBuildOccupancyMode.SkipOccupied;
@@ -46,6 +53,11 @@ namespace DecoLimitLifter.SmartBuildMode
         private int _dragSign = 1;
         private bool _dragging;
         private bool _closeRequested;
+        private bool _resizingLeftPanel;
+        private Rect _leftPanelResizeStart;
+        private Vector2 _leftPanelResizeMouseStart;
+        private int _layoutResetGeneration = s_layoutGeneration;
+        private float _applyCancelAttentionUntil = -1f;
 
         internal SmartBuildSession(cBuild build)
         {
@@ -64,6 +76,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool CanSwitchToDecorationEdit(out string reason)
         {
+            if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
+            {
+                reason = "Place or cancel the pending symmetry plane before switching modes.";
+                return false;
+            }
+
             if (_dragging)
             {
                 reason = "Finish the Smart Builder handle drag before switching modes.";
@@ -72,6 +90,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (_draft != null)
             {
+                RefreshApplyCancelAttention();
                 reason = "Apply or cancel the Smart Builder preview before switching modes.";
                 return false;
             }
@@ -94,6 +113,9 @@ namespace DecoLimitLifter.SmartBuildMode
             Active = false;
             _draft = null;
             _plan = null;
+            _previewCells = Array.Empty<Vector3i>();
+            _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+            _previewVolumes = Array.Empty<SmartBuildVolume>();
             _dragging = false;
             _dragAxis = DecorationEditAxis.None;
             SwitchToDecorationEditRequested = false;
@@ -119,25 +141,38 @@ namespace DecoLimitLifter.SmartBuildMode
             if (Event.current.type == EventType.Repaint)
                 DecorationEditorOverlay.Render();
 
-            _toolbarRect = new Rect(8f, 8f, Screen.width - 16f, ToolbarHeight);
-            _statusRect = new Rect(8f, Screen.height - StatusHeight - 8f, Screen.width - 16f, StatusHeight);
-            _leftPanelRect.width = LeftPanelWidth;
-            _leftPanelRect.height = Mathf.Clamp(
-                _leftPanelRect.height,
-                LeftPanelMinHeight,
-                Mathf.Max(LeftPanelMinHeight, Screen.height - ToolbarHeight - StatusHeight - 34f));
-            _leftPanelRect.x = Mathf.Clamp(_leftPanelRect.x, 8f, Screen.width - LeftPanelWidth - 8f);
-            _leftPanelRect.y = Mathf.Clamp(
-                _leftPanelRect.y,
-                ToolbarHeight + 14f,
-                Screen.height - StatusHeight - _leftPanelRect.height - 12f);
+            ApplyLayoutResetIfNeeded();
+            float margin = EsuHudLayout.Scale(8f);
+            _toolbarRect = EsuHudLayout.ToolbarRect(ToolbarHeight);
+            _statusRect = new Rect(
+                margin,
+                Screen.height - StatusHeightScaled() - margin,
+                Screen.width - margin * 2f,
+                StatusHeightScaled());
+            if (_leftPanelRect.width < 1f || _leftPanelRect.height < 1f)
+                _leftPanelRect = DefaultLeftPanelRect();
+            _leftPanelRect = EsuHudLayout.ClampPanel(
+                _leftPanelRect,
+                MinLeftPanelWidth(),
+                MinLeftPanelHeight(),
+                MaxLeftPanelWidth(),
+                MaxLeftPanelHeight(),
+                LeftPanelTopLimit(),
+                StatusHeightScaled() + EsuHudLayout.Scale(12f));
+            HandleLeftPanelResize();
 
             GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
+            EsuHudNotifications.DrawExpandedPopup();
             _leftPanelRect = GUI.Window(_panelWindowId, _leftPanelRect, DrawLeftPanel, GUIContent.none, GUIStyle.none);
             GUI.Window(_statusWindowId, _statusRect, DrawStatusStrip, GUIContent.none, GUIStyle.none);
+            EsuHudLayout.DrawResizeGrip(_leftPanelRect, leftEdge: false);
 
             s_leftPanelRect = _leftPanelRect;
-            bool overUi = ContainsMouse(_toolbarRect) || ContainsMouse(_leftPanelRect) || ContainsMouse(_statusRect);
+            s_layoutGeneration = _layoutResetGeneration;
+            bool overUi = ContainsMouse(_toolbarRect) ||
+                          EsuHudNotifications.ContainsMouse(Event.current.mousePosition) ||
+                          ContainsMouse(_leftPanelRect) ||
+                          ContainsMouse(_statusRect);
             SmartBuildInputScope.SetMouseOverUi(overUi);
             if (overUi && ShouldConsumeGuiEvent(Event.current))
             {
@@ -147,6 +182,89 @@ namespace DecoLimitLifter.SmartBuildMode
                     SmartBuildInputScope.ClaimBuildInputForFrames();
                 Event.current.Use();
             }
+        }
+
+        private float ToolbarHeightScaled() =>
+            EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight, Screen.width - EsuHudLayout.Scale(16f));
+
+        private float StatusHeightScaled() => EsuHudLayout.Scale(StatusHeight);
+
+        private float LeftPanelTopLimit() => ToolbarHeightScaled() + EsuHudLayout.Scale(14f);
+
+        private float MinLeftPanelWidth() => EsuHudLayout.Scale(300f);
+
+        private float MinLeftPanelHeight() => EsuHudLayout.Scale(LeftPanelMinHeight);
+
+        private float MaxLeftPanelWidth() => Mathf.Max(MinLeftPanelWidth(), Screen.width * 0.62f);
+
+        private float MaxLeftPanelHeight() =>
+            Mathf.Max(MinLeftPanelHeight(), Screen.height - LeftPanelTopLimit() - StatusHeightScaled() - EsuHudLayout.Scale(16f));
+
+        private Rect DefaultLeftPanelRect()
+        {
+            float width = Mathf.Min(
+                EsuHudLayout.Scale(LeftPanelWidth),
+                Mathf.Max(MinLeftPanelWidth(), Screen.width * 0.28f));
+            float height = Mathf.Min(
+                EsuHudLayout.Scale(390f),
+                Mathf.Max(MinLeftPanelHeight(), Screen.height - LeftPanelTopLimit() - StatusHeightScaled() - EsuHudLayout.Scale(16f)));
+            return new Rect(EsuHudLayout.Scale(18f), LeftPanelTopLimit(), width, height);
+        }
+
+        private void ApplyLayoutResetIfNeeded()
+        {
+            if (_layoutResetGeneration == EsuHudLayout.ResetGeneration)
+                return;
+
+            _leftPanelRect = DefaultLeftPanelRect();
+            _layoutResetGeneration = EsuHudLayout.ResetGeneration;
+            s_layoutGeneration = _layoutResetGeneration;
+        }
+
+        private void HandleLeftPanelResize()
+        {
+            Event current = Event.current;
+            if (current == null)
+                return;
+
+            Rect grip = EsuHudLayout.ResizeGripRect(_leftPanelRect, leftEdge: false);
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                grip.Contains(current.mousePosition))
+            {
+                _resizingLeftPanel = true;
+                _leftPanelResizeStart = _leftPanelRect;
+                _leftPanelResizeMouseStart = current.mousePosition;
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseDrag && _resizingLeftPanel)
+            {
+                Vector2 delta = current.mousePosition - _leftPanelResizeMouseStart;
+                Rect next = _leftPanelResizeStart;
+                next.width = Mathf.Clamp(
+                    _leftPanelResizeStart.width + delta.x,
+                    MinLeftPanelWidth(),
+                    MaxLeftPanelWidth());
+                next.height = Mathf.Clamp(
+                    _leftPanelResizeStart.height + delta.y,
+                    MinLeftPanelHeight(),
+                    MaxLeftPanelHeight());
+                _leftPanelRect = EsuHudLayout.ClampPanel(
+                    next,
+                    MinLeftPanelWidth(),
+                    MinLeftPanelHeight(),
+                    MaxLeftPanelWidth(),
+                    MaxLeftPanelHeight(),
+                    LeftPanelTopLimit(),
+                    StatusHeightScaled() + EsuHudLayout.Scale(12f));
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp)
+                _resizingLeftPanel = false;
         }
 
         internal void DrawWorldPreview()
@@ -165,6 +283,8 @@ namespace DecoLimitLifter.SmartBuildMode
                     DrawDraftOutline();
                     DrawDraftHandles();
                 }
+
+                DrawSymmetryOverlay();
             }
             catch (Exception exception)
             {
@@ -179,6 +299,13 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
+                {
+                    DecoLimitLifter.EsuSymmetry.CancelPending();
+                    InfoStore.Add("Symmetry plane placement cancelled.");
+                    return;
+                }
+
                 if (_dragging)
                 {
                     EndDrag(resetDraft: true);
@@ -210,6 +337,26 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (Input.GetMouseButtonDown(2) || Input.GetMouseButton(2) || Input.GetMouseButtonUp(2))
                 return;
+
+            if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
+            {
+                if (Input.GetMouseButtonDown(1))
+                {
+                    DecoLimitLifter.EsuSymmetry.CancelPending();
+                    InfoStore.Add("Symmetry plane placement cancelled.");
+                    SmartBuildInputScope.ClaimBuildInputForFrames();
+                    return;
+                }
+
+                if (Input.GetMouseButtonDown(0))
+                {
+                    PlacePendingSymmetryPlane();
+                    SmartBuildInputScope.ClaimBuildInputForFrames();
+                    return;
+                }
+
+                return;
+            }
 
             if (Input.GetMouseButtonDown(1))
             {
@@ -278,6 +425,27 @@ namespace DecoLimitLifter.SmartBuildMode
             InfoStore.Add("Point at the focused construct grid to create a Smart Builder preview.");
         }
 
+        private void PlacePendingSymmetryPlane()
+        {
+            if (!TrySymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell))
+            {
+                InfoStore.Add("Point at the focused construct grid to place the symmetry plane.");
+                return;
+            }
+
+            if (!DecoLimitLifter.EsuSymmetry.TryPlacePending(
+                    construct,
+                    cell,
+                    out string reason))
+            {
+                InfoStore.Add(reason);
+                return;
+            }
+
+            RebuildPlan();
+            InfoStore.Add("Symmetry plane placed.");
+        }
+
         private void CreatePreviewAtSeed(AllConstruct construct, Vector3i cell)
         {
             if (!CanPlaceDraftOrigin(construct, cell, out string reason))
@@ -325,6 +493,20 @@ namespace DecoLimitLifter.SmartBuildMode
             construct = hit.Construct;
             cell = hit.Anchor + SmartBuildAxisHelper.ToVector3i(axis, sign);
             return construct != null;
+        }
+
+        private bool TrySymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell)
+        {
+            construct = null;
+            cell = default;
+            if (_pointerProbe.TryProbe(out DecorationPointerHit hit))
+            {
+                construct = hit.Construct;
+                cell = hit.Anchor;
+                return construct != null;
+            }
+
+            return TrySeedFromDrawPlane(out construct, out cell);
         }
 
         private bool TrySeedFromDrawPlane(out AllConstruct construct, out Vector3i cell)
@@ -563,26 +745,82 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft == null || _source == null)
             {
                 _plan = null;
+                _previewCells = Array.Empty<Vector3i>();
+                _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+                _previewVolumes = Array.Empty<SmartBuildVolume>();
                 return;
             }
 
             SmartBuildVolume volume = _draft.ToVolume();
-            _plan = SmartBuildPlanner.BuildPlan(
+            if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_draft.Construct, out string reason))
+            {
+                _previewCells = volume.EnumerateCells().ToArray();
+                _previewCellSets = new[] { _previewCells };
+                _previewVolumes = new[] { volume };
+                _plan = SmartBuildPlan.Failed(volume, reason);
+                return;
+            }
+
+            BuildPreviewSymmetrySets(volume);
+            _plan = SmartBuildPlanner.BuildPlanFromCells(
                 volume,
+                _previewCells,
+                volume.GrainAxis,
                 _source.Family,
                 IsOccupied,
                 new SmartBuildPlannerOptions
                 {
                     SkipOccupiedCells = _occupancyMode == SmartBuildOccupancyMode.SkipOccupied
                 });
-            if (_plan.CanCommit && !PlanTouchesExistingConstruct(_plan))
+            if (_plan.CanCommit && !EveryPreviewSetTouchesExistingConstruct())
             {
                 _plan = SmartBuildPlan.Failed(
                     volume,
-                    "The Smart Builder preview must touch an existing block before Apply.",
+                    "Every symmetry preview must touch an existing block before Apply.",
                     _plan.SkippedCells,
                     _plan.Warnings);
             }
+        }
+
+        private void BuildPreviewSymmetrySets(SmartBuildVolume volume)
+        {
+            Vector3i[] baseCells = volume.EnumerateCells().ToArray();
+            var allCells = new Dictionary<string, Vector3i>();
+            var sets = new List<IReadOnlyList<Vector3i>>();
+            var volumes = new List<SmartBuildVolume>();
+            var seenSets = new HashSet<string>();
+            foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
+                     DecoLimitLifter.EsuSymmetry.Variants())
+            {
+                Vector3i[] cells = baseCells
+                    .Select(variant.Mirror)
+                    .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
+                    .Select(group => group.First())
+                    .OrderBy(cell => cell.x)
+                    .ThenBy(cell => cell.y)
+                    .ThenBy(cell => cell.z)
+                    .ToArray();
+                string signature = string.Join(
+                    "|",
+                    cells.Select(DecoLimitLifter.EsuSymmetry.CellKey).ToArray());
+                if (!seenSets.Add(signature))
+                    continue;
+
+                sets.Add(cells);
+                foreach (Vector3i cell in cells)
+                    allCells[DecoLimitLifter.EsuSymmetry.CellKey(cell)] = cell;
+                SmartBuildVolume mirrored = VolumeFromCells(volume.Construct, cells);
+                if (mirrored != null)
+                    volumes.Add(mirrored);
+            }
+
+            _previewCells = allCells.Values
+                .OrderBy(cell => cell.x)
+                .ThenBy(cell => cell.y)
+                .ThenBy(cell => cell.z)
+                .ToArray();
+            _previewCellSets = sets;
+            _previewVolumes = volumes;
         }
 
         private bool IsOccupied(Vector3i cell)
@@ -622,6 +860,45 @@ namespace DecoLimitLifter.SmartBuildMode
             return false;
         }
 
+        private bool EveryPreviewSetTouchesExistingConstruct()
+        {
+            if (_draft?.Construct == null || _previewCellSets == null || _previewCellSets.Count == 0)
+                return false;
+
+            foreach (IReadOnlyList<Vector3i> rawSet in _previewCellSets)
+            {
+                var target = rawSet?
+                    .Where(cell => !IsCellOccupied(_draft.Construct, cell))
+                    .ToArray() ?? Array.Empty<Vector3i>();
+                if (target.Length == 0)
+                    continue;
+
+                var targetKeys = new HashSet<string>(
+                    target.Select(DecoLimitLifter.EsuSymmetry.CellKey));
+                bool touches = false;
+                foreach (Vector3i cell in target)
+                {
+                    foreach (Vector3i neighbor in NeighborCells(cell))
+                    {
+                        if (!targetKeys.Contains(DecoLimitLifter.EsuSymmetry.CellKey(neighbor)) &&
+                            IsCellOccupied(_draft.Construct, neighbor))
+                        {
+                            touches = true;
+                            break;
+                        }
+                    }
+
+                    if (touches)
+                        break;
+                }
+
+                if (!touches)
+                    return false;
+            }
+
+            return true;
+        }
+
         private static Vector3i[] NeighborCells(Vector3i cell)
         {
             return new[]
@@ -655,8 +932,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void CancelPreview()
         {
+            ClearApplyCancelAttention();
             _draft = null;
             _plan = null;
+            _previewCells = Array.Empty<Vector3i>();
+            _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+            _previewVolumes = Array.Empty<SmartBuildVolume>();
             _dragging = false;
             _dragAxis = DecorationEditAxis.None;
         }
@@ -677,45 +958,84 @@ namespace DecoLimitLifter.SmartBuildMode
 
             _source = null;
             _sourceReason = reason;
-            _plan = _draft == null
-                ? null
-                : SmartBuildPlan.Failed(_draft.ToVolume(), reason);
+            if (_draft == null)
+            {
+                _plan = null;
+                _previewCells = Array.Empty<Vector3i>();
+                _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+                _previewVolumes = Array.Empty<SmartBuildVolume>();
+            }
+            else
+            {
+                SmartBuildVolume volume = _draft.ToVolume();
+                BuildPreviewSymmetrySets(volume);
+                _plan = SmartBuildPlan.Failed(volume, reason);
+            }
         }
 
         private void DrawToolbar(int id)
         {
-            GUILayout.BeginArea(new Rect(0f, 0f, _toolbarRect.width, _toolbarRect.height), DecorationEditorTheme.Panel);
+            GUI.Box(new Rect(0f, 0f, _toolbarRect.width, _toolbarRect.height), GUIContent.none, DecorationEditorTheme.Panel);
+            Rect inner = EsuHudLayout.LocalPanelInnerRect(_toolbarRect.width, _toolbarRect.height);
+            float leftRailWidth = EsuHudLayout.ToolbarLeftRailWidth(inner.width);
+            float notificationWidth = EsuHudLayout.ToolbarNotificationWidth(inner.width);
+            float rightRailWidth = EsuHudLayout.ToolbarRightControlsWidth(inner.width);
+            float gap = EsuHudLayout.ToolbarGap;
+
+            GUILayout.BeginArea(inner);
             GUILayout.BeginHorizontal();
-            if (IconButton("build", "Build", DecorationEditorTheme.ToolButton(true), "Smart Block Builder."))
-                _tool = SmartBuildTool.Draw;
-            ToolButton(SmartBuildTool.Draw, "create", "Draw", "Click the focused construct grid to create a 1x1x1 preview.");
-            ToolButton(SmartBuildTool.Move, "move", "Move", "Drag RGB handles to move the preview by whole cells.");
-            ToolButton(SmartBuildTool.Scale, "scale", "Scale", "Drag RGB handles to resize the preview by whole cells.");
-            PlaneButton();
-            OccupancyButton();
+            GUILayout.BeginHorizontal(GUILayout.Width(leftRailWidth));
+            {
+                ModeSwitchButton();
+                ToolButton(SmartBuildTool.Draw, "create", "Draw", "Click the focused construct grid to create a 1x1x1 preview.");
+                ToolButton(SmartBuildTool.Move, "move", "Move", "Drag RGB handles to move the preview by whole cells.");
+                ToolButton(SmartBuildTool.Scale, "scale", "Scale", "Drag RGB handles to resize the preview by whole cells.");
+                PlaneButton();
+                OccupancyButton();
+                SymmetryButton(DecorationEditAxis.X);
+                SymmetryButton(DecorationEditAxis.Y);
+                SymmetryButton(DecorationEditAxis.Z);
+                GUILayout.FlexibleSpace();
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Space(gap);
+            EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth);
+            GUILayout.Space(gap);
+            GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth));
             GUILayout.FlexibleSpace();
-            if (IconButton("save", "Apply", DecorationEditorTheme.Button, "Place the planned blocks.", _plan != null && _plan.CanCommit))
+            if (AttentionIconButton("save", "Apply", DecorationEditorTheme.Button, "Place the planned blocks.", _plan != null && _plan.CanCommit))
                 ApplyPreview();
-            if (IconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Clear the runtime preview.", _draft != null))
+            if (AttentionIconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Clear the runtime preview.", _draft != null))
                 CancelPreview();
-            if (IconButton("open", "Deco", DecorationEditorTheme.Button, "Switch to Decoration Edit Mode."))
-                SwitchToDecorationEditRequested = true;
             if (IconButton("delete", "Close", DecorationEditorTheme.Button, "Close Smart Block Builder."))
                 _closeRequested = true;
             GUILayout.EndHorizontal();
+            GUILayout.EndHorizontal();
             GUILayout.EndArea();
+        }
+
+        private void ModeSwitchButton()
+        {
+            if (IconButton(
+                    "build",
+                    "Build",
+                    DecorationEditorTheme.ToolButton(true),
+                    "Tab: switch to Decoration Edit Mode when Smart Builder is clean."))
+                SwitchToDecorationEditRequested = true;
         }
 
         private void DrawLeftPanel(int id)
         {
             GUI.Box(new Rect(0f, 0f, _leftPanelRect.width, _leftPanelRect.height), GUIContent.none, DecorationEditorTheme.Panel);
-            GUILayout.BeginArea(new Rect(8f, 8f, _leftPanelRect.width - 16f, _leftPanelRect.height - 16f));
-            GUILayout.Label(new GUIContent(" Smart Block Builder", DecorationEditorIconCatalog.Get("build")), DecorationEditorTheme.Header);
+            float inset = EsuHudLayout.Scale(8f);
+            GUILayout.BeginArea(new Rect(inset, inset, _leftPanelRect.width - inset * 2f, _leftPanelRect.height - inset * 2f));
+            DrawCompactIconHeader("Smart Block Builder", "build");
             DecorationEditorTheme.Separator();
             LabelRow("Selected", _source?.DisplayName ?? (_sourceReason ?? "No supported selected block"));
             LabelRow("Tool", _tool.ToString());
             LabelRow("Plane", _drawPlane.ToString());
             LabelRow("Occupancy", _occupancyMode == SmartBuildOccupancyMode.SkipOccupied ? "Skip occupied" : "Block on overlap");
+            LabelRow("Symmetry", DecoLimitLifter.EsuSymmetry.FormatSummary());
             DecorationEditorTheme.Separator();
             if (_draft == null)
             {
@@ -727,7 +1047,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 GUILayout.Label("Preview", DecorationEditorTheme.SubHeader);
                 LabelRow("Origin", FormatCell(_draft.Origin));
                 LabelRow("Size", _draft.FormatDimensions());
-                LabelRow("Cells", _draft.ToVolume().CellCount.ToString("N0", CultureInfo.InvariantCulture));
+                LabelRow("Cells", (_previewCells.Count > 0 ? _previewCells.Count : _draft.ToVolume().CellCount)
+                    .ToString("N0", CultureInfo.InvariantCulture));
                 DrawPlanSummary();
             }
 
@@ -737,9 +1058,28 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.EndArea();
         }
 
+        private static void DrawCompactIconHeader(string text, string iconKey)
+        {
+            Rect rect = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(22f), GUILayout.ExpandWidth(true));
+            GUI.Label(rect, "      " + text, DecorationEditorTheme.SubHeader);
+
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            if (icon == null)
+                return;
+
+            var iconRect = new Rect(
+                rect.x + EsuHudLayout.Scale(5f),
+                rect.y + EsuHudLayout.Scale(3f),
+                EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(16f));
+            GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+        }
+
         private void DrawStatusStrip(int id)
         {
-            GUILayout.BeginArea(new Rect(0f, 0f, _statusRect.width, _statusRect.height), DecorationEditorTheme.Panel);
+            GUI.Box(new Rect(0f, 0f, _statusRect.width, _statusRect.height), GUIContent.none, DecorationEditorTheme.Panel);
+            Rect inner = EsuHudLayout.LocalPanelInnerRect(_statusRect.width, _statusRect.height, 4f);
+            GUILayout.BeginArea(inner);
             GUILayout.BeginHorizontal();
             GUILayout.Label(
                 _draft == null
@@ -802,6 +1142,31 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
+        private void SymmetryButton(DecorationEditAxis axis)
+        {
+            bool active = DecoLimitLifter.EsuSymmetry.IsActive(axis) ||
+                          DecoLimitLifter.EsuSymmetry.IsPending(axis);
+            string label = DecoLimitLifter.EsuSymmetry.AxisName(axis);
+            string tooltip = DecoLimitLifter.EsuSymmetry.IsPending(axis)
+                ? "Click to cancel placing this symmetry plane."
+                : DecoLimitLifter.EsuSymmetry.IsActive(axis)
+                    ? "Click to clear this symmetry plane."
+                    : "Click, then click the construct grid to place this symmetry plane.";
+            if (GUILayout.Button(
+                    new GUIContent(label, DecorationEditorIconCatalog.Get("axis"), tooltip),
+                    DecorationEditorTheme.ToolButton(active),
+                    GUILayout.Width(EsuHudLayout.Scale(36f)),
+                    GUILayout.Height(EsuHudLayout.Scale(40f))))
+            {
+                DecoLimitLifter.EsuSymmetry.ToggleAxis(axis);
+                RebuildPlan();
+                InfoStore.Add(
+                    active && !DecoLimitLifter.EsuSymmetry.IsPending(axis)
+                        ? "Symmetry " + label + " updated."
+                        : "Click the construct grid to place the " + label + " symmetry plane.");
+            }
+        }
+
         private bool IconButton(
             string icon,
             string label,
@@ -814,11 +1179,32 @@ namespace DecoLimitLifter.SmartBuildMode
             bool clicked = GUILayout.Button(
                 new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
                 enabled ? style : DecorationEditorTheme.DisabledButton,
-                GUILayout.Width(62f),
-                GUILayout.Height(40f));
+                GUILayout.Width(EsuHudLayout.Scale(62f)),
+                GUILayout.Height(EsuHudLayout.Scale(40f)));
             GUI.enabled = previous;
             return clicked && enabled;
         }
+
+        private bool AttentionIconButton(
+            string icon,
+            string label,
+            GUIStyle style,
+            string tooltip,
+            bool enabled = true)
+        {
+            bool clicked = IconButton(icon, label, style, tooltip, enabled);
+            EsuToolbarAttention.DrawLastButtonPulse(ApplyCancelAttentionActive);
+            return clicked;
+        }
+
+        private bool ApplyCancelAttentionActive =>
+            EsuToolbarAttention.IsActive(_applyCancelAttentionUntil);
+
+        private void RefreshApplyCancelAttention() =>
+            _applyCancelAttentionUntil = EsuToolbarAttention.RefreshUntil();
+
+        private void ClearApplyCancelAttention() =>
+            _applyCancelAttentionUntil = -1f;
 
         private void DrawPlanSummary()
         {
@@ -842,7 +1228,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private static void LabelRow(string label, string value)
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label(label, DecorationEditorTheme.Mini, GUILayout.Width(72f));
+            GUILayout.Label(label, DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
             GUILayout.Label(value ?? string.Empty, DecorationEditorTheme.BodyWrap);
             GUILayout.EndHorizontal();
         }
@@ -852,9 +1238,11 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft?.Construct == null)
                 return;
 
-            SmartBuildVolume volume = _draft.ToVolume();
             int drawn = 0;
-            foreach (Vector3i cell in volume.EnumerateCells())
+            IEnumerable<Vector3i> cells = _previewCells.Count > 0
+                ? (IEnumerable<Vector3i>)_previewCells
+                : _draft.ToVolume().EnumerateCells();
+            foreach (Vector3i cell in cells)
             {
                 bool occupied = IsOccupied(cell);
                 Color face = occupied
@@ -875,11 +1263,14 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft?.Construct == null)
                 return;
 
-            Vector3[] corners = _draft.ToVolume().GetWorldCorners();
             Color color = _plan != null && !_plan.CanCommit
                 ? new Color(1f, 0.2f, 0.15f, 1f)
                 : new Color(0.1f, 0.95f, 1f, 1f);
-            DrawWireEdges(corners, color, 3.2f);
+            IReadOnlyList<SmartBuildVolume> volumes = _previewVolumes.Count > 0
+                ? _previewVolumes
+                : (IReadOnlyList<SmartBuildVolume>)new[] { _draft.ToVolume() };
+            foreach (SmartBuildVolume volume in volumes)
+                DrawWireEdges(volume.GetWorldCorners(), color, 3.2f);
         }
 
         private void DrawDraftHandles()
@@ -917,6 +1308,42 @@ namespace DecoLimitLifter.SmartBuildMode
             Vector3 center = new Vector3(cell.x, cell.y, cell.z);
             Vector3 world = construct.SafeLocalToGlobal(center);
             DecorationEditorOverlay.Cross(world, 0.36f, new Color(0.1f, 0.95f, 1f, 0.92f), 2.2f);
+        }
+
+        private void DrawSymmetryOverlay()
+        {
+            AllConstruct construct = _draft?.Construct ??
+                                     DecoLimitLifter.EsuSymmetry.Construct ??
+                                     FocusedConstruct();
+            Vector3 around = _draft != null
+                ? _draft.CenterLocal
+                : FocusedConstructLocalCenter(construct);
+
+            foreach (KeyValuePair<DecorationEditAxis, int> plane in DecoLimitLifter.EsuSymmetry.ActivePlanes)
+            {
+                if (ReferenceEquals(DecoLimitLifter.EsuSymmetry.Construct, construct))
+                    DecoLimitLifter.EsuSymmetry.DrawPlane(
+                        construct,
+                        plane.Key,
+                        plane.Value,
+                        around,
+                        pending: false);
+            }
+
+            if (DecoLimitLifter.EsuSymmetry.PendingAxis == DecorationEditAxis.None)
+                return;
+
+            if (TrySymmetryPlaneCandidate(out AllConstruct candidateConstruct, out Vector3i cell))
+            {
+                DecoLimitLifter.EsuSymmetry.DrawPlane(
+                    candidateConstruct,
+                    DecoLimitLifter.EsuSymmetry.PendingAxis,
+                    DecoLimitLifter.EsuSymmetry.AxisComponent(
+                        cell,
+                        DecoLimitLifter.EsuSymmetry.PendingAxis),
+                    new Vector3(cell.x, cell.y, cell.z),
+                    pending: true);
+            }
         }
 
         private void DrawCell(Vector3i cell, Color face, Color edge, float edgeWidth)
@@ -986,6 +1413,52 @@ namespace DecoLimitLifter.SmartBuildMode
                 Mathf.RoundToInt(value.x),
                 Mathf.RoundToInt(value.y),
                 Mathf.RoundToInt(value.z));
+
+        private static Vector3 FocusedConstructLocalCenter(AllConstruct construct)
+        {
+            if (construct == null)
+                return Vector3.zero;
+
+            try
+            {
+                return construct.SafeGlobalToLocal(construct.SafePosition);
+            }
+            catch
+            {
+                return Vector3.zero;
+            }
+        }
+
+        private static SmartBuildVolume VolumeFromCells(
+            AllConstruct construct,
+            IReadOnlyList<Vector3i> cells)
+        {
+            if (construct == null || cells == null || cells.Count == 0)
+                return null;
+
+            Vector3i min = cells[0];
+            Vector3i max = cells[0];
+            for (int index = 1; index < cells.Count; index++)
+            {
+                Vector3i cell = cells[index];
+                min.x = Math.Min(min.x, cell.x);
+                min.y = Math.Min(min.y, cell.y);
+                min.z = Math.Min(min.z, cell.z);
+                max.x = Math.Max(max.x, cell.x);
+                max.y = Math.Max(max.y, cell.y);
+                max.z = Math.Max(max.z, cell.z);
+            }
+
+            return new SmartBuildVolume(
+                construct,
+                min,
+                SmartBuildAxis.X,
+                SmartBuildAxis.Y,
+                SmartBuildAxis.Z,
+                max.x - min.x + 1,
+                max.y - min.y + 1,
+                max.z - min.z + 1);
+        }
 
         private static string FormatCell(Vector3i cell) =>
             $"{cell.x}, {cell.y}, {cell.z}";

@@ -21,6 +21,9 @@ namespace DecoLimitLifter.SerializationHud
         private const string LegacyDataLimitLabel = "6.25 MiB legacy";
         private const string EsuHeaderLimitLabel = "4 MiB ESU";
         private const string EsuDataLimitLabel = "64 MiB ESU";
+        private const int MinimumHudFontSize = 7;
+        private const int MaximumHudFontSize = 14;
+        private const int MaximumHudHeaderFontSize = 15;
         private static readonly Color WarningColor = new Color(1f, 0.72f, 0.2f, 1f);
         private static readonly Color ErrorColor = new Color(1f, 0.25f, 0.2f, 1f);
         private static MainConstruct _cachedConstruct;
@@ -131,7 +134,7 @@ namespace DecoLimitLifter.SerializationHud
                         : forecast.Format == SerializationWireFormat.Sentinel
                             ? WarningColor
                             : Color.white);
-                styles.InfoHeader.Rect(R.GetRectAndMove(), "EndlessShapes save", null);
+                DrawHeader(styles.InfoHeader, R, "EndlessShapes save");
             }
             catch (Exception exception)
             {
@@ -236,12 +239,13 @@ namespace DecoLimitLifter.SerializationHud
             string text,
             Color color)
         {
-            style.TextTintOnceOff = color;
             Rect row = rects.GetRectAndMove();
+            DrawHudBackground(style, row);
+
             Texture2D texture = DecorationEditorIconCatalog.GetRuntimeIcon(icon);
             if (texture != null)
             {
-                float size = Mathf.Max(14f, Mathf.Min(row.height - 4f, 22f));
+                float size = Mathf.Clamp(row.height * 0.68f, 10f, 18f);
                 GUI.DrawTexture(
                     new Rect(row.x + 4f, row.y + (row.height - size) * 0.5f, size, size),
                     texture,
@@ -249,7 +253,105 @@ namespace DecoLimitLifter.SerializationHud
                     alphaBlend: true);
                 row.xMin += size + 8f;
             }
-            style.Rect(row, text, null);
+
+            DrawFittedHudText(
+                style,
+                new Rect(
+                    row.x + 2f,
+                    row.y + 1f,
+                    Mathf.Max(1f, row.width - 4f),
+                    Mathf.Max(1f, row.height - 2f)),
+                text,
+                color,
+                header: false);
+        }
+
+        private static void DrawHeader(StylePlus style, Rectum rects, string text)
+        {
+            Rect row = rects.GetRectAndMove();
+            DrawHudBackground(style, row);
+            DrawFittedHudText(
+                style,
+                new Rect(
+                    row.x + 4f,
+                    row.y + 1f,
+                    Mathf.Max(1f, row.width - 8f),
+                    Mathf.Max(1f, row.height - 2f)),
+                text,
+                Color.white,
+                header: true);
+        }
+
+        private static void DrawHudBackground(StylePlus style, Rect row)
+        {
+            GUIStyle background = style?.Style != null
+                ? new GUIStyle(style.Style)
+                : new GUIStyle(GUI.skin.box);
+            background.normal.textColor = Color.clear;
+            background.hover.textColor = Color.clear;
+            background.active.textColor = Color.clear;
+            GUI.Label(row, GUIContent.none, background);
+        }
+
+        private static void DrawFittedHudText(
+            StylePlus source,
+            Rect rect,
+            string text,
+            Color color,
+            bool header)
+        {
+            GUIStyle textStyle = source?.Style != null
+                ? new GUIStyle(source.Style)
+                : new GUIStyle(GUI.skin.label);
+            textStyle.wordWrap = false;
+            textStyle.clipping = TextClipping.Clip;
+            textStyle.alignment = header ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft;
+            textStyle.fontStyle = header ? FontStyle.BoldAndItalic : FontStyle.Normal;
+            textStyle.padding = new RectOffset(0, 0, 0, 0);
+            textStyle.normal.textColor = color;
+            textStyle.hover.textColor = color;
+            textStyle.active.textColor = color;
+            textStyle.fontSize = FittedHudFontSize(textStyle, text ?? string.Empty, rect, header);
+            GUI.Label(rect, text, textStyle);
+        }
+
+        private static int FittedHudFontSize(
+            GUIStyle style,
+            string text,
+            Rect rect,
+            bool header)
+        {
+            int minimum = MinimumHudFontSize;
+            int size = HudBaseFontSize(rect.height, header);
+            var content = new GUIContent(text);
+            for (; size > minimum; size--)
+            {
+                style.fontSize = size;
+                Vector2 measured = style.CalcSize(content);
+                if (measured.x <= rect.width &&
+                    measured.y <= rect.height + 1f)
+                {
+                    return size;
+                }
+            }
+
+            return minimum;
+        }
+
+        private static int HudBaseFontSize(float rowHeight, bool header)
+        {
+            float screenScale = 1f;
+            if (Screen.width > 0 && Screen.height > 0)
+            {
+                screenScale = Mathf.Clamp(
+                    Mathf.Min(Screen.width / 1920f, Screen.height / 1080f),
+                    0.55f,
+                    1f);
+            }
+
+            float maximum = header ? MaximumHudHeaderFontSize : MaximumHudFontSize;
+            float rowLimited = Mathf.Max(MinimumHudFontSize, rowHeight - 6f);
+            return Mathf.RoundToInt(Mathf.Clamp(maximum * screenScale, MinimumHudFontSize, rowLimited));
         }
 
         private static Color BufferColor(BlueprintSerializationUsage usage)

@@ -116,6 +116,51 @@ namespace DecoLimitLifter.DecorationEditMode
             session.TryRestoreHistorySnapshot(_construct, _decoration, _after, Label + " redo");
     }
 
+    internal sealed class DecorationSnapshotBatchCommand : IDecorationEditCommand
+    {
+        private readonly AllConstruct _construct;
+        private readonly Decoration[] _decorations;
+        private readonly DecorationEditSnapshot[] _before;
+        private readonly DecorationEditSnapshot[] _after;
+        private readonly int _primaryIndex;
+
+        internal DecorationSnapshotBatchCommand(
+            string label,
+            AllConstruct construct,
+            Decoration[] decorations,
+            DecorationEditSnapshot[] before,
+            DecorationEditSnapshot[] after,
+            int primaryIndex)
+        {
+            Label = string.IsNullOrEmpty(label) ? "Edit mirrored decorations" : label;
+            _construct = construct;
+            _decorations = decorations ?? Array.Empty<Decoration>();
+            _before = before ?? Array.Empty<DecorationEditSnapshot>();
+            _after = after ?? Array.Empty<DecorationEditSnapshot>();
+            _primaryIndex = primaryIndex;
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreHistorySnapshots(
+                _construct,
+                _decorations,
+                _before,
+                _primaryIndex,
+                Label + " undo");
+
+        public bool Redo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreHistorySnapshots(
+                _construct,
+                _decorations,
+                _after,
+                _primaryIndex,
+                Label + " redo");
+    }
+
     internal sealed class DecorationCreateCommand : IDecorationEditCommand
     {
         private readonly AllConstruct _construct;
@@ -147,6 +192,58 @@ namespace DecoLimitLifter.DecorationEditMode
             if (session == null)
                 return false;
             return session.TryRedoCreatedDecoration(_construct, _created, out _decoration);
+        }
+    }
+
+    internal sealed class DecorationCreateBatchCommand : IDecorationEditCommand
+    {
+        private readonly AllConstruct _construct;
+        private readonly DecorationEditSnapshot[] _created;
+        private readonly Decoration[] _decorations;
+
+        internal DecorationCreateBatchCommand(
+            AllConstruct construct,
+            Decoration[] decorations,
+            DecorationEditSnapshot[] created)
+        {
+            Label = "Create mirrored decorations";
+            _construct = construct;
+            _decorations = decorations ?? Array.Empty<Decoration>();
+            _created = created ?? Array.Empty<DecorationEditSnapshot>();
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session)
+        {
+            if (session == null)
+                return false;
+
+            bool ok = true;
+            for (int index = _decorations.Length - 1; index >= 0; index--)
+                ok &= session.TryUndoCreatedDecoration(_construct, ref _decorations[index]);
+            return ok;
+        }
+
+        public bool Redo(DecorationEditSession session)
+        {
+            if (session == null)
+                return false;
+
+            var recreated = new Decoration[_created.Length];
+            for (int index = 0; index < _created.Length; index++)
+            {
+                if (!session.TryRedoCreatedDecoration(_construct, _created[index], out recreated[index]))
+                {
+                    for (int rollback = index - 1; rollback >= 0; rollback--)
+                        session.TryUndoCreatedDecoration(_construct, ref recreated[rollback]);
+                    return false;
+                }
+            }
+
+            for (int index = 0; index < recreated.Length && index < _decorations.Length; index++)
+                _decorations[index] = recreated[index];
+            return true;
         }
     }
 }

@@ -3,6 +3,7 @@ using Assets.Scripts;
 using BrilliantSkies.Core.Constants;
 using BrilliantSkies.Ftd.Avatar.Build;
 using HarmonyLib;
+using UnityEngine;
 
 namespace DecoLimitLifter
 {
@@ -28,6 +29,13 @@ namespace DecoLimitLifter
 
         internal static bool CanUseHotkeys() =>
             AllGameControlsEnabled && !IsTextInputActive();
+
+        internal static bool CanSwitchEsuModes() =>
+            !IsTextInputActive();
+
+        internal static bool IsControlHeld() =>
+            Input.GetKey(KeyCode.LeftControl) ||
+            Input.GetKey(KeyCode.RightControl);
 
         internal static bool IsTextInputActive()
         {

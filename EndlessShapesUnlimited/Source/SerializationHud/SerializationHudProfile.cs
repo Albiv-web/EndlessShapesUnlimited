@@ -11,6 +11,8 @@ namespace DecoLimitLifter.SerializationHud
         public sealed class ProfileData
         {
             public bool Enabled { get; set; }
+            public bool EsuEditorAutoScale { get; set; } = true;
+            public float EsuEditorScale { get; set; } = 1f;
         }
 
         internal static ProfileData Data =>
@@ -79,7 +81,7 @@ namespace DecoLimitLifter.SerializationHud
             SetVolatile(
                 SerializationHudKeyInput.SwitchEsuBuildMode,
                 "Switch ESU build mode",
-                "Switch between EndlessShapes Unlimited Decoration Edit Mode and Smart Block Builder.",
+                "Cycle EndlessShapes Unlimited modes: Decoration Edit, Surface Builder, Smart Builder.",
                 category,
                 Q(Key.Tab));
             SetVolatile(

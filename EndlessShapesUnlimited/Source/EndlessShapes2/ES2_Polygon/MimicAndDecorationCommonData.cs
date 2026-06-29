@@ -45,6 +45,50 @@ namespace EndlessShapes2.Polygon
 
         private object _obj = null;
 
+        internal bool TrySetStandaloneData(
+            Guid meshGuid,
+            Vector3 positioning,
+            Vector3 scaling,
+            Vector3 orientation,
+            int colorIndex)
+        {
+            if (_dataType != MAD_DataType.None)
+                return false;
+
+            var data = (MDCD)_obj;
+            data.MeshGuid = meshGuid;
+            data.Positioning = positioning;
+            data.Scaling = scaling;
+            data.Orientation = orientation;
+            if (colorIndex >= 0)
+                data.ColorIndex = colorIndex;
+            return true;
+        }
+
+        internal bool TryGetStandaloneData(
+            out Guid meshGuid,
+            out Vector3 positioning,
+            out Vector3 scaling,
+            out Vector3 orientation,
+            out int colorIndex)
+        {
+            meshGuid = Guid.Empty;
+            positioning = Vector3.zero;
+            scaling = Vector3.one;
+            orientation = Vector3.zero;
+            colorIndex = 0;
+            if (_dataType != MAD_DataType.None)
+                return false;
+
+            var data = (MDCD)_obj;
+            meshGuid = data.MeshGuid;
+            positioning = data.Positioning;
+            scaling = data.Scaling;
+            orientation = data.Orientation;
+            colorIndex = data.ColorIndex;
+            return true;
+        }
+
         public Guid MeshGuid
         {
             get

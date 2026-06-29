@@ -120,6 +120,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (!Active)
                 {
                     SmartBuildInputScope.ForceResetIfActive("no active smart build session");
+                    DecoLimitLifter.EsuInputFocusGuard.TickPostExitRepair(
+                        "Smart Block Builder inactive");
                     return;
                 }
 
@@ -182,6 +184,8 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildSession session = _session;
             _session = null;
             session?.End();
+            if (notifyClose)
+                DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
             {
                 InfoStore.Add(string.IsNullOrWhiteSpace(reason)
