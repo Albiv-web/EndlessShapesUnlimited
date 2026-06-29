@@ -1,12 +1,5 @@
 # EndlessShapes Unlimited
 
-WIP
-WIP
-WIP
-WIP
-WIP
-WIP
-
 EndlessShapes Unlimited is a From The Depths mod that combines the hardened
 DecoLimitLifter serializer with the OBJ import/export and decoration-building
 tools from EndlessShapes2.
@@ -32,6 +25,8 @@ License.
 - Adds a native-looking Decoration Edit Mode shell with FTD-styled toolbar,
   decoration outliner, inspector, mesh browser, focus view, and Apply/Cancel
   transactions.
+- Adds shared X/Y/Z symmetry planes for new Decoration Edit placements and Smart
+  Block Builder previews/commits.
 - Packages DeltaEpsilon's Beamification Python blueprint converter as an
   optional external tool under `Tools/Beamification`.
 - Registers an `EndlessShapes Unlimited v1.0.0 Active!` entry in FTD's Alerts
@@ -145,49 +140,85 @@ means this mod is required to load the extended container.
 Press `Ctrl+D` in build mode, or use the Decoration Builder's
 **Decoration Edit Mode** button, to open the modal editor. The native-styled
 overlay provides a top toolbar, right-side decoration outliner, selected
-decoration inspector and selected-anchor context inside the draggable left mesh
-palette, and a compact bottom status strip. Press `Tab` while the ESU editor is
-clean to switch to Smart Block Builder; apply or cancel live edits first.
+decoration inspector, selected-anchor context, mesh palette, and a compact
+bottom status strip. The **Pal**, **Insp**, **Out**, and **Anch** toolbar buttons
+toggle those panels independently while preserving the same left/right stack
+areas. Press `Tab` while the ESU editor is clean to cycle from Decoration Edit
+to Surface Builder to Smart Block Builder; apply or cancel live edits first.
+The overlay auto-scales on smaller
+game windows, has an options-screen manual scale multiplier plus layout reset,
+and the left/right panel stacks can be resized in-game. The top toolbar keeps a
+stable mode/notification slot across Decoration Edit, Surface Builder, and Smart
+Builder; notification text has no icon, the slot stays fixed-height, and long
+messages show a **Details** button without changing top-panel padding. A blocked
+mode switch makes **Apply** and **Cancel** flash without toolbar movement.
 
 The current pass edits one active decoration at a time. Select a decoration in
 the viewport or outliner, use **Move** for snapped XYZ handles or center
 freeform movement, use **Rotate**/**Scale** for transform gizmos, use
 **Anchor** for whole-block retethering that keeps the mesh visually in place,
-and use **Paint** plus the mesh palette for mesh, color, and material changes. Preview edits
+and use **Paint** plus the mesh palette for mesh, color, and material changes.
+The lower transform strip keeps the Position, Rotation, and Scale X/Y/Z labels
+visible at laptop scale, and its **Anchor follow: on/off** control toggles the
+same retether behavior as the anchor options menu. Preview edits
 are live for rendering; **Ctrl+Z**/**Ctrl+Y** or the toolbar buttons undo and
 redo un-applied editor actions; **Apply** commits and **Cancel** or closing
 restores the original decoration fields.
 
 Mesh palette row clicks enter placement mode: the selected mesh follows the
 pointer as a valid/invalid ghost, then clicking a real craft block creates a
-decoration anchored to that block. The palette can switch between a low-cost
-searchable list and a lazy 3D preview grid.
+decoration anchored to that block. The toolbar X/Y/Z symmetry buttons can place
+construct-local mirror planes; active planes mirror new mesh placements
+atomically and live-follow matched existing decoration moves, rejecting the
+linked edit if any mirrored tether is invalid. The palette can switch between a
+low-cost searchable list and a lazy 3D preview grid that renders only visible
+cards instead of previewing the full mesh catalog at once.
 
 The toolbar **View** control offers **Mixed**, **Wireframe**, **Deco only**,
 **Mass**, **Drag**, **Cost**, **Surface**, **Important**, and **Normal**. ESU uses
 FTD's decoration wireframe/special-view settings where safe and restores the
 player's previous view state when the editor closes.
 
-The editor references FTD's runtime UI element icons by GUID/name and uses
-generated ESU fallback glyphs if a texture is unavailable. It does not package
-copied FTD icon textures.
+The editor references FTD's runtime UI element icons by GUID/name from
+`StreamingAssets/Mods/UI/Ui Elements`, including `editButton`, and uses
+generated ESU-owned fallback icons if a texture is unavailable. It does not
+package copied FTD texture files.
+
+In-game smoke checks should include: no `Colored with paint #N` tooltip while an
+ESU editor is active; press Ctrl alone and confirm the screen does not show the
+vanilla vehicle-control overlay; `Ctrl+Shift+B` remains open after the first
+frame; Surface Builder Ctrl-click behavior still works; and a long ESU warning
+opens through **Details** without changing top-panel padding.
 
 ### Smart Block Builder
 
-Press `Ctrl+Shift+B` in build mode, or press `Tab` from a clean Decoration Edit
-Mode session, to open Smart Block Builder. The builder uses the same native ESU
+Press `Ctrl+Shift+B` in build mode, or press `Tab` from a clean Surface Builder
+session, to open Smart Block Builder. The builder uses the same native ESU
 toolbar/panel/status styling as Decoration Edit Mode and creates a runtime-only
-voxel preview on the focused construct grid. A click on an existing block seeds
-the preview beside that face; a click in empty space seeds a snapped preview on
-the selected draw plane.
+wireframe preview on the focused construct grid. A click on an existing block
+seeds the preview beside that face; a click in empty space seeds a snapped
+preview on the selected draw plane. Its left panel shares the ESU auto-scale
+settings, can be resized independently from Decoration Edit Mode panels, and has
+an internal material picker for Wood, Stone, Metal, Alloy, Glass, Lead, Heavy
+armour, and Rubber.
 
 The preview is not saved and does not place blocks until **Apply**. Use **Move**
-and **Scale** handles to adjust the rectangular volume, cycle **Plane** for
-free-space drawing, and use **Skip** or **Block** occupancy mode to decide
-whether existing cells are skipped or make the plan invalid. By default, occupied
-cells are skipped and reported in the status strip. Middle mouse can be used to
-show the FTD cursor without closing Smart Builder, and camera/WASD input remains
-live unless an ESU handle drag or ESU panel scroll owns that frame.
+and **Scale** handles, or drag any preview face in **Scale**, to adjust the
+rectangular volume. Cycle **Plane** for free-space drawing, cycle **Material** to
+choose the placed block type, and use **Skip** or **Block** occupancy mode to
+decide whether existing cells are skipped or make the plan invalid. By default,
+occupied cells are skipped and reported in the status strip. Active X/Y/Z
+symmetry planes mirror the draft preview and Apply commit as one atomic plan.
+Middle mouse can be used to show the FTD cursor without closing Smart Builder,
+and camera/WASD input remains live unless an ESU handle drag or ESU panel scroll
+owns that frame.
+Implementation notes: `EsuBuildModeInputGate` owns the one-press mode-switch
+guard, `SmartBuildDraft` stays runtime-only until Apply, and Middle mouse may
+show the FTD cursor without closing Smart Builder; click empty space to seed on
+the selected draw plane and confirm middle mouse shows the FTD cursor without
+closing. Large-preview smoke checks should confirm the preview stays to a single
+outer wireframe, all six faces resize by whole cells, and each material preset
+places the expected basic block.
 
 ## Building and verification
 
@@ -203,7 +234,7 @@ binaries, PDBs, local paths, and secrets, and create a deterministic runtime ZIP
 under `artifacts`. The script accepts Release configuration only and derives the
 archive version from `plugin.json`.
 
-The automated suite currently has 216 checks covering exact Harmony methods,
+The automated suite currently has 234 checks covering exact Harmony methods,
 legacy byte compatibility, serialization boundaries and corruption handling,
 shared-buffer growth, locale parsing, image limits, geometry and 100,000-entry
 processing, atomic tether rollback, exporter transactions, scoped serialization
@@ -214,6 +245,26 @@ EndlessShapes2 bindings.
 
 Automated checks do not replace the required in-game acceptance pass for UI,
 Unity rendering, construct import/export, multiplayer, and save/load behavior.
+
+## Technical documentation
+
+- [`docs/ENDLESS_SHAPES_TECHNICAL.md`](docs/ENDLESS_SHAPES_TECHNICAL.md) explains
+  OBJ parsing, coordinate conversion, polygon classification, decoration
+  generation, palette mapping, tether movement, and OBJ export.
+- [`docs/DECO_LIMIT_LIFTER_TECHNICAL.md`](docs/DECO_LIMIT_LIFTER_TECHNICAL.md)
+  explains FTD's serializer model, every Harmony patch, legacy and sentinel wire
+  formats, buffer growth, corruption checks, limits, and multiplayer constraints.
+- [`docs/DECORATION_EDITOR_NATIVE_UI.md`](docs/DECORATION_EDITOR_NATIVE_UI.md)
+  documents the native Decoration Edit Mode shell, focus-view behavior, FTD icon
+  catalog, and ESU-owned fallback icons.
+- [`docs/BEAMIFICATION_TECHNICAL.md`](docs/BEAMIFICATION_TECHNICAL.md) explains
+  the bundled Python blueprint converter, GUID mapping, voxel field
+  construction, mixed-integer beam packing, blueprint emission, and ESU's local
+  CLI fix.
+- [`TECHNICAL_LOG.md`](TECHNICAL_LOG.md) records the combined integration and
+  verification status.
+- [`docs/IN_GAME_TEST_PLAN.md`](docs/IN_GAME_TEST_PLAN.md) is the ordered FTD
+  acceptance checklist required before merge or release.
 
 ## Source provenance and licenses
 

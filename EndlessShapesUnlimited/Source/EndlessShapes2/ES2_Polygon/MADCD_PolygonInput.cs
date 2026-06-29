@@ -59,7 +59,7 @@ namespace EndlessShapes2.Polygon
                 case PolygonType.RightTriangle:
                     position = sides[0].Midpoint - normalOffset;
                     scale = new Vector3(settings.FaceThickness, sides[2].Length, sides[1].Length);
-                    angles = Quaternion.LookRotation(-sides[1].SideVector, sides[2].SideVector).eulerAngles;
+                    angles = LookRotationEuler(-sides[1].SideVector, sides[2].SideVector, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Slope,
@@ -75,7 +75,7 @@ namespace EndlessShapes2.Polygon
                     Vector3 baseToApex = apex - sides[0].Midpoint;
                     position = (sides[0].Midpoint + apex) / 2f - normalOffset;
                     scale = new Vector3(sides[0].Length, settings.FaceThickness, baseToApex.magnitude);
-                    angles = Quaternion.LookRotation(baseToApex, normalOffset).eulerAngles;
+                    angles = LookRotationEuler(baseToApex, normalOffset, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Wedge,
@@ -93,7 +93,7 @@ namespace EndlessShapes2.Polygon
                     float frontZ = PerpendicularComponent(sides[1].Length, frontY, polygonData.SourceLine);
                     position = sides[1].Midpoint - normalOffset;
                     scale = new Vector3(settings.FaceThickness, frontY, frontZ);
-                    angles = Quaternion.LookRotation(forwardFront, sides[1].SideVector).eulerAngles;
+                    angles = LookRotationEuler(forwardFront, sides[1].SideVector, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Slope,
@@ -111,7 +111,7 @@ namespace EndlessShapes2.Polygon
                     float backZ = PerpendicularComponent(sides[2].Length, backY, polygonData.SourceLine);
                     position = sides[2].Midpoint - normalOffset;
                     scale = new Vector3(settings.FaceThickness, backY, backZ);
-                    angles = Quaternion.LookRotation(-forwardBack, -sides[2].SideVector).eulerAngles;
+                    angles = LookRotationEuler(-forwardBack, -sides[2].SideVector, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Slope,
@@ -125,7 +125,7 @@ namespace EndlessShapes2.Polygon
                 case PolygonType.Rectangle:
                     position = (sides[0].OriginPosition + sides[2].OriginPosition) / 2f - normalOffset;
                     scale = new Vector3(settings.FaceThickness, sides[1].Length, sides[0].Length);
-                    angles = Quaternion.LookRotation(sides[0].SideVector, sides[1].SideVector).eulerAngles;
+                    angles = LookRotationEuler(sides[0].SideVector, sides[1].SideVector, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Block,
@@ -146,7 +146,7 @@ namespace EndlessShapes2.Polygon
                     center /= 16f;
                     position = center - normalOffset;
                     scale = new Vector3(right.magnitude, up.magnitude, settings.FaceThickness);
-                    angles = Quaternion.LookRotation(forward, up).eulerAngles;
+                    angles = LookRotationEuler(forward, up, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Pole,
@@ -160,7 +160,7 @@ namespace EndlessShapes2.Polygon
                 case PolygonType.Line:
                     position = (sides[0].OriginPosition + sides[0].TargetPosition) / 2f;
                     scale = new Vector3(settings.LineThickness, settings.LineThickness, sides[0].Length);
-                    angles = Quaternion.LookRotation(sides[0].SideVector, Vector3.up).eulerAngles;
+                    angles = LookRotationEuler(sides[0].SideVector, Vector3.up, polygonData.SourceLine);
                     InputDecorationData(
                         madcd,
                         meshGuids.Pole,
@@ -187,13 +187,145 @@ namespace EndlessShapes2.Polygon
         {
             ValidateGeneratedTransform(position, scale, angles, sourceLine);
 
+            Vector3 roundedPosition = Round(position);
+            Vector3 roundedScale = Round(scale);
+            Vector3 roundedAngles = Round(angles);
+            if (data.TrySetStandaloneData(
+                    guid,
+                    roundedPosition,
+                    roundedScale,
+                    roundedAngles,
+                    colorIndex))
+            {
+                return;
+            }
+
             data.MeshGuid = guid;
-            data.Positioning = Round(position);
-            data.Scaling = Round(scale);
-            data.Orientation = Round(angles);
+            data.Positioning = roundedPosition;
+            data.Scaling = roundedScale;
+            data.Orientation = roundedAngles;
             if (colorIndex >= 0)
                 data.ColorIndex = colorIndex;
         }
+
+        private static Vector3 LookRotationEuler(Vector3 forward, Vector3 upwards, int sourceLine)
+        {
+            EnsureFinite(forward, "forward vector", sourceLine);
+            EnsureFinite(upwards, "up vector", sourceLine);
+            if (forward.sqrMagnitude <= 0.000000000001f)
+                throw GeometryError(sourceLine, "generated decoration forward vector has zero length");
+            if (upwards.sqrMagnitude <= 0.000000000001f)
+                throw GeometryError(sourceLine, "generated decoration up vector has zero length");
+
+            try
+            {
+                return Quaternion.LookRotation(forward, upwards).eulerAngles;
+            }
+            catch (Exception exception) when (IsUnityECallUnavailable(exception))
+            {
+                return ManagedLookRotationEuler(forward, upwards, sourceLine);
+            }
+        }
+
+        private static Vector3 ManagedLookRotationEuler(Vector3 forward, Vector3 upwards, int sourceLine)
+        {
+            Vector3 z = Normalize(forward, sourceLine, "forward vector");
+            Vector3 x = Cross(upwards, z);
+            if (x.sqrMagnitude <= 0.000000000001f)
+                throw GeometryError(sourceLine, "generated decoration up vector is parallel to forward");
+            x = Normalize(x, sourceLine, "right vector");
+            Vector3 y = Cross(z, x);
+
+            double m00 = x.x;
+            double m01 = y.x;
+            double m02 = z.x;
+            double m10 = x.y;
+            double m11 = y.y;
+            double m12 = z.y;
+            double m20 = x.z;
+            double m21 = y.z;
+            double m22 = z.z;
+
+            double qw;
+            double qx;
+            double qy;
+            double qz;
+            double trace = m00 + m11 + m22;
+            if (trace > 0d)
+            {
+                double s = Math.Sqrt(trace + 1d) * 2d;
+                qw = 0.25d * s;
+                qx = (m21 - m12) / s;
+                qy = (m02 - m20) / s;
+                qz = (m10 - m01) / s;
+            }
+            else if (m00 > m11 && m00 > m22)
+            {
+                double s = Math.Sqrt(1d + m00 - m11 - m22) * 2d;
+                qw = (m21 - m12) / s;
+                qx = 0.25d * s;
+                qy = (m01 + m10) / s;
+                qz = (m02 + m20) / s;
+            }
+            else if (m11 > m22)
+            {
+                double s = Math.Sqrt(1d + m11 - m00 - m22) * 2d;
+                qw = (m02 - m20) / s;
+                qx = (m01 + m10) / s;
+                qy = 0.25d * s;
+                qz = (m12 + m21) / s;
+            }
+            else
+            {
+                double s = Math.Sqrt(1d + m22 - m00 - m11) * 2d;
+                qw = (m10 - m01) / s;
+                qx = (m02 + m20) / s;
+                qy = (m12 + m21) / s;
+                qz = 0.25d * s;
+            }
+
+            double sinX = 2d * (qw * qx + qy * qz);
+            double cosX = 1d - 2d * (qx * qx + qy * qy);
+            double xDegrees = Math.Atan2(sinX, cosX) * Mathf.Rad2Deg;
+            double sinY = 2d * (qw * qy - qz * qx);
+            sinY = Math.Max(-1d, Math.Min(1d, sinY));
+            double yDegrees = Math.Asin(sinY) * Mathf.Rad2Deg;
+            double sinZ = 2d * (qw * qz + qx * qy);
+            double cosZ = 1d - 2d * (qy * qy + qz * qz);
+            double zDegrees = Math.Atan2(sinZ, cosZ) * Mathf.Rad2Deg;
+
+            return new Vector3(
+                NormalizeDegrees((float)xDegrees),
+                NormalizeDegrees((float)yDegrees),
+                NormalizeDegrees((float)zDegrees));
+        }
+
+        private static Vector3 Normalize(Vector3 vector, int sourceLine, string name)
+        {
+            float magnitude = vector.magnitude;
+            if (!IsFinite(magnitude) || magnitude <= 0.000001f)
+                throw GeometryError(sourceLine, $"generated decoration {name} has zero length");
+            return vector / magnitude;
+        }
+
+        private static Vector3 Cross(Vector3 left, Vector3 right) =>
+            new Vector3(
+                left.y * right.z - left.z * right.y,
+                left.z * right.x - left.x * right.z,
+                left.x * right.y - left.y * right.x);
+
+        private static float NormalizeDegrees(float value)
+        {
+            if (!IsFinite(value))
+                return value;
+            value %= 360f;
+            if (value < 0f)
+                value += 360f;
+            return value;
+        }
+
+        private static bool IsUnityECallUnavailable(Exception exception) =>
+            exception?.Message?.IndexOf("ECall", StringComparison.OrdinalIgnoreCase) >= 0;
 
         internal static void ValidateGeneratedTransform(
             Vector3 position,

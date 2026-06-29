@@ -125,12 +125,15 @@ namespace DecoLimitLifter.SmartBuildMode
         }
 
         internal static bool CanOpenFromModeSwitch(out string reason) =>
-            CanOpenNow(out reason, ignoreDecorationEditMode: true);
+            CanOpenNow(out reason, ignoreDecorationEditMode: true, modeSwitch: true);
 
         internal static bool CanOpenNow(out string reason) =>
-            CanOpenNow(out reason, ignoreDecorationEditMode: false);
+            CanOpenNow(out reason, ignoreDecorationEditMode: false, modeSwitch: false);
 
-        private static bool CanOpenNow(out string reason, bool ignoreDecorationEditMode)
+        private static bool CanOpenNow(
+            out string reason,
+            bool ignoreDecorationEditMode,
+            bool modeSwitch)
         {
             reason = null;
             if (!ignoreDecorationEditMode &&
@@ -140,9 +143,14 @@ namespace DecoLimitLifter.SmartBuildMode
                 return false;
             }
 
-            if (!DecoLimitLifter.EsuInputState.CanUseHotkeys())
+            bool inputAvailable = modeSwitch
+                ? DecoLimitLifter.EsuInputState.CanSwitchEsuModes()
+                : DecoLimitLifter.EsuInputState.CanUseHotkeys();
+            if (!inputAvailable)
             {
-                reason = "Close text input or blocking UI before opening Smart Block Builder.";
+                reason = modeSwitch
+                    ? "Close text input before switching ESU modes."
+                    : "Close text input or blocking UI before opening Smart Block Builder.";
                 return false;
             }
 

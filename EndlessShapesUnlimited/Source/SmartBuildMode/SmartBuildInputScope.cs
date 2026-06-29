@@ -1,5 +1,6 @@
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ui.Displayer;
+using DecoLimitLifter.DecorationEditMode;
 using UnityEngine;
 
 namespace DecoLimitLifter.SmartBuildMode
@@ -30,20 +31,30 @@ namespace DecoLimitLifter.SmartBuildMode
             MouseOverUi &&
             Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f;
 
+        internal static bool ControlHeldWhileActive =>
+            _active && DecoLimitLifter.EsuInputState.IsControlHeld();
+
         internal static void Begin()
         {
             _active = true;
+            DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Smart Block Builder");
             _mouseOverUi = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
+            DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
         }
 
         internal static void End()
         {
+            bool wasActive = _active;
+            if (_active)
+                DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
             _active = false;
             _mouseOverUi = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
+            if (wasActive)
+                DecoLimitLifter.EsuInputFocusGuard.EndEditor("Smart Block Builder");
         }
 
         internal static void ForceResetIfActive(string reason)
@@ -113,7 +124,9 @@ namespace DecoLimitLifter.SmartBuildMode
         internal static bool SuppressBuildHud() => _active;
 
         internal static bool SuppressBuildInput() =>
-            OwnsBuildInputThisFrame || ScrollWheelOverUi;
+            ControlHeldWhileActive ||
+            OwnsBuildInputThisFrame ||
+            ScrollWheelOverUi;
 
         internal static bool SuppressCameraInput() =>
             OwnsCameraInputThisFrame || ScrollWheelOverUi;

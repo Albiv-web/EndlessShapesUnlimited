@@ -40,6 +40,7 @@ namespace DecoLimitLifter
             {
                 harmony = new Harmony(HarmonyId);
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
+                DecorationTooltipSuppressor.Install(harmony);
 
                 Patches.ByteStorePatch.EnsureMegaBytes();
                 Patches.SuperSaverBuffersPatch.OnBootEnsurePools();
@@ -147,7 +148,8 @@ namespace DecoLimitLifter
                 ResolveDecorationEditorHudTarget("DisplayCorrectToolBar"),
                 ResolveDecorationEditorBuildUpdateTarget(),
                 ResolveDecorationEditorCameraUpdateTarget(),
-                ResolveBuildFreezeTarget()
+                ResolveBuildFreezeTarget(),
+                DecorationTooltipSuppressor.ResolveBlockGetToolTipTarget()
             };
 
             required.AddRange(typeof(SuperLoader)
@@ -325,6 +327,16 @@ namespace DecoLimitLifter
                     typeof(EsuVanillaInputBridge_cBuild_ToggleFreeze_Patch),
                     "Postfix"),
                 prefix: false);
+            VerifyExactTranspiler(
+                DecorationTooltipSuppressor.ResolveBlockGetToolTipTarget(),
+                AccessTools.Method(
+                    typeof(DecorationTooltipSuppressor),
+                    "Transpiler"));
+            if (DecorationTooltipSuppressor.PatchedBlockTooltipColorCheckCount != 2)
+                throw new InvalidOperationException(
+                    "Required Block.GetToolTip paint-tooltip transpiler patched " +
+                    DecorationTooltipSuppressor.PatchedBlockTooltipColorCheckCount.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    " color checks instead of 2.");
         }
 
         internal static MethodBase ResolveBlueprintSaveTarget() =>
@@ -397,6 +409,19 @@ namespace DecoLimitLifter
             {
                 throw new InvalidOperationException(
                     "Required Harmony finalizer is missing: " +
+                    $"{patchMethod?.DeclaringType?.FullName}.{patchMethod?.Name}");
+            }
+        }
+
+        private static void VerifyExactTranspiler(MethodBase target, MethodInfo patchMethod)
+        {
+            HarmonyLib.Patches patchInfo = target == null ? null : Harmony.GetPatchInfo(target);
+            if (target == null || patchMethod == null ||
+                patchInfo?.Transpilers?.Any(
+                    patch => patch.owner == HarmonyId && patch.PatchMethod == patchMethod) != true)
+            {
+                throw new InvalidOperationException(
+                    "Required Harmony transpiler is missing: " +
                     $"{patchMethod?.DeclaringType?.FullName}.{patchMethod?.Name}");
             }
         }
