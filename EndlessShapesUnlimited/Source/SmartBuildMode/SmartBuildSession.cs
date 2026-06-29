@@ -19,10 +19,10 @@ namespace DecoLimitLifter.SmartBuildMode
         private const float LeftPanelMinHeight = 292f;
         private const float HandleLength = 1.8f;
         private const float AxisPickThresholdPixels = 24f;
-        private const int MaxPreviewCellsWithFaces = 768;
 
         private static Rect s_leftPanelRect = new Rect(18f, 110f, LeftPanelWidth, 390f);
         private static int s_layoutGeneration = -1;
+        private static SmartBuildMaterial s_selectedMaterial = SmartBuildMaterial.Wood;
 
         private readonly cBuild _build;
         private readonly DecorationPointerProbe _pointerProbe;
@@ -45,6 +45,8 @@ namespace DecoLimitLifter.SmartBuildMode
         private SmartBuildTool _tool = SmartBuildTool.Draw;
         private SmartBuildDrawPlane _drawPlane = SmartBuildDrawPlane.Camera;
         private SmartBuildOccupancyMode _occupancyMode = SmartBuildOccupancyMode.SkipOccupied;
+        private SmartBuildMaterial _selectedMaterial = s_selectedMaterial;
+        private SmartBuildMaterial _sourceMaterial = s_selectedMaterial;
         private DecorationEditAxis _dragAxis = DecorationEditAxis.None;
         private SmartBuildTool _dragTool = SmartBuildTool.Draw;
         private Vector2 _dragMouseStart;
@@ -52,6 +54,10 @@ namespace DecoLimitLifter.SmartBuildMode
         private Vector3i _dragSizeStart;
         private int _dragSign = 1;
         private bool _dragging;
+        private bool _planDirty;
+        private bool _dragStartedFromFace;
+        private DecorationEditAxis _hoverFaceAxis = DecorationEditAxis.None;
+        private int _hoverFaceSign = 1;
         private bool _closeRequested;
         private bool _resizingLeftPanel;
         private Rect _leftPanelResizeStart;
@@ -118,6 +124,9 @@ namespace DecoLimitLifter.SmartBuildMode
             _previewVolumes = Array.Empty<SmartBuildVolume>();
             _dragging = false;
             _dragAxis = DecorationEditAxis.None;
+            _planDirty = false;
+            _dragStartedFromFace = false;
+            _hoverFaceAxis = DecorationEditAxis.None;
             SwitchToDecorationEditRequested = false;
         }
 
@@ -279,8 +288,8 @@ namespace DecoLimitLifter.SmartBuildMode
                     DrawDrawPlaneCursor();
                 else
                 {
-                    DrawDraftCells();
                     DrawDraftOutline();
+                    DrawDraftFaceHighlight();
                     DrawDraftHandles();
                 }
 
@@ -406,7 +415,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (_source == null)
             {
-                InfoStore.Add(_sourceReason ?? "Select a supported block before using Smart Block Builder.");
+                InfoStore.Add(_sourceReason ?? "Selected Smart Builder material is unavailable.");
                 return;
             }
 
@@ -604,13 +613,25 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft == null || (_tool != SmartBuildTool.Move && _tool != SmartBuildTool.Scale))
                 return false;
 
-            if (!TryPickHandle(out DecorationEditAxis axis, out int sign))
-                return false;
+            if (TryPickHandle(out DecorationEditAxis axis, out int sign))
+                return BeginDrag(axis, sign, fromFace: false);
 
+            if (_tool == SmartBuildTool.Scale &&
+                TryPickFace(out axis, out sign))
+            {
+                return BeginDrag(axis, sign, fromFace: true);
+            }
+
+            return false;
+        }
+
+        private bool BeginDrag(DecorationEditAxis axis, int sign, bool fromFace)
+        {
             _dragging = true;
             _dragTool = _tool;
             _dragAxis = axis;
             _dragSign = sign;
+            _dragStartedFromFace = fromFace;
             _dragMouseStart = MouseGuiPosition();
             _dragOriginStart = _draft.Origin;
             _dragSizeStart = _draft.Size;
@@ -636,7 +657,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 _draft.ResizeFromHandle(_dragAxis, _dragSign, cells);
             }
 
-            RebuildPlan();
+            _planDirty = true;
+            RefreshPreviewVolumesOnly();
         }
 
         private void EndDrag(bool resetDraft)
@@ -644,11 +666,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (resetDraft && _draft != null)
             {
                 _draft.SetTransform(_dragOriginStart, _dragSizeStart);
-                RebuildPlan();
             }
 
+            if (_draft != null)
+                RebuildPlan();
             _dragging = false;
             _dragAxis = DecorationEditAxis.None;
+            _dragStartedFromFace = false;
         }
 
         private int ProjectDragDeltaToCells(DecorationEditAxis axis)
@@ -740,24 +764,148 @@ namespace DecoLimitLifter.SmartBuildMode
             bestSign = candidateSign;
         }
 
+        private bool TryPickFace(out DecorationEditAxis axis, out int sign)
+        {
+            axis = DecorationEditAxis.None;
+            sign = 1;
+            if (_draft?.Construct == null)
+                return false;
+
+            Camera camera = Camera.main ?? Camera.current;
+            if (camera == null ||
+                !TryLocalMouseRay(camera, out Vector3 localOrigin, out Vector3 localDirection))
+            {
+                return false;
+            }
+
+            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3 min = corners[0];
+            Vector3 max = corners[6];
+            float bestDistance = float.PositiveInfinity;
+            TryPickFacePlane(localOrigin, localDirection, min, max, DecorationEditAxis.X, -1, ref axis, ref sign, ref bestDistance);
+            TryPickFacePlane(localOrigin, localDirection, min, max, DecorationEditAxis.X, 1, ref axis, ref sign, ref bestDistance);
+            TryPickFacePlane(localOrigin, localDirection, min, max, DecorationEditAxis.Y, -1, ref axis, ref sign, ref bestDistance);
+            TryPickFacePlane(localOrigin, localDirection, min, max, DecorationEditAxis.Y, 1, ref axis, ref sign, ref bestDistance);
+            TryPickFacePlane(localOrigin, localDirection, min, max, DecorationEditAxis.Z, -1, ref axis, ref sign, ref bestDistance);
+            TryPickFacePlane(localOrigin, localDirection, min, max, DecorationEditAxis.Z, 1, ref axis, ref sign, ref bestDistance);
+            return axis != DecorationEditAxis.None;
+        }
+
+        private bool TryLocalMouseRay(
+            Camera camera,
+            out Vector3 localOrigin,
+            out Vector3 localDirection)
+        {
+            localOrigin = Vector3.zero;
+            localDirection = Vector3.zero;
+            if (_draft?.Construct == null || camera == null)
+                return false;
+
+            Ray ray = camera.ScreenPointToRay(Input.mousePosition);
+            if (!TryWorldToLocal(_draft.Construct, ray.origin, out localOrigin) ||
+                !TryWorldToLocal(_draft.Construct, ray.origin + ray.direction, out Vector3 localTarget))
+            {
+                return false;
+            }
+
+            localDirection = localTarget - localOrigin;
+            if (localDirection.sqrMagnitude <= 0.0001f)
+                return false;
+
+            localDirection.Normalize();
+            return true;
+        }
+
+        private static void TryPickFacePlane(
+            Vector3 localOrigin,
+            Vector3 localDirection,
+            Vector3 min,
+            Vector3 max,
+            DecorationEditAxis candidate,
+            int candidateSign,
+            ref DecorationEditAxis bestAxis,
+            ref int bestSign,
+            ref float bestDistance)
+        {
+            float direction = AxisComponent(localDirection, candidate);
+            if (Mathf.Abs(direction) <= 0.0001f)
+                return;
+
+            float plane = candidateSign >= 0
+                ? AxisComponent(max, candidate)
+                : AxisComponent(min, candidate);
+            float distance = (plane - AxisComponent(localOrigin, candidate)) / direction;
+            if (distance < 0f || distance >= bestDistance)
+                return;
+
+            Vector3 hit = localOrigin + localDirection * distance;
+            if (!PointInsideFace(hit, min, max, candidate))
+                return;
+
+            bestDistance = distance;
+            bestAxis = candidate;
+            bestSign = candidateSign;
+        }
+
+        private static bool PointInsideFace(
+            Vector3 point,
+            Vector3 min,
+            Vector3 max,
+            DecorationEditAxis normalAxis)
+        {
+            const float epsilon = 0.02f;
+            switch (normalAxis)
+            {
+                case DecorationEditAxis.X:
+                    return point.y >= min.y - epsilon &&
+                           point.y <= max.y + epsilon &&
+                           point.z >= min.z - epsilon &&
+                           point.z <= max.z + epsilon;
+                case DecorationEditAxis.Y:
+                    return point.x >= min.x - epsilon &&
+                           point.x <= max.x + epsilon &&
+                           point.z >= min.z - epsilon &&
+                           point.z <= max.z + epsilon;
+                default:
+                    return point.x >= min.x - epsilon &&
+                           point.x <= max.x + epsilon &&
+                           point.y >= min.y - epsilon &&
+                           point.y <= max.y + epsilon;
+            }
+        }
+
         private void RebuildPlan()
         {
-            if (_draft == null || _source == null)
+            if (_draft == null)
             {
                 _plan = null;
                 _previewCells = Array.Empty<Vector3i>();
                 _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
                 _previewVolumes = Array.Empty<SmartBuildVolume>();
+                _planDirty = false;
                 return;
             }
 
             SmartBuildVolume volume = _draft.ToVolume();
+            if (_source == null)
+            {
+                _previewCells = Array.Empty<Vector3i>();
+                _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+                _previewVolumes = BuildPreviewVolumesOnly(volume);
+                _plan = SmartBuildPlan.Failed(
+                    volume,
+                    _sourceReason ?? "Selected Smart Builder material is unavailable.");
+                _planDirty = false;
+                return;
+            }
+
             if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_draft.Construct, out string reason))
             {
                 _previewCells = volume.EnumerateCells().ToArray();
                 _previewCellSets = new[] { _previewCells };
                 _previewVolumes = new[] { volume };
                 _plan = SmartBuildPlan.Failed(volume, reason);
+                _planDirty = false;
                 return;
             }
 
@@ -780,6 +928,8 @@ namespace DecoLimitLifter.SmartBuildMode
                     _plan.SkippedCells,
                     _plan.Warnings);
             }
+
+            _planDirty = false;
         }
 
         private void BuildPreviewSymmetrySets(SmartBuildVolume volume)
@@ -809,7 +959,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 sets.Add(cells);
                 foreach (Vector3i cell in cells)
                     allCells[DecoLimitLifter.EsuSymmetry.CellKey(cell)] = cell;
-                SmartBuildVolume mirrored = VolumeFromCells(volume.Construct, cells);
+                SmartBuildVolume mirrored = MirrorVolume(volume, variant);
                 if (mirrored != null)
                     volumes.Add(mirrored);
             }
@@ -821,6 +971,91 @@ namespace DecoLimitLifter.SmartBuildMode
                 .ToArray();
             _previewCellSets = sets;
             _previewVolumes = volumes;
+        }
+
+        private void RefreshPreviewVolumesOnly()
+        {
+            _previewCells = Array.Empty<Vector3i>();
+            _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+            if (_draft == null)
+            {
+                _previewVolumes = Array.Empty<SmartBuildVolume>();
+                return;
+            }
+
+            SmartBuildVolume volume = _draft.ToVolume();
+            if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_draft.Construct, out _))
+            {
+                _previewVolumes = new[] { volume };
+                return;
+            }
+
+            _previewVolumes = BuildPreviewVolumesOnly(volume);
+        }
+
+        private static IReadOnlyList<SmartBuildVolume> BuildPreviewVolumesOnly(SmartBuildVolume volume)
+        {
+            if (volume == null)
+                return Array.Empty<SmartBuildVolume>();
+
+            var volumes = new List<SmartBuildVolume>();
+            var seen = new HashSet<string>();
+            foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
+                     DecoLimitLifter.EsuSymmetry.Variants())
+            {
+                SmartBuildVolume mirrored = MirrorVolume(volume, variant);
+                if (mirrored == null)
+                    continue;
+
+                if (seen.Add(VolumeSignature(mirrored)))
+                    volumes.Add(mirrored);
+            }
+
+            return volumes;
+        }
+
+        private static SmartBuildVolume MirrorVolume(
+            SmartBuildVolume volume,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
+        {
+            if (volume == null)
+                return null;
+
+            Vector3i min = volume.MinCell;
+            Vector3i max = volume.MaxCell;
+            Vector3i[] corners =
+            {
+                new Vector3i(min.x, min.y, min.z),
+                new Vector3i(max.x, min.y, min.z),
+                new Vector3i(max.x, min.y, max.z),
+                new Vector3i(min.x, min.y, max.z),
+                new Vector3i(min.x, max.y, min.z),
+                new Vector3i(max.x, max.y, min.z),
+                new Vector3i(max.x, max.y, max.z),
+                new Vector3i(min.x, max.y, max.z)
+            };
+
+            Vector3i mirroredMin = variant.Mirror(corners[0]);
+            Vector3i mirroredMax = mirroredMin;
+            for (int index = 1; index < corners.Length; index++)
+            {
+                Vector3i mirrored = variant.Mirror(corners[index]);
+                mirroredMin.x = Math.Min(mirroredMin.x, mirrored.x);
+                mirroredMin.y = Math.Min(mirroredMin.y, mirrored.y);
+                mirroredMin.z = Math.Min(mirroredMin.z, mirrored.z);
+                mirroredMax.x = Math.Max(mirroredMax.x, mirrored.x);
+                mirroredMax.y = Math.Max(mirroredMax.y, mirrored.y);
+                mirroredMax.z = Math.Max(mirroredMax.z, mirrored.z);
+            }
+
+            return SmartBuildVolume.FromBounds(volume.Construct, mirroredMin, mirroredMax);
+        }
+
+        private static string VolumeSignature(SmartBuildVolume volume)
+        {
+            Vector3i min = volume.MinCell;
+            Vector3i max = volume.MaxCell;
+            return FormatCell(min) + "|" + FormatCell(max);
         }
 
         private bool IsOccupied(Vector3i cell)
@@ -914,6 +1149,15 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void ApplyPreview()
         {
+            if (_dragging)
+            {
+                InfoStore.Add("Finish the Smart Builder drag before applying.");
+                return;
+            }
+
+            if (_planDirty)
+                RebuildPlan();
+
             if (_plan == null)
             {
                 InfoStore.Add("Create a Smart Builder preview before applying.");
@@ -940,16 +1184,27 @@ namespace DecoLimitLifter.SmartBuildMode
             _previewVolumes = Array.Empty<SmartBuildVolume>();
             _dragging = false;
             _dragAxis = DecorationEditAxis.None;
+            _planDirty = false;
+            _dragStartedFromFace = false;
+            _hoverFaceAxis = DecorationEditAxis.None;
         }
 
         private void RefreshSelection()
         {
-            if (SmartBuildSelectionResolver.TryResolve(
-                    _build,
+            if (_source != null &&
+                _sourceReason == null &&
+                _sourceMaterial == _selectedMaterial)
+            {
+                return;
+            }
+
+            if (SmartBlockFamilyCatalog.TryCreateMaterialSource(
+                    _selectedMaterial,
                     out SmartBuildSource source,
                     out string reason))
             {
                 _source = source;
+                _sourceMaterial = _selectedMaterial;
                 _sourceReason = null;
                 if (_draft != null)
                     RebuildPlan();
@@ -957,6 +1212,7 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             _source = null;
+            _sourceMaterial = _selectedMaterial;
             _sourceReason = reason;
             if (_draft == null)
             {
@@ -964,12 +1220,16 @@ namespace DecoLimitLifter.SmartBuildMode
                 _previewCells = Array.Empty<Vector3i>();
                 _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
                 _previewVolumes = Array.Empty<SmartBuildVolume>();
+                _planDirty = false;
             }
             else
             {
                 SmartBuildVolume volume = _draft.ToVolume();
-                BuildPreviewSymmetrySets(volume);
+                _previewCells = Array.Empty<Vector3i>();
+                _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+                _previewVolumes = BuildPreviewVolumesOnly(volume);
                 _plan = SmartBuildPlan.Failed(volume, reason);
+                _planDirty = false;
             }
         }
 
@@ -992,6 +1252,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 ToolButton(SmartBuildTool.Scale, "scale", "Scale", "Drag RGB handles to resize the preview by whole cells.");
                 PlaneButton();
                 OccupancyButton();
+                MaterialButton();
                 SymmetryButton(DecorationEditAxis.X);
                 SymmetryButton(DecorationEditAxis.Y);
                 SymmetryButton(DecorationEditAxis.Z);
@@ -999,11 +1260,11 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(gap);
-            EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth);
+            EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth, "ESU mode: Smart Builder.");
             GUILayout.Space(gap);
             GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth));
             GUILayout.FlexibleSpace();
-            if (AttentionIconButton("save", "Apply", DecorationEditorTheme.Button, "Place the planned blocks.", _plan != null && _plan.CanCommit))
+            if (AttentionIconButton("save", "Apply", DecorationEditorTheme.Button, "Place the planned blocks.", !_planDirty && _plan != null && _plan.CanCommit))
                 ApplyPreview();
             if (AttentionIconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Clear the runtime preview.", _draft != null))
                 CancelPreview();
@@ -1031,7 +1292,9 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.BeginArea(new Rect(inset, inset, _leftPanelRect.width - inset * 2f, _leftPanelRect.height - inset * 2f));
             DrawCompactIconHeader("Smart Block Builder", "build");
             DecorationEditorTheme.Separator();
-            LabelRow("Selected", _source?.DisplayName ?? (_sourceReason ?? "No supported selected block"));
+            DrawMaterialSelector();
+            if (!string.IsNullOrWhiteSpace(_sourceReason))
+                LabelRow("Blocks", _sourceReason);
             LabelRow("Tool", _tool.ToString());
             LabelRow("Plane", _drawPlane.ToString());
             LabelRow("Occupancy", _occupancyMode == SmartBuildOccupancyMode.SkipOccupied ? "Skip occupied" : "Block on overlap");
@@ -1047,7 +1310,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 GUILayout.Label("Preview", DecorationEditorTheme.SubHeader);
                 LabelRow("Origin", FormatCell(_draft.Origin));
                 LabelRow("Size", _draft.FormatDimensions());
-                LabelRow("Cells", (_previewCells.Count > 0 ? _previewCells.Count : _draft.ToVolume().CellCount)
+                LabelRow("Cells", PreviewCellCount()
                     .ToString("N0", CultureInfo.InvariantCulture));
                 DrawPlanSummary();
             }
@@ -1084,10 +1347,12 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.Label(
                 _draft == null
                     ? "Smart Builder | runtime preview: none"
-                    : $"Smart Builder | {_draft.FormatDimensions()} | {_plan?.EstimatedBlockCount ?? 0:N0} placements | {_plan?.CoveredCellCount ?? 0:N0} cells",
+                    : StatusSummary(),
                 DecorationEditorTheme.Status);
             GUILayout.FlexibleSpace();
-            if (_plan != null && !_plan.CanCommit)
+            if (_planDirty)
+                GUILayout.Label("Preview changed", DecorationEditorTheme.Warning);
+            else if (_plan != null && !_plan.CanCommit)
                 GUILayout.Label(_plan.FailureReason ?? "Plan blocked", DecorationEditorTheme.Error);
             else if (_plan != null && _plan.SkippedCells.Count > 0)
                 GUILayout.Label($"Skipped {_plan.SkippedCells.Count:N0} occupied", DecorationEditorTheme.Warning);
@@ -1095,6 +1360,28 @@ namespace DecoLimitLifter.SmartBuildMode
                 GUILayout.Label("Ready", DecorationEditorTheme.Mini);
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
+        }
+
+        private string StatusSummary()
+        {
+            if (_draft == null)
+                return "Smart Builder | runtime preview: none";
+
+            if (_planDirty)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Smart Builder | {0} | preview | {1:N0} cells",
+                    _draft.FormatDimensions(),
+                    PreviewCellCount());
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Smart Builder | {0} | {1:N0} placements | {2:N0} cells",
+                _draft.FormatDimensions(),
+                _plan?.EstimatedBlockCount ?? 0,
+                _plan?.CoveredCellCount ?? 0);
         }
 
         private void ToolButton(SmartBuildTool tool, string icon, string label, string tooltip)
@@ -1139,6 +1426,103 @@ namespace DecoLimitLifter.SmartBuildMode
                     ? SmartBuildOccupancyMode.BlockOnOverlap
                     : SmartBuildOccupancyMode.SkipOccupied;
                 RebuildPlan();
+            }
+        }
+
+        private void MaterialButton()
+        {
+            if (IconButton(
+                    "material",
+                    MaterialShortName(_selectedMaterial),
+                    DecorationEditorTheme.Button,
+                    "Cycle Smart Builder material."))
+            {
+                CycleSelectedMaterial(1);
+            }
+        }
+
+        private void DrawMaterialSelector()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Material", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
+            if (GUILayout.Button(
+                    "<",
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                CycleSelectedMaterial(-1);
+            }
+
+            GUILayout.Label(
+                SmartBlockFamilyCatalog.MaterialDisplayName(_selectedMaterial),
+                DecorationEditorTheme.BodyWrap);
+            if (GUILayout.Button(
+                    ">",
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                CycleSelectedMaterial(1);
+            }
+
+            GUILayout.EndHorizontal();
+        }
+
+        private void CycleSelectedMaterial(int direction)
+        {
+            IReadOnlyList<SmartBuildMaterial> materials = SmartBlockFamilyCatalog.BasicMaterials;
+            if (materials == null || materials.Count == 0)
+                return;
+
+            int index = 0;
+            for (int candidate = 0; candidate < materials.Count; candidate++)
+            {
+                if (materials[candidate] == _selectedMaterial)
+                {
+                    index = candidate;
+                    break;
+                }
+            }
+
+            int next = (index + direction) % materials.Count;
+            if (next < 0)
+                next += materials.Count;
+            SetSelectedMaterial(materials[next]);
+        }
+
+        private void SetSelectedMaterial(SmartBuildMaterial material)
+        {
+            if (_selectedMaterial == material)
+                return;
+
+            _selectedMaterial = material;
+            s_selectedMaterial = material;
+            _source = null;
+            _sourceReason = null;
+            RefreshSelection();
+        }
+
+        private static string MaterialShortName(SmartBuildMaterial material)
+        {
+            switch (material)
+            {
+                case SmartBuildMaterial.Stone:
+                    return "Stone";
+                case SmartBuildMaterial.Metal:
+                    return "Metal";
+                case SmartBuildMaterial.Alloy:
+                    return "Alloy";
+                case SmartBuildMaterial.Glass:
+                    return "Glass";
+                case SmartBuildMaterial.Lead:
+                    return "Lead";
+                case SmartBuildMaterial.HeavyArmour:
+                    return "Heavy";
+                case SmartBuildMaterial.Rubber:
+                    return "Rubber";
+                default:
+                    return "Wood";
             }
         }
 
@@ -1214,6 +1598,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
+            if (_planDirty)
+            {
+                LabelRow("Plan", "release drag to update");
+                return;
+            }
+
             if (_plan.CanCommit)
                 LabelRow("Plan", $"{_plan.EstimatedBlockCount:N0} placements / {_plan.CoveredCellCount:N0} cells");
             else
@@ -1225,6 +1615,15 @@ namespace DecoLimitLifter.SmartBuildMode
                 GUILayout.Label(_plan.Warnings[0], DecorationEditorTheme.Warning);
         }
 
+        private int PreviewCellCount()
+        {
+            if (_draft == null)
+                return 0;
+            if (_planDirty || _previewCells.Count == 0)
+                return _draft.ToVolume().CellCount;
+            return _previewCells.Count;
+        }
+
         private static void LabelRow(string label, string value)
         {
             GUILayout.BeginHorizontal();
@@ -1233,37 +1632,12 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.EndHorizontal();
         }
 
-        private void DrawDraftCells()
-        {
-            if (_draft?.Construct == null)
-                return;
-
-            int drawn = 0;
-            IEnumerable<Vector3i> cells = _previewCells.Count > 0
-                ? (IEnumerable<Vector3i>)_previewCells
-                : _draft.ToVolume().EnumerateCells();
-            foreach (Vector3i cell in cells)
-            {
-                bool occupied = IsOccupied(cell);
-                Color face = occupied
-                    ? new Color(1f, 0.55f, 0.12f, 0.16f)
-                    : new Color(0.05f, 0.9f, 1f, 0.13f);
-                Color edge = occupied
-                    ? new Color(1f, 0.55f, 0.12f, 0.72f)
-                    : new Color(0.1f, 0.95f, 1f, 0.62f);
-                DrawCell(cell, face, edge, 1.1f);
-                drawn++;
-                if (drawn >= MaxPreviewCellsWithFaces)
-                    break;
-            }
-        }
-
         private void DrawDraftOutline()
         {
             if (_draft?.Construct == null)
                 return;
 
-            Color color = _plan != null && !_plan.CanCommit
+            Color color = !_planDirty && _plan != null && !_plan.CanCommit
                 ? new Color(1f, 0.2f, 0.15f, 1f)
                 : new Color(0.1f, 0.95f, 1f, 1f);
             IReadOnlyList<SmartBuildVolume> volumes = _previewVolumes.Count > 0
@@ -1271,6 +1645,50 @@ namespace DecoLimitLifter.SmartBuildMode
                 : (IReadOnlyList<SmartBuildVolume>)new[] { _draft.ToVolume() };
             foreach (SmartBuildVolume volume in volumes)
                 DrawWireEdges(volume.GetWorldCorners(), color, 3.2f);
+        }
+
+        private void DrawDraftFaceHighlight()
+        {
+            if (_draft?.Construct == null || _tool != SmartBuildTool.Scale)
+            {
+                _hoverFaceAxis = DecorationEditAxis.None;
+                return;
+            }
+
+            DecorationEditAxis axis = DecorationEditAxis.None;
+            int sign = 1;
+            bool active = _dragging &&
+                          _dragTool == SmartBuildTool.Scale &&
+                          _dragStartedFromFace &&
+                          _dragAxis != DecorationEditAxis.None;
+            if (active)
+            {
+                axis = _dragAxis;
+                sign = _dragSign;
+            }
+            else if (!SmartBuildInputScope.MouseOverUi &&
+                     TryPickFace(out axis, out sign))
+            {
+                _hoverFaceAxis = axis;
+                _hoverFaceSign = sign;
+            }
+            else
+            {
+                _hoverFaceAxis = DecorationEditAxis.None;
+                return;
+            }
+
+            if (!TryGetFaceWorldCorners(axis, sign, out Vector3[] face))
+                return;
+
+            Color axisColor = DecorationEditMath.AxisColor(axis);
+            Color faceColor = new Color(axisColor.r, axisColor.g, axisColor.b, active ? 0.20f : 0.12f);
+            Color edgeColor = new Color(axisColor.r, axisColor.g, axisColor.b, active ? 1f : 0.86f);
+            DecorationEditorOverlay.Quad(face[0], face[1], face[2], face[3], faceColor);
+            DecorationEditorOverlay.Line(face[0], face[1], edgeColor, active ? 4.2f : 2.6f);
+            DecorationEditorOverlay.Line(face[1], face[2], edgeColor, active ? 4.2f : 2.6f);
+            DecorationEditorOverlay.Line(face[2], face[3], edgeColor, active ? 4.2f : 2.6f);
+            DecorationEditorOverlay.Line(face[3], face[0], edgeColor, active ? 4.2f : 2.6f);
         }
 
         private void DrawDraftHandles()
@@ -1346,32 +1764,6 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
-        private void DrawCell(Vector3i cell, Color face, Color edge, float edgeWidth)
-        {
-            Vector3 center = new Vector3(cell.x, cell.y, cell.z);
-            Vector3[] corners =
-            {
-                new Vector3(-0.5f, -0.5f, -0.5f),
-                new Vector3(0.5f, -0.5f, -0.5f),
-                new Vector3(0.5f, -0.5f, 0.5f),
-                new Vector3(-0.5f, -0.5f, 0.5f),
-                new Vector3(-0.5f, 0.5f, -0.5f),
-                new Vector3(0.5f, 0.5f, -0.5f),
-                new Vector3(0.5f, 0.5f, 0.5f),
-                new Vector3(-0.5f, 0.5f, 0.5f)
-            };
-            for (int index = 0; index < corners.Length; index++)
-                corners[index] = _draft.Construct.SafeLocalToGlobal(center + corners[index]);
-
-            DecorationEditorOverlay.Quad(corners[0], corners[1], corners[2], corners[3], face);
-            DecorationEditorOverlay.Quad(corners[4], corners[7], corners[6], corners[5], face);
-            DecorationEditorOverlay.Quad(corners[0], corners[4], corners[5], corners[1], face);
-            DecorationEditorOverlay.Quad(corners[1], corners[5], corners[6], corners[2], face);
-            DecorationEditorOverlay.Quad(corners[2], corners[6], corners[7], corners[3], face);
-            DecorationEditorOverlay.Quad(corners[3], corners[7], corners[4], corners[0], face);
-            DrawWireEdges(corners, edge, edgeWidth);
-        }
-
         private static void DrawWireEdges(Vector3[] corners, Color color, float width)
         {
             DrawWireEdge(corners, 0, 1, color, width);
@@ -1390,6 +1782,65 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static void DrawWireEdge(Vector3[] corners, int from, int to, Color color, float width) =>
             DecorationEditorOverlay.Line(corners[from], corners[to], color, width);
+
+        private bool TryGetFaceWorldCorners(
+            DecorationEditAxis axis,
+            int sign,
+            out Vector3[] face)
+        {
+            face = null;
+            if (_draft?.Construct == null)
+                return false;
+
+            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            int[] indices;
+            switch (axis)
+            {
+                case DecorationEditAxis.X:
+                    indices = sign >= 0
+                        ? new[] { 1, 5, 6, 2 }
+                        : new[] { 3, 7, 4, 0 };
+                    break;
+                case DecorationEditAxis.Y:
+                    indices = sign >= 0
+                        ? new[] { 4, 7, 6, 5 }
+                        : new[] { 0, 1, 2, 3 };
+                    break;
+                case DecorationEditAxis.Z:
+                    indices = sign >= 0
+                        ? new[] { 2, 6, 7, 3 }
+                        : new[] { 0, 4, 5, 1 };
+                    break;
+                default:
+                    return false;
+            }
+
+            face = new Vector3[4];
+            try
+            {
+                for (int index = 0; index < face.Length; index++)
+                    face[index] = _draft.Construct.SafeLocalToGlobal(corners[indices[index]]);
+                return true;
+            }
+            catch
+            {
+                face = null;
+                return false;
+            }
+        }
+
+        private static float AxisComponent(Vector3 value, DecorationEditAxis axis)
+        {
+            switch (axis)
+            {
+                case DecorationEditAxis.X:
+                    return value.x;
+                case DecorationEditAxis.Y:
+                    return value.y;
+                default:
+                    return value.z;
+            }
+        }
 
         private Vector3 WorldNormalToLocal(DecorationPointerHit hit)
         {

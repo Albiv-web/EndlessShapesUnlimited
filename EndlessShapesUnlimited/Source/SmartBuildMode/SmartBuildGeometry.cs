@@ -156,6 +156,14 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal int CellCount => checked(LengthU * LengthV * Thickness);
 
+        internal Vector3i MinCell => Origin;
+
+        internal Vector3i MaxCell =>
+            Origin +
+            SmartBuildAxisHelper.ToVector3i(AxisU, LengthU - 1) +
+            SmartBuildAxisHelper.ToVector3i(AxisV, LengthV - 1) +
+            SmartBuildAxisHelper.ToVector3i(AxisN, Thickness - 1);
+
         internal IEnumerable<Vector3i> EnumerateCells()
         {
             for (int n = 0; n < Thickness; n++)
@@ -234,21 +242,19 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal Vector3[] GetWorldCorners()
         {
-            Vector3i min = Origin;
-            Vector3i max = Origin;
-            foreach (Vector3i cell in EnumerateCells())
-            {
-                min.x = Math.Min(min.x, cell.x);
-                min.y = Math.Min(min.y, cell.y);
-                min.z = Math.Min(min.z, cell.z);
-                max.x = Math.Max(max.x, cell.x);
-                max.y = Math.Max(max.y, cell.y);
-                max.z = Math.Max(max.z, cell.z);
-            }
+            Vector3[] corners = GetLocalCorners();
+            for (int index = 0; index < corners.Length; index++)
+                corners[index] = Construct.SafeLocalToGlobal(corners[index]);
+            return corners;
+        }
 
+        internal Vector3[] GetLocalCorners()
+        {
+            Vector3i min = MinCell;
+            Vector3i max = MaxCell;
             Vector3 localMin = new Vector3(min.x - 0.5f, min.y - 0.5f, min.z - 0.5f);
             Vector3 localMax = new Vector3(max.x + 0.5f, max.y + 0.5f, max.z + 0.5f);
-            Vector3[] corners =
+            return new[]
             {
                 new Vector3(localMin.x, localMin.y, localMin.z),
                 new Vector3(localMax.x, localMin.y, localMin.z),
@@ -259,10 +265,30 @@ namespace DecoLimitLifter.SmartBuildMode
                 new Vector3(localMax.x, localMax.y, localMax.z),
                 new Vector3(localMin.x, localMax.y, localMax.z)
             };
+        }
 
-            for (int index = 0; index < corners.Length; index++)
-                corners[index] = Construct.SafeLocalToGlobal(corners[index]);
-            return corners;
+        internal static SmartBuildVolume FromBounds(
+            AllConstruct construct,
+            Vector3i min,
+            Vector3i max)
+        {
+            Vector3i origin = new Vector3i(
+                Math.Min(min.x, max.x),
+                Math.Min(min.y, max.y),
+                Math.Min(min.z, max.z));
+            Vector3i end = new Vector3i(
+                Math.Max(min.x, max.x),
+                Math.Max(min.y, max.y),
+                Math.Max(min.z, max.z));
+            return new SmartBuildVolume(
+                construct,
+                origin,
+                SmartBuildAxis.X,
+                SmartBuildAxis.Y,
+                SmartBuildAxis.Z,
+                end.x - origin.x + 1,
+                end.y - origin.y + 1,
+                end.z - origin.z + 1);
         }
     }
 }

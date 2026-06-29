@@ -144,13 +144,20 @@ toggle those panels independently while preserving the same left/right stack
 areas. Press `Tab` while the ESU editor is clean to switch to Smart Block
 Builder; apply or cancel live edits first. The overlay auto-scales on smaller
 game windows, has an options-screen manual scale multiplier plus layout reset,
-and the left/right panel stacks can be resized in-game.
+and the left/right panel stacks can be resized in-game. The top toolbar keeps a
+stable mode/notification slot across Decoration Edit, Surface Builder, and Smart
+Builder; notification text has no icon, the slot stays fixed-height, and long
+messages show a **Details** button without changing top-panel padding. A blocked
+mode switch makes **Apply** and **Cancel** flash without toolbar movement.
 
 The current pass edits one active decoration at a time. Select a decoration in
 the viewport or outliner, use **Move** for snapped XYZ handles or center
 freeform movement, use **Rotate**/**Scale** for transform gizmos, use
 **Anchor** for whole-block retethering that keeps the mesh visually in place,
-and use **Paint** plus the mesh palette for mesh, color, and material changes. Preview edits
+and use **Paint** plus the mesh palette for mesh, color, and material changes.
+The lower transform strip keeps the Position, Rotation, and Scale X/Y/Z labels
+visible at laptop scale, and its **Anchor follow: on/off** control toggles the
+same retether behavior as the anchor options menu. Preview edits
 are live for rendering; **Ctrl+Z**/**Ctrl+Y** or the toolbar buttons undo and
 redo un-applied editor actions; **Apply** commits and **Cancel** or closing
 restores the original decoration fields.
@@ -161,35 +168,54 @@ decoration anchored to that block. The toolbar X/Y/Z symmetry buttons can place
 construct-local mirror planes; active planes mirror new mesh placements
 atomically and live-follow matched existing decoration moves, rejecting the
 linked edit if any mirrored tether is invalid. The palette can switch between a
-low-cost searchable list and a lazy 3D preview grid.
+low-cost searchable list and a lazy 3D preview grid that renders only visible
+cards instead of previewing the full mesh catalog at once.
 
 The toolbar **View** control offers **Mixed**, **Wireframe**, **Deco only**,
 **Mass**, **Drag**, **Cost**, **Surface**, **Important**, and **Normal**. ESU uses
 FTD's decoration wireframe/special-view settings where safe and restores the
 player's previous view state when the editor closes.
 
-The editor references FTD's runtime UI element icons by GUID/name and uses
-generated ESU fallback glyphs if a texture is unavailable. It does not package
-copied FTD icon textures.
+The editor references FTD's runtime UI element icons by GUID/name from
+`StreamingAssets/Mods/UI/Ui Elements`, including `editButton`, and uses
+generated ESU-owned fallback icons if a texture is unavailable. It does not
+package copied FTD texture files.
+
+In-game smoke checks should include: no `Colored with paint #N` tooltip while an
+ESU editor is active; press Ctrl alone and confirm the screen does not show the
+vanilla vehicle-control overlay; `Ctrl+Shift+B` remains open after the first
+frame; Surface Builder Ctrl-click behavior still works; and a long ESU warning
+opens through **Details** without changing top-panel padding.
 
 ### Smart Block Builder
 
 Press `Ctrl+Shift+B` in build mode, or press `Tab` from a clean Decoration Edit
 Mode session, to open Smart Block Builder. The builder uses the same native ESU
 toolbar/panel/status styling as Decoration Edit Mode and creates a runtime-only
-voxel preview on the focused construct grid. A click on an existing block seeds
-the preview beside that face; a click in empty space seeds a snapped preview on
-the selected draw plane. Its left panel shares the ESU auto-scale settings and
-can be resized independently from Decoration Edit Mode panels.
+wireframe preview on the focused construct grid. A click on an existing block
+seeds the preview beside that face; a click in empty space seeds a snapped
+preview on the selected draw plane. Its left panel shares the ESU auto-scale
+settings, can be resized independently from Decoration Edit Mode panels, and has
+an internal material picker for Wood, Stone, Metal, Alloy, Glass, Lead, Heavy
+armour, and Rubber.
 
 The preview is not saved and does not place blocks until **Apply**. Use **Move**
-and **Scale** handles to adjust the rectangular volume, cycle **Plane** for
-free-space drawing, and use **Skip** or **Block** occupancy mode to decide
-whether existing cells are skipped or make the plan invalid. By default, occupied
-cells are skipped and reported in the status strip. Active X/Y/Z symmetry planes
-mirror the draft preview and Apply commit as one atomic plan. Middle mouse can be
-used to show the FTD cursor without closing Smart Builder, and camera/WASD input
-remains live unless an ESU handle drag or ESU panel scroll owns that frame.
+and **Scale** handles, or drag any preview face in **Scale**, to adjust the
+rectangular volume. Cycle **Plane** for free-space drawing, cycle **Material** to
+choose the placed block type, and use **Skip** or **Block** occupancy mode to
+decide whether existing cells are skipped or make the plan invalid. By default,
+occupied cells are skipped and reported in the status strip. Active X/Y/Z
+symmetry planes mirror the draft preview and Apply commit as one atomic plan.
+Middle mouse can be used to show the FTD cursor without closing Smart Builder,
+and camera/WASD input remains live unless an ESU handle drag or ESU panel scroll
+owns that frame.
+Implementation notes: `EsuBuildModeInputGate` owns the one-press mode-switch
+guard, `SmartBuildDraft` stays runtime-only until Apply, and Middle mouse may
+show the FTD cursor without closing Smart Builder; click empty space to seed on
+the selected draw plane and confirm middle mouse shows the FTD cursor without
+closing. Large-preview smoke checks should confirm the preview stays to a single
+outer wireframe, all six faces resize by whole cells, and each material preset
+places the expected basic block.
 
 ## Building and verification
 

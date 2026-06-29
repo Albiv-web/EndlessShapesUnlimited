@@ -125,6 +125,7 @@ internal static class Program
             VerifySerializationTelemetryScopes();
             VerifySerializationHudProfiles();
             VerifyDecorationEditModeMvp();
+            VerifySurfaceDecorationBuilder();
             VerifySmartBlockBuilder();
             VerifyBeamificationBundle();
             VerifyPackageIdentityAndAssets();
@@ -1656,6 +1657,17 @@ f 0 2 3
         var data = new SerializationHudProfile.ProfileData();
         Assert(!data.Enabled,
             "The serialization HUD is disabled by default for a new profile.");
+        Assert(data.EsuEditorAutoScale &&
+               Math.Abs(data.EsuEditorScale - 1f) < 0.001f &&
+               EsuHudLayout.ScaleForScreen(1366, 768, autoScale: true, manualScale: 1f) < 1f &&
+               Math.Abs(EsuHudLayout.ScaleForScreen(1920, 1080, autoScale: true, manualScale: 1f) - 1f) < 0.001f &&
+               Math.Abs(EsuHudLayout.ScaleForScreen(1366, 768, autoScale: false, manualScale: 1f) - 1f) < 0.001f &&
+               Math.Abs(EsuHudLayout.ClampManualScale(0.01f) - 0.10f) < 0.001f &&
+               Math.Abs(EsuHudLayout.ClampManualScale(3f) - 2f) < 0.001f &&
+               Math.Abs(EsuHudLayout.ScaleForScreen(1920, 1080, autoScale: false, manualScale: 0.10f) - 0.10f) < 0.001f &&
+               Math.Abs(EsuHudLayout.ScaleForScreen(1920, 1080, autoScale: false, manualScale: 2f) - 2f) < 0.001f &&
+               Math.Abs(EsuHudLayout.ClampManualScale(float.NaN) - 1f) < 0.001f,
+            "ESU editor HUD scaling defaults to automatic laptop-friendly sizing with a 10%-200% manual multiplier.");
 
         PropertyInfo filename = typeof(SerializationHudProfile).GetProperty(
             "FilenameAndExtension",
@@ -1677,8 +1689,10 @@ f 0 2 3
             "SerializationHudProfile.cs"));
         Assert(profileSource.Contains("Q(Key.F8)") &&
                profileSource.Contains("MeasureUsage") &&
-               profileSource.Contains("Q(Key.Shift, Key.F8)"),
-            "The configurable serialization HUD toggle defaults to F8 and exact measurement defaults to Shift+F8.");
+               profileSource.Contains("Q(Key.Shift, Key.F8)") &&
+               profileSource.Contains("EsuEditorAutoScale") &&
+               profileSource.Contains("EsuEditorScale"),
+            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor HUD scale settings are profiled.");
         Assert(SerializationHudRenderer.FormatName(SerializationWireFormat.Legacy) == "LEGACY WIRE" &&
                SerializationHudRenderer.FormatBytes(1024UL) == "1 KiB",
             "Serialization HUD labels use readable invariant wire-format and byte text.");
@@ -1694,8 +1708,13 @@ f 0 2 3
                rendererSource.Contains("Save buffer:") &&
                rendererSource.Contains("Vanilla OK") &&
                rendererSource.Contains("10 MB") &&
-               rendererSource.Contains("GetRuntimeIcon"),
-            "Serialization HUD shows split aggregate/stream buffer rows without generated fallback HUD icons.");
+               rendererSource.Contains("GetRuntimeIcon") &&
+               rendererSource.Contains("DrawFittedHudText") &&
+               rendererSource.Contains("FittedHudFontSize") &&
+               rendererSource.Contains("HudBaseFontSize") &&
+               rendererSource.Contains("wordWrap = false") &&
+               rendererSource.Contains("TextClipping.Clip"),
+            "Serialization HUD shows split aggregate/stream buffer rows with runtime icons and screen-fitted no-wrap text.");
         Assert(SerializationHudRenderer.FormatSaveBuffer(BlueprintSerializationUsage.Empty) == "unknown" &&
                SerializationHudRenderer.FormatHeaderLimit(34UL * 1024UL) == "64 KiB legacy" &&
                SerializationHudRenderer.FormatHeaderLimit(70_000UL) == "4 MiB ESU" &&
@@ -1727,6 +1746,28 @@ f 0 2 3
             1f);
         Assert(picked == DecorationEditAxis.X && Math.Abs(projected - 0.25f) < 0.001f,
             "Decoration Edit Mode picks the nearest screen-space axis and converts drag pixels to local-axis motion.");
+
+        Assert(EsuSymmetry.MirrorCell(new Vector3i(3, 4, 5), DecorationEditAxis.X, 1)
+                   .Equals(new Vector3i(-1, 4, 5)) &&
+               EsuSymmetry.MirrorCell(new Vector3i(3, 4, 5), DecorationEditAxis.Y, 2)
+                   .Equals(new Vector3i(3, 0, 5)) &&
+               Math.Abs(EsuSymmetry.MirrorVector(new Vector3(3.25f, 4.5f, 5.75f), DecorationEditAxis.Z, 3).z - 0.25f) < 0.001f,
+            "ESU symmetry mirrors cells and decoration centers across X/Y/Z grid planes.");
+
+        EsuSymmetry.Clear();
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 1);
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.Y, 2);
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.Z, 3);
+        Vector3i[] mirroredCells = EsuSymmetry.Variants()
+            .Select(variant => variant.Mirror(new Vector3i(3, 4, 5)))
+            .ToArray();
+        Vector3i[] dedupedPlaneCells = EsuSymmetry.MirrorCells(new[] { new Vector3i(1, 2, 3) })
+            .ToArray();
+        Assert(mirroredCells.Length == 8 &&
+               mirroredCells.Select(EsuSymmetry.CellKey).Distinct().Count() == 8 &&
+               dedupedPlaneCells.Length == 1,
+            "ESU symmetry combines active axes into 2/4/8 variants and dedupes cells that lie on every active plane.");
+        EsuSymmetry.Clear();
 
         string root = FindRepositoryRoot();
         string profileSource = File.ReadAllText(Path.Combine(
@@ -1770,6 +1811,16 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
+        string focusGuardSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuInputFocusGuard.cs"));
+        string symmetrySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuSymmetry.cs"));
         string registrationSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -1812,13 +1863,8 @@ f 0 2 3
             "Source",
             "SerializationHud",
             "SerializationHudRenderer.cs"));
-        string technicalLogSource = File.ReadAllText(Path.Combine(
-            root,
-            "TECHNICAL_LOG.md"));
-        string inGameTestPlanSource = File.ReadAllText(Path.Combine(
-            root,
-            "docs",
-            "IN_GAME_TEST_PLAN.md"));
+        string technicalLogSource = ReadDocumentationText(root, "TECHNICAL_LOG.md");
+        string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string builderUiSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -1827,6 +1873,7 @@ f 0 2 3
             "ES2_UI",
             "DBUI_BasicSettingTab.cs"));
         string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
+        string inputScopeSourceNormalized = inputScopeSource.Replace("\r\n", "\n");
         string inspectorSource = ExtractMethodSource(sessionSource, "DrawInspector");
         int toolButtonSignature = sessionSource.IndexOf(
             "private void ToolButton(",
@@ -1847,13 +1894,27 @@ f 0 2 3
                registrationSource.Contains("SmartBuildModeRegistration.Active") &&
                registrationSource.Contains("CanOpenFromModeSwitch") &&
                registrationSource.Contains("ignoreSmartBuildMode") &&
+               registrationSource.Contains("modeSwitch: true") &&
+               registrationSource.Contains("CanSwitchEsuModes") &&
                registrationSource.Contains("Close Smart Block Builder before opening Decoration Edit Mode.") &&
                buildModeInputGateSource.Contains("_decorationEditToggleRequiresRelease") &&
                buildModeInputGateSource.Contains("ReadDecorationEditToggleDown") &&
                buildModeInputGateSource.Contains("IsDecorationEditToggleDefaultHeld"),
             "Decoration Edit Mode has repository-profile keybinds, rejects direct opens over Smart Builder, and uses the shared one-press Ctrl+D input gate.");
-        Assert(sessionSource.Contains("SetGameControlOptions(") &&
-                !sessionSource.Contains("gameDisableKeys: true") &&
+        Assert(!sessionSource.Contains("SetGameControlOptions(") &&
+                focusGuardSource.Contains("internal static class EsuInputFocusGuard") &&
+                !focusGuardSource.Contains("SetGameControlOptions(") &&
+                !focusGuardSource.Contains("StaticOptionsManager.SetMouseCursorActive") &&
+                !focusGuardSource.Contains("MouseCursorModeChangeSource") &&
+                !focusGuardSource.Contains("_playerWantsMouseLookInUi") &&
+                !focusGuardSource.Contains("PlayerWantsMouseLookInUi") &&
+                !focusGuardSource.Contains("AccessTools.Method(typeof(UserInput), \"SetCursor\")") &&
+                !focusGuardSource.Contains("InvokeSetCursor") &&
+                !focusGuardSource.Contains("PostExitRepairFrames") &&
+                !focusGuardSource.Contains("PostExitRepairActive") &&
+                focusGuardSource.Contains("TickPostExitRepair") &&
+                !focusGuardSource.Contains("gameDisableKeys: true") &&
+                !focusGuardSource.Contains("gameShowMouseCursor: false") &&
                 sessionSource.Contains("GUI.ModalWindow") &&
                 sessionSource.Contains("ApplyEditorViewMode") &&
                 sessionSource.Contains("_previousWireframe") &&
@@ -1864,13 +1925,19 @@ f 0 2 3
                inputScopeSource.Contains("ClaimBuildInputForFrames") &&
                inputScopeSource.Contains("Time.frameCount <= _buildInputClaimUntilFrame") &&
                inputScopeSource.Contains("ForceResetIfActive") &&
+               inputScopeSource.Contains("EsuInputFocusGuard.BeginEditor") &&
+               inputScopeSource.Contains("EsuInputFocusGuard.EndEditor") &&
                sessionSource.Contains("DecorationEditorInputScope.End();") &&
                !inputScopeSource.Contains("SuppressBuildInput() => _active") &&
+               inputScopeSource.Contains("ControlHeldWhileActive") &&
+               inputScopeSource.Contains("DecoLimitLifter.EsuInputState.IsControlHeld()") &&
+               inputScopeSource.Contains("ControlHeldWhileActive ||") &&
+               !inputScopeSourceNormalized.Contains("ControlHeldWhileActive ||\n            OwnsCameraInputThisFrame") &&
                 inputScopeSource.Contains("HudBuildCommands") &&
                 inputScopeSource.Contains("DrawInsideBuildMode") &&
                 inputScopeSource.Contains("cBuild") &&
                 inputScopeSource.Contains("BuildCameraMode"),
-            "Decoration Edit Mode uses modal focus without disabling camera keys, scoped build-input claims, safe decoration wireframe, public decoration enumeration/creation APIs, native HUD/input suppression, and transaction rollback.");
+            "Decoration Edit Mode uses a no-op cursor focus guard, scoped build-input/Ctrl claims, safe decoration wireframe, public decoration enumeration/creation APIs, native HUD/input suppression, and transaction rollback.");
         Assert(inputScopeSource.Contains("DrawRhs") &&
                inputScopeSource.Contains("DrawInteractionIcon") &&
                inputScopeSource.Contains("DrawWeaponInfo") &&
@@ -1904,54 +1971,160 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditorTheme.cs"));
+        string layoutSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudLayout.cs"));
+        string notificationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotifications.cs"));
+        string toolbarAttentionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuToolbarAttention.cs"));
+        string smartBuildSessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildSession.cs"));
+        string smartBuildSessionSourceNormalized = smartBuildSessionSource.Replace("\r\n", "\n");
+        string smartInputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildInputScope.cs"));
+        string optionsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudOptionsScreen.cs"));
+        string pluginSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
+        string tooltipSuppressorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationTooltipSuppressor.cs"));
         Assert(themeSource.Contains("PanelColor") &&
                themeSource.Contains("ToolButton") &&
+               themeSource.Contains("Ensure(EsuHudLayout.CurrentScale)") &&
+               themeSource.Contains("EsuHudLayout.FontSize") &&
                !sessionSource.Contains("DimTextureFor(_viewMode)") &&
                !sessionSource.Contains("GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height)") &&
                themeSource.Contains("DecorationEditorViewMode") &&
                themeSource.Contains("FTD") == false,
             "Decoration Edit Mode has an ESU-owned native-style theme layer without copied FTD texture data or a full-screen dark overlay.");
 
+        Assert(layoutSource.Contains("ReferenceWidth = 1920f") &&
+               layoutSource.Contains("MinAutoScale = 0.72f") &&
+               layoutSource.Contains("MinManualScale = 0.10f") &&
+               layoutSource.Contains("MaxManualScale = 2f") &&
+               layoutSource.Contains("MinEffectiveScale = 0.10f") &&
+               layoutSource.Contains("MaxEffectiveScale = 2f") &&
+               layoutSource.Contains("ToolbarNotificationBaseWidth = 250f") &&
+               layoutSource.Contains("ToolbarRightControlsBaseWidth = 504f") &&
+               layoutSource.Contains("PanelInnerRect") &&
+               layoutSource.Contains("ToolbarRect(float baseHeight)") &&
+               layoutSource.Contains("ToolbarLeftRailWidth") &&
+               layoutSource.Contains("ToolbarNotificationWidth") &&
+               layoutSource.Contains("ToolbarRightControlsWidth") &&
+               layoutSource.Contains("ScaleForScreen") &&
+               layoutSource.Contains("ClampPanel") &&
+               layoutSource.Contains("ResizeGripRect") &&
+               layoutSource.Contains("RequestReset") &&
+               optionsSource.Contains("Automatic editor scaling") &&
+               optionsSource.Contains("Editor scale {0:0.00}x") &&
+               optionsSource.Contains("Reset ESU editor layout"),
+            "ESU editor HUD layout has shared automatic scaling, profile options, reset, panel clamping, and resize grip helpers.");
+
         Assert(sessionSource.Contains("DrawEditorShell") &&
                sessionSource.Contains("DrawTopToolbar") &&
+               sessionSource.Contains("EsuHudLayout.PanelInnerRect(toolbarRect)") &&
+               sessionSource.Contains("EsuHudLayout.PanelInnerRect(bottomRect)") &&
+               sessionSource.Contains("EsuHudLayout.ToolbarLeftRailWidth(toolbarRect.width)") &&
+               sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(leftRailWidth))") &&
                sessionSource.Contains("DrawAnchorMenu") &&
                sessionSource.Contains("AnchorMenuRect") &&
                sessionSource.Contains("_anchorMenuOpen") &&
                sessionSource.Contains("DrawOutliner") &&
                sessionSource.Contains("DrawInspector") &&
                sessionSource.Contains("DrawMeshPalette") &&
+               sessionSource.Contains("DrawLeftPanelStack") &&
+               sessionSource.Contains("DrawInspectorPanel") &&
+               sessionSource.Contains("DrawOutlinerPanel") &&
+               sessionSource.Contains("DrawAnchorPanel") &&
+               sessionSource.Contains("DrawCompactIconHeader(\"Mesh Palette\", \"mesh\")") &&
+               sessionSource.Contains("DrawCompactIconHeader(titleRect, \"Outliner\", \"outliner\")") &&
+               sessionSource.Contains("DrawCompactIconHeader(\"Inspector\", \"settings\"") &&
+               !sessionSource.Contains("new GUIContent(\" Mesh Palette\", DecorationEditorIconCatalog.Get(\"mesh\"))") &&
+               !sessionSource.Contains("new GUIContent(\" Outliner\", DecorationEditorIconCatalog.Get(\"outliner\"))") &&
+               !sessionSource.Contains("new GUIContent(\" Inspector\", DecorationEditorIconCatalog.Get(\"settings\"))") &&
+               !sessionSource.Contains("GUILayout.Label(\"Inspector\", DecorationEditorTheme.SubHeader") &&
+               sessionSource.Contains("IsLeftPanelStackVisible") &&
+               sessionSource.Contains("IsRightPanelStackVisible") &&
                sessionSource.Contains("DrawBottomPanel") &&
-               sessionSource.Contains("DrawPaletteDetails(Rect rect)") &&
-               sessionSource.Contains("Rect anchorRect") &&
-               sessionSource.Contains("DrawAnchorContext(anchorRect.height)") &&
+               !sessionSource.Contains("DrawPaletteDetails") &&
+               sessionSource.Contains("SplitVerticalStack") &&
+               sessionSource.Contains("DrawAnchorContext(inner.height)") &&
                sessionSource.Contains("DrawCompactAnchorHeader") &&
-               sessionSource.Contains("GUILayoutUtility.GetRect(1f, 22f") &&
-               sessionSource.Contains("16f, 16f") &&
+               sessionSource.Contains("GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(22f)") &&
+               sessionSource.Contains("EsuHudLayout.Scale(16f)") &&
                !sessionSource.Contains("new GUIContent(\" Selected anchor\", DecorationEditorIconCatalog.Get(\"anchor\"))") &&
-               sessionSource.Contains("const float countHeight = 18f") &&
+               sessionSource.Contains("float countHeight = EsuHudLayout.Scale(18f)") &&
                sessionSource.Contains("Rect countRect") &&
                sessionSource.Contains("GUI.Label(countRect, MeshCountText(rows.Count)") &&
                sessionSource.Contains("total meshes") &&
                sessionSource.Contains("search: ") &&
-               sessionSource.Contains("InspectorPanelButton") &&
-               sessionSource.Contains("AnchorPanelButton") &&
+               sessionSource.Contains("s_showInspectorPanel") &&
+               sessionSource.Contains("s_showAnchorPanel") &&
+               sessionSource.Contains("PanelToggle(\"settings\", \"Insp\", ref _showInspectorPanel") &&
+               sessionSource.Contains("PanelToggle(\"anchor\", \"Anch\", ref _showAnchorPanel") &&
+               !sessionSource.Contains("InspectorPanelButton") &&
+               !sessionSource.Contains("AnchorPanelButton") &&
                sessionSource.Contains("Rect listRect") &&
-               sessionSource.Contains("Rect detailsRect") &&
                sessionSource.Contains("GUI.BeginGroup(listRect)") &&
                sessionSource.Contains("alwaysShowHorizontal: false") &&
                sessionSource.Contains("CompactText") &&
-                sessionSource.Contains("480f, 1050f") &&
-                sessionSource.Contains("const float topLimit = 44f") &&
-                sessionSource.Contains("1170f") &&
+               sessionSource.Contains("480f, 1050f") &&
+               sessionSource.Contains("s_rightPanelRect") &&
+               sessionSource.Contains("ToolbarBottomLimit") &&
+               sessionSource.Contains("MaxMeshPaletteHeight") &&
+               sessionSource.Contains("HandlePanelResize") &&
+               sessionSource.Contains("EsuHudLayout.DrawResizeGrip(meshRect") &&
+               sessionSource.Contains("EsuHudLayout.DrawResizeGrip(rightRect") &&
                !themeSource.Contains("DecorationEditorPaletteTab") &&
                !sessionSource.Contains("PaletteDetailTab") &&
                !sessionSource.Contains("DecorationEditorPaletteTab.Anchor") &&
                !sessionSource.Contains("DecorationEditorBottomTab") &&
                sessionSource.Contains("PanelToggle(\"mesh\"") &&
                sessionSource.Contains("PanelToggle(\"outliner\"") &&
-               !sessionSource.Contains("PanelToggle(\"settings\"") &&
-               !sessionSource.Contains("PanelToggle(\"anchor\""),
-            "Decoration Edit Mode renders the native shell with compact toolbar, outliner plus right-panel anchor details, taller Inspector-only mesh palette, bottom status strip, and panel toggles.");
+               sessionSource.Contains("PanelToggle(\"settings\"") &&
+               sessionSource.Contains("PanelToggle(\"anchor\"") &&
+               sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(toolbarRect, notificationWidth") &&
+               sessionSource.Contains("CurrentModeToolbarLabel") &&
+               sessionSource.Contains("ESU mode: Surface Builder.") &&
+               sessionSource.Contains("ESU mode: Decoration Edit.") &&
+               sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth))") &&
+               smartBuildSessionSource.Contains("private const float ToolbarHeight = 54f") &&
+               smartBuildSessionSource.Contains("_toolbarRect = EsuHudLayout.ToolbarRect(ToolbarHeight)") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth") &&
+               smartBuildSessionSource.Contains("ESU mode: Smart Builder.") &&
+               smartBuildSessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth))"),
+            "Decoration Edit Mode renders the native shell with a first-slot mode switch, compact toolbar, stable shared notification/right-control rail, independent Mesh/Inspector/Outliner/Anchor panels, bottom status strip, and panel toggles.");
 
         Assert(!sessionSource.Contains("Mesh/Add") &&
                !sessionSource.Contains("Add here") &&
@@ -1965,10 +2138,21 @@ f 0 2 3
                sessionSource.Contains("DrawAnchorMenu(toolbarRect)") &&
                sessionSource.Contains("SelectViewMode") &&
                sessionSource.Contains("toolbarRect.xMax - width") &&
+               sessionSource.Contains("ViewModeButtonsPerRow") &&
+               sessionSource.Contains("ViewModePreferredWidth") &&
+               sessionSource.Contains("ViewModeButtonRect") &&
+               sessionSource.Contains("Screen.width - margin * 2f") &&
+               sessionSource.Contains("Mathf.CeilToInt(ViewModeMenuButtonCount / (float)ViewModeButtonsPerRow(width))") &&
+               sessionSource.Contains("GUI.Button(\n                    rect,") &&
+               !sessionSource.Contains("GUILayout.Width(54f)") &&
                sessionSource.Contains("private static bool s_anchorMenuOpen") &&
                sessionSource.Contains("private bool _anchorMenuOpen = s_anchorMenuOpen") &&
                sessionSource.Contains("s_anchorMenuOpen = _anchorMenuOpen") &&
-               toolButtonSource.Contains("_anchorMenuOpen = !_anchorMenuOpen") &&
+               sessionSource.Contains("AnchorMenuButton") &&
+               sessionSource.Contains("Anchor follow is also available in the bottom status panel.") &&
+               sessionSourceNormalized.Contains("_tool = DecorationEditorTool.Anchor;\n                _anchorMenuOpen = !_anchorMenuOpen") &&
+               !toolButtonSource.Contains("DecorationEditorTool.Anchor") &&
+               !toolButtonSource.Contains("_anchorMenuOpen = !_anchorMenuOpen") &&
                toolButtonSource.Contains("else\n                {\n                    _tool = tool;\n                }") &&
                !toolButtonSource.Contains("_anchorMenuOpen = false") &&
                !sessionSourceNormalized.Contains("_viewModeMenuOpen = false;\n            ApplyEditorViewMode();") &&
@@ -1993,17 +2177,20 @@ f 0 2 3
                sessionSource.Contains("MeshPreviewGridColumns = 4") &&
                sessionSource.Contains("MeshPreviewGridCardWidth = 112f") &&
                sessionSource.Contains("MeshPreviewGridCardHeight = 86f") &&
-               sessionSource.Contains("CompactText(entry.Name, 18)") &&
+               sessionSource.Contains("Mathf.Min(MeshPreviewGridColumns") &&
+               sessionSource.Contains("Mathf.FloorToInt((viewportWidth - EsuHudLayout.Scale(20f)) / cardWidth)") &&
+               sessionSource.Contains("CompactText(entry.Name, Mathf.Max(10") &&
                sessionSource.Contains("DrawMeshListRows(rows, listRect.height, mouseInListViewport)") &&
-               sessionSource.Contains("DrawMeshPreviewGrid(rows, listRect.height, mouseInListViewport)") &&
-               sessionSource.Contains("MaxMeshGridPreviewRendersPerFrame") &&
-               sessionSource.Contains("Mathf.CeilToInt((_meshScroll.y + viewportHeight) / MeshPreviewGridRowHeight)") &&
+               sessionSource.Contains("DrawMeshPreviewGrid(rows, listRect.width, listRect.height, mouseInListViewport)") &&
+               sessionSource.Contains("Mathf.CeilToInt((_meshScroll.y + viewportHeight) / rowHeight)") &&
                sessionSource.Contains("EventType.Repaint") &&
-               sessionSource.Contains("GetCachedPreview(entry, MeshPreviewGridTexturePixels)") &&
+               sessionSource.Contains("bool canRenderVisiblePreview") &&
+               sessionSource.Contains("? _previewRenderer?.GetPreview(entry, previewPixels, _previewSpin)") &&
+               sessionSource.Contains(": _previewRenderer?.GetCachedPreview(entry, previewPixels)") &&
                previewSource.Contains("GetCachedPreview") &&
                !sessionSource.Contains("FloorToInt(_meshScroll.y / MeshPreviewGridRowHeight) - 2") &&
                !sessionSource.Contains("visibleRows = Mathf.CeilToInt(viewportHeight / MeshPreviewGridRowHeight) + 4"),
-            "Decoration Edit Mode mesh palette virtualizes the full filtered mesh catalog and lazily renders only visible 4-column 3D grid thumbnails.");
+            "Decoration Edit Mode mesh palette virtualizes the full filtered mesh catalog and rotates every visible adaptive-column 3D grid thumbnail.");
 
         Assert(sessionSource.Contains("DrawMeshPreviewCard") &&
                previewSource.Contains("RenderTexture") &&
@@ -2043,7 +2230,18 @@ f 0 2 3
                sessionSource.Contains("AnchorFollowMinimumDistance") &&
                sessionSource.Contains("AnchorFollowMaximumSearchRadius") &&
                sessionSource.Contains("Follow: on") &&
+               sessionSource.Contains("ToggleAnchorFollow") &&
+               sessionSource.Contains("DrawBottomAnchorFollowToggle") &&
+               sessionSource.Contains("Anchor follow: on") &&
                sessionSource.Contains("Anchor follow range") &&
+               sessionSource.Contains("AnchorMenuPreferredWidth") &&
+               sessionSource.Contains("AnchorMenuNeedsPresetWrap") &&
+               sessionSource.Contains("DrawAnchorFollowDistanceButton") &&
+               sessionSource.Contains("Mathf.Clamp(AnchorMenuPreferredWidth(), minWidth, maxWidth)") &&
+               sessionSource.Contains("Screen.width - margin * 2f") &&
+               sessionSource.Contains("GUI.TextField") &&
+               sessionSource.Contains("if (wrapsPresets)") &&
+               sessionSource.Contains("DrawAnchorFollowDistanceButton(new Rect(x, presetY") &&
                sessionSource.Contains("DrawAnchorGizmo") &&
                sessionSource.Contains("DrawBlockWireframe") &&
                sessionSource.Contains("oldCenter - ToVector3(newTether)") &&
@@ -2084,18 +2282,22 @@ f 0 2 3
                sessionSource.Contains("ForDecoration(") &&
                sessionSource.Contains("depth)") &&
                sessionSource.Contains("DrawAnchorContext") &&
-               sessionSource.Contains("DrawAnchorContext(anchorRect.height)") &&
+               sessionSource.Contains("DrawAnchorPanel") &&
+               sessionSource.Contains("PanelToggle(\"anchor\", \"Anch\", ref _showAnchorPanel") &&
                sessionSource.Contains("SelectedAnchorDecorations") &&
                sessionSource.Contains("DrawSelectedAnchorConnections") &&
                sessionSource.Contains("_tool != DecorationEditorTool.Anchor"),
-            "Decoration Edit Mode outliner defaults to construct-grouped decoration rows with optional tether pins, collapsible constructs, right-panel selected-anchor context, anchor connection lines, and anchor-mode click selection.");
+            "Decoration Edit Mode outliner defaults to construct-grouped decoration rows with optional tether pins, collapsible constructs, independent selected-anchor context, anchor connection lines, and anchor-mode click selection.");
 
         Assert(historySource.Contains("DecorationEditHistory") &&
                historySource.Contains("DecorationSnapshotCommand") &&
+               historySource.Contains("DecorationSnapshotBatchCommand") &&
                historySource.Contains("DecorationCreateCommand") &&
+               historySource.Contains("DecorationCreateBatchCommand") &&
                transactionSource.Contains("DecorationEditTransactionSet") &&
                transactionSource.Contains("MarkCreated") &&
                transactionSource.Contains("TrackEdit") &&
+               sessionSource.Contains("TryRestoreHistorySnapshots") &&
                sessionSource.Contains("UndoEdit") &&
                sessionSource.Contains("RedoEdit") &&
                sessionSource.Contains("Ctrl+Shift+Z") &&
@@ -2104,6 +2306,33 @@ f 0 2 3
                historySourceNormalized.Contains("if (!command.Undo(session))\n                return false;\n\n            _undo.Pop();") &&
                historySourceNormalized.Contains("if (!command.Redo(session))\n                return false;\n\n            _redo.Pop();"),
             "Decoration Edit Mode has session-scoped undo/redo history, preserves failed history entries, and transaction rollback for snapshots and created decorations.");
+
+        Assert(symmetrySource.Contains("internal static class EsuSymmetry") &&
+               symmetrySource.Contains("PendingAxis") &&
+               symmetrySource.Contains("TryPlacePending") &&
+               symmetrySource.Contains("MirrorCell") &&
+               symmetrySource.Contains("MirrorVector") &&
+               sessionSource.Contains("SymmetryButton(DecorationEditAxis.X)") &&
+               sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y)") &&
+               sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z)") &&
+               sessionSource.Contains("TryBuildDecorationPlacementPlans") &&
+               sessionSource.Contains("Symmetry placement rejected because a mirrored tether block is missing") &&
+               sessionSource.Contains("DecorationCreateBatchCommand") &&
+               sessionSource.Contains("BeginSymmetryFollow") &&
+               sessionSource.Contains("TryFindSymmetryCounterpart") &&
+               sessionSource.Contains("SelectedAnchorDecorations(expectedAnchor)") &&
+               sessionSource.Contains("GetDecorationLocalCenter(decoration)") &&
+               sessionSource.Contains("TryApplySymmetryFollow") &&
+               sessionSource.Contains("RecordSymmetrySnapshotEdit") &&
+               sessionSource.Contains("RecordSnapshotEdit(\"Move decoration\", before, symmetryFollow)") &&
+               sessionSource.Contains("RecordSnapshotEdit(\"Set position\", before, symmetryFollow)") &&
+               sessionSource.Contains("ApplyAnchorShift(shift, before, symmetryFollow)") &&
+               sessionSource.Contains("Symmetry follow skipped: ") &&
+               sessionSource.Contains("Symmetry follow rejected: ") &&
+               sessionSource.Contains("mirrored tether block is missing") &&
+               sessionSource.Contains("mirrored offset would exceed +/-10") &&
+               decorationBehaviourSource.Contains("EsuSymmetry.Clear"),
+            "Decoration Edit Mode exposes shared XYZ symmetry planes, validates mirrored placement batches, and live-follows matched existing mirrored decorations atomically.");
 
         Assert(sessionSource.Contains("HashSet<Decoration> _selection") &&
                 sessionSource.Contains("MaxOutlinerDrawRows") &&
@@ -2128,14 +2357,22 @@ f 0 2 3
                sessionSource.Contains("DrawBottomTransformEditors") &&
                sessionSource.Contains("DrawBottomVectorEditor") &&
                sessionSource.Contains("DrawBottomVectorComponent") &&
-               sessionSource.Contains("Mode: Deco | Tab to Build when clean") &&
-               sessionSource.Contains("GUILayout.Label(\"Mode: Deco | Tab to Build when clean\", DecorationEditorTheme.Body)") &&
-               sessionSource.Contains("const float width = 386f") &&
-               sessionSource.Contains("const float fieldWidth = 72f") &&
-               sessionSource.Contains("float x = row.xMax - totalWidth") &&
+               sessionSource.Contains("Mode: Deco | Tab to Surface when clean") &&
+               sessionSource.Contains("Mode: Surface | Tab to Build when clean") &&
+               sessionSource.Contains("GUILayout.Label(surface ? \"Mode: Surface | Tab to Build when clean\" : \"Mode: Deco | Tab to Surface when clean\", DecorationEditorTheme.Body)") &&
+               sessionSource.Contains("float edgePadding = EsuHudLayout.Scale(4f)") &&
+               sessionSource.Contains("row.width - edgePadding * 2f") &&
+               sessionSource.Contains("float available = Mathf.Max(\n                1f,") &&
+               sessionSource.Contains("gap * 7f") &&
+               sessionSource.Contains("float setX = Mathf.Min(x + gap, rect.xMax - setWidth)") &&
+               sessionSource.Contains("float axisWidth = EsuHudLayout.Scale(18f)") &&
+               sessionSource.Contains("BottomVectorAxisStyle") &&
+               sessionSource.Contains("DecorationEditMath.AxisColor(axis)") &&
+               sessionSource.Contains("hasSelection ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton") &&
+               !sessionSource.Contains("GUI.enabled = previous && hasSelection") &&
                sessionSource.Contains("RefreshLiveTransformFields") &&
                sessionSourceNormalized.Contains("HandleSceneInput();\n            RefreshLiveTransformFields();") &&
-               sessionSource.Contains("Mathf.Clamp(Screen.height * 0.105f, 88f, 112f)") &&
+               sessionSource.Contains("Mathf.Clamp(Screen.height * 0.105f, EsuHudLayout.Scale(88f), EsuHudLayout.Scale(112f))") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Position\"") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Rotation\"") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Scale\"") &&
@@ -2150,6 +2387,20 @@ f 0 2 3
                sessionSourceNormalized.IndexOf("\"Scale\",\n                _scaleText", StringComparison.Ordinal),
             "Decoration Edit Mode inspector uses color/material controls, while the bottom panel hosts live Position/Rotation/Scale transform editing.");
 
+        Assert(sessionSource.Contains("DrawPaintPalette") &&
+               sessionSource.Contains("DrawPaintColorRow") &&
+               sessionSource.Contains("PaintPreviewColor") &&
+               sessionSource.Contains("PaintNearest") &&
+               sessionSource.Contains("TryFindNearestDecoration") &&
+               sessionSource.Contains("_tool == DecorationEditorTool.Paint || _showMeshPalette") &&
+               sessionSource.Contains("Pick a color, then click decoration centers in the viewport to paint them.") &&
+               sessionSource.Contains("Painted decoration color #") &&
+               sessionSource.Contains("_tool != DecorationEditorTool.Paint") &&
+               sessionSource.Contains("_tool == DecorationEditorTool.Paint)") &&
+               sessionSource.Contains("_tool == DecorationEditorTool.Surface ||") &&
+               sessionSource.Contains("_tool == DecorationEditorTool.Paint);"),
+            "Decoration Edit Mode Paint has a dedicated color-number palette and viewport click painting instead of only inspector color fields.");
+
         Assert(!sessionSource.Contains("color = Color.white;") &&
                !sessionSource.Contains("VectorLines.i.Current") &&
                overlaySource.Contains("Hidden/Internal-Colored") &&
@@ -2161,13 +2412,105 @@ f 0 2 3
                sessionSource.Contains("float width = _anchorDragAxis == axis && _anchorDragSign == sign ? 4f : 2.5f"),
             "Decoration Edit Mode transform and anchor axes use ESU unlit overlay drawing with stable RGB hues across native view modes.");
 
-        Assert(inputScopeSource.Contains("TipDisplayer") &&
-               inputScopeSource.Contains("SetTip") &&
-               inputScopeSource.Contains("!DecorationEditorInputScope.Active &&") &&
-               inputScopeSource.Contains("!SmartBuildInputScope.Active") &&
+        Assert(inputScopeSource.Contains("DecorationTooltipSuppressor.IsLegacyPaintHoverMessage") &&
                inputScopeSource.Contains("InfoStore") &&
-               inputScopeSource.Contains("Colored with paint"),
-            "ESU modal build tools suppress hovered-block paint/tool tips while active.");
+               inputScopeSource.Contains("EsuHudNotifications.TryCaptureInfoStore") &&
+               tooltipSuppressorSource.Contains("ResolveBlockGetToolTipTarget") &&
+               tooltipSuppressorSource.Contains("\"Block\"") &&
+               tooltipSuppressorSource.Contains("\"IInteractionSettings\"") &&
+               tooltipSuppressorSource.Contains("\"GetToolTip\"") &&
+               tooltipSuppressorSource.Contains("ShouldIncludeVanillaPaintTooltipLine") &&
+               tooltipSuppressorSource.Contains("Tip_Colored") &&
+               tooltipSuppressorSource.Contains("PatchedBlockTooltipColorCheckCount") &&
+               tooltipSuppressorSource.Contains("outerChecks != 1 || innerChecks != 1") &&
+               tooltipSuppressorSource.Contains("OpCodes.Brtrue") &&
+               tooltipSuppressorSource.Contains("OpCodes.Cgt_Un") &&
+               tooltipSuppressorSource.Contains("return color != 0 &&") &&
+               tooltipSuppressorSource.Contains("StaticOptionsManager.ShowMouseCursor") &&
+               tooltipSuppressorSource.Contains("!EsuOwnsEditorView;") &&
+               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
+               tooltipSuppressorSource.Contains("return false;") &&
+               !tooltipSuppressorSource.Contains("harmony.Patch(method, prefix: patch)") &&
+               !tooltipSuppressorSource.Contains("LogSuppressedCall(__originalMethod, __args);") &&
+               !tooltipSuppressorSource.Contains("TipDisplayer") &&
+               !tooltipSuppressorSource.Contains("ForceTip") &&
+               !tooltipSuppressorSource.Contains("TooltipGUI") &&
+               !tooltipSuppressorSource.Contains("ProTip.Add") &&
+               !tooltipSuppressorSource.Contains("StaticOptionsManager.SetMouseCursorActive") &&
+               !tooltipSuppressorSource.Contains("SetGameControlOptions") &&
+               !tooltipSuppressorSource.Contains("PlayerWantsMouseLookInUi") &&
+               !tooltipSuppressorSource.Contains("GUI.tooltip") &&
+               !tooltipSuppressorSource.Contains("tooltipOverride") &&
+               !tooltipSuppressorSource.Contains("ClearStaleTooltipStateAfterEditorExit") &&
+               !tooltipSuppressorSource.Contains("PostExitRepairActive") &&
+               !tooltipSuppressorSource.Contains("LogPostExitTooltipCandidate") &&
+               !focusGuardSource.Contains("ClearStaleTooltipStateAfterEditorExit") &&
+               decorationBehaviourSource.Contains("EsuInputFocusGuard.TickPostExitRepair") &&
+               smartBuildSessionSource.Contains("SmartBuildInputScope.End();") &&
+               smartInputScopeSource.Contains("EsuInputFocusGuard.BeginEditor") &&
+               smartInputScopeSource.Contains("EsuInputFocusGuard.EndEditor") &&
+               pluginSource.Contains("DecorationTooltipSuppressor.Install(harmony)") &&
+               pluginSource.Contains("VerifyExactTranspiler") &&
+               pluginSource.Contains("DecorationTooltipSuppressor.ResolveBlockGetToolTipTarget()") &&
+               pluginSource.Contains("PatchedBlockTooltipColorCheckCount != 2") &&
+               !pluginSource.Contains("PatchedTipSetterCount <= 0") &&
+               !sessionSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState();") &&
+               inputScopeSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState(force: true)") &&
+               !smartBuildSessionSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState();") &&
+               smartInputScopeSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState(force: true)") &&
+               notificationSource.Contains("TryCaptureInfoStore") &&
+               notificationSource.Contains("DrawToolbarSlot") &&
+               notificationSource.Contains("fallbackMessage") &&
+               notificationSource.Contains("hasTransientMessage") &&
+               notificationSource.Contains("GUIUtility.GUIToScreenPoint") &&
+               notificationSource.Contains("DecorationEditorInputScope.Active") &&
+               notificationSource.Contains("SmartBuildInputScope.Active") &&
+               notificationSource.Contains("DisplaySeconds = 6f") &&
+               notificationSource.Contains("ToolbarHeightScaled") &&
+               notificationSource.Contains("EsuHudLayout.Scale(baseHeight)") &&
+               notificationSource.Contains("MessageOverflows") &&
+               notificationSource.Contains("DrawCollapsedOverflow") &&
+               notificationSource.Contains("DrawExpandedPopup") &&
+               notificationSource.Contains("ContainsMouse") &&
+               notificationSource.Contains("CalcHeight") &&
+               notificationSource.Contains("MessageStyle") &&
+               notificationSource.Contains("\"Details\"") &&
+               notificationSource.Contains("\"Hide\"") &&
+               !notificationSource.Contains("PreferredSlotHeight") &&
+               !notificationSource.Contains("DecorationEditorIconCatalog.Get") &&
+               !notificationSource.Contains("IconKey") &&
+               sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(toolbarRect, notificationWidth") &&
+               sessionSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
+               sessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.ContainsMouse(Event.current.mousePosition)") &&
+               inGameTestPlanSource.Contains("slot stays fixed-height") &&
+               inGameTestPlanSource.Contains("no icon") &&
+               inGameTestPlanSource.Contains("Details") &&
+               inGameTestPlanSource.Contains("no `Colored with paint #N` tooltip") &&
+               inGameTestPlanSource.Contains("without changing top-panel padding"),
+            "ESU modal build tools suppress only FTD Block.GetToolTip paint-hover text while preserving vanilla cursor state and route native InfoStore popups into a fixed-height, text-only ESU toolbar slot with expandable details while active.");
+        Assert(toolbarAttentionSource.Contains("PulseSeconds = 2.5f") &&
+               toolbarAttentionSource.Contains("DrawLastButtonPulse") &&
+               toolbarAttentionSource.Contains("GUILayoutUtility.GetLastRect()") &&
+               toolbarAttentionSource.Contains("DrawBorder") &&
+               toolbarAttentionSource.Contains("GUI.DrawTexture") &&
+               sessionSource.Contains("private float _applyCancelAttentionUntil") &&
+               sessionSource.Contains("AttentionIconButton(\"save\", \"Apply\"") &&
+               sessionSource.Contains("AttentionIconButton(\"cancel\", \"Cancel\"") &&
+               sessionSourceNormalized.Contains("RefreshApplyCancelAttention();\n                reason = \"Apply or Cancel Decoration Edit changes before switching to Smart Builder.") &&
+               sessionSourceNormalized.Contains("RefreshApplyCancelAttention();\n                reason = \"Apply or Cancel Decoration Edit changes before switching to Surface Builder.") &&
+               sessionSource.Contains("ClearApplyCancelAttention();") &&
+               smartBuildSessionSource.Contains("private float _applyCancelAttentionUntil") &&
+               smartBuildSessionSource.Contains("AttentionIconButton(\"save\", \"Apply\"") &&
+               smartBuildSessionSource.Contains("AttentionIconButton(\"cancel\", \"Cancel\"") &&
+               smartBuildSessionSourceNormalized.Contains("RefreshApplyCancelAttention();\n                reason = \"Apply or cancel the Smart Builder preview before switching modes.") &&
+               smartBuildSessionSource.Contains("ClearApplyCancelAttention();") &&
+               inGameTestPlanSource.Contains("blocked mode switch makes **Apply** and **Cancel** flash") &&
+               inGameTestPlanSource.Contains("without toolbar movement"),
+            "ESU mode-switch blockers flash fixed-layout Apply/Cancel attention outlines in Decoration Edit Mode and Smart Builder.");
         Assert(technicalLogSource.Contains("EsuBuildModeInputGate") &&
                technicalLogSource.Contains("Ctrl+Shift+B") &&
                inGameTestPlanSource.Contains("Ctrl+Shift+B") &&
@@ -2181,8 +2524,14 @@ f 0 2 3
             "EsuInputState.cs"));
         Assert(!registrationSource.Contains("ChatGUI.Instance") &&
                !inputStateSource.Contains("ChatGUI.Instance") &&
-               inputStateSource.Contains("AccessTools.Field(typeof(ChatGUI), \"_instance\")"),
-            "ESU hotkey guards inspect an existing ChatGUI instance without constructing ChatGUI/FtdKeyMap during boot.");
+               inputStateSource.Contains("AccessTools.Field(typeof(ChatGUI), \"_instance\")") &&
+               inputStateSource.Contains("IsControlHeld()") &&
+               inputStateSource.Contains("KeyCode.LeftControl") &&
+               inputStateSource.Contains("KeyCode.RightControl") &&
+               inGameTestPlanSource.Contains("press Ctrl alone") &&
+               inGameTestPlanSource.Contains("screen does not") &&
+               inGameTestPlanSource.Contains("Surface Builder Ctrl-click behavior still works"),
+            "ESU hotkey guards inspect an existing ChatGUI instance without constructing ChatGUI/FtdKeyMap during boot and expose shared Ctrl state.");
 
         Assert(serializationHudSource.Contains("DecorationEditorIconCatalog.GetRuntimeIcon(icon)") &&
                serializationHudSource.Contains("\"count\"") &&
@@ -2190,10 +2539,7 @@ f 0 2 3
                serializationHudSource.Contains("\"risk\""),
             "Serialization HUD rows use runtime icons outside Decoration Edit Mode without generated fallback tiles.");
 
-        string nativeUiDoc = File.ReadAllText(Path.Combine(
-            root,
-            "docs",
-            "DECORATION_EDITOR_NATIVE_UI.md"));
+        string nativeUiDoc = ReadDocumentationText(root, "docs", "DECORATION_EDITOR_NATIVE_UI.md");
         Assert(nativeUiDoc.Contains("StreamingAssets/Mods/UI/Ui Elements") &&
                nativeUiDoc.Contains("editButton") &&
                nativeUiDoc.Contains("ESU-owned fallback icons") &&
@@ -2206,6 +2552,214 @@ f 0 2 3
             .Any(path => copiedTextureExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase));
         Assert(!copiedIconAsset,
             "Decoration Edit Mode packages no copied FTD icon texture or UI-element assets.");
+    }
+
+    private static void VerifySurfaceDecorationBuilder()
+    {
+        var resolver = new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) });
+        SurfaceDecorationPlan plan;
+        string message;
+
+        SurfaceDraft right = SurfaceDraftForTests(
+            new Vector3(0f, 0f, 0f),
+            new Vector3(1f, 0f, 0f),
+            new Vector3(0f, 1f, 0f));
+        AssertSurfacePlanCount(right, resolver, 1,
+            "Surface planner maps a right triangle to one generated decoration.");
+
+        SurfaceDraft preciseRight = SurfaceDraftForTests(
+            new Vector3(0f, 0f, 0f),
+            new Vector3(1.05f, 0f, 0f),
+            new Vector3(0f, 1f, 0f));
+        Assert(SurfaceDecorationPlanner.TryPlan(preciseRight, resolver, out plan, out message) &&
+               plan.DecorationCount == 1 &&
+               Math.Abs(plan.Placements[0].Positioning.x - 0.525f) < 0.0001f &&
+               Math.Abs(plan.Placements[0].Positioning.z + 0.025f) < 0.0001f,
+            "Surface planner preserves precise generated decoration centers instead of snapping them to the 0.05m move grid.");
+
+        SurfaceDraft isosceles = SurfaceDraftForTests(
+            new Vector3(-0.5f, 0f, 0f),
+            new Vector3(0.5f, 0f, 0f),
+            new Vector3(0f, 1f, 0f));
+        AssertSurfacePlanCount(isosceles, resolver, 1,
+            "Surface planner maps an isosceles triangle to one generated decoration.");
+
+        SurfaceDraft scalene = SurfaceDraftForTests(
+            new Vector3(0f, 0f, 0f),
+            new Vector3(2f, 0f, 0f),
+            new Vector3(0.25f, 1.1f, 0f));
+        AssertSurfacePlanCount(scalene, resolver, 2,
+            "Surface planner maps a scalene triangle to two generated decorations.");
+        Assert(SurfaceDecorationPlanner.TryPlan(scalene, resolver, out plan, out message) &&
+               SurfacePlacementThicknessAxesAreCoherent(plan.Placements),
+            "Surface planner splits a scalene face into co-planar right-triangle decorations with matching thickness normals.");
+
+        var connected = new SurfaceDraft();
+        connected.SetConstructForTests(null);
+        connected.AddPointForTests(new Vector3(0f, 0f, 0f));
+        connected.AddPointForTests(new Vector3(1f, 0f, 0f));
+        connected.AddPointForTests(new Vector3(0f, 1f, 0f));
+        connected.AddPointForTests(new Vector3(1f, 1f, 0f));
+        Assert(connected.TryAddFace(0, 1, 2, out message) &&
+               connected.TryAddFace(1, 2, 3, out message) &&
+               SurfaceDecorationPlanner.TryPlan(connected, resolver, out plan, out message) &&
+               plan.DecorationCount == 2,
+            "Surface planner supports connected edge-extended face drafts.");
+        Assert(SurfaceSharedEdgesAreOpposed(connected.Faces),
+            "Surface draft auto-orients connected faces so adjacent triangle normals stay coherent.");
+        Assert(!connected.TryAddFace(2, 1, 0, out message) &&
+               message.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Surface draft rejects duplicate or reversed faces.");
+
+        var repeated = new SurfaceDraft();
+        repeated.SetConstructForTests(null);
+        repeated.AddPointForTests(Vector3.zero);
+        repeated.AddPointForTests(Vector3.right);
+        repeated.AddPointForTests(Vector3.up);
+        Assert(!repeated.TryAddFace(0, 0, 1, out message),
+            "Surface draft rejects repeated point faces.");
+
+        SurfaceDraft zeroArea = SurfaceDraftForTests(
+            Vector3.zero,
+            Vector3.right,
+            Vector3.right * 2f);
+        Assert(!SurfaceDecorationPlanner.TryPlan(zeroArea, resolver, out plan, out message) &&
+               message.IndexOf("zero", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Surface planner rejects zero-area/collinear faces.");
+
+        SurfaceDraft nonFinite = SurfaceDraftForTests(
+            Vector3.zero,
+            new Vector3(float.NaN, 0f, 0f),
+            Vector3.up);
+        Assert(!SurfaceDecorationPlanner.TryPlan(nonFinite, resolver, out plan, out message) &&
+               message.IndexOf("non-finite", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Surface planner rejects non-finite coordinates.");
+
+        SurfaceDraft anchored = SurfaceDraftForTests(Vector3.zero, Vector3.right, Vector3.up);
+        Assert(SurfaceDecorationPlanner.TryPlan(
+                   anchored,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                   out plan,
+                   out message) &&
+               plan.Placements.All(placement => DecorationEditMath.IsWithinPositionLimit(placement.Positioning)),
+            "Surface nearest-anchor planning accepts generated decoration offsets inside +/-10m.");
+        Assert(!SurfaceDecorationPlanner.TryPlan(
+                   anchored,
+                   new SetSurfaceAnchorResolver(Array.Empty<Vector3i>()),
+                   out plan,
+                   out message) &&
+               message.IndexOf("no valid nearest anchor", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Surface nearest-anchor planning rejects generated decorations with no valid nearby block.");
+
+        string root = FindRepositoryRoot();
+        string plannerSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "SurfaceDecorationPlanner.cs"));
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string themeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorTheme.cs"));
+        Assert(themeSource.Contains("Surface") &&
+               plannerSource.Contains("MADCD_PolygonInput.Start") &&
+               plannerSource.Contains("ConstructSurfaceAnchorResolver") &&
+               plannerSource.Contains("ValidateSurfaceFace") &&
+               plannerSource.Contains("TryOrientFace") &&
+               plannerSource.Contains("TryBuildCoPlanarScalenePolygons") &&
+               plannerSource.Contains("CreateRightTrianglePolygon") &&
+               plannerSource.Contains("RoundPlacementPosition") &&
+               !plannerSource.Contains("DecorationEditMath.Snap(center - ToVector3(anchor))") &&
+               plannerSource.Contains("ThicknessAxis") &&
+               sessionSource.Contains("TrySwitchToSurfaceBuilder") &&
+               sessionSource.Contains("IsSurfaceMode") &&
+               sessionSource.Contains("surface ? \"Surf\" : \"Deco\"") &&
+               sessionSource.Contains("Mode: Deco | Tab to Surface when clean") &&
+               sessionSource.Contains("Mode: Surface | Tab to Build when clean") &&
+               !sessionSource.Contains("ToolButton(DecorationEditorTool.Surface") &&
+               sessionSource.Contains("DrawSurfacePanel") &&
+               sessionSource.Contains("DrawCompactIconHeader(\"Surface Builder\", \"build\")") &&
+               sessionSource.Contains("HandleSurfaceSceneInput") &&
+               sessionSource.Contains("DrawSurfaceOverlay") &&
+               sessionSource.Contains("IsSurfaceMode || _tool == DecorationEditorTool.Paint || _showMeshPalette") &&
+               sessionSource.Contains("PlaceSurfacePlan"),
+            "Decoration Edit Mode exposes Surface Builder as the second ESU mode in the Tab cycle, backed by ES2 polygon conversion.");
+    }
+
+    private static SurfaceDraft SurfaceDraftForTests(params Vector3[] points)
+    {
+        var draft = new SurfaceDraft();
+        draft.SetConstructForTests(null);
+        foreach (Vector3 point in points)
+            draft.AddPointForTests(point);
+        if (points.Length >= 3 && !draft.TryAddFace(0, 1, 2, out string message))
+            throw new InvalidOperationException(message);
+        return draft;
+    }
+
+    private static void AssertSurfacePlanCount(
+        SurfaceDraft draft,
+        ISurfaceAnchorResolver resolver,
+        int expected,
+        string description)
+    {
+        if (!SurfaceDecorationPlanner.TryPlan(draft, resolver, out SurfaceDecorationPlan plan, out string message))
+            throw new InvalidOperationException("Verification failed: " + description + " Planner said: " + message);
+        Assert(plan.DecorationCount == expected,
+            description + " Expected " + expected.ToString(CultureInfo.InvariantCulture) +
+            ", got " + plan.DecorationCount.ToString(CultureInfo.InvariantCulture) + ".");
+    }
+
+    private static bool SurfaceSharedEdgesAreOpposed(IReadOnlyList<SurfaceFace> faces)
+    {
+        for (int left = 0; left < faces.Count; left++)
+        {
+            foreach (SurfaceEdge edge in faces[left].Edges())
+            {
+                for (int right = left + 1; right < faces.Count; right++)
+                {
+                    if (faces[right].ContainsEdge(edge.A, edge.B) &&
+                        faces[right].HasDirectedEdge(edge.A, edge.B))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SurfacePlacementThicknessAxesAreCoherent(
+        IReadOnlyList<SurfaceDecorationPlacement> placements)
+    {
+        if (placements == null || placements.Count < 2)
+            return false;
+
+        Vector3 reference = placements[0].ThicknessAxis;
+        if (reference.sqrMagnitude < 0.999f)
+            return false;
+
+        for (int index = 1; index < placements.Count; index++)
+        {
+            Vector3 axis = placements[index].ThicknessAxis;
+            if (axis.sqrMagnitude < 0.999f ||
+                Vector3.Dot(reference, axis) < 0.999f)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static void VerifySmartBlockBuilder()
@@ -2283,6 +2837,39 @@ f 0 2 3
                skipped.SkippedCells.Count == 1 &&
                skipped.CoveredCellCount == 9,
             "Smart Block Builder can either fail on occupied cells or skip them according to planner options.");
+
+        IReadOnlyList<SmartBuildMaterial> materials = SmartBlockFamilyCatalog.BasicMaterials;
+        Assert(materials.Count == 8 &&
+               materials.Contains(SmartBuildMaterial.Wood) &&
+               materials.Contains(SmartBuildMaterial.Stone) &&
+               materials.Contains(SmartBuildMaterial.Metal) &&
+               materials.Contains(SmartBuildMaterial.Alloy) &&
+               materials.Contains(SmartBuildMaterial.Glass) &&
+               materials.Contains(SmartBuildMaterial.Lead) &&
+               materials.Contains(SmartBuildMaterial.HeavyArmour) &&
+               materials.Contains(SmartBuildMaterial.Rubber) &&
+               SmartBlockFamilyCatalog.MaterialDisplayName(SmartBuildMaterial.HeavyArmour) == "Heavy armour",
+            "Smart Block Builder exposes all 8 basic structural materials through its internal picker.");
+
+        EsuSymmetry.Clear();
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
+        Vector3i[] mirroredTargets = EsuSymmetry.MirrorCells(new[]
+            {
+                new Vector3i(1, 0, 0),
+                new Vector3i(2, 0, 0)
+            })
+            .ToArray();
+        SmartBuildPlan mirroredPlan = SmartBuildPlanner.BuildPlanFromCells(
+            line,
+            mirroredTargets,
+            SmartBuildAxis.X,
+            SmartBlockFamily.ForTests(1),
+            _ => false);
+        Assert(mirroredPlan.CanCommit &&
+               mirroredPlan.CoveredCellCount == 4 &&
+               mirroredTargets.Select(EsuSymmetry.CellKey).Distinct().Count() == 4,
+            "Smart Block Builder can plan mirrored composite target cells without duplicate placements.");
+        EsuSymmetry.Clear();
 
         SmartBuildDraft draft = SmartBuildDraft.CreateSeed(
             construct: null,
@@ -2377,18 +2964,26 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildSession.cs"));
+        string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
         string draftSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "SmartBuildMode",
             "SmartBuildDraft.cs"));
+        string geometrySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildGeometry.cs"));
         string smartInputScopeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "SmartBuildMode",
             "SmartBuildInputScope.cs"));
+        string smartInputScopeSourceNormalized = smartInputScopeSource.Replace("\r\n", "\n");
         string overlaySource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -2419,18 +3014,19 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditorInputScope.cs"));
+        string tooltipSuppressorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationTooltipSuppressor.cs"));
         string vanillaInputBridgeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
-        string technicalLogSource = File.ReadAllText(Path.Combine(
-            root,
-            "TECHNICAL_LOG.md"));
-        string inGameTestPlanSource = File.ReadAllText(Path.Combine(
-            root,
-            "docs",
-            "IN_GAME_TEST_PLAN.md"));
+        string technicalLogSource = ReadDocumentationText(root, "TECHNICAL_LOG.md");
+        string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
                profileSource.Contains("SwitchEsuBuildMode") &&
@@ -2439,9 +3035,12 @@ f 0 2 3
                registrationSource.Contains("DecorationEditModeRegistration.Active") &&
                registrationSource.Contains("CanOpenFromModeSwitch") &&
                registrationSource.Contains("ignoreDecorationEditMode") &&
+               registrationSource.Contains("modeSwitch: true") &&
+               registrationSource.Contains("CanSwitchEsuModes") &&
                registrationSource.Contains("TrySwitchToDecorationEdit") &&
                behaviourSource.Contains("ReadSwitchModeKeyDown") &&
                behaviourSource.Contains("CanOpenFromModeSwitch") &&
+               behaviourSource.Contains("EsuSymmetry.Clear") &&
                behaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
                behaviourSource.Contains("ConsumeSmartBuildToggleDown") &&
                behaviourSource.Contains("ConsumeSwitchModeDown") &&
@@ -2455,28 +3054,73 @@ f 0 2 3
                buildModeInputGateSource.Contains("IsSmartBuildToggleDefaultHeld"),
             "Smart Block Builder registers at startup, defaults to Ctrl+Shift+B, rejects direct opens over Decoration Edit Mode, and shares one-press input gates for Tab/Ctrl+D/Ctrl+Shift+B handoffs.");
         Assert(selectionSource.Contains("build.BuildingWith?.Item") &&
+               catalogSource.Contains("internal enum SmartBuildMaterial") &&
+               catalogSource.Contains("BasicMaterials") &&
+               catalogSource.Contains("TryCreateMaterialSource") &&
+               catalogSource.Contains("FromMaterial") &&
+               catalogSource.Contains("SmartBuildMaterial.Wood") &&
+               catalogSource.Contains("SmartBuildMaterial.Stone") &&
+               catalogSource.Contains("SmartBuildMaterial.Metal") &&
+               catalogSource.Contains("SmartBuildMaterial.Alloy") &&
+               catalogSource.Contains("SmartBuildMaterial.Glass") &&
+               catalogSource.Contains("SmartBuildMaterial.Lead") &&
+               catalogSource.Contains("SmartBuildMaterial.HeavyArmour") &&
+               catalogSource.Contains("SmartBuildMaterial.Rubber") &&
+               catalogSource.Contains("2d519ca8-1f12-4a8e-9340-aa6648b5e799") &&
+               catalogSource.Contains("6c0bab88-aa88-4825-9cf5-55df36aa12b8") &&
                catalogSource.Contains("3cc75979-18ac-46c4-9a5b-25b327d99410") &&
                catalogSource.Contains("ModificationComponentContainerItem") &&
                committerSource.Contains("PlaceBlockCommand") &&
                committerSource.Contains("MirrorInfo.none"),
-            "Smart Block Builder resolves the selected FTD block, knows Beamification armor families, and commits vanilla block commands.");
+            "Smart Block Builder has an internal 8-material picker, keeps selected-item compatibility available, resolves FtD item definitions, and commits vanilla block commands.");
         Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
-               inputScopeSource.Contains("!SmartBuildInputScope.Active") &&
+               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
                vanillaInputBridgeSource.Contains("KeyInputsFtd.Freeze") &&
-               pluginSource.Contains("ResolveBuildFreezeTarget"),
-            "Smart Block Builder shares the modal build input guard and ESU has a one-frame vanilla freeze fallback for Caps Lock while ESU owns the HUD.");
+               pluginSource.Contains("ResolveBuildFreezeTarget") &&
+               smartInputScopeSource.Contains("ControlHeldWhileActive") &&
+               smartInputScopeSource.Contains("DecoLimitLifter.EsuInputState.IsControlHeld()") &&
+               smartInputScopeSource.Contains("ControlHeldWhileActive ||"),
+            "Smart Block Builder shares the modal build/Ctrl input guard and ESU has a one-frame vanilla freeze fallback for Caps Lock while ESU owns the HUD.");
+        Assert(geometrySource.Contains("internal Vector3[] GetLocalCorners()") &&
+               geometrySource.Contains("internal static SmartBuildVolume FromBounds") &&
+               !ExtractMethodSource(geometrySource, "GetWorldCorners").Contains("EnumerateCells"),
+            "Smart Block Builder preview bounds expose local corners and compute world corners without enumerating every cell.");
         Assert(draftSource.Contains("SmartBuildDraft") &&
                draftSource.Contains("SmartBuildDrawPlane") &&
                draftSource.Contains("SmartBuildOccupancyMode") &&
                sessionSource.Contains("TrySeedFromDrawPlane") &&
                sessionSource.Contains("TrySeedFromPointedBlock") &&
+               sessionSource.Contains("SmartBlockFamilyCatalog.TryCreateMaterialSource") &&
+               !sessionSource.Contains("SmartBuildSelectionResolver.TryResolve") &&
+               sessionSource.Contains("MaterialButton()") &&
+               sessionSource.Contains("DrawMaterialSelector") &&
+               sessionSource.Contains("CycleSelectedMaterial") &&
+               sessionSource.Contains("SymmetryButton(DecorationEditAxis.X)") &&
+               sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y)") &&
+               sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z)") &&
+               sessionSource.Contains("BuildPreviewSymmetrySets") &&
+               sessionSource.Contains("BuildPlanFromCells") &&
+               sessionSource.Contains("RefreshPreviewVolumesOnly") &&
+               sessionSource.Contains("BuildPreviewVolumesOnly") &&
+               sessionSource.Contains("DrawDraftFaceHighlight") &&
+               sessionSource.Contains("TryPickFace") &&
+               sessionSource.Contains("TryPickFacePlane") &&
+               sessionSource.Contains("TryGetFaceWorldCorners") &&
+               sessionSource.Contains("_planDirty") &&
+               !sessionSource.Contains("DrawDraftCells") &&
+               !sessionSource.Contains("MaxPreviewCellsWithFaces") &&
+               sessionSource.Contains("EveryPreviewSetTouchesExistingConstruct") &&
+               sessionSource.Contains("Every symmetry preview must touch an existing block before Apply.") &&
                sessionSource.Contains("CreatePreviewAtSeed") &&
                sessionSource.Contains("CanPlaceDraftOrigin") &&
                sessionSource.Contains("_tool = SmartBuildTool.Scale") &&
                sessionSource.Contains("Smart Builder origin is occupied. Pick an empty cell.") &&
+               sessionSource.Contains("HandleLeftPanelResize") &&
+               sessionSource.Contains("EsuHudLayout.DrawResizeGrip(_leftPanelRect") &&
+               sessionSource.Contains("MinLeftPanelWidth") &&
+               sessionSource.Contains("DefaultLeftPanelRect") &&
                sessionSource.Contains("PlanTouchesExistingConstruct") &&
-               sessionSource.Contains("The Smart Builder preview must touch an existing block before Apply.") &&
                committerSource.Contains("TryOrderPlacementsForCommit") &&
                committerSource.Contains("PlacementTouchesConstructOrPlacedCells") &&
                committerSource.Contains("remaining planned blocks are disconnected") &&
@@ -2484,14 +3128,22 @@ f 0 2 3
                sessionSource.Contains("Input.GetMouseButtonDown(2)") &&
                !behaviourSource.Contains("AllGameControlsEnabled") &&
                sessionSource.Contains("DecorationEditorTheme") &&
+               sessionSource.Contains("DrawCompactIconHeader(\"Smart Block Builder\", \"build\")") &&
+               !sessionSource.Contains("new GUIContent(\" Smart Block Builder\", DecorationEditorIconCatalog.Get(\"build\"))") &&
+               sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(leftRailWidth))") &&
+               sessionSource.Contains("EsuHudLayout.LocalPanelInnerRect(_toolbarRect.width, _toolbarRect.height)") &&
+               sessionSource.Contains("private void ModeSwitchButton()") &&
+               !sessionSource.Contains("IconButton(\"open\", \"Deco\"") &&
+               sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth") &&
                sessionSource.Contains("DecorationEditorOverlay.Quad") &&
                overlaySource.Contains("OverlayQuad"),
-            "Smart Block Builder uses a runtime draft, rejects occupied draw origins, switches Draw to Scale, commits connected placements first, tolerates middle-mouse cursor input, and draws native-styled translucent voxel previews.");
+            "Smart Block Builder uses a runtime draft, internal material picker, first-slot mode switch, rejects occupied draw origins, mirrors symmetry previews, switches Draw to Scale, commits connected placements first, tolerates middle-mouse cursor input, draws lightweight corner/face wire previews, and shares the ESU toolbar notification slot.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
                smartInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&
                smartInputScopeSource.Contains("SuppressCameraInput() =>") &&
                !smartInputScopeSource.Contains("MouseOverUi ||") &&
+               !smartInputScopeSourceNormalized.Contains("ControlHeldWhileActive ||\n            OwnsCameraInputThisFrame") &&
                !sessionSource.Contains("if (_draft != null)\r\n                SmartBuildInputScope.ClaimBuildInputForFrames") &&
                sessionSource.Contains("ShouldConsumeGuiEvent(Event.current)") &&
                sessionSource.Contains("SwitchToDecorationEditRequested") &&
@@ -2513,7 +3165,7 @@ f 0 2 3
         string beamification = Path.Combine(root, "tools", "Beamification");
         string licensePath = Path.Combine(root, "LICENSES", "FtD_Beamification-MIT.txt");
         string mainPath = Path.Combine(beamification, "__main__.py");
-        string technicalDoc = Path.Combine(root, "docs", "BEAMIFICATION_TECHNICAL.md");
+        string technicalDoc = ReadDocumentationText(root, "docs", "BEAMIFICATION_TECHNICAL.md");
 
         Assert(File.Exists(mainPath) &&
                File.Exists(Path.Combine(beamification, "requirements.txt")) &&
@@ -2544,7 +3196,7 @@ f 0 2 3
             root,
             "EndlessShapesUnlimited",
             "THIRD_PARTY_NOTICES.md"));
-        string doc = File.ReadAllText(technicalDoc);
+        string doc = technicalDoc;
         Assert(rootNotice.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787") &&
                packageNotice.Contains("DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787") &&
                rootNotice.Contains("Wengh / Weng Haoyu") &&
@@ -2716,6 +3368,25 @@ f 0 2 3
         }
 
         throw new DirectoryNotFoundException("Could not locate the repository root.");
+    }
+
+    private static string ReadDocumentationText(string root, params string[] relativeParts)
+    {
+        var builder = new StringBuilder();
+        AppendOptionalFile(builder, Path.Combine(new[] { root }.Concat(relativeParts).ToArray()));
+        AppendOptionalFile(builder, Path.Combine(root, "README.md"));
+        AppendOptionalFile(builder, Path.Combine(root, "EndlessShapesUnlimited", "README.md"));
+        return builder.ToString();
+    }
+
+    private static void AppendOptionalFile(StringBuilder builder, string path)
+    {
+        if (!File.Exists(path))
+            return;
+
+        if (builder.Length > 0)
+            builder.AppendLine();
+        builder.Append(File.ReadAllText(path));
     }
 
     private static SuperSaver NewSaver(uint headerCount, uint dataBytes)

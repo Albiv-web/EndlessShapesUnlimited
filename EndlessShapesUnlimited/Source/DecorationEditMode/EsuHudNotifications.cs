@@ -80,6 +80,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static void DrawToolbarSlot(Rect toolbarRect, float width)
         {
+            DrawToolbarSlot(toolbarRect, width, null);
+        }
+
+        internal static void DrawToolbarSlot(Rect toolbarRect, float width, string fallbackMessage)
+        {
             float height = EsuHudLayout.Scale(SlotHeight);
             Rect rect = GUILayoutUtility.GetRect(
                 Mathf.Max(EsuHudLayout.Scale(SlotMinWidth), width),
@@ -92,16 +97,31 @@ namespace DecoLimitLifter.DecorationEditMode
                 screenPoint.y,
                 rect.width,
                 rect.height);
-            if (!HasMessage)
+            bool hasTransientMessage = HasMessage;
+            string message = hasTransientMessage
+                ? _message
+                : (fallbackMessage ?? string.Empty).Trim();
+            if (!hasTransientMessage && string.IsNullOrWhiteSpace(message))
             {
                 _expanded = false;
                 _lastMessageOverflow = false;
                 return;
             }
 
+            if (!hasTransientMessage)
+            {
+                _expanded = false;
+                _lastMessageOverflow = false;
+            }
+
+            EsuHudNotificationKind kind = hasTransientMessage
+                ? _kind
+                : EsuHudNotificationKind.Info;
             float remaining = Mathf.Max(0f, _expiresAt - Time.unscaledTime);
-            float alpha = _expanded ? 1f : Mathf.Clamp01(remaining / FadeSeconds);
-            Color accent = AccentColor(_kind);
+            float alpha = hasTransientMessage
+                ? (_expanded ? 1f : Mathf.Clamp01(remaining / FadeSeconds))
+                : 1f;
+            Color accent = AccentColor(kind);
             Color oldColor = GUI.color;
             try
             {
@@ -114,21 +134,22 @@ namespace DecoLimitLifter.DecorationEditMode
                     Texture2D.whiteTexture);
 
                 GUI.color = new Color(1f, 1f, 1f, alpha);
-                GUIStyle style = MessageStyle();
+                GUIStyle style = MessageStyle(kind);
                 Rect textRect = new Rect(
                     rect.x + EsuHudLayout.Scale(AccentWidth + TextPaddingX),
                     rect.y + EsuHudLayout.Scale(TextPaddingY),
                     rect.width - EsuHudLayout.Scale(AccentWidth + TextPaddingX * 2f),
                     rect.height - EsuHudLayout.Scale(TextPaddingY * 2f));
-                _lastMessageOverflow = MessageOverflows(_message, style, textRect);
+                _lastMessageOverflow = hasTransientMessage && MessageOverflows(message, style, textRect);
                 if (_lastMessageOverflow)
                 {
-                    DrawCollapsedOverflow(rect, textRect, style, alpha);
+                    DrawCollapsedOverflow(rect, textRect, style, kind, alpha);
                 }
                 else
                 {
-                    _expanded = false;
-                    GUI.Label(textRect, _message, style);
+                    if (hasTransientMessage)
+                        _expanded = false;
+                    GUI.Label(textRect, message, style);
                 }
             }
             finally
@@ -142,7 +163,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!HasMessage || !_expanded || !_lastMessageOverflow)
                 return;
 
-            GUIStyle messageStyle = MessageStyle();
+            GUIStyle messageStyle = MessageStyle(_kind);
             GUIStyle titleStyle = new GUIStyle(messageStyle)
             {
                 alignment = TextAnchor.MiddleLeft,
@@ -225,6 +246,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Rect slotRect,
             Rect textRect,
             GUIStyle style,
+            EsuHudNotificationKind kind,
             float alpha)
         {
             float buttonWidth = EsuHudLayout.Scale(DetailsButtonWidth);
@@ -240,7 +262,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 Mathf.Max(EsuHudLayout.Scale(42f), buttonRect.x - textRect.x - buttonGap),
                 textRect.height);
 
-            GUI.Label(labelRect, KindLabel(_kind), style);
+            GUI.Label(labelRect, KindLabel(kind), style);
             Color previous = GUI.color;
             GUI.color = new Color(1f, 1f, 1f, alpha);
             if (GUI.Button(buttonRect, _expanded ? "Hide" : "Details", DecorationEditorTheme.Button))
@@ -264,20 +286,20 @@ namespace DecoLimitLifter.DecorationEditMode
             return textHeight > textRect.height + EsuHudLayout.Scale(1f);
         }
 
-        private static GUIStyle MessageStyle()
+        private static GUIStyle MessageStyle(EsuHudNotificationKind kind)
         {
             return new GUIStyle(DecorationEditorTheme.BodyWrap)
             {
                 alignment = TextAnchor.MiddleLeft,
                 clipping = TextClipping.Clip,
-                fontStyle = _kind == EsuHudNotificationKind.Info
+                fontStyle = kind == EsuHudNotificationKind.Info
                     ? FontStyle.Normal
                     : FontStyle.Bold,
                 normal =
                 {
-                    textColor = _kind == EsuHudNotificationKind.Error
+                    textColor = kind == EsuHudNotificationKind.Error
                         ? DecorationEditorTheme.ErrorColor
-                        : _kind == EsuHudNotificationKind.Warning
+                        : kind == EsuHudNotificationKind.Warning
                             ? DecorationEditorTheme.WarningColor
                             : Color.white
                 }

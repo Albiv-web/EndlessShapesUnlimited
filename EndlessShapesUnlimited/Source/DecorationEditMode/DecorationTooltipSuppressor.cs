@@ -61,7 +61,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool ShouldIncludeVanillaPaintTooltipLine(int color)
         {
-            return color != 0 && !EsuOwnsEditorView;
+            return color != 0 &&
+                   StaticOptionsManager.ShowMouseCursor &&
+                   !EsuOwnsEditorView;
         }
 
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)

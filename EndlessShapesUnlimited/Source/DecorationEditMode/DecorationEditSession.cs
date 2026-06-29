@@ -856,7 +856,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     SymmetryButton(DecorationEditAxis.X);
                     SymmetryButton(DecorationEditAxis.Y);
                     SymmetryButton(DecorationEditAxis.Z);
-                    ToolButton(DecorationEditorTool.Anchor, "anchor", "Anchor", "Move tether point by whole blocks.");
+                    AnchorMenuButton();
                     ToolButton(DecorationEditorTool.Paint, "paint", "Paint", "Edit color and material replacement.");
                     ToolButton(DecorationEditorTool.Focus, "visibility", "View", "Current view: " + ViewModeShortName());
                 }
@@ -865,7 +865,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(gap);
-            EsuHudNotifications.DrawToolbarSlot(toolbarRect, notificationWidth);
+            EsuHudNotifications.DrawToolbarSlot(toolbarRect, notificationWidth, CurrentModeToolbarLabel());
             GUILayout.Space(gap);
             GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth));
             PanelToggle("mesh", "Pal", ref _showMeshPalette, "Show or hide the mesh palette.");
@@ -888,6 +888,11 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.EndHorizontal();
             GUILayout.EndHorizontal();
         }
+
+        private string CurrentModeToolbarLabel() =>
+            IsSurfaceMode
+                ? "ESU mode: Surface Builder."
+                : "ESU mode: Decoration Edit.";
 
         private void ModeSwitchButton()
         {
@@ -959,6 +964,20 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        private void AnchorMenuButton()
+        {
+            if (IconButton(
+                    "anchor",
+                    "Anchor",
+                    DecorationEditorTheme.Button,
+                    "Open anchor retethering options. Anchor follow is also available in the bottom status panel."))
+            {
+                _tool = DecorationEditorTool.Anchor;
+                _anchorMenuOpen = !_anchorMenuOpen;
+                _viewModeMenuOpen = false;
+            }
+        }
+
         private void PanelToggle(string icon, string label, ref bool state, string tooltip)
         {
             if (GUILayout.Button(
@@ -990,12 +1009,6 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (tool == DecorationEditorTool.Focus)
                 {
                     _viewModeMenuOpen = !_viewModeMenuOpen;
-                }
-                else if (tool == DecorationEditorTool.Anchor)
-                {
-                    _tool = tool;
-                    _anchorMenuOpen = !_anchorMenuOpen;
-                    _viewModeMenuOpen = false;
                 }
                 else
                 {
@@ -1158,9 +1171,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     _anchorFollowDecoration ? "Follow: on" : "Follow: off",
                     DecorationEditorTheme.ToolButton(_anchorFollowDecoration)))
             {
-                _anchorFollowDecoration = !_anchorFollowDecoration;
-                s_anchorFollowDecoration = _anchorFollowDecoration;
-                InfoStore.Add("Anchor follow " + (_anchorFollowDecoration ? "enabled." : "disabled."));
+                ToggleAnchorFollow();
             }
 
             x += EsuHudLayout.Scale(86f) + gap;
@@ -1210,6 +1221,13 @@ namespace DecoLimitLifter.DecorationEditMode
                 "When enabled, moving a decoration retethers its anchor to the nearest valid block once the center is this far from the current anchor.",
                 DecorationEditorTheme.MiniWrap);
             GUILayout.EndArea();
+        }
+
+        private void ToggleAnchorFollow()
+        {
+            _anchorFollowDecoration = !_anchorFollowDecoration;
+            s_anchorFollowDecoration = _anchorFollowDecoration;
+            InfoStore.Add("Anchor follow " + (_anchorFollowDecoration ? "enabled." : "disabled."));
         }
 
         private void DrawAnchorFollowDistanceButton(Rect rect, float distance, string label)
@@ -2581,6 +2599,8 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginHorizontal();
             GUILayout.Label(surface ? "Surface Builder" : "Decoration Edit Mode", DecorationEditorTheme.SubHeader, GUILayout.Width(EsuHudLayout.Scale(168f)));
             GUILayout.Label(surface ? "Mode: Surface | Tab to Build when clean" : "Mode: Deco | Tab to Surface when clean", DecorationEditorTheme.Body);
+            if (!surface)
+                DrawBottomAnchorFollowToggle();
             GUILayout.FlexibleSpace();
             GUILayout.Label(
                 HasUnappliedChanges ? "Dirty preview" : "Clean",
@@ -2595,6 +2615,21 @@ namespace DecoLimitLifter.DecorationEditMode
                 DecorationEditorTheme.Mini);
         }
 
+        private void DrawBottomAnchorFollowToggle()
+        {
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            if (GUILayout.Button(
+                    new GUIContent(
+                        _anchorFollowDecoration ? "Anchor follow: on" : "Anchor follow: off",
+                        "When enabled, moving a decoration retethers its anchor to the nearest valid block once the center is outside the follow range."),
+                    DecorationEditorTheme.ToolButton(_anchorFollowDecoration),
+                    GUILayout.Width(EsuHudLayout.Scale(132f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                ToggleAnchorFollow();
+            }
+        }
+
         private void DrawStatusStrip()
         {
             GUILayout.BeginHorizontal();
@@ -2604,7 +2639,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void DrawBottomTransformEditors()
         {
-            Rect row = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(28f), GUILayout.ExpandWidth(true));
+            Rect row = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(30f), GUILayout.ExpandWidth(true));
             float edgePadding = EsuHudLayout.Scale(4f);
             float gap = EsuHudLayout.Scale(8f);
             float availableWidth = Mathf.Max(1f, row.width - edgePadding * 2f);
@@ -2638,67 +2673,88 @@ namespace DecoLimitLifter.DecorationEditMode
             Action<Vector3> apply)
         {
             bool hasSelection = _selected != null && !_selected.IsDeleted;
+            float fieldHeight = EsuHudLayout.Scale(24f);
+            float verticalOffset = EsuHudLayout.Scale(3f);
+            float setWidth = EsuHudLayout.Scale(40f);
+            float axisWidth = EsuHudLayout.Scale(18f);
+            float gap = EsuHudLayout.Scale(4f);
+            float labelWidth = Mathf.Min(EsuHudLayout.Scale(74f), rect.width * 0.22f);
             GUI.Label(
                 new Rect(
                     rect.x,
-                    rect.y + EsuHudLayout.Scale(2f),
-                    Mathf.Min(EsuHudLayout.Scale(76f), rect.width * 0.24f),
-                    EsuHudLayout.Scale(22f)),
+                    rect.y + verticalOffset,
+                    labelWidth,
+                    fieldHeight),
                 label,
                 hasSelection ? DecorationEditorTheme.SubHeader : DecorationEditorTheme.DisabledButton);
 
-            bool previous = GUI.enabled;
-            GUI.enabled = previous && hasSelection;
-            float setWidth = EsuHudLayout.Scale(36f);
-            float axisWidth = EsuHudLayout.Scale(10f);
-            float gap = EsuHudLayout.Scale(5f);
-            float labelWidth = Mathf.Min(EsuHudLayout.Scale(76f), rect.width * 0.24f);
             float x = rect.x + labelWidth + gap;
             float available = Mathf.Max(
                 1f,
                 rect.xMax - x - setWidth - gap * 7f - axisWidth * 3f);
             float fieldWidth = Mathf.Max(1f, available / 3f);
-            DrawBottomVectorComponent("X", values, 0, rect.y, ref x, axisWidth, fieldWidth, gap);
-            DrawBottomVectorComponent("Y", values, 1, rect.y, ref x, axisWidth, fieldWidth, gap);
-            DrawBottomVectorComponent("Z", values, 2, rect.y, ref x, axisWidth, fieldWidth, gap);
+            DrawBottomVectorComponent(DecorationEditAxis.X, values, 0, rect.y, ref x, axisWidth, fieldWidth, fieldHeight, gap, hasSelection);
+            DrawBottomVectorComponent(DecorationEditAxis.Y, values, 1, rect.y, ref x, axisWidth, fieldWidth, fieldHeight, gap, hasSelection);
+            DrawBottomVectorComponent(DecorationEditAxis.Z, values, 2, rect.y, ref x, axisWidth, fieldWidth, fieldHeight, gap, hasSelection);
             float setX = Mathf.Min(x + gap, rect.xMax - setWidth);
             if (GUI.Button(
                     new Rect(
                         setX,
-                        rect.y + EsuHudLayout.Scale(2f),
+                        rect.y + verticalOffset,
                         setWidth,
-                        EsuHudLayout.Scale(22f)),
+                        fieldHeight),
                     "Set",
-                    DecorationEditorTheme.Button))
+                    hasSelection ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton) &&
+                hasSelection)
             {
                 if (TryParseVector(values, out Vector3 parsed))
                     apply(parsed);
                 else
                     InfoStore.Add($"{label} contains incomplete, invalid, NaN, or infinity input.");
             }
-            GUI.enabled = previous;
         }
 
         private static void DrawBottomVectorComponent(
-            string axis,
+            DecorationEditAxis axis,
             string[] values,
             int index,
             float y,
             ref float x,
             float axisWidth,
             float fieldWidth,
-            float gap)
+            float fieldHeight,
+            float gap,
+            bool hasSelection)
         {
             GUI.Label(
-                new Rect(x, y + EsuHudLayout.Scale(6f), axisWidth, EsuHudLayout.Scale(16f)),
-                axis,
-                DecorationEditorTheme.Mini);
+                new Rect(x, y + EsuHudLayout.Scale(4f), axisWidth, fieldHeight),
+                axis.ToString(),
+                BottomVectorAxisStyle(axis));
             x += axisWidth + gap;
-            values[index] = GUI.TextField(
-                new Rect(x, y + EsuHudLayout.Scale(2f), fieldWidth, EsuHudLayout.Scale(22f)),
-                values[index] ?? string.Empty,
-                DecorationEditorTheme.TextField);
+            Rect fieldRect = new Rect(x, y + EsuHudLayout.Scale(3f), fieldWidth, fieldHeight);
+            if (hasSelection)
+            {
+                values[index] = GUI.TextField(
+                    fieldRect,
+                    values[index] ?? string.Empty,
+                    DecorationEditorTheme.TextField);
+            }
+            else
+            {
+                GUI.Label(fieldRect, values[index] ?? string.Empty, DecorationEditorTheme.TextField);
+            }
             x += fieldWidth + gap;
+        }
+
+        private static GUIStyle BottomVectorAxisStyle(DecorationEditAxis axis)
+        {
+            return new GUIStyle(DecorationEditorTheme.Mini)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                clipping = TextClipping.Clip,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = DecorationEditMath.AxisColor(axis) }
+            };
         }
 
         private string StatusLine()
