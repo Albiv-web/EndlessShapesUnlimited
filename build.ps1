@@ -9,7 +9,6 @@ $root = $PSScriptRoot
 $project = Join-Path $root 'EndlessShapesUnlimited\Source\EndlessShapesUnlimited.csproj'
 $verification = Join-Path $root 'tools\EndlessShapesUnlimited.Verification\EndlessShapesUnlimited.Verification.csproj'
 $packageSource = Join-Path $root 'EndlessShapesUnlimited'
-$beamificationSource = Join-Path $root 'tools\Beamification'
 $manifestPath = Join-Path $packageSource 'plugin.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $version = [string]$manifest.version
@@ -94,15 +93,14 @@ $runtimeDirectories = @('Assets', 'Character Items', 'Items', 'Meshes')
 foreach ($directory in $runtimeDirectories) {
     Copy-Item -LiteralPath (Join-Path $packageSource $directory) -Destination $stagedPackage -Recurse
 }
-Copy-Item -LiteralPath (Join-Path $root 'LICENSES') -Destination $stagedPackage -Recurse
-if (-not (Test-Path -LiteralPath (Join-Path $beamificationSource '__main__.py'))) {
-    throw 'Bundled Beamification tool source is missing.'
+$licensesDestination = Join-Path $stagedPackage 'LICENSES'
+New-Item -ItemType Directory -Path $licensesDestination -Force | Out-Null
+$licenseFiles = @('EndlessShapes2-MIT.txt', 'Harmony-MIT.txt')
+foreach ($licenseFile in $licenseFiles) {
+    Copy-Item -LiteralPath (Join-Path (Join-Path $root 'LICENSES') $licenseFile) -Destination $licensesDestination
 }
-$toolsDestination = Join-Path $stagedPackage 'Tools'
-New-Item -ItemType Directory -Path $toolsDestination -Force | Out-Null
-Copy-Item -LiteralPath $beamificationSource -Destination $toolsDestination -Recurse
 
-$allowedTopLevel = $runtimeFiles + $runtimeDirectories + @('LICENSES', 'Tools')
+$allowedTopLevel = $runtimeFiles + $runtimeDirectories + @('LICENSES')
 $unexpectedTopLevel = Get-ChildItem -LiteralPath $stagedPackage -Force | Where-Object {
     $_.Name -notin $allowedTopLevel
 }

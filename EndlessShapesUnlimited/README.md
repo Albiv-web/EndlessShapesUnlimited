@@ -25,8 +25,6 @@ License.
 - Adds a native-looking Decoration Edit Mode shell with FTD-styled toolbar,
   decoration outliner, inspector, mesh browser, focus view, and Apply/Cancel
   transactions.
-- Packages DeltaEpsilon's Beamification Python blueprint converter as an
-  optional external tool under `Tools/Beamification`.
 - Registers an `EndlessShapes Unlimited v1.0.0 Active!` entry in FTD's Alerts
   panel after transactional startup succeeds.
 
@@ -88,21 +86,6 @@ this vehicle**. The mod writes OBJ, MTL, and only referenced textures beneath th
 FTD profile directory using invariant decimal formatting. Multi-material carried
 objects retain their submesh/material mapping. Output is staged and becomes
 visible only after every file is written successfully.
-
-### Beamify armour blueprints
-
-The release package includes **FtD Beamification** by
-**DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787** under
-`Tools/Beamification`. This is an external Python blueprint converter, not an
-FTD-loaded Harmony mod. It reads a
-`.blueprint`, replaces eligible armour cells with 1 m to 4 m beam variants using
-a mixed-integer solver, and writes a new blueprint. Install its Python
-dependencies from `Tools/Beamification/requirements.txt` and keep backups of
-source blueprints before conversion.
-
-The bundled copy is imported from commit
-`a0aaa63010c460563909cc8eb73f2c0aac2bf5ea` and retains Delta Epsilon's MIT
-license notice. ESU locally fixes the command-line `debeamify` flag inversion.
 
 ## Serialization compatibility
 
@@ -348,14 +331,13 @@ binaries, PDBs, local paths, and secrets, and create a deterministic runtime ZIP
 under `artifacts`. The script accepts Release configuration only and derives the
 archive version from `plugin.json`.
 
-The automated suite currently has 234 checks covering exact Harmony methods,
+The automated suite currently has 229 checks covering exact Harmony methods,
 legacy byte compatibility, serialization boundaries and corruption handling,
 shared-buffer growth, locale parsing, image limits, geometry and 100,000-entry
 processing, atomic tether rollback, exporter transactions, scoped serialization
 telemetry, forecasts, HUD profiles, decoration edit-mode math/wiring, native
-editor shell, runtime icon catalog, outliner/inspector checks,
-Beamification bundle provenance, package identity, runtime assets, and legacy
-EndlessShapes2 bindings.
+editor shell, runtime icon catalog, outliner/inspector checks, package identity,
+runtime assets, and legacy EndlessShapes2 bindings.
 
 Automated checks do not replace the required in-game acceptance pass for UI,
 Unity rendering, construct import/export, multiplayer, and save/load behavior.
@@ -364,11 +346,6 @@ Unity rendering, construct import/export, multiplayer, and save/load behavior.
 
 - Combined project: MIT, see `LICENSE`.
 - EndlessShapes2: Huwa / huwahuwa, copyright 2022 huwahuwa, MIT.
-- FtD Beamification: DeltaEpsilon / Delta Epsilon / DeltaEpsilon7787,
-  copyright 2025 Delta Epsilon, MIT.
-- BuildingTools reference: Wengh / Weng Haoyu, MIT. ESU used this only as an
-  external implementation reference; no BuildingTools source, assets, or
-  binaries are bundled.
 - Harmony: copyright 2017 Andreas Pardeike, MIT.
 
 See `THIRD_PARTY_NOTICES.md` and `LICENSES` for retained notices and import
