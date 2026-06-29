@@ -40,20 +40,30 @@ namespace DecoLimitLifter.DecorationEditMode
             MouseOverEditorUi &&
             Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f;
 
+        internal static bool ControlHeldWhileActive =>
+            _active && DecoLimitLifter.EsuInputState.IsControlHeld();
+
         internal static void Begin()
         {
             _active = true;
+            DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Decoration Edit Mode");
             _mouseOverEditorUi = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
+            DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
         }
 
         internal static void End()
         {
+            bool wasActive = _active;
+            if (_active)
+                DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
             _active = false;
             _mouseOverEditorUi = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
+            if (wasActive)
+                DecoLimitLifter.EsuInputFocusGuard.EndEditor("Decoration Edit Mode");
         }
 
         internal static void ForceResetIfActive(string reason)
@@ -124,6 +134,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _active || SmartBuildInputScope.SuppressBuildHud();
 
         internal static bool SuppressBuildInput() =>
+            ControlHeldWhileActive ||
             OwnsBuildInputThisFrame ||
             ScrollWheelOverEditorUi ||
             SmartBuildInputScope.SuppressBuildInput();
@@ -135,19 +146,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool IsPaintHoverMessage(object[] arguments)
         {
-            if (!_active || arguments == null)
-                return false;
-
-            foreach (object argument in arguments)
-            {
-                if (!(argument is string text) || string.IsNullOrWhiteSpace(text))
-                    continue;
-
-                if (text.IndexOf("Colored with paint", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return true;
-            }
-
-            return false;
+            return DecorationTooltipSuppressor.IsLegacyPaintHoverMessage(arguments);
         }
 
         internal static bool IsMouseOver(params Rect[] rects)
@@ -239,29 +238,6 @@ namespace DecoLimitLifter.DecorationEditMode
     }
 
     [HarmonyPatch]
-    internal static class DecorationEditor_TipDisplayer_SetTip_Patch
-    {
-        private static IEnumerable<MethodBase> TargetMethods()
-        {
-            TypeInfo type = AccessTools.TypeByName("BrilliantSkies.Ui.Tips.TipDisplayer")
-                ?.GetTypeInfo();
-            if (type == null)
-                yield break;
-
-            foreach (MethodInfo method in type
-                         .DeclaredMethods
-                         .Where(method => method.Name == "SetTip"))
-            {
-                yield return method;
-            }
-        }
-
-        private static bool Prefix() =>
-            !DecorationEditorInputScope.Active &&
-            !SmartBuildInputScope.Active;
-    }
-
-    [HarmonyPatch]
     internal static class DecorationEditor_InfoStore_Add_Patch
     {
         private static IEnumerable<MethodBase> TargetMethods()
@@ -279,7 +255,12 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
-        private static bool Prefix(object[] __args) =>
-            !DecorationEditorInputScope.IsPaintHoverMessage(__args);
+        private static bool Prefix(object[] __args)
+        {
+            if (DecorationEditorInputScope.IsPaintHoverMessage(__args))
+                return false;
+
+            return !EsuHudNotifications.TryCaptureInfoStore(__args);
+        }
     }
 }

@@ -76,6 +76,26 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
+        internal bool TrySwitchToNextEsuMode()
+        {
+            if (!Active)
+                return false;
+
+            if (_session == null)
+                return false;
+
+            if (!_session.IsSurfaceMode)
+            {
+                if (_session.TrySwitchToSurfaceBuilder(out string reason))
+                    InfoStore.Add("ESU mode: Surface Builder.");
+                else
+                    InfoStore.Add(reason ?? "Apply or Cancel Decoration Edit changes before switching modes.");
+                return true;
+            }
+
+            return TrySwitchToSmartBuild();
+        }
+
         internal void ForceClose()
         {
             if (Active)
@@ -97,14 +117,14 @@ namespace DecoLimitLifter.DecorationEditMode
                     _session.SwitchToSmartBuildRequested)
                 {
                     _session.ClearSwitchToSmartBuildRequest();
-                    TrySwitchToSmartBuild();
+                    TrySwitchToNextEsuMode();
                     return;
                 }
 
                 if (Active &&
                     ReadSwitchModeKeyDown())
                 {
-                    TrySwitchToSmartBuild();
+                    TrySwitchToNextEsuMode();
                     return;
                 }
 
@@ -133,6 +153,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     DecorationEditorInputScope.ForceResetIfActive(
                         "no active editor session");
+                    DecoLimitLifter.EsuInputFocusGuard.TickPostExitRepair(
+                        "Decoration Edit Mode inactive");
                     return;
                 }
 
@@ -195,6 +217,8 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditSession session = _session;
             _session = null;
             session?.End(apply, notifySession);
+            if (notifyClose)
+                DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
                 InfoStore.Add("Decoration Edit Mode closed.");
         }

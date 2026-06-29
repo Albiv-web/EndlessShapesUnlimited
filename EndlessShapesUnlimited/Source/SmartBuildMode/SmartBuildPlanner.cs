@@ -178,24 +178,45 @@ namespace DecoLimitLifter.SmartBuildMode
             options ??= new SmartBuildPlannerOptions();
             if (volume == null)
                 return SmartBuildPlan.Failed(null, "No preview volume is active.");
+
+            return BuildPlanFromCells(
+                volume,
+                volume.EnumerateCells(),
+                volume.GrainAxis,
+                family,
+                isOccupied,
+                options);
+        }
+
+        internal static SmartBuildPlan BuildPlanFromCells(
+            SmartBuildVolume referenceVolume,
+            IEnumerable<Vector3i> cells,
+            SmartBuildAxis grain,
+            SmartBlockFamily family,
+            Func<Vector3i, bool> isOccupied,
+            SmartBuildPlannerOptions options = null)
+        {
+            options ??= new SmartBuildPlannerOptions();
+            if (referenceVolume == null)
+                return SmartBuildPlan.Failed(null, "No preview volume is active.");
             if (family == null || !family.IsSupported)
                 return SmartBuildPlan.Failed(
-                    volume,
+                    referenceVolume,
                     family?.UnsupportedReason ?? "The selected item cannot be used by Smart Block Builder.");
             if (!family.HasSingleCell)
                 return SmartBuildPlan.Failed(
-                    volume,
+                    referenceVolume,
                     "The selected family has no 1m fallback block.");
 
             var target = new HashSet<Vector3i>();
             var skipped = new List<Vector3i>();
-            foreach (Vector3i cell in volume.EnumerateCells())
+            foreach (Vector3i cell in cells ?? Array.Empty<Vector3i>())
             {
                 if (isOccupied != null && isOccupied(cell))
                 {
                     if (!options.SkipOccupiedCells)
                         return SmartBuildPlan.Failed(
-                            volume,
+                            referenceVolume,
                             "The preview intersects existing blocks.",
                             new[] { cell });
                     skipped.Add(cell);
@@ -207,13 +228,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (target.Count == 0)
                 return SmartBuildPlan.Failed(
-                    volume,
+                    referenceVolume,
                     "No empty cells are available in the preview.",
                     skipped);
 
             var placements = new List<SmartBuildPlacement>();
             var covered = new HashSet<Vector3i>();
-            SmartBuildAxis grain = volume.GrainAxis;
             SmartBlockCandidate[] candidates = family.Candidates
                 .Where(candidate => candidate.Length >= 1)
                 .OrderByDescending(candidate => candidate.Length)
@@ -236,7 +256,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 if (chosen == null)
                     return SmartBuildPlan.Failed(
-                        volume,
+                        referenceVolume,
                         "The planner could not cover every target cell with legal blocks.",
                         skipped);
 
@@ -249,7 +269,7 @@ namespace DecoLimitLifter.SmartBuildMode
             var warnings = new List<string>();
             if (placements.Count > options.HardPlacementCap)
                 return new SmartBuildPlan(
-                    volume,
+                    referenceVolume,
                     placements,
                     skipped,
                     warnings,
@@ -262,7 +282,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     $"Large plan: {placements.Count:N0} placements. Commit may hitch.");
 
             return new SmartBuildPlan(
-                volume,
+                referenceVolume,
                 placements,
                 skipped,
                 warnings,
