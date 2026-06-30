@@ -60,7 +60,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
     internal static class EsuRuntimeLog
     {
-        internal const int Capacity = 100;
+        internal const int Capacity = 25;
 
         private static readonly List<EsuRuntimeLogEntry> Entries =
             new List<EsuRuntimeLogEntry>(Capacity);

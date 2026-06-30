@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Modding;
 using BrilliantSkies.Modding.Containers;
@@ -27,13 +28,18 @@ namespace DecoLimitLifter.SmartBuildMode
             Guid itemGuid,
             string displayName,
             Vector3i dimensions,
-            SmartBlockFamily family)
+            SmartBlockFamily family,
+            SmartBlockFamily downSlopeFamily = null)
         {
             Item = item;
             ItemGuid = itemGuid;
             DisplayName = displayName;
             Dimensions = dimensions;
             Family = family;
+            DownSlopeFamily = downSlopeFamily ??
+                              SmartBlockFamily.Unsupported(
+                                  displayName + " down slopes",
+                                  displayName + " down slopes are unavailable in this FtD install.");
         }
 
         internal ItemDefinition Item { get; }
@@ -45,6 +51,24 @@ namespace DecoLimitLifter.SmartBuildMode
         internal Vector3i Dimensions { get; }
 
         internal SmartBlockFamily Family { get; }
+
+        internal SmartBlockFamily DownSlopeFamily { get; }
+
+        internal bool HasDownSlopeLength(IEnumerable<int> lengths)
+        {
+            if (DownSlopeFamily == null || !DownSlopeFamily.IsSupported)
+                return false;
+
+            var available = new HashSet<int>(
+                DownSlopeFamily.Candidates.Select(candidate => candidate.Length));
+            foreach (int length in lengths ?? Array.Empty<int>())
+            {
+                if (!available.Contains(length))
+                    return false;
+            }
+
+            return true;
+        }
     }
 
     internal static class SmartBlockFamilyCatalog
@@ -109,6 +133,54 @@ namespace DecoLimitLifter.SmartBuildMode
         private static readonly Guid[] RubberFamily = Family(
             "6c0bab88-aa88-4825-9cf5-55df36aa12b8");
 
+        private static readonly Guid[] WoodDownSlopeFamily = Family(
+            "bdafa446-f615-49cb-94f3-d7652dde6cec",
+            "b88679fb-0325-4c85-942f-ad9c6ed6545b",
+            "caec26b3-847c-4876-80e1-e6206003ecb5",
+            "3296c67d-6ace-44dd-8e86-335b9a90ad80");
+
+        private static readonly Guid[] StoneDownSlopeFamily = Family(
+            "11fcac17-e3b9-47d5-aeb8-2224d86b2f1d",
+            "66aa8853-094a-41ef-aa96-a2d658b21305",
+            "9e204cce-876c-4d9d-af0e-65ec39cf1ba4",
+            "cf8b2e90-abe7-4a4f-9596-253364004394");
+
+        private static readonly Guid[] MetalDownSlopeFamily = Family(
+            "5548037e-8428-43f8-bcb6-d730dbcd0a79",
+            "8477bbec-974c-45bf-a1ce-49a48d5b5307",
+            "a09be1c6-93fd-4b54-b9ca-62e60efbc818",
+            "db9ed060-d556-435b-945c-19c923e233d3");
+
+        private static readonly Guid[] AlloyDownSlopeFamily = Family(
+            "911fe222-f9b2-4892-9cd6-8b154d55b2aa",
+            "c6176cb5-0a32-4d68-a749-8ee33b2230c1",
+            "a3ea61a8-018c-4277-afd9-ac0a34faa759",
+            "2a3905ff-2030-421d-a2bf-90fba71c1c5e");
+
+        private static readonly Guid[] GlassDownSlopeFamily = Family(
+            "174b5b41-b70e-485d-b00a-a61cc9826b2c",
+            "69feebc3-e241-4dff-a000-736def80c851",
+            "b148f5b4-e237-41a0-a1a3-30c455321149",
+            "c4ef6072-822a-4fa5-b618-e7fc0508c499");
+
+        private static readonly Guid[] LeadDownSlopeFamily = Family(
+            "df61d4c4-a514-4f23-baab-4da8fce066a3",
+            "354bc2b0-de06-4948-ad1e-2fbcef516cb7",
+            "7579ca39-af82-4a2c-83f6-a2090ae50d6b",
+            "97ea8dab-dc9b-4056-9532-78533e3b82bf");
+
+        private static readonly Guid[] HeavyArmourDownSlopeFamily = Family(
+            "78b81c0a-44df-4c24-b2a5-5d273737da60",
+            "525d85fc-f4d4-49ea-bebd-dc51bc562adf",
+            "98467918-ec0c-47e1-8ce6-55949326eb4f",
+            "983ebe9d-535e-4bdb-a37f-6b681a96f5a3");
+
+        private static readonly Guid[] RubberDownSlopeFamily = Family(
+            "552d8144-11c0-46e6-8607-927f825b18be",
+            "d204f301-7ea9-4bcf-b9e8-34ed899de190",
+            "d62bca2a-ffe5-4316-8c43-269e5393db6e",
+            "2a31679e-2d6e-4598-95e2-4016ed834e9c");
+
         private static readonly Guid[][] ArmorFamilies =
         {
             AlloyFamily,
@@ -163,7 +235,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 itemGuid,
                 displayName,
                 new Vector3i(1, 1, 1),
-                family);
+                family,
+                DownSlopeFromMaterial(material));
             reason = null;
             return true;
         }
@@ -179,6 +252,27 @@ namespace DecoLimitLifter.SmartBuildMode
             return SmartBlockFamily.Unsupported(
                 displayName,
                 displayName + " is unavailable in this FtD install.");
+        }
+
+        internal static SmartBlockFamily DownSlopeFromMaterial(SmartBuildMaterial material)
+        {
+            string displayName = MaterialDisplayName(material) + " down slopes";
+            var candidates = DiscoverDownSlopeCandidates(material);
+            var lengths = new HashSet<int>(candidates.Select(candidate => candidate.Length));
+            foreach (SmartBlockCandidate fallback in ResolveFamilyCandidates(
+                         DownSlopeFamilyForMaterial(material),
+                         SmartBuildShapeKind.DownSlope))
+            {
+                if (lengths.Add(fallback.Length))
+                    candidates.Add(fallback);
+            }
+
+            if (candidates.Count > 0)
+                return new SmartBlockFamily(displayName, candidates);
+
+            return SmartBlockFamily.Unsupported(
+                displayName,
+                displayName + " are unavailable in this FtD install.");
         }
 
         internal static string MaterialDisplayName(SmartBuildMaterial material)
@@ -274,7 +368,37 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
+        private static Guid[] DownSlopeFamilyForMaterial(SmartBuildMaterial material)
+        {
+            switch (material)
+            {
+                case SmartBuildMaterial.Stone:
+                    return StoneDownSlopeFamily;
+                case SmartBuildMaterial.Metal:
+                    return MetalDownSlopeFamily;
+                case SmartBuildMaterial.Alloy:
+                    return AlloyDownSlopeFamily;
+                case SmartBuildMaterial.Glass:
+                    return GlassDownSlopeFamily;
+                case SmartBuildMaterial.Lead:
+                    return LeadDownSlopeFamily;
+                case SmartBuildMaterial.HeavyArmour:
+                    return HeavyArmourDownSlopeFamily;
+                case SmartBuildMaterial.Rubber:
+                    return RubberDownSlopeFamily;
+                default:
+                    return WoodDownSlopeFamily;
+            }
+        }
+
         private static List<SmartBlockCandidate> ResolveFamilyCandidates(Guid[] family)
+        {
+            return ResolveFamilyCandidates(family, SmartBuildShapeKind.Cuboid);
+        }
+
+        private static List<SmartBlockCandidate> ResolveFamilyCandidates(
+            Guid[] family,
+            SmartBuildShapeKind shapeKind)
         {
             var candidates = new List<SmartBlockCandidate>();
             if (family == null)
@@ -286,13 +410,145 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (definition == null)
                     continue;
 
+                object geometry = GeometryFor(definition);
                 candidates.Add(new SmartBlockCandidate(
                     ItemName(definition),
                     index + 1,
-                    definition));
+                    definition,
+                    shapeKind,
+                    geometry));
             }
 
             return candidates;
+        }
+
+        private static List<SmartBlockCandidate> DiscoverDownSlopeCandidates(SmartBuildMaterial material)
+        {
+            var candidates = new List<SmartBlockCandidate>();
+            foreach (ItemDefinition item in LoadedItemDefinitions())
+            {
+                object geometry = GeometryFor(item);
+                string geometryName = geometry?.ToString();
+                if (!TryLengthFromDownSlopeGeometry(geometryName, out int length))
+                    continue;
+                if (!LooksLikeMaterial(item, material))
+                    continue;
+
+                candidates.Add(new SmartBlockCandidate(
+                    ItemName(item),
+                    length,
+                    item,
+                    SmartBuildShapeKind.DownSlope,
+                    geometry));
+            }
+
+            return candidates
+                .GroupBy(candidate => candidate.Length)
+                .Select(group => group.First())
+                .ToList();
+        }
+
+        private static IEnumerable<ItemDefinition> LoadedItemDefinitions()
+        {
+            try
+            {
+                ModificationComponentContainerItem container = Configured.i
+                    .Get<ModificationComponentContainerItem>();
+                FieldInfo field = typeof(ModificationComponentContainerItem)
+                    .GetField(
+                        "m_AllCorrespondingItems",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (field?.GetValue(container) is IEnumerable<ItemDefinition> items)
+                    return items.Where(item => item != null).ToArray();
+            }
+            catch
+            {
+                // GUID fallbacks below keep Smart Builder usable when reflection changes.
+            }
+
+            return Array.Empty<ItemDefinition>();
+        }
+
+        private static object GeometryFor(ItemDefinition item)
+        {
+            try
+            {
+                return item?.DragSettings?.Geometry;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool TryLengthFromDownSlopeGeometry(string geometryName, out int length)
+        {
+            length = 0;
+            if (string.IsNullOrWhiteSpace(geometryName) ||
+                !geometryName.StartsWith("DownSlope", StringComparison.OrdinalIgnoreCase) ||
+                !geometryName.EndsWith("m", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string number = geometryName
+                .Substring("DownSlope".Length)
+                .TrimEnd('m', 'M');
+            return int.TryParse(number, out length) &&
+                   length >= 1 &&
+                   length <= 4;
+        }
+
+        private static bool LooksLikeMaterial(ItemDefinition item, SmartBuildMaterial material)
+        {
+            string text = (ItemName(item) + " " + ComponentText(item))
+                .Replace("_", " ")
+                .Replace("-", " ");
+            string lowered = text.ToLowerInvariant();
+            switch (material)
+            {
+                case SmartBuildMaterial.HeavyArmour:
+                    return lowered.Contains("heavy") || lowered.Contains("ha ");
+                case SmartBuildMaterial.Alloy:
+                    return lowered.Contains("alloy");
+                case SmartBuildMaterial.Glass:
+                    return lowered.Contains("glass");
+                case SmartBuildMaterial.Lead:
+                    return lowered.Contains("lead");
+                case SmartBuildMaterial.Metal:
+                    return lowered.Contains("metal");
+                case SmartBuildMaterial.Rubber:
+                    return lowered.Contains("rubber");
+                case SmartBuildMaterial.Stone:
+                    return lowered.Contains("stone");
+                default:
+                    return lowered.Contains("wood");
+            }
+        }
+
+        private static string ComponentText(ItemDefinition item)
+        {
+            try
+            {
+                object componentId = item?.ComponentId;
+                if (componentId == null)
+                    return string.Empty;
+
+                string reflectedName = componentId
+                    .GetType()
+                    .GetProperty(
+                        "Name",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?.GetValue(componentId, null) as string;
+                if (!string.IsNullOrWhiteSpace(reflectedName))
+                    return reflectedName;
+
+                return item.ComponentId.Guid.ToString();
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static ItemDefinition ResolveItemDefinition(Guid guid)

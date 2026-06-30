@@ -69,7 +69,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 return true;
             }
 
-            Close(apply: false, notifySession: false, notifyClose: false);
+            DecoLimitLifter.EsuModeSwitchHandoff.Begin();
+            Close(apply: false, notifySession: false, notifyClose: false, preserveSharedHud: true);
             if (SmartBuildModeRegistration.OpenFromModeSwitch())
                 InfoStore.Add("ESU mode: Smart Builder.");
             else
@@ -144,8 +145,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
                 if (Active && Input.GetKeyDown(KeyCode.Escape))
                 {
-                    if (_session.HandleEscape())
-                        return;
+                    DecoLimitLifter.EsuEscapeCloseGuard.Arm();
                     Close(apply: false);
                     return;
                 }
@@ -158,6 +158,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
                 if (!Active)
                 {
+                    if (DecoLimitLifter.EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame())
+                        return;
+
                     DecorationEditorInputScope.ForceResetIfActive(
                         "no active editor session");
                     DecoLimitLifter.EsuInputFocusGuard.TickPostExitRepair(
@@ -222,11 +225,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 InfoStore.Add("Decoration Edit Mode opened. Select one decoration; Apply commits, Cancel restores.");
         }
 
-        private void Close(bool apply, bool notifySession = true, bool notifyClose = true)
+        private void Close(
+            bool apply,
+            bool notifySession = true,
+            bool notifyClose = true,
+            bool preserveSharedHud = false)
         {
             DecorationEditSession session = _session;
             _session = null;
-            session?.End(apply, notifySession);
+            session?.End(apply, notifySession, preserveSharedHud);
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)

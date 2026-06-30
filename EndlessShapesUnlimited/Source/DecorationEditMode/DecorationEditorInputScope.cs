@@ -134,12 +134,14 @@ namespace DecoLimitLifter.DecorationEditMode
             _active || SmartBuildInputScope.SuppressBuildHud();
 
         internal static bool SuppressBuildInput() =>
+            DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             ControlHeldWhileActive ||
             OwnsBuildInputThisFrame ||
             ScrollWheelOverEditorUi ||
             SmartBuildInputScope.SuppressBuildInput();
 
         internal static bool SuppressCameraInput() =>
+            DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             OwnsCameraInputThisFrame ||
             ScrollWheelOverEditorUi ||
             SmartBuildInputScope.SuppressCameraInput();

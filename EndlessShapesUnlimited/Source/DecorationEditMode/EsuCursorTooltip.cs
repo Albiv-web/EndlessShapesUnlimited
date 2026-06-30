@@ -5,7 +5,7 @@ namespace DecoLimitLifter.DecorationEditMode
 {
     internal static class EsuCursorTooltip
     {
-        internal const float HoverDelaySeconds = 2f;
+        internal const float HoverDelaySeconds = 1f;
 
         private const float MaxWidthBase = 320f;
         private const float MinWidthBase = 120f;

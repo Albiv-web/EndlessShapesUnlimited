@@ -124,11 +124,14 @@ namespace DecoLimitLifter.SmartBuildMode
         internal static bool SuppressBuildHud() => _active;
 
         internal static bool SuppressBuildInput() =>
+            DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             ControlHeldWhileActive ||
             OwnsBuildInputThisFrame ||
             ScrollWheelOverUi;
 
         internal static bool SuppressCameraInput() =>
-            OwnsCameraInputThisFrame || ScrollWheelOverUi;
+            DecoLimitLifter.EsuEscapeCloseGuard.Active ||
+            OwnsCameraInputThisFrame ||
+            ScrollWheelOverUi;
     }
 }

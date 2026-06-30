@@ -14,12 +14,24 @@ namespace DecoLimitLifter.SmartBuildMode
             string displayName,
             int length,
             ItemDefinition definition)
+            : this(displayName, length, definition, SmartBuildShapeKind.Cuboid, null)
+        {
+        }
+
+        internal SmartBlockCandidate(
+            string displayName,
+            int length,
+            ItemDefinition definition,
+            SmartBuildShapeKind shapeKind,
+            object geometry)
         {
             DisplayName = string.IsNullOrWhiteSpace(displayName)
                 ? "Selected block"
                 : displayName;
             Length = Math.Max(1, length);
             Definition = definition;
+            ShapeKind = shapeKind;
+            Geometry = geometry;
         }
 
         internal string DisplayName { get; }
@@ -27,6 +39,10 @@ namespace DecoLimitLifter.SmartBuildMode
         internal int Length { get; }
 
         internal ItemDefinition Definition { get; }
+
+        internal SmartBuildShapeKind ShapeKind { get; }
+
+        internal object Geometry { get; }
 
         internal static SmartBlockCandidate ForTests(int length) =>
             new SmartBlockCandidate(length + "m test block", length, null);
@@ -57,6 +73,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool HasSingleCell => Candidates.Any(candidate => candidate.Length == 1);
 
+        internal SmartBlockCandidate CandidateForLength(int length) =>
+            Candidates
+                .OrderBy(candidate => Math.Abs(candidate.Length - length))
+                .ThenBy(candidate => candidate.Length)
+                .FirstOrDefault();
+
         internal static SmartBlockFamily ForTests(params int[] lengths) =>
             new SmartBlockFamily(
                 "test family",
@@ -73,19 +95,60 @@ namespace DecoLimitLifter.SmartBuildMode
         internal int WarningPlacementCap { get; set; } = 1_000;
 
         internal int HardPlacementCap { get; set; } = 10_000;
+
+        internal bool AllowNullConstructForVerification { get; set; }
     }
 
     internal sealed class SmartBuildPlacement
     {
+        private readonly Vector3i[] _coveredCells;
+
         internal SmartBuildPlacement(
             Vector3i position,
             SmartBlockCandidate candidate,
             SmartBuildAxis axis)
+            : this(position, candidate, axis, 1)
+        {
+        }
+
+        internal SmartBuildPlacement(
+            Vector3i position,
+            SmartBlockCandidate candidate,
+            SmartBuildAxis axis,
+            int axisSign)
         {
             Position = position;
             Candidate = candidate;
             Axis = axis;
-            Rotation = RotationForAxis(axis);
+            AxisSign = axisSign >= 0 ? 1 : -1;
+            Rotation = RotationForAxis(axis, AxisSign);
+            _coveredCells = EnumerateLine(position, axis, AxisSign, candidate?.Length ?? 1)
+                .ToArray();
+            DisplayName = candidate?.DisplayName ?? "Selected block";
+        }
+
+        internal SmartBuildPlacement(
+            Vector3i position,
+            SmartBlockCandidate candidate,
+            SmartBuildAxis axis,
+            int axisSign,
+            Quaternion rotation,
+            IEnumerable<Vector3i> coveredCells,
+            string displayName = null)
+        {
+            Position = position;
+            Candidate = candidate;
+            Axis = axis;
+            AxisSign = axisSign >= 0 ? 1 : -1;
+            Rotation = rotation;
+            _coveredCells = (coveredCells ?? EnumerateLine(position, axis, AxisSign, candidate?.Length ?? 1))
+                .Distinct()
+                .ToArray();
+            if (_coveredCells.Length == 0)
+                _coveredCells = new[] { position };
+            DisplayName = string.IsNullOrWhiteSpace(displayName)
+                ? candidate?.DisplayName ?? "Selected block"
+                : displayName;
         }
 
         internal Vector3i Position { get; }
@@ -94,28 +157,45 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal SmartBuildAxis Axis { get; }
 
+        internal int AxisSign { get; }
+
         internal Quaternion Rotation { get; }
 
-        internal int Length => Candidate.Length;
+        internal string DisplayName { get; }
 
-        private static Quaternion RotationForAxis(SmartBuildAxis axis)
+        internal int Length => _coveredCells.Length;
+
+        internal static Quaternion RotationForAxis(SmartBuildAxis axis, int sign = 1)
         {
             const float halfSqrt = 0.70710678118f;
             switch (axis)
             {
                 case SmartBuildAxis.X:
-                    return new Quaternion(0f, halfSqrt, 0f, halfSqrt);
+                    return sign >= 0
+                        ? new Quaternion(0f, halfSqrt, 0f, halfSqrt)
+                        : new Quaternion(0f, -halfSqrt, 0f, halfSqrt);
                 case SmartBuildAxis.Y:
-                    return new Quaternion(-halfSqrt, 0f, 0f, halfSqrt);
+                    return sign >= 0
+                        ? new Quaternion(-halfSqrt, 0f, 0f, halfSqrt)
+                        : new Quaternion(halfSqrt, 0f, 0f, halfSqrt);
                 default:
-                    return new Quaternion(0f, 0f, 0f, 1f);
+                    return sign >= 0
+                        ? new Quaternion(0f, 0f, 0f, 1f)
+                        : new Quaternion(0f, 1f, 0f, 0f);
             }
         }
 
-        internal IEnumerable<Vector3i> CoveredCells()
+        internal IReadOnlyList<Vector3i> CoveredCells() => _coveredCells;
+
+        private static IEnumerable<Vector3i> EnumerateLine(
+            Vector3i position,
+            SmartBuildAxis axis,
+            int sign,
+            int length)
         {
-            for (int index = 0; index < Length; index++)
-                yield return Position + SmartBuildAxisHelper.ToVector3i(Axis, index);
+            int direction = sign >= 0 ? 1 : -1;
+            for (int index = 0; index < Math.Max(1, length); index++)
+                yield return position + SmartBuildAxisHelper.ToVector3i(axis, index * direction);
         }
     }
 
@@ -130,12 +210,33 @@ namespace DecoLimitLifter.SmartBuildMode
             string failureReason)
         {
             Volume = volume;
+            Construct = volume?.Construct;
             Placements = placements ?? Array.Empty<SmartBuildPlacement>();
             SkippedCells = skippedCells ?? Array.Empty<Vector3i>();
             Warnings = warnings ?? Array.Empty<string>();
             CanCommit = canCommit;
             FailureReason = failureReason;
         }
+
+        internal SmartBuildPlan(
+            AllConstruct construct,
+            SmartBuildVolume volume,
+            IReadOnlyList<SmartBuildPlacement> placements,
+            IReadOnlyList<Vector3i> skippedCells,
+            IReadOnlyList<string> warnings,
+            bool canCommit,
+            string failureReason)
+        {
+            Construct = construct ?? volume?.Construct;
+            Volume = volume;
+            Placements = placements ?? Array.Empty<SmartBuildPlacement>();
+            SkippedCells = skippedCells ?? Array.Empty<Vector3i>();
+            Warnings = warnings ?? Array.Empty<string>();
+            CanCommit = canCommit;
+            FailureReason = failureReason;
+        }
+
+        internal AllConstruct Construct { get; }
 
         internal SmartBuildVolume Volume { get; }
 

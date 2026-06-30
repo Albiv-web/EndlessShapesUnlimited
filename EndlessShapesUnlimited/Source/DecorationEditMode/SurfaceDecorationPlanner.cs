@@ -134,6 +134,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private readonly List<Vector3> _points = new List<Vector3>();
         private readonly List<SurfaceFace> _faces = new List<SurfaceFace>();
         private readonly List<int> _manualFaceSelection = new List<int>(3);
+        private readonly List<int> _freeTriangleSelection = new List<int>(3);
+        private readonly List<SurfaceEdge> _bridgeEdgeSelection = new List<SurfaceEdge>(2);
 
         internal AllConstruct Construct { get; private set; }
 
@@ -153,9 +155,18 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal IReadOnlyList<int> ManualFaceSelection => _manualFaceSelection;
 
+        internal IReadOnlyList<SurfaceEdge> BridgeEdgeSelection => _bridgeEdgeSelection;
+
+        internal int FreeTriangleSelectionCount => _freeTriangleSelection.Count;
+
         internal bool HasDraft => _points.Count > 0 || _faces.Count > 0;
 
         internal bool HasPlaceableFaces => _faces.Count > 0;
+
+        internal bool HasActiveSelection =>
+            SelectionKind != SurfaceSelectionKind.None ||
+            _manualFaceSelection.Count > 0 ||
+            _bridgeEdgeSelection.Count > 0;
 
         internal void SetConstructForTests(AllConstruct construct) =>
             Construct = construct;
@@ -187,6 +198,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Construct = null;
             _points.Clear();
             _faces.Clear();
+            _freeTriangleSelection.Clear();
             ClearSelection();
         }
 
@@ -197,6 +209,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(-1, -1);
             _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
         }
 
         internal bool TryAddPoint(
@@ -214,6 +227,30 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
+            return TryAddAcceptedPoint(local, extendSelectedEdge, out message);
+        }
+
+        internal bool TryAddPointForTests(
+            Vector3 local,
+            bool extendSelectedEdge,
+            out string message)
+        {
+            message = null;
+            if (!DecorationEditMath.IsFinite(local))
+            {
+                message = "Surface point must be finite.";
+                return false;
+            }
+
+            return TryAddAcceptedPoint(local, extendSelectedEdge, out message);
+        }
+
+        private bool TryAddAcceptedPoint(
+            Vector3 local,
+            bool extendSelectedEdge,
+            out string message)
+        {
+            message = null;
             local = DecorationEditMath.Snap(local);
             int index = _points.Count;
             _points.Add(local);
@@ -237,17 +274,28 @@ namespace DecoLimitLifter.DecorationEditMode
                 return true;
             }
 
-            if (_points.Count == 3)
+            SelectedEdge = new SurfaceEdge(-1, -1);
+            _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
+            _freeTriangleSelection.Add(index);
+            if (_freeTriangleSelection.Count == 3)
             {
-                if (!TryAddFace(0, 1, 2, out message))
+                int a = _freeTriangleSelection[0];
+                int b = _freeTriangleSelection[1];
+                int c = _freeTriangleSelection[2];
+                _freeTriangleSelection.Clear();
+                bool baseTriangle = _faces.Count == 0;
+                if (!TryAddFace(a, b, c, out message))
                     return false;
-                message = "Surface base triangle created.";
+                message = baseTriangle
+                    ? "Surface base triangle created."
+                    : "Surface triangle created from free points.";
             }
             else
             {
-                message = _points.Count < 3
-                    ? "Surface point " + _points.Count.ToString(CultureInfo.InvariantCulture) + "/3 placed."
-                    : "Surface point placed. Select an edge before clicking to extend a face.";
+                message = "Surface point " +
+                          _freeTriangleSelection.Count.ToString(CultureInfo.InvariantCulture) +
+                          "/3 placed for the next triangle.";
             }
 
             return true;
@@ -280,6 +328,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = index;
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(-1, -1);
+            _bridgeEdgeSelection.Clear();
         }
 
         internal void SelectEdge(int a, int b)
@@ -291,6 +340,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(a, b);
             _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
         }
 
         internal void SelectFace(int index)
@@ -302,6 +352,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = index;
             SelectedEdge = new SurfaceEdge(-1, -1);
             _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
         }
 
         internal bool ToggleManualFacePoint(int index, out string message)
@@ -336,6 +387,87 @@ namespace DecoLimitLifter.DecorationEditMode
             return created;
         }
 
+        internal bool ToggleBridgeEdge(SurfaceEdge edge, out string message)
+        {
+            message = null;
+            if (!edge.IsValid ||
+                edge.A >= _points.Count ||
+                edge.B >= _points.Count ||
+                !FacesContainEdge(edge))
+            {
+                message = "Select an existing surface edge to bridge.";
+                return false;
+            }
+
+            int existing = _bridgeEdgeSelection.FindIndex(candidate => candidate.Matches(edge.A, edge.B));
+            if (existing >= 0)
+            {
+                _bridgeEdgeSelection.RemoveAt(existing);
+                message = "Bridge edge removed. " +
+                          _bridgeEdgeSelection.Count.ToString(CultureInfo.InvariantCulture) +
+                          "/2 edges selected.";
+                return true;
+            }
+
+            if (_bridgeEdgeSelection.Count >= 2)
+            {
+                message = "Bridge already has 2/2 edges selected. Press Bridge or Shift-click a selected bridge edge to remove it.";
+                return false;
+            }
+
+            _bridgeEdgeSelection.Add(edge);
+            _manualFaceSelection.Clear();
+            SelectionKind = SurfaceSelectionKind.Edge;
+            SelectedPoint = -1;
+            SelectedFace = -1;
+            SelectedEdge = edge;
+            message = "Bridge edge " +
+                      _bridgeEdgeSelection.Count.ToString(CultureInfo.InvariantCulture) +
+                      "/2 selected.";
+            return true;
+        }
+
+        internal bool IsBridgeEdgeSelected(int a, int b) =>
+            _bridgeEdgeSelection.Any(edge => edge.Matches(a, b));
+
+        internal bool TryBridgeSelectedEdges(out string message)
+        {
+            message = null;
+            if (_bridgeEdgeSelection.Count != 2)
+            {
+                message = "Select two surface edges with Shift-click before bridging.";
+                return false;
+            }
+
+            SurfaceEdge first = _bridgeEdgeSelection[0];
+            SurfaceEdge second = _bridgeEdgeSelection[1];
+            if (!IsBridgeEdgeStillValid(first) || !IsBridgeEdgeStillValid(second))
+            {
+                message = "Bridge edges are no longer valid.";
+                return false;
+            }
+
+            List<List<SurfaceFace>> candidateSets = BuildBridgeCandidateSets(first, second, out message);
+            if (candidateSets == null || candidateSets.Count == 0)
+                return false;
+
+            string lastMessage = message;
+            for (int index = 0; index < candidateSets.Count; index++)
+            {
+                if (!TryAddBridgeCandidateSet(candidateSets[index], out lastMessage))
+                    continue;
+
+                _bridgeEdgeSelection.Clear();
+                message = candidateSets[index].Count == 1
+                    ? "Bridge created one surface face."
+                    : "Bridge created two surface faces.";
+                return true;
+            }
+
+            message = lastMessage ?? "Bridge faces could not be created.";
+            return false;
+        }
+
         internal bool TryDeleteSelection(out string message)
         {
             message = null;
@@ -361,6 +493,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
 
                 _points.RemoveAt(removed);
+                RemapFreeTriangleSelectionAfterPointDelete(removed);
                 ClearSelection();
                 if (_points.Count == 0)
                     Construct = null;
@@ -441,6 +574,151 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             return true;
+        }
+
+        private bool FacesContainEdge(SurfaceEdge edge) =>
+            _faces.Any(face => face.ContainsEdge(edge.A, edge.B));
+
+        private bool IsBridgeEdgeStillValid(SurfaceEdge edge) =>
+            edge.IsValid &&
+            edge.A < _points.Count &&
+            edge.B < _points.Count &&
+            FacesContainEdge(edge);
+
+        private bool TryAddBridgeCandidateSet(
+            IReadOnlyList<SurfaceFace> candidates,
+            out string message)
+        {
+            message = null;
+            var orientedFaces = new List<SurfaceFace>(candidates.Count);
+
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                SurfaceFace candidate = candidates[index];
+                if (!ArePointIndexesValid(candidate.A, candidate.B, candidate.C))
+                {
+                    message = "Surface face needs three different existing points.";
+                    return false;
+                }
+
+                if (_faces.Any(face => SameFace(face, candidate.A, candidate.B, candidate.C)) ||
+                    orientedFaces.Any(face => SameFace(face, candidate.A, candidate.B, candidate.C)))
+                {
+                    message = "Surface face already exists.";
+                    return false;
+                }
+
+                if (!TryOrientBridgeFace(candidate, out SurfaceFace oriented, out message))
+                    return false;
+
+                orientedFaces.Add(oriented);
+            }
+
+            _faces.AddRange(orientedFaces);
+            SelectFace(_faces.Count - 1);
+            return true;
+        }
+
+        private bool TryOrientBridgeFace(SurfaceFace candidate, out SurfaceFace oriented, out string message)
+        {
+            oriented = candidate;
+            message = null;
+            if (!TryGetFaceNormal(candidate, out Vector3 candidateNormal))
+            {
+                message = "Surface bridge face has zero area.";
+                return false;
+            }
+
+            if (TryGetReferenceNormal(out Vector3 referenceNormal) &&
+                Vector3.Dot(referenceNormal, candidateNormal) < 0f)
+            {
+                oriented = candidate.Flipped();
+            }
+
+            return true;
+        }
+
+        private List<List<SurfaceFace>> BuildBridgeCandidateSets(
+            SurfaceEdge first,
+            SurfaceEdge second,
+            out string message)
+        {
+            message = null;
+            int[] unique = { first.A, first.B, second.A, second.B };
+            var points = unique.Distinct().ToList();
+            if (points.Count < 3)
+            {
+                message = "Bridge needs two different edges.";
+                return null;
+            }
+
+            if (points.Count == 3)
+            {
+                return PermuteFace(points[0], points[1], points[2])
+                    .Select(face => new List<SurfaceFace> { face })
+                    .ToList();
+            }
+
+            if (points.Count != 4)
+            {
+                message = "Bridge supports only two triangle or quad-like edges.";
+                return null;
+            }
+
+            SurfaceFace firstA = new SurfaceFace(first.A, first.B, second.A);
+            SurfaceFace firstB = new SurfaceFace(first.B, second.B, second.A);
+            SurfaceFace secondA = new SurfaceFace(first.A, first.B, second.B);
+            SurfaceFace secondB = new SurfaceFace(first.B, second.A, second.B);
+            float firstPairing =
+                Vector3.Distance(_points[first.A], _points[second.A]) +
+                Vector3.Distance(_points[first.B], _points[second.B]);
+            float secondPairing =
+                Vector3.Distance(_points[first.A], _points[second.B]) +
+                Vector3.Distance(_points[first.B], _points[second.A]);
+
+            return firstPairing <= secondPairing
+                ? PermuteFacePair(firstA, firstB)
+                : PermuteFacePair(secondA, secondB);
+        }
+
+        private static List<List<SurfaceFace>> PermuteFacePair(SurfaceFace first, SurfaceFace second)
+        {
+            var result = new List<List<SurfaceFace>>();
+            foreach (SurfaceFace left in PermuteFace(first.A, first.B, first.C))
+            {
+                foreach (SurfaceFace right in PermuteFace(second.A, second.B, second.C))
+                {
+                    result.Add(new List<SurfaceFace> { left, right });
+                }
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<SurfaceFace> PermuteFace(int a, int b, int c)
+        {
+            yield return new SurfaceFace(a, b, c);
+            yield return new SurfaceFace(a, c, b);
+            yield return new SurfaceFace(b, a, c);
+            yield return new SurfaceFace(b, c, a);
+            yield return new SurfaceFace(c, a, b);
+            yield return new SurfaceFace(c, b, a);
+        }
+
+        private void RemapFreeTriangleSelectionAfterPointDelete(int removed)
+        {
+            for (int index = _freeTriangleSelection.Count - 1; index >= 0; index--)
+            {
+                int point = _freeTriangleSelection[index];
+                if (point == removed)
+                {
+                    _freeTriangleSelection.RemoveAt(index);
+                }
+                else if (point > removed)
+                {
+                    _freeTriangleSelection[index] = point - 1;
+                }
+            }
         }
 
         private bool TryGetReferenceNormal(out Vector3 normal)
@@ -597,9 +875,13 @@ namespace DecoLimitLifter.DecorationEditMode
         internal float TransformPlaneDistance { get; }
     }
 
-    internal abstract class ISurfaceAnchorResolver
+    internal abstract class DecorationAnchorResolver
     {
         internal abstract bool TryResolveAnchor(Vector3 localCenter, out Vector3i anchor);
+    }
+
+    internal abstract class ISurfaceAnchorResolver : DecorationAnchorResolver
+    {
     }
 
     internal sealed class ConstructSurfaceAnchorResolver : ISurfaceAnchorResolver

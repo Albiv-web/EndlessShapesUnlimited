@@ -13,6 +13,8 @@ namespace DecoLimitLifter.SmartBuildMode
     internal sealed class SmartBuildModeBehaviour : MonoBehaviour
     {
         private SmartBuildSession _session;
+        private SmartBuildSession _handoffGuiSession;
+        private int _handoffGuiFrame = -1;
 
         internal bool Active => _session != null && _session.Active;
 
@@ -70,11 +72,19 @@ namespace DecoLimitLifter.SmartBuildMode
                 return true;
             }
 
-            Close(reason: null, notifyClose: false);
+            DecoLimitLifter.EsuModeSwitchHandoff.Begin();
+            Close(
+                reason: null,
+                notifyClose: false,
+                preserveSharedHud: true,
+                keepModeSwitchHandoffGui: true);
             if (DecorationEditModeRegistration.OpenFromModeSwitch())
                 InfoStore.Add("ESU mode: Decoration Edit.");
             else
+            {
+                ClearModeSwitchHandoffGui();
                 Open(modeSwitch: true);
+            }
             return true;
         }
 
@@ -97,6 +107,13 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (Active && toggleDown)
                 {
                     Close("toggle pressed");
+                    return;
+                }
+
+                if (Active && Input.GetKeyDown(KeyCode.Escape))
+                {
+                    DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+                    Close("Escape pressed");
                     return;
                 }
 
@@ -123,6 +140,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 if (!Active)
                 {
+                    if (DecoLimitLifter.EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame())
+                        return;
+
                     SmartBuildInputScope.ForceResetIfActive("no active smart build session");
                     DecoLimitLifter.EsuInputFocusGuard.TickPostExitRepair(
                         "Smart Block Builder inactive");
@@ -163,7 +183,21 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             try
             {
-                _session?.OnGUI();
+                if (_session != null)
+                {
+                    ClearModeSwitchHandoffGui();
+                    _session.OnGUI();
+                    return;
+                }
+
+                if (_handoffGuiSession != null &&
+                    Time.frameCount <= _handoffGuiFrame)
+                {
+                    _handoffGuiSession.DrawModeSwitchHandoffGui();
+                    return;
+                }
+
+                ClearModeSwitchHandoffGui();
             }
             catch (Exception exception)
             {
@@ -178,6 +212,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void Open(bool modeSwitch = false)
         {
+            ClearModeSwitchHandoffGui();
             cBuild build = cBuild.GetSingleton();
             _session = new SmartBuildSession(build);
             _session.Begin();
@@ -186,11 +221,26 @@ namespace DecoLimitLifter.SmartBuildMode
                 InfoStore.Add("Smart Block Builder opened. Click the focused construct grid to create a runtime preview, then Apply to place blocks.");
         }
 
-        private void Close(string reason = null, bool notifyClose = true)
+        private void Close(
+            string reason = null,
+            bool notifyClose = true,
+            bool preserveSharedHud = false,
+            bool keepModeSwitchHandoffGui = false)
         {
             SmartBuildSession session = _session;
             _session = null;
-            session?.End();
+            if (keepModeSwitchHandoffGui && session != null)
+            {
+                ClearModeSwitchHandoffGui();
+                session.SuspendForModeSwitchHandoff();
+                _handoffGuiSession = session;
+                _handoffGuiFrame = Time.frameCount;
+            }
+            else
+            {
+                session?.End(preserveSharedHud);
+            }
+
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
@@ -204,6 +254,14 @@ namespace DecoLimitLifter.SmartBuildMode
                     ? "Smart Block Builder closed."
                     : "Smart Block Builder closed: " + reason + ".");
             }
+        }
+
+        private void ClearModeSwitchHandoffGui()
+        {
+            SmartBuildSession session = _handoffGuiSession;
+            _handoffGuiSession = null;
+            _handoffGuiFrame = -1;
+            session?.End(preserveSharedHud: true);
         }
     }
 }
