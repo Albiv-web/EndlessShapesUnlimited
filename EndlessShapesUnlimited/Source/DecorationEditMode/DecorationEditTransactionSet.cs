@@ -119,6 +119,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (failure != null)
             {
+                EsuRuntimeLog.Exception("Decoration Edit", failure, "Decoration Edit transaction rollback had failures");
                 AdvLogger.LogException(
                     "[EndlessShapes Unlimited] Decoration Edit transaction rollback had failures",
                     failure,

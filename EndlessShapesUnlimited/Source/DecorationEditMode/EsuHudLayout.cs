@@ -21,6 +21,32 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static int _resetGeneration;
 
+        internal struct ToolbarBudget
+        {
+            internal ToolbarBudget(
+                float leftRailWidth,
+                float notificationWidth,
+                float rightControlsWidth,
+                float gap)
+            {
+                LeftRailWidth = leftRailWidth;
+                NotificationWidth = notificationWidth;
+                RightControlsWidth = rightControlsWidth;
+                Gap = gap;
+            }
+
+            internal float LeftRailWidth { get; }
+
+            internal float NotificationWidth { get; }
+
+            internal float RightControlsWidth { get; }
+
+            internal float Gap { get; }
+
+            internal float TotalWidth =>
+                LeftRailWidth + NotificationWidth + RightControlsWidth + Gap * 2f;
+        }
+
         internal static int ResetGeneration => _resetGeneration;
 
         internal static float CurrentScale => ScaleForScreen(Screen.width, Screen.height);
@@ -116,34 +142,66 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static float ToolbarGap => Scale(ToolbarGapBase);
 
+        internal static ToolbarBudget CalculateToolbarBudget(float toolbarWidth) =>
+            CalculateToolbarBudget(toolbarWidth, CurrentScale);
+
+        internal static ToolbarBudget CalculateToolbarBudget(float toolbarWidth, float scale)
+        {
+            float width = Mathf.Max(1f, toolbarWidth);
+            float resolvedScale = ResolveLayoutScale(scale);
+            float gap = ToolbarGapBase * resolvedScale;
+            float left = Mathf.Min(ToolbarLeftRailBaseWidth * resolvedScale, width * 0.48f);
+            float notification = ToolbarNotificationBaseWidth * resolvedScale;
+            float right = Mathf.Min(ToolbarRightControlsBaseWidth * resolvedScale, width * 0.38f);
+            float leftFloor = Mathf.Min(54f * resolvedScale, left);
+            float rightFloor = Mathf.Min(168f * resolvedScale, right);
+
+            float overflow = left + notification + right + gap * 2f - width;
+            if (overflow > 0f)
+                Reduce(ref notification, 0f, ref overflow);
+            if (overflow > 0f)
+                Reduce(ref left, leftFloor, ref overflow);
+            if (overflow > 0f)
+                Reduce(ref right, rightFloor, ref overflow);
+            if (overflow > 0f)
+            {
+                float gapFloor = 0f;
+                float pairedGap = gap * 2f;
+                float reduction = Mathf.Min(pairedGap, overflow);
+                gap = Mathf.Max(gapFloor, gap - reduction * 0.5f);
+                overflow -= reduction;
+            }
+
+            float total = left + notification + right + gap * 2f;
+            if (total > width)
+            {
+                float ratio = width / total;
+                left *= ratio;
+                notification *= ratio;
+                right *= ratio;
+                gap *= ratio;
+            }
+
+            return new ToolbarBudget(
+                Mathf.Max(0f, left),
+                Mathf.Max(0f, notification),
+                Mathf.Max(0f, right),
+                Mathf.Max(0f, gap));
+        }
+
         internal static float ToolbarLeftRailWidth(float toolbarWidth)
         {
-            float preferred = Scale(ToolbarLeftRailBaseWidth);
-            float minimum = Scale(54f);
-            float maximum = Mathf.Max(minimum, toolbarWidth * 0.48f);
-            return Mathf.Clamp(preferred, minimum, maximum);
+            return CalculateToolbarBudget(toolbarWidth).LeftRailWidth;
         }
 
         internal static float ToolbarNotificationWidth(float toolbarWidth)
         {
-            float preferred = Scale(ToolbarNotificationBaseWidth);
-            float minimum = Scale(120f);
-            float available = toolbarWidth -
-                              ToolbarLeftRailWidth(toolbarWidth) -
-                              ToolbarRightControlsWidth(toolbarWidth) -
-                              ToolbarGap * 2f;
-            float maximum = Mathf.Max(
-                minimum,
-                available);
-            return Mathf.Clamp(preferred, minimum, maximum);
+            return CalculateToolbarBudget(toolbarWidth).NotificationWidth;
         }
 
         internal static float ToolbarRightControlsWidth(float toolbarWidth)
         {
-            float preferred = Scale(ToolbarRightControlsBaseWidth);
-            float minimum = Scale(168f);
-            float maximum = Mathf.Max(minimum, toolbarWidth * 0.38f);
-            return Mathf.Clamp(preferred, minimum, maximum);
+            return CalculateToolbarBudget(toolbarWidth).RightControlsWidth;
         }
 
         internal static float ToolbarRightControlsWidth() =>
@@ -202,6 +260,40 @@ namespace DecoLimitLifter.DecorationEditMode
             GUI.color = previous;
         }
 
+        internal static void DrawStackDividerGrip(Rect rect, bool active)
+        {
+            if (rect.width <= 1f || rect.height <= 1f)
+                return;
+
+            Color previous = GUI.color;
+            float alpha = active ? 0.85f : 0.42f;
+            GUI.color = new Color(
+                DecorationEditorTheme.Cyan.r,
+                DecorationEditorTheme.Cyan.g,
+                DecorationEditorTheme.Cyan.b,
+                alpha);
+            float line = Mathf.Max(1f, Scale(1.25f));
+            float centerY = rect.y + rect.height * 0.5f - line * 0.5f;
+            float inset = Mathf.Max(18f, Scale(18f));
+            float width = Mathf.Max(12f, rect.width - inset * 2f);
+            GUI.DrawTexture(
+                new Rect(rect.x + (rect.width - width) * 0.5f, centerY, width, line),
+                Texture2D.whiteTexture);
+
+            if (active)
+            {
+                float handleWidth = Mathf.Min(width, Scale(56f));
+                GUI.DrawTexture(
+                    new Rect(rect.x + (rect.width - handleWidth) * 0.5f, centerY - line * 2f, handleWidth, line),
+                    Texture2D.whiteTexture);
+                GUI.DrawTexture(
+                    new Rect(rect.x + (rect.width - handleWidth) * 0.5f, centerY + line * 2f, handleWidth, line),
+                    Texture2D.whiteTexture);
+            }
+
+            GUI.color = previous;
+        }
+
         internal static string ScaleSummary()
         {
             try
@@ -220,6 +312,20 @@ namespace DecoLimitLifter.DecorationEditMode
                     "auto x{0:0.00}",
                     CurrentScale);
             }
+        }
+
+        private static float ResolveLayoutScale(float scale)
+        {
+            if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+                return 1f;
+            return Mathf.Clamp(scale, MinEffectiveScale, MaxEffectiveScale);
+        }
+
+        private static void Reduce(ref float value, float floor, ref float overflow)
+        {
+            float reduction = Mathf.Min(Mathf.Max(0f, value - floor), overflow);
+            value -= reduction;
+            overflow -= reduction;
         }
     }
 }

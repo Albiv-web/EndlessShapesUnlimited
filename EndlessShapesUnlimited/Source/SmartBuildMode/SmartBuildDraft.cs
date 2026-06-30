@@ -10,7 +10,16 @@ namespace DecoLimitLifter.SmartBuildMode
     {
         Draw,
         Move,
-        Scale
+        Scale,
+        Rotate
+    }
+
+    internal enum SmartBuildEditHandleMode
+    {
+        Gizmo,
+        Face,
+        Edge,
+        Corner
     }
 
     internal enum SmartBuildDrawPlane
@@ -25,6 +34,12 @@ namespace DecoLimitLifter.SmartBuildMode
     {
         SkipOccupied,
         BlockOnOverlap
+    }
+
+    internal enum SmartBuildPreviewMode
+    {
+        Wireframe,
+        Material
     }
 
     internal sealed class SmartBuildDraft

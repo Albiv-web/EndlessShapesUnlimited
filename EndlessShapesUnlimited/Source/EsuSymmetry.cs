@@ -14,6 +14,14 @@ namespace DecoLimitLifter
             new Dictionary<DecorationEditAxis, int>();
 
         private static AllConstruct _construct;
+        private static AllConstruct _boundsCacheConstruct;
+        private static Vector3 _boundsCacheMin;
+        private static Vector3 _boundsCacheMax;
+        private static float _boundsCacheUntil;
+        private static bool _boundsCacheValid;
+
+        private const float BoundsCacheSeconds = 0.5f;
+        private const float MinimumPlaneSpan = 8f;
 
         internal static DecorationEditAxis PendingAxis { get; private set; } =
             DecorationEditAxis.None;
@@ -221,11 +229,21 @@ namespace DecoLimitLifter
                 return;
 
             Vector3 center = aroundLocal;
+            float radius = pending ? 3.2f : 2.6f;
+            float halfA = radius;
+            float halfB = radius;
+            if (TryGetConstructLocalBounds(construct, out Vector3 min, out Vector3 max))
+            {
+                center = (min + max) * 0.5f;
+                BuildPlaneAxisPair(axis, out DecorationEditAxis axisA, out DecorationEditAxis axisB);
+                halfA = PlaneHalfSpan(min, max, axisA);
+                halfB = PlaneHalfSpan(min, max, axisB);
+            }
+
             center = SetAxis(center, axis, coordinate);
             Color color = DecorationEditMath.AxisColor(axis);
             Color face = new Color(color.r, color.g, color.b, pending ? 0.12f : 0.07f);
             Color edge = new Color(color.r, color.g, color.b, pending ? 0.95f : 0.72f);
-            float radius = pending ? 3.2f : 2.6f;
             BuildPlaneBasis(axis, out Vector3 a, out Vector3 b);
             Vector3 p0;
             Vector3 p1;
@@ -237,14 +255,14 @@ namespace DecoLimitLifter
             Vector3 b1;
             try
             {
-                p0 = construct.SafeLocalToGlobal(center - a * radius - b * radius);
-                p1 = construct.SafeLocalToGlobal(center + a * radius - b * radius);
-                p2 = construct.SafeLocalToGlobal(center + a * radius + b * radius);
-                p3 = construct.SafeLocalToGlobal(center - a * radius + b * radius);
-                a0 = construct.SafeLocalToGlobal(center - a * radius);
-                a1 = construct.SafeLocalToGlobal(center + a * radius);
-                b0 = construct.SafeLocalToGlobal(center - b * radius);
-                b1 = construct.SafeLocalToGlobal(center + b * radius);
+                p0 = construct.SafeLocalToGlobal(center - a * halfA - b * halfB);
+                p1 = construct.SafeLocalToGlobal(center + a * halfA - b * halfB);
+                p2 = construct.SafeLocalToGlobal(center + a * halfA + b * halfB);
+                p3 = construct.SafeLocalToGlobal(center - a * halfA + b * halfB);
+                a0 = construct.SafeLocalToGlobal(center - a * halfA);
+                a1 = construct.SafeLocalToGlobal(center + a * halfA);
+                b0 = construct.SafeLocalToGlobal(center - b * halfB);
+                b1 = construct.SafeLocalToGlobal(center + b * halfB);
             }
             catch
             {
@@ -342,6 +360,85 @@ namespace DecoLimitLifter
             return value;
         }
 
+        internal static bool TryGetConstructLocalBounds(
+            AllConstruct construct,
+            out Vector3 min,
+            out Vector3 max)
+        {
+            min = Vector3.zero;
+            max = Vector3.zero;
+            if (construct == null)
+                return false;
+
+            float now = Time.unscaledTime;
+            if (ReferenceEquals(_boundsCacheConstruct, construct) &&
+                now <= _boundsCacheUntil)
+            {
+                min = _boundsCacheMin;
+                max = _boundsCacheMax;
+                return _boundsCacheValid;
+            }
+
+            _boundsCacheConstruct = construct;
+            _boundsCacheUntil = now + BoundsCacheSeconds;
+            _boundsCacheValid = false;
+            try
+            {
+                Vector3i rawMin = construct.GetMin();
+                Vector3i rawMax = construct.GetMax();
+                int minX = Math.Min(rawMin.x, rawMax.x);
+                int minY = Math.Min(rawMin.y, rawMax.y);
+                int minZ = Math.Min(rawMin.z, rawMax.z);
+                int maxX = Math.Max(rawMin.x, rawMax.x);
+                int maxY = Math.Max(rawMin.y, rawMax.y);
+                int maxZ = Math.Max(rawMin.z, rawMax.z);
+                min = new Vector3(minX - 0.5f, minY - 0.5f, minZ - 0.5f);
+                max = new Vector3(maxX + 0.5f, maxY + 0.5f, maxZ + 0.5f);
+                if (max.x < min.x || max.y < min.y || max.z < min.z)
+                    return false;
+
+                _boundsCacheMin = min;
+                _boundsCacheMax = max;
+                _boundsCacheValid = true;
+                return true;
+            }
+            catch
+            {
+                _boundsCacheMin = Vector3.zero;
+                _boundsCacheMax = Vector3.zero;
+                return false;
+            }
+        }
+
+        private static float PlaneHalfSpan(Vector3 min, Vector3 max, DecorationEditAxis axis)
+        {
+            float span = AxisComponent(max, axis) - AxisComponent(min, axis);
+            float padded = span + Mathf.Max(2f, span * 0.12f);
+            return Mathf.Max(MinimumPlaneSpan, padded) * 0.5f;
+        }
+
+        private static void BuildPlaneAxisPair(
+            DecorationEditAxis axis,
+            out DecorationEditAxis a,
+            out DecorationEditAxis b)
+        {
+            switch (axis)
+            {
+                case DecorationEditAxis.X:
+                    a = DecorationEditAxis.Y;
+                    b = DecorationEditAxis.Z;
+                    break;
+                case DecorationEditAxis.Y:
+                    a = DecorationEditAxis.X;
+                    b = DecorationEditAxis.Z;
+                    break;
+                default:
+                    a = DecorationEditAxis.X;
+                    b = DecorationEditAxis.Y;
+                    break;
+            }
+        }
+
         private static void BuildPlaneBasis(
             DecorationEditAxis axis,
             out Vector3 a,
@@ -374,6 +471,10 @@ namespace DecoLimitLifter
             }
 
             internal IReadOnlyList<DecorationEditAxis> Axes => _axes;
+
+            internal bool IsIdentity => _axes.Length == 0;
+
+            internal int AxisCount => _axes.Length;
 
             internal Vector3i Mirror(Vector3i cell)
             {

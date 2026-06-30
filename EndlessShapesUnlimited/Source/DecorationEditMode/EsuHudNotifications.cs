@@ -25,10 +25,13 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float TextPaddingY = 6f;
         private const float DetailsButtonWidth = 58f;
         private const float DetailsButtonGap = 6f;
+        private const float LogButtonWidth = 42f;
+        private const float LogButtonGap = 6f;
 
         private static string _message;
         private static float _expiresAt = -1f;
         private static EsuHudNotificationKind _kind;
+        private static string _activeSource = "ESU";
         private static bool _expanded;
         private static bool _lastMessageOverflow;
         private static Rect _lastSlotScreenRect;
@@ -39,14 +42,25 @@ namespace DecoLimitLifter.DecorationEditMode
             !string.IsNullOrWhiteSpace(_message) &&
             (_expanded || Time.unscaledTime <= _expiresAt);
 
+        internal static void SetActiveSource(string source)
+        {
+            if (!string.IsNullOrWhiteSpace(source))
+                _activeSource = source.Trim();
+        }
+
         internal static void Show(string message)
+        {
+            Show(message, Classify(message));
+        }
+
+        internal static void Show(string message, EsuHudNotificationKind kind)
         {
             message = (message ?? string.Empty).Trim();
             if (message.Length == 0)
                 return;
 
             _message = message;
-            _kind = Classify(message);
+            _kind = kind;
             _expiresAt = Time.unscaledTime + DisplaySeconds;
             _expanded = false;
             _expandedScroll = Vector2.zero;
@@ -64,7 +78,9 @@ namespace DecoLimitLifter.DecorationEditMode
             if (string.IsNullOrWhiteSpace(message))
                 return false;
 
-            Show(message);
+            EsuHudNotificationKind kind = Classify(message);
+            Show(message, kind);
+            EsuRuntimeLog.FromNotification(_activeSource, kind, message);
             return true;
         }
 
@@ -75,15 +91,28 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static void DrawToolbarSlot(Rect toolbarRect)
         {
-            DrawToolbarSlot(toolbarRect, EsuHudLayout.ToolbarNotificationWidth(toolbarRect.width));
+            DrawToolbarSlot(
+                toolbarRect,
+                EsuHudLayout.ToolbarNotificationWidth(toolbarRect.width),
+                null,
+                toolbarRect.position);
         }
 
         internal static void DrawToolbarSlot(Rect toolbarRect, float width)
         {
-            DrawToolbarSlot(toolbarRect, width, null);
+            DrawToolbarSlot(toolbarRect, width, null, toolbarRect.position);
         }
 
         internal static void DrawToolbarSlot(Rect toolbarRect, float width, string fallbackMessage)
+        {
+            DrawToolbarSlot(toolbarRect, width, fallbackMessage, toolbarRect.position);
+        }
+
+        internal static void DrawToolbarSlot(
+            Rect toolbarRect,
+            float width,
+            string fallbackMessage,
+            Vector2 screenOrigin)
         {
             float height = EsuHudLayout.Scale(SlotHeight);
             Rect rect = GUILayoutUtility.GetRect(
@@ -91,10 +120,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 height,
                 GUILayout.Width(Mathf.Max(EsuHudLayout.Scale(SlotMinWidth), width)),
                 GUILayout.Height(height));
-            Vector2 screenPoint = GUIUtility.GUIToScreenPoint(new Vector2(rect.x, rect.y));
+            Rect logButtonRect = LogButtonRect(rect);
             _lastSlotScreenRect = new Rect(
-                screenPoint.x,
-                screenPoint.y,
+                screenOrigin.x + rect.x,
+                screenOrigin.y + rect.y,
                 rect.width,
                 rect.height);
             bool hasTransientMessage = HasMessage;
@@ -105,6 +134,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 _expanded = false;
                 _lastMessageOverflow = false;
+                DrawLogButton(logButtonRect);
                 return;
             }
 
@@ -138,12 +168,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 Rect textRect = new Rect(
                     rect.x + EsuHudLayout.Scale(AccentWidth + TextPaddingX),
                     rect.y + EsuHudLayout.Scale(TextPaddingY),
-                    rect.width - EsuHudLayout.Scale(AccentWidth + TextPaddingX * 2f),
+                    Mathf.Max(
+                        EsuHudLayout.Scale(28f),
+                        logButtonRect.x - rect.x - EsuHudLayout.Scale(AccentWidth + TextPaddingX * 2f + LogButtonGap)),
                     rect.height - EsuHudLayout.Scale(TextPaddingY * 2f));
                 _lastMessageOverflow = hasTransientMessage && MessageOverflows(message, style, textRect);
                 if (_lastMessageOverflow)
                 {
-                    DrawCollapsedOverflow(rect, textRect, style, kind, alpha);
+                    DrawCollapsedOverflow(rect, textRect, kind, alpha, logButtonRect.x - EsuHudLayout.Scale(LogButtonGap));
                 }
                 else
                 {
@@ -156,6 +188,8 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 GUI.color = oldColor;
             }
+
+            DrawLogButton(logButtonRect);
         }
 
         internal static void DrawExpandedPopup()
@@ -215,7 +249,10 @@ namespace DecoLimitLifter.DecorationEditMode
                     _expandedScreenRect.y + EsuHudLayout.Scale(7f),
                     EsuHudLayout.Scale(54f),
                     EsuHudLayout.Scale(24f));
-                if (GUI.Button(hideRect, "Hide", DecorationEditorTheme.Button))
+                if (GUI.Button(
+                        hideRect,
+                        new GUIContent("Hide", "Hide the notification details."),
+                        DecorationEditorTheme.Button))
                 {
                     _expanded = false;
                     return;
@@ -238,40 +275,109 @@ namespace DecoLimitLifter.DecorationEditMode
         }
 
         internal static bool ContainsMouse(Vector2 mouse) =>
-            _expanded &&
-            HasMessage &&
-            _expandedScreenRect.Contains(mouse);
+            (_expanded &&
+             HasMessage &&
+             _expandedScreenRect.Contains(mouse)) ||
+            EsuConsoleWindow.ContainsMouse(mouse);
+
+        private static Rect LogButtonRect(Rect slotRect)
+        {
+            float buttonWidth = EsuHudLayout.Scale(LogButtonWidth);
+            return new Rect(
+                slotRect.xMax - buttonWidth - EsuHudLayout.Scale(7f),
+                slotRect.y + EsuHudLayout.Scale(7f),
+                buttonWidth,
+                slotRect.height - EsuHudLayout.Scale(14f));
+        }
+
+        private static void DrawLogButton(Rect rect)
+        {
+            Color previous = GUI.color;
+            GUI.color = Color.white;
+            if (GUI.Button(
+                    rect,
+                    new GUIContent("Log", "Open the ESU runtime log."),
+                    DecorationEditorTheme.ToolButton(EsuConsoleWindow.IsOpen)))
+            {
+                EsuConsoleWindow.Toggle();
+            }
+
+            GUI.color = previous;
+        }
 
         private static void DrawCollapsedOverflow(
             Rect slotRect,
             Rect textRect,
-            GUIStyle style,
             EsuHudNotificationKind kind,
-            float alpha)
+            float alpha,
+            float rightLimit)
         {
             float buttonWidth = EsuHudLayout.Scale(DetailsButtonWidth);
             float buttonGap = EsuHudLayout.Scale(DetailsButtonGap);
             Rect buttonRect = new Rect(
-                slotRect.xMax - buttonWidth - EsuHudLayout.Scale(7f),
+                Mathf.Min(slotRect.xMax - buttonWidth - EsuHudLayout.Scale(7f), rightLimit - buttonWidth),
                 slotRect.y + EsuHudLayout.Scale(7f),
                 buttonWidth,
                 slotRect.height - EsuHudLayout.Scale(14f));
             Rect labelRect = new Rect(
                 textRect.x,
                 textRect.y,
-                Mathf.Max(EsuHudLayout.Scale(42f), buttonRect.x - textRect.x - buttonGap),
+                Mathf.Max(0f, buttonRect.x - textRect.x - buttonGap),
                 textRect.height);
 
-            GUI.Label(labelRect, KindLabel(kind), style);
+            GUIStyle labelStyle = CollapsedSeverityStyle(kind);
+            string label = CollapsedSeverityLabel(kind, labelStyle, labelRect.width, labelRect.height);
+            if (!string.IsNullOrEmpty(label))
+                GUI.Label(labelRect, label, labelStyle);
             Color previous = GUI.color;
             GUI.color = new Color(1f, 1f, 1f, alpha);
-            if (GUI.Button(buttonRect, _expanded ? "Hide" : "Details", DecorationEditorTheme.Button))
+            if (GUI.Button(
+                    buttonRect,
+                    new GUIContent(_expanded ? "Hide" : "Details", _expanded ? "Hide the notification details." : "Show the full notification text."),
+                    DecorationEditorTheme.Button))
             {
                 _expanded = !_expanded;
                 if (_expanded)
                     _expiresAt = Time.unscaledTime + DisplaySeconds;
             }
             GUI.color = previous;
+        }
+
+        private static string CollapsedSeverityLabel(
+            EsuHudNotificationKind kind,
+            GUIStyle style,
+            float width,
+            float height)
+        {
+            string full = KindLabel(kind);
+            if (FitsCollapsedSeverityLabel(full, style, width, height))
+                return full;
+
+            string compact = CompactKindLabel(kind);
+            if (FitsCollapsedSeverityLabel(compact, style, width, height))
+                return compact;
+
+            return string.Empty;
+        }
+
+        private static bool FitsCollapsedSeverityLabel(
+            string text,
+            GUIStyle style,
+            float width,
+            float height)
+        {
+            if (string.IsNullOrEmpty(text) ||
+                width <= 0f ||
+                height <= 0f)
+            {
+                return false;
+            }
+
+            var content = new GUIContent(text);
+            Vector2 size = style.CalcSize(content);
+            float lineHeight = style.CalcHeight(content, Mathf.Max(width, size.x));
+            return size.x <= width + EsuHudLayout.Scale(1f) &&
+                   lineHeight <= height + EsuHudLayout.Scale(1f);
         }
 
         private static bool MessageOverflows(string message, GUIStyle style, Rect textRect)
@@ -304,6 +410,15 @@ namespace DecoLimitLifter.DecorationEditMode
                             : Color.white
                 }
             };
+        }
+
+        private static GUIStyle CollapsedSeverityStyle(EsuHudNotificationKind kind)
+        {
+            GUIStyle style = MessageStyle(kind);
+            style.alignment = TextAnchor.MiddleLeft;
+            style.clipping = TextClipping.Clip;
+            style.wordWrap = false;
+            return style;
         }
 
         private static string ExtractMessage(object[] arguments)
@@ -390,6 +505,19 @@ namespace DecoLimitLifter.DecorationEditMode
                     return "Error";
                 case EsuHudNotificationKind.Warning:
                     return "Warning";
+                default:
+                    return "Info";
+            }
+        }
+
+        private static string CompactKindLabel(EsuHudNotificationKind kind)
+        {
+            switch (kind)
+            {
+                case EsuHudNotificationKind.Error:
+                    return "Err";
+                case EsuHudNotificationKind.Warning:
+                    return "Warn";
                 default:
                     return "Info";
             }

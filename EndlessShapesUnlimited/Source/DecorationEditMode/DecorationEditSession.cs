@@ -21,8 +21,17 @@ namespace DecoLimitLifter.DecorationEditMode
 {
     internal sealed class DecorationEditSession
     {
+        private enum StackDividerKind
+        {
+            None,
+            Left,
+            Right
+        }
+
         private const float HandleLength = 1.25f;
         private const float SelectionRadiusPixels = 28f;
+        private const float BoxSelectionClickThresholdPixels = 6f;
+        private const float BoxSelectionVisibilityTolerance = 0.45f;
         private const float HandleRadiusPixels = 14f;
         private const int MaxOutlinerDrawRows = 180;
         private const int MaxWorldHintLines = 650;
@@ -42,9 +51,13 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float AnchorFollowMaximumDistance = 10f;
         private const int AnchorFollowMaximumSearchRadius = 8;
         private const float SymmetryCounterpartCenterTolerance = 0.075f;
+        private const float LeftStackDefaultBottomRatio = 0.34f;
+        private const float RightStackDefaultBottomRatio = 0.38f;
         private static Rect s_meshPaletteRect = new Rect(18f, 110f, 480f, 1050f);
         private static Rect s_rightPanelRect = Rect.zero;
         private static int s_layoutGeneration = -1;
+        private static float s_leftStackBottomRatio = LeftStackDefaultBottomRatio;
+        private static float s_rightStackBottomRatio = RightStackDefaultBottomRatio;
         private static bool s_showMeshPalette = true;
         private static bool s_showInspectorPanel = true;
         private static bool s_showOutlinerPanel = true;
@@ -54,6 +67,9 @@ namespace DecoLimitLifter.DecorationEditMode
         private static bool s_anchorMenuOpen;
         private static bool s_anchorFollowDecoration;
         private static float s_anchorFollowDistance = AnchorFollowMinimumDistance;
+        private static bool s_surfaceExtraShelfOpen;
+        private static SurfaceExtraTool s_surfaceExtraTool = SurfaceExtraTool.Path;
+        private static readonly DecorationGeneratorSettings s_generatorSettings = new DecorationGeneratorSettings();
 
         private readonly cBuild _build;
         private readonly int _modalWindowId = "EndlessShapesUnlimited.DecorationEditMode.Modal".GetHashCode();
@@ -72,11 +88,23 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool _resizingRightPanel;
         private Rect _rightPanelResizeStart;
         private Vector2 _rightPanelResizeMouseStart;
+        private Rect _anchorSettingsButtonScreenRect;
         private int _layoutResetGeneration = s_layoutGeneration;
+        private float _leftStackBottomRatio = s_leftStackBottomRatio;
+        private float _rightStackBottomRatio = s_rightStackBottomRatio;
+        private StackDividerKind _draggingStackDivider;
+        private float _stackDividerDragStartMouseY;
+        private float _stackDividerDragStartBottomRatio;
         private bool _meshPreviewGrid = s_meshPreviewGrid;
         private bool _textInputFocused;
         private bool _viewModeMenuOpen;
         private bool _anchorMenuOpen = s_anchorMenuOpen;
+        private DecorationSelectionMode _selectionMode = DecorationSelectionMode.Single;
+        private bool _selectionXray;
+        private bool _boxSelecting;
+        private Vector2 _boxSelectStartMouse;
+        private Vector2 _boxSelectCurrentMouse;
+        private int _boxSelectCandidateCount;
         private bool _showMeshPalette = s_showMeshPalette;
         private bool _showInspectorPanel = s_showInspectorPanel;
         private bool _showOutlinerPanel = s_showOutlinerPanel;
@@ -118,6 +146,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private float _applyCancelAttentionUntil = -1f;
         private DecorationEditorViewMode _viewMode = DecorationEditorViewMode.Mixed;
         private DecorationEditorTool _tool = DecorationEditorTool.Select;
+        private DecorationEditorTool _toolBeforePaint = DecorationEditorTool.Select;
+        private bool _showMeshPaletteBeforePaint = s_showMeshPalette;
         private DecorationTransformOrientation _transformOrientation = s_transformOrientation;
         private DecorationEditAxis _dragAxis;
         private Vector2 _dragMouseStart;
@@ -127,6 +157,10 @@ namespace DecoLimitLifter.DecorationEditMode
         private Vector3 _freeDragCameraUp;
         private float _freeDragMetresPerPixel;
         private DecorationEditSnapshot _dragSnapshotStart;
+        private Decoration[] _multiTransformDecorations = Array.Empty<Decoration>();
+        private DecorationEditSnapshot[] _multiTransformBefore = Array.Empty<DecorationEditSnapshot>();
+        private Vector3[] _multiTransformStartCenters = Array.Empty<Vector3>();
+        private Vector3 _multiTransformPivotStart;
         private DecorationEditAxis _rotateDragAxis;
         private Vector2 _rotateDragMouseStart;
         private Vector2 _rotateDragCenterScreen;
@@ -181,6 +215,24 @@ namespace DecoLimitLifter.DecorationEditMode
         private Vector3 _surfaceFreeDragCameraRight;
         private Vector3 _surfaceFreeDragCameraUp;
         private float _surfaceFreeDragMetresPerPixel = 0.01f;
+        private readonly DecorationGeneratorDraft _generatorDraft = new DecorationGeneratorDraft();
+        private readonly DecorationGeneratorSettings _generatorSettings = s_generatorSettings;
+        private DecorationGeneratorPlan _generatorPlan;
+        private string _generatorMessage = "Open Extra, then draw a path or place a circle center.";
+        private bool _surfaceExtraShelfOpen = s_surfaceExtraShelfOpen;
+        private SurfaceExtraTool _surfaceExtraTool = s_surfaceExtraTool;
+        private Vector2 _generatorScroll;
+        private string _generatorDiameterText = "0.10";
+        private string _generatorRadiusText = "2.00";
+        private string _generatorSegmentsText = "24";
+        private string _generatorColorText = "0";
+        private string _generatorMaterialText = string.Empty;
+        private DecorationEditAxis _generatorDragAxis;
+        private Vector2 _generatorDragMouseStart;
+        private Vector3 _generatorDragPointStart;
+        private Vector3 _generatorFreeDragCameraRight;
+        private Vector3 _generatorFreeDragCameraUp;
+        private float _generatorFreeDragMetresPerPixel = 0.01f;
         private readonly string[] _positionText = new string[3];
         private readonly string[] _scaleText = new string[3];
         private readonly string[] _orientationText = new string[3];
@@ -216,7 +268,9 @@ namespace DecoLimitLifter.DecorationEditMode
             _scaleDragAxis != DecorationEditAxis.None ||
             _anchorDragAxis != DecorationEditAxis.None ||
             _surfaceDragAxis != DecorationEditAxis.None ||
-            _surfaceDraft.HasDraft;
+            _generatorDragAxis != DecorationEditAxis.None ||
+            _surfaceDraft.HasDraft ||
+            _generatorDraft.HasDraft;
 
         internal DecorationEditSession(cBuild build)
         {
@@ -242,6 +296,7 @@ namespace DecoLimitLifter.DecorationEditMode
             RefreshForecast(force: true);
             _materialCatalog = BuildMaterialCatalog();
             _showMaterialPicker = true;
+            SyncGeneratorTextFromSettings();
         }
 
         internal bool CanSwitchToSmartBuild(out string reason)
@@ -264,7 +319,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
-            if (_surfaceDraft.HasDraft)
+            if (_surfaceDraft.HasDraft || _generatorDraft.HasDraft)
             {
                 reason = "Place or clear the Surface draft before switching to Smart Builder.";
                 return false;
@@ -274,7 +329,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 _rotateDragAxis != DecorationEditAxis.None ||
                 _scaleDragAxis != DecorationEditAxis.None ||
                 _anchorDragAxis != DecorationEditAxis.None ||
-                _surfaceDragAxis != DecorationEditAxis.None)
+                _surfaceDragAxis != DecorationEditAxis.None ||
+                _generatorDragAxis != DecorationEditAxis.None)
             {
                 reason = "Finish the active Decoration Edit drag before switching modes.";
                 return false;
@@ -321,7 +377,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 _rotateDragAxis != DecorationEditAxis.None ||
                 _scaleDragAxis != DecorationEditAxis.None ||
                 _anchorDragAxis != DecorationEditAxis.None ||
-                _surfaceDragAxis != DecorationEditAxis.None)
+                _surfaceDragAxis != DecorationEditAxis.None ||
+                _generatorDragAxis != DecorationEditAxis.None)
             {
                 reason = "Finish the active Decoration Edit drag before switching modes.";
                 return false;
@@ -334,6 +391,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
+            if (_tool == DecorationEditorTool.Paint)
+                _showMeshPalette = _showMeshPaletteBeforePaint;
             _tool = DecorationEditorTool.Surface;
             _viewModeMenuOpen = false;
             _anchorMenuOpen = false;
@@ -341,7 +400,7 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
-        internal void End(bool apply, bool notify = true)
+        internal void End(bool apply, bool notify = true, bool preserveSharedHud = false)
         {
             if (!Active)
                 return;
@@ -363,6 +422,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 _hits.Clear();
                 _outlinerRows.Clear();
                 _selection.Clear();
+                _boxSelecting = false;
+                _boxSelectCandidateCount = 0;
+                ClearMultiTransformState();
                 _meshByGuid.Clear();
                 _meshCatalog.Clear();
                 _selected = null;
@@ -381,7 +443,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 _anchorDragSnapshotStart = null;
                 _anchorDragSymmetryFollow = null;
                 _anchorPreviewValid = false;
-                DecorationEditorOverlay.Clear();
+                if (!preserveSharedHud)
+                    DecorationEditorOverlay.Clear();
                 _viewModeMenuOpen = false;
                 _anchorMenuOpen = false;
                 _placingMesh = null;
@@ -408,6 +471,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!Active)
                 return;
 
+            EsuHudNotifications.SetActiveSource(CurrentModeLogSource());
             _lastMouseGui = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
             DecorationEditorInputScope.SetMouseOverEditorUi(IsMouseOverEditorUi(_lastMouseGui));
             if (DecorationEditorInputScope.MouseOverEditorUi &&
@@ -508,7 +572,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 _rotateDragAxis != DecorationEditAxis.None ||
                 _scaleDragAxis != DecorationEditAxis.None ||
                 _anchorDragAxis != DecorationEditAxis.None ||
-                _surfaceDragAxis != DecorationEditAxis.None)
+                _surfaceDragAxis != DecorationEditAxis.None ||
+                _boxSelecting ||
+                _draggingStackDivider != StackDividerKind.None)
                 return current.type != EventType.ScrollWheel;
 
             if (_placingMesh != null)
@@ -527,10 +593,19 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void DrawEditorShell()
         {
+            EsuHudNotifications.SetActiveSource(CurrentModeLogSource());
+            EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed());
             ApplyLayoutResetIfNeeded();
             Rect toolbarRect = ToolbarRect();
             Rect rightRect = RightPanelRect();
             Rect bottomRect = StatusRect(rightRect);
+            Rect bottomInnerScreen = EsuHudLayout.PanelInnerRect(bottomRect);
+            _anchorSettingsButtonScreenRect = BottomHeaderRects(
+                new Rect(
+                    bottomInnerScreen.x,
+                    bottomInnerScreen.y,
+                    bottomInnerScreen.width,
+                    EsuHudLayout.Scale(24f))).AnchorSettings;
             Rect meshRect = MeshPaletteRect();
             bool leftStackVisible = IsLeftPanelStackVisible();
             bool rightStackVisible = IsRightPanelStackVisible();
@@ -538,7 +613,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _mouseOverWindow = toolbarRect.Contains(mouse) ||
                                EsuHudNotifications.ContainsMouse(mouse) ||
                                (_viewModeMenuOpen && ViewModeMenuRect(toolbarRect).Contains(mouse)) ||
-                               (_anchorMenuOpen && AnchorMenuRect(toolbarRect).Contains(mouse)) ||
+                               (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
                                (rightStackVisible && rightRect.Contains(mouse)) ||
                                bottomRect.Contains(mouse) ||
                                (leftStackVisible && meshRect.Contains(mouse));
@@ -582,34 +657,51 @@ namespace DecoLimitLifter.DecorationEditMode
             GUI.Box(toolbarRect, GUIContent.none, DecorationEditorTheme.Panel);
             Rect toolbarInner = EsuHudLayout.PanelInnerRect(toolbarRect);
             GUILayout.BeginArea(toolbarInner);
-            DrawTopToolbar(toolbarInner);
+            DrawTopToolbar(toolbarInner, toolbarInner.position);
             GUILayout.EndArea();
             EsuHudNotifications.DrawExpandedPopup();
 
             DrawViewModeMenu(toolbarRect);
-            DrawAnchorMenu(toolbarRect);
 
             if (leftStackVisible)
             {
                 DrawLeftPanelStack(meshRect);
                 EsuHudLayout.DrawResizeGrip(meshRect, leftEdge: false);
+                EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(meshRect, leftEdge: false), "Drag to resize the left panel stack.");
             }
 
             if (rightStackVisible)
             {
                 DrawRightPanel(rightRect);
                 EsuHudLayout.DrawResizeGrip(rightRect, leftEdge: true);
+                EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(rightRect, leftEdge: true), "Drag to resize the right panel stack.");
             }
 
             GUI.Box(bottomRect, GUIContent.none, DecorationEditorTheme.Panel);
             Rect bottomInner = EsuHudLayout.PanelInnerRect(bottomRect);
             GUILayout.BeginArea(bottomInner);
-            DrawBottomPanel(bottomInner.height);
+            DrawBottomPanel(bottomInner.width, bottomInner.height);
             GUILayout.EndArea();
+            DrawAnchorMenu();
 
             DrawMeshPreviewCard();
+            DrawBoxSelectionMarquee();
+            EsuConsoleWindow.Draw();
+            EsuCursorTooltip.Draw();
             PersistPanelState();
         }
+
+        private bool TooltipInputSuppressed() =>
+            _dragAxis != DecorationEditAxis.None ||
+            _rotateDragAxis != DecorationEditAxis.None ||
+            _scaleDragAxis != DecorationEditAxis.None ||
+            _anchorDragAxis != DecorationEditAxis.None ||
+            _surfaceDragAxis != DecorationEditAxis.None ||
+            _boxSelecting ||
+            _draggingMeshPalette ||
+            _resizingMeshPalette ||
+            _resizingRightPanel ||
+            _draggingStackDivider != StackDividerKind.None;
 
         private Rect ToolbarRect()
         {
@@ -659,6 +751,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private float BottomPanelHeight()
         {
+            if (IsSurfaceMode && _surfaceExtraShelfOpen)
+                return Mathf.Clamp(Screen.height * 0.24f, EsuHudLayout.Scale(188f), EsuHudLayout.Scale(268f));
             return Mathf.Clamp(Screen.height * 0.105f, EsuHudLayout.Scale(88f), EsuHudLayout.Scale(112f));
         }
 
@@ -708,6 +802,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
             _meshPaletteRect = DefaultMeshPaletteRect();
             _rightPanelRect = DefaultRightPanelRect();
+            _leftStackBottomRatio = LeftStackDefaultBottomRatio;
+            _rightStackBottomRatio = RightStackDefaultBottomRatio;
+            s_leftStackBottomRatio = _leftStackBottomRatio;
+            s_rightStackBottomRatio = _rightStackBottomRatio;
+            _draggingStackDivider = StackDividerKind.None;
             _layoutResetGeneration = EsuHudLayout.ResetGeneration;
             s_layoutGeneration = _layoutResetGeneration;
         }
@@ -720,8 +819,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private bool IsMouseOverEditorUi(Vector2 mouse) =>
             ToolbarRect().Contains(mouse) ||
+            EsuHudNotifications.ContainsMouse(mouse) ||
             (_viewModeMenuOpen && ViewModeMenuRect(ToolbarRect()).Contains(mouse)) ||
-            (_anchorMenuOpen && AnchorMenuRect(ToolbarRect()).Contains(mouse)) ||
+            (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
             (IsRightPanelStackVisible() && RightPanelRect().Contains(mouse)) ||
             StatusRect(RightPanelRect()).Contains(mouse) ||
             (IsLeftPanelStackVisible() && MeshPaletteRect().Contains(mouse));
@@ -736,9 +836,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             Rect title = new Rect(meshRect.x, meshRect.y, meshRect.width, EsuHudLayout.Scale(28f));
+            if (current.type == EventType.MouseDown)
+                _draggingMeshPalette = false;
             if (current.type == EventType.MouseDown &&
                 current.button == 0 &&
-                title.Contains(current.mousePosition))
+                title.Contains(current.mousePosition) &&
+                !ShouldSkipLeftPanelDrag(current.mousePosition, meshRect))
             {
                 _draggingMeshPalette = true;
                 _meshPaletteDragOffset = current.mousePosition - new Vector2(meshRect.x, meshRect.y);
@@ -765,6 +868,16 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        private bool ShouldSkipLeftPanelDrag(Vector2 mouse, Rect leftPanelRect)
+        {
+            bool showBuilderPanel = IsSurfaceMode || _tool == DecorationEditorTool.Paint || _showMeshPalette;
+            if (showBuilderPanel || !_showInspectorPanel)
+                return false;
+
+            Rect hideRect = InspectorHeaderHideRect(InspectorHeaderRect(leftPanelRect, localToPanel: false));
+            return hideRect.Contains(mouse);
+        }
+
         private void HandlePanelResize(
             ref Rect rect,
             ref bool resizing,
@@ -783,6 +896,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             Rect grip = EsuHudLayout.ResizeGripRect(rect, resizeFromLeft);
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                resizing &&
+                !grip.Contains(current.mousePosition))
+            {
+                resizing = false;
+            }
+
             if (current.type == EventType.MouseDown &&
                 current.button == 0 &&
                 grip.Contains(current.mousePosition))
@@ -824,7 +945,11 @@ namespace DecoLimitLifter.DecorationEditMode
             s_meshPaletteRect = _meshPaletteRect;
             s_rightPanelRect = _rightPanelRect;
             s_layoutGeneration = _layoutResetGeneration;
-            s_showMeshPalette = _showMeshPalette;
+            s_leftStackBottomRatio = _leftStackBottomRatio;
+            s_rightStackBottomRatio = _rightStackBottomRatio;
+            s_showMeshPalette = _tool == DecorationEditorTool.Paint
+                ? _showMeshPaletteBeforePaint
+                : _showMeshPalette;
             s_showInspectorPanel = _showInspectorPanel;
             s_showOutlinerPanel = _showOutlinerPanel;
             s_showAnchorPanel = _showAnchorPanel;
@@ -833,22 +958,27 @@ namespace DecoLimitLifter.DecorationEditMode
             s_anchorMenuOpen = _anchorMenuOpen;
             s_anchorFollowDecoration = _anchorFollowDecoration;
             s_anchorFollowDistance = _anchorFollowDistance;
+            s_surfaceExtraShelfOpen = _surfaceExtraShelfOpen;
+            s_surfaceExtraTool = _surfaceExtraTool;
         }
 
-        private void DrawTopToolbar(Rect toolbarRect)
+        private void DrawTopToolbar(Rect toolbarRect, Vector2 toolbarScreenOrigin)
         {
-            float leftRailWidth = EsuHudLayout.ToolbarLeftRailWidth(toolbarRect.width);
-            float notificationWidth = EsuHudLayout.ToolbarNotificationWidth(toolbarRect.width);
-            float rightRailWidth = EsuHudLayout.ToolbarRightControlsWidth(toolbarRect.width);
-            float gap = EsuHudLayout.ToolbarGap;
+            EsuHudLayout.ToolbarBudget budget = EsuHudLayout.CalculateToolbarBudget(toolbarRect.width);
 
             GUILayout.BeginHorizontal();
-            GUILayout.BeginHorizontal(GUILayout.Width(leftRailWidth));
+            GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth));
             {
                 ModeSwitchButton();
-                if (!IsSurfaceMode)
+                if (IsSurfaceMode)
                 {
-                    ToolButton(DecorationEditorTool.Select, "select", "Select", "Click decoration centers or outliner rows.");
+                    SymmetryButton(DecorationEditAxis.X);
+                    SymmetryButton(DecorationEditAxis.Y);
+                    SymmetryButton(DecorationEditAxis.Z);
+                }
+                else
+                {
+                    ToolButton(DecorationEditorTool.Select, "select", SelectToolLabel(), "Click decoration centers or drag a selection box.");
                     ToolButton(DecorationEditorTool.Move, "move", "Move", "Drag XYZ handles. Snaps to 0.05m.");
                     ToolButton(DecorationEditorTool.Rotate, "rotate", "Rotate", "Drag RGB rotation rings. Snaps to 5 degrees.");
                     ToolButton(DecorationEditorTool.Scale, "scale", "Scale", "Drag RGB scale handles. Snaps to 0.05.");
@@ -864,10 +994,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.FlexibleSpace();
             }
             GUILayout.EndHorizontal();
-            GUILayout.Space(gap);
-            EsuHudNotifications.DrawToolbarSlot(toolbarRect, notificationWidth, CurrentModeToolbarLabel());
-            GUILayout.Space(gap);
-            GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth));
+            GUILayout.Space(budget.Gap);
+            EsuHudNotifications.DrawToolbarSlot(
+                toolbarRect,
+                budget.NotificationWidth,
+                CurrentModeToolbarLabel(),
+                toolbarScreenOrigin);
+            GUILayout.Space(budget.Gap);
+            GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));
             PanelToggle("mesh", "Pal", ref _showMeshPalette, "Show or hide the mesh palette.");
             PanelToggle("outliner", "Out", ref _showOutlinerPanel, "Show or hide the decoration outliner.");
             PanelToggle("settings", "Insp", ref _showInspectorPanel, "Show or hide the selected decoration inspector.");
@@ -893,6 +1027,11 @@ namespace DecoLimitLifter.DecorationEditMode
             IsSurfaceMode
                 ? "ESU mode: Surface Builder."
                 : "ESU mode: Decoration Edit.";
+
+        private string CurrentModeLogSource() =>
+            IsSurfaceMode
+                ? "Surface Builder"
+                : "Decoration Edit";
 
         private void ModeSwitchButton()
         {
@@ -969,11 +1108,11 @@ namespace DecoLimitLifter.DecorationEditMode
             if (IconButton(
                     "anchor",
                     "Anchor",
-                    DecorationEditorTheme.Button,
-                    "Open anchor retethering options. Anchor follow is also available in the bottom status panel."))
+                    DecorationEditorTheme.ToolButton(_tool == DecorationEditorTool.Anchor),
+                    "Select and move decoration anchors. Anchor settings are in the bottom status panel."))
             {
-                _tool = DecorationEditorTool.Anchor;
-                _anchorMenuOpen = !_anchorMenuOpen;
+                SetActiveTool(DecorationEditorTool.Anchor);
+                _anchorMenuOpen = false;
                 _viewModeMenuOpen = false;
             }
         }
@@ -1012,9 +1151,117 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
                 else
                 {
-                    _tool = tool;
+                    SetActiveTool(tool);
                 }
             }
+        }
+
+        private void SetActiveTool(DecorationEditorTool tool)
+        {
+            if (tool == DecorationEditorTool.Paint)
+            {
+                TogglePaintTool();
+                return;
+            }
+
+            if (_tool == DecorationEditorTool.Paint)
+                _showMeshPalette = _showMeshPaletteBeforePaint;
+            if (tool == DecorationEditorTool.Select && _tool == DecorationEditorTool.Select)
+            {
+                ToggleSelectionMode();
+                return;
+            }
+
+            if (tool != DecorationEditorTool.Select)
+                CancelBoxSelection();
+            _tool = tool;
+        }
+
+        private string SelectToolLabel() =>
+            _selectionMode == DecorationSelectionMode.Box ? "Box" : "Select";
+
+        private void ToggleSelectionMode()
+        {
+            if (_selectionMode == DecorationSelectionMode.Box)
+            {
+                _selectionMode = DecorationSelectionMode.Single;
+                CancelBoxSelection();
+            }
+            else
+            {
+                _selectionMode = DecorationSelectionMode.Box;
+            }
+        }
+
+        private void TogglePaintTool()
+        {
+            if (_tool == DecorationEditorTool.Paint)
+            {
+                _tool = IsPaintRestorableTool(_toolBeforePaint)
+                    ? _toolBeforePaint
+                    : DecorationEditorTool.Select;
+                _showMeshPalette = _showMeshPaletteBeforePaint;
+                return;
+            }
+
+            _toolBeforePaint = IsPaintRestorableTool(_tool)
+                ? _tool
+                : DecorationEditorTool.Select;
+            _showMeshPaletteBeforePaint = _showMeshPalette;
+            _showMeshPalette = true;
+            CancelBoxSelection();
+            _tool = DecorationEditorTool.Paint;
+            _viewModeMenuOpen = false;
+            _anchorMenuOpen = false;
+        }
+
+        private static bool IsPaintRestorableTool(DecorationEditorTool tool) =>
+            tool != DecorationEditorTool.Paint &&
+            tool != DecorationEditorTool.Surface &&
+            tool != DecorationEditorTool.Mesh &&
+            tool != DecorationEditorTool.Focus;
+
+        private void DrawBoxSelectionMarquee()
+        {
+            if (!_boxSelecting)
+                return;
+
+            Rect rect = BoxSelectionRect();
+            Color previous = GUI.color;
+            try
+            {
+                GUI.color = new Color(0.05f, 0.9f, 1f, 0.14f);
+                GUI.DrawTexture(rect, Texture2D.whiteTexture);
+                GUI.color = new Color(0.05f, 0.9f, 1f, 0.95f);
+                DrawGuiBorder(rect, Mathf.Max(1f, EsuHudLayout.Scale(1f)));
+
+                string label = _boxSelectCandidateCount.ToString("N0", CultureInfo.InvariantCulture);
+                Rect labelRect = new Rect(
+                    rect.xMin,
+                    Mathf.Max(0f, rect.yMin - EsuHudLayout.Scale(22f)),
+                    EsuHudLayout.Scale(118f),
+                    EsuHudLayout.Scale(20f));
+                GUI.color = new Color(0f, 0.08f, 0.1f, 0.86f);
+                GUI.DrawTexture(labelRect, Texture2D.whiteTexture);
+                GUI.color = new Color(1f, 1f, 1f, 1f);
+                GUI.Label(
+                    labelRect,
+                    label + (_selectionXray ? " x-ray" : " visible"),
+                    DecorationEditorTheme.Mini);
+            }
+            finally
+            {
+                GUI.color = previous;
+            }
+        }
+
+        private static void DrawGuiBorder(Rect rect, float thickness)
+        {
+            thickness = Mathf.Max(1f, thickness);
+            GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, thickness), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(rect.x, rect.yMax - thickness, rect.width, thickness), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(rect.x, rect.y, thickness, rect.height), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(rect.xMax - thickness, rect.y, thickness, rect.height), Texture2D.whiteTexture);
         }
 
         private void DrawViewModeMenu(Rect toolbarRect)
@@ -1108,7 +1355,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 height);
         }
 
-        private Rect AnchorMenuRect(Rect toolbarRect)
+        private Rect AnchorMenuRect()
         {
             float margin = EsuHudLayout.Scale(8f);
             float maxWidth = Mathf.Max(1f, Screen.width - margin * 2f);
@@ -1116,12 +1363,15 @@ namespace DecoLimitLifter.DecorationEditMode
             float width = Mathf.Clamp(AnchorMenuPreferredWidth(), minWidth, maxWidth);
             bool wrapsPresets = AnchorMenuNeedsPresetWrap(width);
             float height = EsuHudLayout.Scale(wrapsPresets ? 122f : 88f);
+            Rect button = _anchorSettingsButtonScreenRect.width > 1f
+                ? _anchorSettingsButtonScreenRect
+                : new Rect(Screen.width - width - margin, Screen.height - height - margin, width, height);
             float x = Mathf.Clamp(
-                toolbarRect.x + EsuHudLayout.Scale(344f),
+                button.xMax - width,
                 margin,
                 Screen.width - width - margin);
             float y = Mathf.Clamp(
-                toolbarRect.yMax + EsuHudLayout.Scale(4f),
+                button.y - height - EsuHudLayout.Scale(4f),
                 margin,
                 Mathf.Max(margin, Screen.height - height - margin));
             return new Rect(x, y, width, height);
@@ -1150,12 +1400,12 @@ namespace DecoLimitLifter.DecorationEditMode
             return available < firstRowWidth;
         }
 
-        private void DrawAnchorMenu(Rect toolbarRect)
+        private void DrawAnchorMenu()
         {
             if (!_anchorMenuOpen)
                 return;
 
-            Rect rect = AnchorMenuRect(toolbarRect);
+            Rect rect = AnchorMenuRect();
             bool wrapsPresets = AnchorMenuNeedsPresetWrap(rect.width);
             float padding = EsuHudLayout.Scale(8f);
             float gap = EsuHudLayout.Scale(6f);
@@ -1168,7 +1418,9 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginArea(rect);
             if (GUI.Button(
                     new Rect(x, y, EsuHudLayout.Scale(86f), rowHeight),
-                    _anchorFollowDecoration ? "Follow: on" : "Follow: off",
+                    new GUIContent(
+                        _anchorFollowDecoration ? "Follow: on" : "Follow: off",
+                        "Toggle automatic anchor retethering while moving a decoration."),
                     DecorationEditorTheme.ToolButton(_anchorFollowDecoration)))
             {
                 ToggleAnchorFollow();
@@ -1180,14 +1432,16 @@ namespace DecoLimitLifter.DecorationEditMode
                 "Range",
                 DecorationEditorTheme.Mini);
             x += EsuHudLayout.Scale(42f) + compactGap;
+            Rect anchorDistanceRect = new Rect(x, y + EsuHudLayout.Scale(2f), EsuHudLayout.Scale(52f), EsuHudLayout.Scale(22f));
             _anchorFollowDistanceText = GUI.TextField(
-                new Rect(x, y + EsuHudLayout.Scale(2f), EsuHudLayout.Scale(52f), EsuHudLayout.Scale(22f)),
+                anchorDistanceRect,
                 _anchorFollowDistanceText ?? string.Empty,
                 DecorationEditorTheme.TextField);
+            EsuCursorTooltip.Register(anchorDistanceRect, "Set the anchor follow distance in metres.");
             x += EsuHudLayout.Scale(52f) + compactGap;
             if (GUI.Button(
                     new Rect(x, y + EsuHudLayout.Scale(1f), EsuHudLayout.Scale(42f), EsuHudLayout.Scale(24f)),
-                    "Set",
+                    new GUIContent("Set", "Apply the anchor follow distance."),
                     DecorationEditorTheme.Button))
             {
                 ApplyAnchorFollowDistanceText();
@@ -1234,7 +1488,7 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (GUI.Button(
                     rect,
-                    label,
+                    new GUIContent(label, "Set the anchor follow distance to " + label + "."),
                     DecorationEditorTheme.ToolButton(Math.Abs(_anchorFollowDistance - distance) < 0.001f)))
             {
                 SetAnchorFollowDistance(distance);
@@ -1275,7 +1529,7 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (GUI.Button(
                     rect,
-                    label,
+                    new GUIContent(label, "Switch decoration view to " + ViewModeDisplayName(mode) + "."),
                     DecorationEditorTheme.ToolButton(_viewMode == mode)))
             {
                 SelectViewMode(mode);
@@ -1363,20 +1617,50 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             Rect meshRect;
+            Rect dividerRect;
             Rect inspectorRect;
             SplitVerticalStack(
                 stackRect,
                 showBuilderPanel,
                 _showInspectorPanel,
-                Mathf.Clamp(stackRect.height * 0.34f, EsuHudLayout.Scale(125f), EsuHudLayout.Scale(342f)),
-                EsuHudLayout.Scale(8f),
+                _leftStackBottomRatio,
+                StackDividerGap(),
+                StackDividerMinimumPanelHeight(),
                 out meshRect,
-                out inspectorRect);
+                out dividerRect,
+                out inspectorRect,
+                out _leftStackBottomRatio);
+            if (dividerRect.height > 0f)
+            {
+                HandleStackDividerDrag(
+                    StackDividerKind.Left,
+                    stackRect,
+                    dividerRect,
+                    StackDividerGap(),
+                    ref _leftStackBottomRatio);
+                SplitVerticalStack(
+                    stackRect,
+                    showBuilderPanel,
+                    _showInspectorPanel,
+                    _leftStackBottomRatio,
+                    StackDividerGap(),
+                    StackDividerMinimumPanelHeight(),
+                    out meshRect,
+                    out dividerRect,
+                    out inspectorRect,
+                    out _leftStackBottomRatio);
+            }
+            else
+            {
+                ClearStackDividerDrag(StackDividerKind.Left);
+            }
 
             if (showBuilderPanel)
                 DrawMeshPalette(meshRect);
             if (_showInspectorPanel)
                 DrawInspectorPanel(inspectorRect);
+            if (dividerRect.height > 0f)
+                DrawStackDividerGrip(dividerRect, StackDividerKind.Left);
         }
 
         private void DrawRightPanel(Rect rightRect)
@@ -1385,42 +1669,82 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             Rect outlinerRect;
+            Rect dividerRect;
             Rect anchorRect;
             SplitVerticalStack(
                 rightRect,
                 _showOutlinerPanel,
                 _showAnchorPanel,
-                Mathf.Clamp(rightRect.height * 0.38f, EsuHudLayout.Scale(170f), EsuHudLayout.Scale(310f)),
-                EsuHudLayout.Scale(8f),
+                _rightStackBottomRatio,
+                StackDividerGap(),
+                StackDividerMinimumPanelHeight(),
                 out outlinerRect,
-                out anchorRect);
+                out dividerRect,
+                out anchorRect,
+                out _rightStackBottomRatio);
+            if (dividerRect.height > 0f)
+            {
+                HandleStackDividerDrag(
+                    StackDividerKind.Right,
+                    rightRect,
+                    dividerRect,
+                    StackDividerGap(),
+                    ref _rightStackBottomRatio);
+                SplitVerticalStack(
+                    rightRect,
+                    _showOutlinerPanel,
+                    _showAnchorPanel,
+                    _rightStackBottomRatio,
+                    StackDividerGap(),
+                    StackDividerMinimumPanelHeight(),
+                    out outlinerRect,
+                    out dividerRect,
+                    out anchorRect,
+                    out _rightStackBottomRatio);
+            }
+            else
+            {
+                ClearStackDividerDrag(StackDividerKind.Right);
+            }
 
             if (_showOutlinerPanel)
                 DrawOutlinerPanel(outlinerRect);
             if (_showAnchorPanel)
                 DrawAnchorPanel(anchorRect);
+            if (dividerRect.height > 0f)
+                DrawStackDividerGrip(dividerRect, StackDividerKind.Right);
         }
 
         private static void SplitVerticalStack(
             Rect stackRect,
             bool showTop,
             bool showBottom,
-            float preferredBottomHeight,
+            float bottomRatio,
             float gap,
+            float minimumPanelHeight,
             out Rect topRect,
-            out Rect bottomRect)
+            out Rect dividerRect,
+            out Rect bottomRect,
+            out float resolvedBottomRatio)
         {
             topRect = Rect.zero;
+            dividerRect = Rect.zero;
             bottomRect = Rect.zero;
+            resolvedBottomRatio = ValidStackRatio(bottomRatio);
             if (showTop && showBottom)
             {
-                float bottomHeight = Mathf.Clamp(
-                    preferredBottomHeight,
-                    Mathf.Min(EsuHudLayout.Scale(96f), stackRect.height * 0.5f),
-                    Mathf.Max(EsuHudLayout.Scale(96f), stackRect.height - gap - EsuHudLayout.Scale(120f)));
-                float topHeight = Mathf.Max(EsuHudLayout.Scale(96f), stackRect.height - bottomHeight - gap);
+                float availableHeight = StackAvailableHeight(stackRect, gap);
+                float bottomHeight = ClampStackBottomHeight(
+                    availableHeight * resolvedBottomRatio,
+                    availableHeight,
+                    minimumPanelHeight);
+                resolvedBottomRatio = availableHeight > 0f
+                    ? bottomHeight / availableHeight
+                    : resolvedBottomRatio;
+                float topHeight = Mathf.Max(0f, availableHeight - bottomHeight);
                 topRect = new Rect(stackRect.x, stackRect.y, stackRect.width, topHeight);
-                bottomRect = new Rect(stackRect.x, topRect.yMax + gap, stackRect.width, stackRect.yMax - topRect.yMax - gap);
+                dividerRect = new Rect(stackRect.x, topRect.yMax, stackRect.width, Mathf.Max(0f, gap));
+                bottomRect = new Rect(stackRect.x, dividerRect.yMax, stackRect.width, bottomHeight);
                 return;
             }
 
@@ -1430,24 +1754,132 @@ namespace DecoLimitLifter.DecorationEditMode
                 bottomRect = stackRect;
         }
 
+        private static float StackDividerGap() => EsuHudLayout.Scale(8f);
+
+        private static float StackDividerMinimumPanelHeight() => EsuHudLayout.Scale(96f);
+
+        private static float StackAvailableHeight(Rect stackRect, float gap) =>
+            Mathf.Max(0f, stackRect.height - Mathf.Max(0f, gap));
+
+        private static float ValidStackRatio(float ratio)
+        {
+            if (float.IsNaN(ratio) || float.IsInfinity(ratio))
+                return 0.5f;
+            return Mathf.Clamp01(ratio);
+        }
+
+        private static float ClampStackBottomHeight(
+            float bottomHeight,
+            float availableHeight,
+            float minimumPanelHeight)
+        {
+            if (availableHeight <= 0f)
+                return 0f;
+
+            float minimum = Mathf.Min(Mathf.Max(0f, minimumPanelHeight), availableHeight * 0.5f);
+            float maximum = Mathf.Max(minimum, availableHeight - minimum);
+            return Mathf.Clamp(bottomHeight, minimum, maximum);
+        }
+
+        private static float ClampStackBottomRatioFromHeight(
+            float bottomHeight,
+            Rect stackRect,
+            float gap,
+            float minimumPanelHeight)
+        {
+            float availableHeight = StackAvailableHeight(stackRect, gap);
+            if (availableHeight <= 0f)
+                return 0.5f;
+
+            return ClampStackBottomHeight(
+                bottomHeight,
+                availableHeight,
+                minimumPanelHeight) / availableHeight;
+        }
+
+        private void HandleStackDividerDrag(
+            StackDividerKind divider,
+            Rect stackRect,
+            Rect dividerRect,
+            float gap,
+            ref float bottomRatio)
+        {
+            Event current = Event.current;
+            if (current == null || divider == StackDividerKind.None || dividerRect.height <= 0f)
+                return;
+
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                dividerRect.Contains(current.mousePosition))
+            {
+                _draggingStackDivider = divider;
+                _stackDividerDragStartMouseY = current.mousePosition.y;
+                _stackDividerDragStartBottomRatio = bottomRatio;
+                current.Use();
+                return;
+            }
+
+            if (_draggingStackDivider != divider)
+                return;
+
+            if (current.type == EventType.MouseDrag)
+            {
+                float availableHeight = StackAvailableHeight(stackRect, gap);
+                float startBottomHeight = availableHeight * _stackDividerDragStartBottomRatio;
+                float deltaY = current.mousePosition.y - _stackDividerDragStartMouseY;
+                bottomRatio = ClampStackBottomRatioFromHeight(
+                    startBottomHeight - deltaY,
+                    stackRect,
+                    gap,
+                    StackDividerMinimumPanelHeight());
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp)
+            {
+                _draggingStackDivider = StackDividerKind.None;
+                current.Use();
+            }
+        }
+
+        private void ClearStackDividerDrag(StackDividerKind divider)
+        {
+            if (_draggingStackDivider == divider)
+                _draggingStackDivider = StackDividerKind.None;
+        }
+
+        private void DrawStackDividerGrip(Rect dividerRect, StackDividerKind divider)
+        {
+            Event current = Event.current;
+            bool active = _draggingStackDivider == divider;
+            bool hovered = current != null && dividerRect.Contains(current.mousePosition);
+            EsuHudLayout.DrawStackDividerGrip(dividerRect, active || hovered);
+            EsuCursorTooltip.Register(dividerRect, "Drag to resize the panels in this stack.");
+        }
+
         private void DrawOutlinerPanel(Rect rect)
         {
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
-            Rect inner = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
+            GUI.BeginGroup(rect);
+            Rect inner = new Rect(inset, inset, rect.width - inset * 2f, rect.height - inset * 2f);
             GUILayout.BeginArea(inner);
-            DrawOutliner(inner.height);
+            DrawOutliner(inner.width, inner.height);
             GUILayout.EndArea();
+            GUI.EndGroup();
         }
 
         private void DrawAnchorPanel(Rect rect)
         {
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
-            Rect inner = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
+            GUI.BeginGroup(rect);
+            Rect inner = new Rect(inset, inset, rect.width - inset * 2f, rect.height - inset * 2f);
             GUILayout.BeginArea(inner);
             DrawAnchorContext(inner.height);
             GUILayout.EndArea();
+            GUI.EndGroup();
         }
 
         private void DrawAnchorContext(float height)
@@ -1471,7 +1903,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 alwaysShowHorizontal: false,
                 alwaysShowVertical: true,
                 GUILayout.Height(Mathf.Max(
-                    EsuHudLayout.Scale(72f),
+                    0f,
                     height - EsuHudLayout.Scale(_tool == DecorationEditorTool.Anchor ? 84f : 52f))));
             foreach (Decoration decoration in rows)
             {
@@ -1481,7 +1913,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 string meshName = CompactText(MeshName(decoration.MeshGuid.Us), 36);
                 string detail = $"c{decoration.Color.Us} | {decoration.MeshGuid.Us.ToString("N").Substring(0, 8)}";
                 if (GUILayout.Button(
-                        new GUIContent(meshName + "  " + detail, DecorationEditorIconCatalog.Get("mesh")),
+                        new GUIContent(meshName + "  " + detail, DecorationEditorIconCatalog.Get("mesh"), "Select this decoration on the same anchor."),
                         style,
                         GUILayout.Height(EsuHudLayout.Scale(OutlinerRowHeight))))
                 {
@@ -1491,9 +1923,24 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.EndScrollView();
         }
 
-        private static void DrawCompactAnchorHeader()
+        private void DrawCompactAnchorHeader()
         {
-            DrawCompactIconHeader("Selected anchor", "anchor");
+            Rect headerRow = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(24f), GUILayout.ExpandWidth(true));
+            float gap = EsuHudLayout.Scale(6f);
+            float hideWidth = EsuHudLayout.Scale(58f);
+            Rect titleRect = new Rect(
+                headerRow.x,
+                headerRow.y,
+                Mathf.Max(0f, headerRow.width - hideWidth - gap),
+                headerRow.height);
+            DrawCompactIconHeader(titleRect, "Selected anchor", "anchor");
+            if (GUI.Button(
+                    new Rect(titleRect.xMax + gap, headerRow.y, hideWidth, headerRow.height),
+                    new GUIContent("Hide", "Hide the selected anchor panel."),
+                    DecorationEditorTheme.Button))
+            {
+                _showAnchorPanel = false;
+            }
         }
 
         private static void DrawCompactIconHeader(string text, string iconKey)
@@ -1512,18 +1959,37 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static void DrawCompactIconHeader(Rect rect, string text, string iconKey)
         {
-            GUI.Label(rect, "      " + text, DecorationEditorTheme.SubHeader);
+            GUI.Label(rect, GUIContent.none, DecorationEditorTheme.SubHeader);
 
             Texture icon = DecorationEditorIconCatalog.Get(iconKey);
-            if (icon == null)
-                return;
-
-            var iconRect = new Rect(
+            Rect iconRect = new Rect(
                 rect.x + EsuHudLayout.Scale(5f),
                 rect.y + EsuHudLayout.Scale(3f),
                 EsuHudLayout.Scale(16f),
                 EsuHudLayout.Scale(16f));
-            GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            Rect textRect = new Rect(
+                iconRect.xMax + EsuHudLayout.Scale(6f),
+                rect.y,
+                Mathf.Max(0f, rect.xMax - iconRect.xMax - EsuHudLayout.Scale(8f)),
+                rect.height);
+            if (textRect.width > 1f)
+                GUI.Label(textRect, text, CompactHeaderTextStyle());
+        }
+
+        private static GUIStyle CompactHeaderTextStyle()
+        {
+            var style = new GUIStyle(DecorationEditorTheme.SubHeader)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                clipping = TextClipping.Clip,
+                padding = new RectOffset(0, 0, 0, 0),
+                wordWrap = false
+            };
+            style.normal.background = null;
+            return style;
         }
 
         private IEnumerable<Decoration> SelectedAnchorDecorations(Vector3i tether)
@@ -1539,23 +2005,23 @@ namespace DecoLimitLifter.DecorationEditMode
                     decoration.TetherPoint.Us.Equals(tether)));
         }
 
-        private void DrawOutliner(float height)
+        private void DrawOutliner(float width, float height)
         {
             Rect headerRow = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(24f), GUILayout.ExpandWidth(true));
             float gap = EsuHudLayout.Scale(6f);
             float pinsWidth = EsuHudLayout.Scale(76f);
             float refreshWidth = EsuHudLayout.Scale(86f);
-            float actionWidth = pinsWidth + refreshWidth + gap * 2f;
-            float titleWidth = Mathf.Clamp(
-                headerRow.width - actionWidth,
-                EsuHudLayout.Scale(80f),
-                Mathf.Max(EsuHudLayout.Scale(80f), headerRow.width - actionWidth));
+            float hideWidth = EsuHudLayout.Scale(58f);
+            float actionWidth = pinsWidth + refreshWidth + hideWidth + gap * 3f;
+            float titleWidth = Mathf.Max(0f, headerRow.width - actionWidth);
             Rect titleRect = new Rect(headerRow.x, headerRow.y, titleWidth, headerRow.height);
             DrawCompactIconHeader(titleRect, "Outliner", "outliner");
             float buttonX = titleRect.xMax + gap;
             if (GUI.Button(
                     new Rect(buttonX, headerRow.y, pinsWidth, headerRow.height),
-                    _showTetherPins ? "Pins on" : "Pins off",
+                    new GUIContent(
+                        _showTetherPins ? "Pins on" : "Pins off",
+                        "Show or hide anchor pins in the viewport."),
                     DecorationEditorTheme.ToolButton(_showTetherPins)))
             {
                 _showTetherPins = !_showTetherPins;
@@ -1564,9 +2030,17 @@ namespace DecoLimitLifter.DecorationEditMode
             buttonX += pinsWidth + gap;
             if (GUI.Button(
                     new Rect(buttonX, headerRow.y, refreshWidth, headerRow.height),
-                    new GUIContent("Refresh", DecorationEditorIconCatalog.Get("create")),
+                    new GUIContent("Refresh", DecorationEditorIconCatalog.Get("create"), "Refresh the decoration outliner."),
                     DecorationEditorTheme.Button))
                 RefreshDecorationCache(force: true);
+            buttonX += refreshWidth + gap;
+            if (GUI.Button(
+                    new Rect(buttonX, headerRow.y, hideWidth, headerRow.height),
+                    new GUIContent("Hide", "Hide the outliner panel."),
+                    DecorationEditorTheme.Button))
+            {
+                _showOutlinerPanel = false;
+            }
 
             GUILayout.BeginHorizontal();
             GUILayout.Label(
@@ -1574,6 +2048,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.Width(EsuHudLayout.Scale(24f)),
                 GUILayout.Height(EsuHudLayout.Scale(22f)));
             _outlinerFilter = GUILayout.TextField(_outlinerFilter ?? string.Empty, DecorationEditorTheme.TextField);
+            EsuCursorTooltip.RegisterLast("Filter decorations by mesh name, construct, anchor, color, or GUID.");
             GUILayout.EndHorizontal();
 
             List<OutlinerRow> rows = FilterOutlinerRows();
@@ -1582,9 +2057,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 DecorationEditorTheme.Mini);
 
             float rowHeight = EsuHudLayout.Scale(OutlinerRowHeight);
+            float listHeight = Mathf.Max(0f, height - EsuHudLayout.Scale(76f));
             _outlinerScroll = GUILayout.BeginScrollView(
                 _outlinerScroll,
-                GUILayout.Height(Mathf.Max(EsuHudLayout.Scale(80f), height - EsuHudLayout.Scale(76f))));
+                GUILayout.Width(width),
+                GUILayout.Height(listHeight));
             int total = rows.Count;
             int first = Mathf.Max(0, Mathf.FloorToInt(_outlinerScroll.y / rowHeight) - 4);
             int last = Mathf.Min(total, first + MaxOutlinerDrawRows);
@@ -1610,9 +2087,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void DrawOutlinerRow(OutlinerRow row)
         {
-            GUILayout.BeginHorizontal();
             float rowHeight = EsuHudLayout.Scale(OutlinerRowHeight);
-            GUILayout.Space(row.Depth * EsuHudLayout.Scale(14f));
+            Rect rowRect = GUILayoutUtility.GetRect(1f, rowHeight, GUILayout.ExpandWidth(true));
             GUIStyle style = row.Decoration != null && _selection.Contains(row.Decoration)
                 ? DecorationEditorTheme.RowSelected
                 : DecorationEditorTheme.Row;
@@ -1624,11 +2100,7 @@ namespace DecoLimitLifter.DecorationEditMode
             string dirty = row.Decoration != null && ReferenceEquals(row.Decoration, _selected) && _dirty
                 ? " !"
                 : string.Empty;
-            string label = row.Label + dirty + (string.IsNullOrEmpty(row.Detail) ? string.Empty : "  " + row.Detail);
-            if (GUILayout.Button(
-                    new GUIContent(label, DecorationEditorIconCatalog.Get(icon)),
-                    style,
-                    GUILayout.Height(rowHeight)))
+            if (GUI.Button(rowRect, GUIContent.none, style))
             {
                 if (row.Kind == DecorationOutlinerRowKind.Construct)
                 {
@@ -1640,7 +2112,57 @@ namespace DecoLimitLifter.DecorationEditMode
                     Select(row.Decoration, row.Construct);
                 }
             }
-            GUILayout.EndHorizontal();
+            EsuCursorTooltip.Register(
+                rowRect,
+                row.Kind == DecorationOutlinerRowKind.Decoration
+                    ? "Select this decoration."
+                    : "Expand or collapse this outliner group.");
+
+            float iconSize = EsuHudLayout.Scale(18f);
+            float gap = EsuHudLayout.Scale(4f);
+            float indent = Mathf.Min(
+                row.Depth * EsuHudLayout.Scale(14f),
+                Mathf.Max(0f, rowRect.width - iconSize - gap));
+            Rect iconRect = new Rect(
+                rowRect.x + indent + gap,
+                rowRect.y + Mathf.Max(0f, (rowRect.height - iconSize) * 0.5f),
+                iconSize,
+                iconSize);
+            Texture texture = DecorationEditorIconCatalog.Get(icon);
+            if (texture != null)
+                GUI.DrawTexture(iconRect, texture, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            float textX = iconRect.xMax + gap;
+            float textWidth = Mathf.Max(0f, rowRect.xMax - textX - gap);
+            float detailWidth = string.IsNullOrEmpty(row.Detail)
+                ? 0f
+                : Mathf.Min(EsuHudLayout.Scale(142f), textWidth * 0.45f);
+            Rect detailRect = new Rect(rowRect.xMax - detailWidth - gap, rowRect.y, detailWidth, rowRect.height);
+            Rect labelRect = new Rect(
+                textX,
+                rowRect.y,
+                Mathf.Max(0f, detailRect.x - textX - gap),
+                rowRect.height);
+            GUIStyle textStyle = OutlinerRowTextStyle(style);
+            if (labelRect.width > 1f)
+                GUI.Label(labelRect, row.Label + dirty, textStyle);
+            if (detailRect.width > 1f)
+                GUI.Label(detailRect, row.Detail ?? string.Empty, textStyle);
+        }
+
+        private static GUIStyle OutlinerRowTextStyle(GUIStyle source)
+        {
+            var style = new GUIStyle(source)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                clipping = TextClipping.Clip,
+                padding = new RectOffset(0, 0, 0, 0)
+            };
+            style.normal.background = null;
+            style.hover.background = null;
+            style.active.background = null;
+            style.focused.background = null;
+            return style;
         }
 
         private void DrawInspector(float height)
@@ -1649,7 +2171,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 _inspectorScroll,
                 alwaysShowHorizontal: false,
                 alwaysShowVertical: true,
-                GUILayout.Height(Mathf.Max(EsuHudLayout.Scale(58f), height)));
+                GUILayout.Height(Mathf.Max(0f, height)));
             if (_selected == null || _selected.IsDeleted)
             {
                 GUILayout.Label("No decoration selected.", DecorationEditorTheme.Body);
@@ -1685,11 +2207,17 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginHorizontal();
             GUILayout.Label("X", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(12f)));
             values[0] = GUILayout.TextField(values[0] ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Width(EsuHudLayout.Scale(72f)));
+            EsuCursorTooltip.RegisterLast("Edit the " + label.ToLowerInvariant() + " X value.");
             GUILayout.Label("Y", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(12f)));
             values[1] = GUILayout.TextField(values[1] ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Width(EsuHudLayout.Scale(72f)));
+            EsuCursorTooltip.RegisterLast("Edit the " + label.ToLowerInvariant() + " Y value.");
             GUILayout.Label("Z", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(12f)));
             values[2] = GUILayout.TextField(values[2] ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Width(EsuHudLayout.Scale(72f)));
-            if (GUILayout.Button("Set", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(42f))))
+            EsuCursorTooltip.RegisterLast("Edit the " + label.ToLowerInvariant() + " Z value.");
+            if (GUILayout.Button(
+                    new GUIContent("Set", "Apply the typed " + label.ToLowerInvariant() + " values."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(42f))))
             {
                 if (TryParseVector(values, out Vector3 parsed))
                     apply(parsed);
@@ -1712,7 +2240,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         ? DecorationEditorTheme.ActiveButton
                         : DecorationEditorTheme.Button;
                     if (GUILayout.Button(
-                            color.ToString(CultureInfo.InvariantCulture),
+                            new GUIContent(color.ToString(CultureInfo.InvariantCulture), "Set the selected decoration paint color to #" + color.ToString(CultureInfo.InvariantCulture) + "."),
                             style,
                             GUILayout.Width(EsuHudLayout.Scale(36f)),
                             GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -1726,7 +2254,11 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginHorizontal();
             GUILayout.Label("Color", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
             _colorText = GUILayout.TextField(_colorText ?? string.Empty, DecorationEditorTheme.TextField);
-            if (GUILayout.Button("0-31", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(52f))))
+            EsuCursorTooltip.RegisterLast("Type a paint color from 0 to 31.");
+            if (GUILayout.Button(
+                    new GUIContent("0-31", "Apply the typed paint color."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(52f))))
             {
                 if (int.TryParse((_colorText ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int color))
                     SetSelectedColor(Mathf.Clamp(color, 0, 31));
@@ -1771,7 +2303,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     GUILayout.Height(EsuHudLayout.Scale(24f)));
             if (hasMaterialOverride &&
                 GUILayout.Button(
-                    "Clear",
+                    new GUIContent("Clear", "Remove the material override."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -1780,7 +2312,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             if (GUILayout.Button(
-                    _showMaterialPicker ? "Hide list" : "Show list",
+                    new GUIContent(_showMaterialPicker ? "Hide list" : "Show list", "Show or hide the material override picker."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(76f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -1800,6 +2332,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     GUILayout.Width(EsuHudLayout.Scale(24f)),
                     GUILayout.Height(EsuHudLayout.Scale(22f)));
                 _materialFilter = GUILayout.TextField(_materialFilter ?? string.Empty, DecorationEditorTheme.TextField);
+                EsuCursorTooltip.RegisterLast("Filter material overrides by name or GUID.");
                 GUILayout.EndHorizontal();
 
                 List<MaterialCatalogEntry> materials = FilterMaterials().ToList();
@@ -1816,7 +2349,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     bool active = _selected.MaterialReplacement.Us == material.Guid;
                     if (GUILayout.Button(
-                            material.DisplayName,
+                            new GUIContent(material.DisplayName, "Apply this material override."),
                             active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row,
                             GUILayout.Height(EsuHudLayout.Scale(22f))))
                     {
@@ -1829,7 +2362,11 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginHorizontal();
             GUILayout.Label("GUID", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
             _materialText = GUILayout.TextField(_materialText ?? string.Empty, DecorationEditorTheme.TextField);
-            if (GUILayout.Button("Set", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(42f))))
+            EsuCursorTooltip.RegisterLast("Type a material GUID, or leave blank for default.");
+            if (GUILayout.Button(
+                    new GUIContent("Set", "Apply the typed material override."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(42f))))
             {
                 string text = (_materialText ?? string.Empty).Trim();
                 if (string.IsNullOrEmpty(text) || text.Equals("default", StringComparison.OrdinalIgnoreCase))
@@ -1897,7 +2434,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void StyledAnchorButton(string label, Vector3i shift)
         {
-            if (GUILayout.Button(label, DecorationEditorTheme.Button))
+            if (GUILayout.Button(
+                    new GUIContent(label, "Move the selected decoration to this neighboring anchor block while keeping its visual position."),
+                    DecorationEditorTheme.Button))
                 ShiftAnchor(shift);
         }
 
@@ -1916,17 +2455,17 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            GUI.BeginGroup(rect);
 
             float inset = EsuHudLayout.Scale(8f);
-            Rect inner = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
-            float headerHeight = EsuHudLayout.Scale(116f);
-            float countHeight = EsuHudLayout.Scale(18f);
+            Rect inner = new Rect(inset, inset, Mathf.Max(1f, rect.width - inset * 2f), Mathf.Max(1f, rect.height - inset * 2f));
+            float headerHeight = Mathf.Min(EsuHudLayout.Scale(116f), inner.height);
+            float countHeight = Mathf.Min(EsuHudLayout.Scale(18f), Mathf.Max(0f, inner.height - headerHeight));
             float placingHeight = _placingMesh == null ? 0f : EsuHudLayout.Scale(24f);
-            float listHeight = Mathf.Max(
-                EsuHudLayout.Scale(120f),
-                inner.height - headerHeight - countHeight - placingHeight - EsuHudLayout.Scale(8f));
             Rect headerRect = new Rect(inner.x, inner.y, inner.width, headerHeight);
             Rect countRect = new Rect(inner.x, headerRect.yMax, inner.width, countHeight);
+            float listBottom = inner.yMax - (placingHeight <= 0f ? 0f : placingHeight + EsuHudLayout.Scale(4f));
+            float listHeight = Mathf.Max(0f, listBottom - countRect.yMax);
             Rect listRect = new Rect(inner.x, countRect.yMax, inner.width, listHeight);
             Rect placingRect = new Rect(inner.x, listRect.yMax + EsuHudLayout.Scale(4f), inner.width, placingHeight);
             bool mouseInListViewport = listRect.Contains(Event.current.mousePosition);
@@ -1937,23 +2476,44 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.Label("Drag this panel. Click a mesh to place it; Set swaps the selected decoration.", DecorationEditorTheme.Mini);
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("List", DecorationEditorTheme.ToolButton(!_meshPreviewGrid), GUILayout.Width(EsuHudLayout.Scale(62f))))
+            if (GUILayout.Button(
+                    new GUIContent("List", "Show the mesh palette as a virtualized text list."),
+                    DecorationEditorTheme.ToolButton(!_meshPreviewGrid),
+                    GUILayout.Width(EsuHudLayout.Scale(62f))))
                 _meshPreviewGrid = false;
-            if (GUILayout.Button("3D grid", DecorationEditorTheme.ToolButton(_meshPreviewGrid), GUILayout.Width(EsuHudLayout.Scale(76f))))
+            if (GUILayout.Button(
+                    new GUIContent("3D grid", "Show the mesh palette as a virtualized 3D thumbnail grid."),
+                    DecorationEditorTheme.ToolButton(_meshPreviewGrid),
+                    GUILayout.Width(EsuHudLayout.Scale(76f))))
                 _meshPreviewGrid = true;
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Hide", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(58f))))
+            if (GUILayout.Button(
+                    new GUIContent("Hide", "Hide the mesh palette panel."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
                 _showMeshPalette = false;
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("All", DecorationEditorTheme.ToolButton(_meshKindFilter == "all"), GUILayout.Width(EsuHudLayout.Scale(48f))))
+            if (GUILayout.Button(
+                    new GUIContent("All", "Show all meshes."),
+                    DecorationEditorTheme.ToolButton(_meshKindFilter == "all"),
+                    GUILayout.Width(EsuHudLayout.Scale(48f))))
                 _meshKindFilter = "all";
-            if (GUILayout.Button("Items", DecorationEditorTheme.ToolButton(_meshKindFilter == "item"), GUILayout.Width(EsuHudLayout.Scale(58f))))
+            if (GUILayout.Button(
+                    new GUIContent("Items", "Show item meshes."),
+                    DecorationEditorTheme.ToolButton(_meshKindFilter == "item"),
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
                 _meshKindFilter = "item";
-            if (GUILayout.Button("Objects", DecorationEditorTheme.ToolButton(_meshKindFilter == "object"), GUILayout.Width(EsuHudLayout.Scale(68f))))
+            if (GUILayout.Button(
+                    new GUIContent("Objects", "Show object meshes."),
+                    DecorationEditorTheme.ToolButton(_meshKindFilter == "object"),
+                    GUILayout.Width(EsuHudLayout.Scale(68f))))
                 _meshKindFilter = "object";
-            if (GUILayout.Button("Recent", DecorationEditorTheme.ToolButton(_meshKindFilter == "recent"), GUILayout.Width(EsuHudLayout.Scale(68f))))
+            if (GUILayout.Button(
+                    new GUIContent("Recent", "Show recently used meshes."),
+                    DecorationEditorTheme.ToolButton(_meshKindFilter == "recent"),
+                    GUILayout.Width(EsuHudLayout.Scale(68f))))
                 _meshKindFilter = "recent";
             GUILayout.EndHorizontal();
 
@@ -1963,6 +2523,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.Width(EsuHudLayout.Scale(24f)),
                 GUILayout.Height(EsuHudLayout.Scale(22f)));
             _meshFilter = GUILayout.TextField(_meshFilter ?? string.Empty, DecorationEditorTheme.TextField);
+            EsuCursorTooltip.RegisterLast("Filter meshes by name or GUID.");
             GUILayout.EndHorizontal();
 
             GUILayout.EndVertical();
@@ -1971,40 +2532,45 @@ namespace DecoLimitLifter.DecorationEditMode
             List<DecorationMeshCatalogEntry> rows = FilterMeshCatalog().ToList();
             GUI.Label(countRect, MeshCountText(rows.Count), DecorationEditorTheme.Mini);
 
-            GUI.BeginGroup(listRect);
-            _meshScroll = GUILayout.BeginScrollView(
-                _meshScroll,
-                alwaysShowHorizontal: false,
-                alwaysShowVertical: true,
-                GUILayout.Width(listRect.width),
-                GUILayout.Height(listRect.height));
-            if (_meshPreviewGrid)
-                DrawMeshPreviewGrid(rows, listRect.width, listRect.height, mouseInListViewport);
-            else
-                DrawMeshListRows(rows, listRect.height, mouseInListViewport);
-            GUILayout.EndScrollView();
-            GUI.EndGroup();
+            if (listRect.height > 1f)
+            {
+                GUI.BeginGroup(listRect);
+                _meshScroll = GUILayout.BeginScrollView(
+                    _meshScroll,
+                    alwaysShowHorizontal: false,
+                    alwaysShowVertical: true,
+                    GUILayout.Width(listRect.width),
+                    GUILayout.Height(listRect.height));
+                if (_meshPreviewGrid)
+                    DrawMeshPreviewGrid(rows, listRect.width, listRect.height, mouseInListViewport);
+                else
+                    DrawMeshListRows(rows, listRect.height, mouseInListViewport);
+                GUILayout.EndScrollView();
+                GUI.EndGroup();
+            }
 
-            if (_placingMesh != null)
+            if (_placingMesh != null && placingRect.height > 1f && placingRect.y < inner.yMax)
             {
                 GUILayout.BeginArea(placingRect);
                 GUILayout.Label($"Placing: {_placingMesh.Name} | click a valid block, right-click/Esc cancels.", DecorationEditorTheme.Warning);
                 GUILayout.EndArea();
             }
+            GUI.EndGroup();
         }
 
         private void DrawPaintPalette(Rect rect)
         {
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            GUI.BeginGroup(rect);
             float inset = EsuHudLayout.Scale(8f);
-            Rect inner = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
-            float headerHeight = EsuHudLayout.Scale(106f);
+            Rect inner = new Rect(inset, inset, Mathf.Max(1f, rect.width - inset * 2f), Mathf.Max(1f, rect.height - inset * 2f));
+            float headerHeight = Mathf.Min(EsuHudLayout.Scale(106f), inner.height);
             Rect headerRect = new Rect(inner.x, inner.y, inner.width, headerHeight);
             Rect listRect = new Rect(
                 inner.x,
                 headerRect.yMax + EsuHudLayout.Scale(4f),
                 inner.width,
-                Mathf.Max(EsuHudLayout.Scale(120f), inner.yMax - headerRect.yMax - EsuHudLayout.Scale(4f)));
+                Mathf.Max(0f, inner.yMax - headerRect.yMax - EsuHudLayout.Scale(4f)));
 
             GUILayout.BeginArea(headerRect);
             GUILayout.BeginVertical();
@@ -2028,16 +2594,20 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.EndVertical();
             GUILayout.EndArea();
 
-            GUI.BeginGroup(listRect);
-            _paintScroll = GUILayout.BeginScrollView(
-                _paintScroll,
-                alwaysShowHorizontal: false,
-                alwaysShowVertical: true,
-                GUILayout.Width(listRect.width),
-                GUILayout.Height(listRect.height));
-            for (int color = 0; color <= 31; color++)
-                DrawPaintColorRow(color);
-            GUILayout.EndScrollView();
+            if (listRect.height > 1f)
+            {
+                GUI.BeginGroup(listRect);
+                _paintScroll = GUILayout.BeginScrollView(
+                    _paintScroll,
+                    alwaysShowHorizontal: false,
+                    alwaysShowVertical: true,
+                    GUILayout.Width(listRect.width),
+                    GUILayout.Height(listRect.height));
+                for (int color = 0; color <= 31; color++)
+                    DrawPaintColorRow(color);
+                GUILayout.EndScrollView();
+                GUI.EndGroup();
+            }
             GUI.EndGroup();
         }
 
@@ -2061,6 +2631,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 else
                     InfoStore.Add("Paint brush set to color #" + color.ToString(CultureInfo.InvariantCulture) + ".");
             }
+            EsuCursorTooltip.Register(row, "Set the paint brush to color #" + color.ToString(CultureInfo.InvariantCulture) + ".");
 
             Rect swatch = new Rect(
                 row.x + EsuHudLayout.Scale(7f),
@@ -2165,29 +2736,49 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
-            GUILayout.BeginArea(new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f));
+            GUI.BeginGroup(rect);
+            Rect inner = new Rect(inset, inset, Mathf.Max(1f, rect.width - inset * 2f), Mathf.Max(1f, rect.height - inset * 2f));
+            GUILayout.BeginArea(inner);
             DrawCompactIconHeader("Surface Builder", "build");
             GUILayout.Label("Click three craft-surface points to seed a triangle. Select an edge, then click a new point to extend.", DecorationEditorTheme.MiniWrap);
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Preview", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(82f))))
+            if (GUILayout.Button(
+                    new GUIContent("Preview", "Rebuild the surface decoration preview."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(82f))))
                 RebuildSurfacePreview(showMessage: true);
             bool canPlace = _surfacePlan != null && _surfacePlan.DecorationCount > 0;
             bool previous = GUI.enabled;
             GUI.enabled = previous && canPlace;
-            if (GUILayout.Button("Place", DecorationEditorTheme.ToolButton(false, canPlace), GUILayout.Width(EsuHudLayout.Scale(72f))))
+            if (GUILayout.Button(
+                    new GUIContent("Place", "Create the planned surface decorations."),
+                    DecorationEditorTheme.ToolButton(false, canPlace),
+                    GUILayout.Width(EsuHudLayout.Scale(72f))))
                 PlaceSurfacePlan();
             GUI.enabled = previous;
-            if (GUILayout.Button("Clear", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(64f))))
+            bool canBridge = _surfaceDraft.BridgeEdgeSelection.Count == 2;
+            previous = GUI.enabled;
+            GUI.enabled = previous && canBridge;
+            if (GUILayout.Button(
+                    new GUIContent("Bridge", "Create surface face(s) between the two Shift-selected edges."),
+                    DecorationEditorTheme.ToolButton(false, canBridge),
+                    GUILayout.Width(EsuHudLayout.Scale(72f))))
+                BridgeSurfaceEdges();
+            GUI.enabled = previous;
+            if (GUILayout.Button(
+                    new GUIContent("Clear", "Clear the current surface draft."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(64f))))
                 ClearSurfaceDraft(notify: true);
-            if (GUILayout.Button("Delete", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(72f))))
+            if (GUILayout.Button(
+                    new GUIContent("Delete", "Delete the selected surface point or face."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(72f))))
                 DeleteSurfaceSelection();
             GUILayout.EndHorizontal();
 
             DecorationEditorTheme.Separator();
-            DrawSurfaceSettings();
-            DecorationEditorTheme.Separator();
-
             GUILayout.Label(SurfaceSummary(), DecorationEditorTheme.BodyWrap);
             if (!string.IsNullOrEmpty(_surfaceMessage))
                 GUILayout.Label(_surfaceMessage, SurfaceMessageStyle());
@@ -2199,7 +2790,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 _surfaceScroll,
                 alwaysShowHorizontal: false,
                 alwaysShowVertical: true,
-                GUILayout.Height(Mathf.Max(EsuHudLayout.Scale(110f), rect.height - EsuHudLayout.Scale(332f))));
+                GUILayout.MinHeight(EsuHudLayout.Scale(96f)),
+                GUILayout.ExpandHeight(true));
             for (int index = 0; index < _surfaceDraft.Points.Count; index++)
             {
                 GUIStyle style = _surfaceDraft.SelectionKind == SurfaceSelectionKind.Point &&
@@ -2207,7 +2799,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     ? DecorationEditorTheme.RowSelected
                     : DecorationEditorTheme.Row;
                 if (GUILayout.Button(
-                        PointLabel(index, _surfaceDraft.Points[index]),
+                        new GUIContent(PointLabel(index, _surfaceDraft.Points[index]), "Select this surface draft point."),
                         style,
                         GUILayout.Height(EsuHudLayout.Scale(24f))))
                     _surfaceDraft.SelectPoint(index);
@@ -2221,57 +2813,86 @@ namespace DecoLimitLifter.DecorationEditMode
                     ? DecorationEditorTheme.RowSelected
                     : DecorationEditorTheme.Row;
                 if (GUILayout.Button(
-                        string.Format(
+                        new GUIContent(string.Format(
                             CultureInfo.InvariantCulture,
                             "Face {0}: {1}, {2}, {3}",
                             index + 1,
                             face.A + 1,
                             face.B + 1,
                             face.C + 1),
+                            "Select this surface draft face."),
                         style,
                         GUILayout.Height(EsuHudLayout.Scale(24f))))
                     _surfaceDraft.SelectFace(index);
             }
             GUILayout.EndScrollView();
             GUILayout.Label("Ctrl-click existing points to create a face from any three points.", DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("Shift-click two edges, then Bridge, to connect them.", DecorationEditorTheme.MiniWrap);
+            DecorationEditorTheme.Separator();
+            DrawSurfaceSettings();
             GUILayout.EndArea();
+            GUI.EndGroup();
         }
 
         private void DrawSurfaceSettings()
         {
             GUILayout.BeginHorizontal();
             GUILayout.Label("Material", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
-            if (GUILayout.Button("<", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            if (GUILayout.Button(
+                    new GUIContent("<", "Previous surface material."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f))))
                 StepSurfaceMaterial(-1);
-            GUILayout.Label(_surfaceDraft.Settings.StructureBlockType.ToString(), DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(112f)));
-            if (GUILayout.Button(">", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            GUILayout.Label(_surfaceDraft.Settings.StructureBlockType.ToString(), DecorationEditorTheme.Body, GUILayout.ExpandWidth(true));
+            if (GUILayout.Button(
+                    new GUIContent(">", "Next surface material."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f))))
                 StepSurfaceMaterial(1);
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Thickness", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
             _surfaceThicknessText = GUILayout.TextField(_surfaceThicknessText ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Width(EsuHudLayout.Scale(64f)));
-            if (GUILayout.Button("Set", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(42f))))
+            EsuCursorTooltip.RegisterLast("Type the surface thickness in metres.");
+            if (GUILayout.Button(
+                    new GUIContent("Set", "Apply the typed surface thickness."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(42f))))
                 ApplySurfaceThicknessText();
             SurfaceThicknessButton(0.025f, "0.025");
             SurfaceThicknessButton(0.05f, "0.05");
             SurfaceThicknessButton(0.1f, "0.1");
+            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Color", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
             _surfaceColorText = GUILayout.TextField(_surfaceColorText ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Width(EsuHudLayout.Scale(44f)));
-            if (GUILayout.Button("Set", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(42f))))
+            EsuCursorTooltip.RegisterLast("Type the surface paint color from 0 to 31.");
+            if (GUILayout.Button(
+                    new GUIContent("Set", "Apply the typed surface color."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(42f))))
                 ApplySurfaceColorText();
-            if (GUILayout.Button("-", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            if (GUILayout.Button(
+                    new GUIContent("-", "Decrease the surface color."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f))))
                 SetSurfaceColor(_surfaceDraft.Settings.ColorIndex - 1);
-            if (GUILayout.Button("+", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            if (GUILayout.Button(
+                    new GUIContent("+", "Increase the surface color."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f))))
                 SetSurfaceColor(_surfaceDraft.Settings.ColorIndex + 1);
+            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(
-                    _surfaceDraft.Settings.NormalReversal ? "Normal flip: on" : "Normal flip: off",
+                    new GUIContent(
+                        _surfaceDraft.Settings.NormalReversal ? "Normal flip: on" : "Normal flip: off",
+                        "Flip the generated surface normal direction."),
                     DecorationEditorTheme.ToolButton(_surfaceDraft.Settings.NormalReversal),
                     GUILayout.Width(EsuHudLayout.Scale(126f))))
             {
@@ -2279,7 +2900,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 InvalidateSurfacePlan("Surface normal direction changed.");
             }
             if (GUILayout.Button(
-                    _surfaceDraft.Settings.NearestAnchor ? "Nearest anchor: on" : "Nearest anchor: off",
+                    new GUIContent(
+                        _surfaceDraft.Settings.NearestAnchor ? "Nearest anchor: on" : "Nearest anchor: off",
+                        "Use the nearest valid anchor for generated surface decorations."),
                     DecorationEditorTheme.ToolButton(_surfaceDraft.Settings.NearestAnchor),
                     GUILayout.Width(EsuHudLayout.Scale(148f))))
             {
@@ -2313,7 +2936,10 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void SurfaceThicknessButton(float value, string label)
         {
-            if (GUILayout.Button(label, DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(48f))))
+            if (GUILayout.Button(
+                    new GUIContent(label, "Set surface thickness to " + label + "m."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(48f))))
                 SetSurfaceThickness(value);
         }
 
@@ -2366,6 +2992,8 @@ namespace DecoLimitLifter.DecorationEditMode
             string count = _surfacePlan == null
                 ? "no preview"
                 : _surfacePlan.DecorationCount.ToString("N0", CultureInfo.InvariantCulture) + " decorations";
+            string free = _surfaceDraft.FreeTriangleSelectionCount.ToString(CultureInfo.InvariantCulture) + "/3 free";
+            string bridge = _surfaceDraft.BridgeEdgeSelection.Count.ToString(CultureInfo.InvariantCulture) + "/2 bridge";
             string selection = _surfaceDraft.SelectionKind == SurfaceSelectionKind.Point
                 ? "point " + (_surfaceDraft.SelectedPoint + 1).ToString(CultureInfo.InvariantCulture)
                 : _surfaceDraft.SelectionKind == SurfaceSelectionKind.Edge
@@ -2376,10 +3004,12 @@ namespace DecoLimitLifter.DecorationEditMode
                         : "none";
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "{0:N0} points | {1:N0} faces | {2} | selected {3}",
+                "{0:N0} points | {1:N0} faces | {2} | {3} | {4} | selected {5}",
                 _surfaceDraft.Points.Count,
                 _surfaceDraft.Faces.Count,
                 count,
+                free,
+                bridge,
                 selection);
         }
 
@@ -2396,21 +3026,78 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
-            GUILayout.BeginArea(new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f));
-            GUILayout.BeginHorizontal();
-            DrawCompactIconHeader("Inspector", "settings", GUILayout.Width(EsuHudLayout.Scale(126f)));
-            GUILayout.FlexibleSpace();
-            GUILayout.Label(
-                _selected == null || _selected.IsDeleted ? "No selection" : MeshName(_selected.MeshGuid.Us),
-                DecorationEditorTheme.Mini,
-                GUILayout.Width(EsuHudLayout.Scale(132f)));
-            if (GUILayout.Button("Hide", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(58f))))
-                _showInspectorPanel = false;
-            GUILayout.EndHorizontal();
+            GUI.BeginGroup(rect);
+            Rect inner = new Rect(inset, inset, Mathf.Max(1f, rect.width - inset * 2f), Mathf.Max(1f, rect.height - inset * 2f));
+            float gap = EsuHudLayout.Scale(6f);
+            Rect headerRect = InspectorHeaderRect(rect, localToPanel: true);
+            Rect contentRect = new Rect(
+                inner.x,
+                headerRect.yMax + gap,
+                inner.width,
+                Mathf.Max(0f, inner.yMax - headerRect.yMax - gap));
 
-            float contentHeight = Mathf.Max(EsuHudLayout.Scale(120f), rect.height - EsuHudLayout.Scale(38f));
-            DrawInspector(contentHeight);
-            GUILayout.EndArea();
+            if (contentRect.height > 1f)
+            {
+                GUILayout.BeginArea(contentRect);
+                DrawInspector(contentRect.height);
+                GUILayout.EndArea();
+            }
+
+            DrawInspectorHeader(headerRect);
+            GUI.EndGroup();
+        }
+
+        private static Rect InspectorHeaderRect(Rect panelRect, bool localToPanel)
+        {
+            float inset = EsuHudLayout.Scale(8f);
+            float headerHeight = EsuHudLayout.Scale(24f);
+            Rect inner = new Rect(
+                (localToPanel ? 0f : panelRect.x) + inset,
+                (localToPanel ? 0f : panelRect.y) + inset,
+                Mathf.Max(1f, panelRect.width - inset * 2f),
+                Mathf.Max(1f, panelRect.height - inset * 2f));
+            return new Rect(
+                inner.x,
+                inner.y,
+                inner.width,
+                Mathf.Min(headerHeight, inner.height));
+        }
+
+        private static Rect InspectorHeaderHideRect(Rect rect)
+        {
+            float hideWidth = Mathf.Min(EsuHudLayout.Scale(58f), rect.width);
+            return new Rect(rect.xMax - hideWidth, rect.y, hideWidth, rect.height);
+        }
+
+        private void DrawInspectorHeader(Rect rect)
+        {
+            float gap = EsuHudLayout.Scale(6f);
+            float selectedWidth = rect.width >= EsuHudLayout.Scale(260f)
+                ? Mathf.Min(EsuHudLayout.Scale(132f), rect.width * 0.32f)
+                : 0f;
+            Rect hideRect = InspectorHeaderHideRect(rect);
+            Rect selectedRect = new Rect(
+                Mathf.Max(rect.x, hideRect.x - gap - selectedWidth),
+                rect.y,
+                selectedWidth,
+                rect.height);
+            Rect titleRect = new Rect(
+                rect.x,
+                rect.y,
+                Mathf.Max(0f, selectedRect.x - rect.x - gap),
+                rect.height);
+
+            DrawCompactIconHeader(titleRect, "Inspector", "settings");
+            if (selectedRect.width > 1f)
+            {
+                GUI.Label(
+                    selectedRect,
+                    _selected == null || _selected.IsDeleted ? "No selection" : MeshName(_selected.MeshGuid.Us),
+                    DecorationEditorTheme.Mini);
+            }
+
+            if (GUI.Button(hideRect, new GUIContent("Hide", "Hide the inspector panel."), DecorationEditorTheme.Button))
+                _showInspectorPanel = false;
         }
 
         private void DrawMeshListRows(
@@ -2433,11 +3120,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button($"[{entry.Kind}] {entry.Name}", style, GUILayout.Height(rowHeight)))
                     StartMeshPlacement(entry);
+                EsuCursorTooltip.RegisterLast("Start placing this mesh.");
 
                 bool previous = GUI.enabled;
                 GUI.enabled = previous && _selected != null && !_selected.IsDeleted;
                 if (GUILayout.Button(
-                        "Set",
+                        new GUIContent("Set", "Replace the selected decoration with this mesh."),
                         DecorationEditorTheme.Button,
                         GUILayout.Width(EsuHudLayout.Scale(44f)),
                         GUILayout.Height(rowHeight)))
@@ -2496,6 +3184,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         GUILayout.Height(cardHeight));
                     if (GUI.Button(card, GUIContent.none, style))
                         StartMeshPlacement(entry);
+                    EsuCursorTooltip.Register(card, "Start placing this mesh.");
                     bool hovered = mouseInListViewport && card.Contains(Event.current.mousePosition);
                     if (hovered)
                         _hoveredMesh = entry;
@@ -2593,53 +3282,641 @@ namespace DecoLimitLifter.DecorationEditMode
                 : entry.Name + " | " + materialGuid.ToString("N").Substring(0, 8);
         }
 
-        private void DrawBottomPanel(float height)
+        private void DrawBottomPanel(float width, float height)
         {
-            bool surface = IsSurfaceMode;
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(surface ? "Surface Builder" : "Decoration Edit Mode", DecorationEditorTheme.SubHeader, GUILayout.Width(EsuHudLayout.Scale(168f)));
-            GUILayout.Label(surface ? "Mode: Surface | Tab to Build when clean" : "Mode: Deco | Tab to Surface when clean", DecorationEditorTheme.Body);
-            if (!surface)
-                DrawBottomAnchorFollowToggle();
-            GUILayout.FlexibleSpace();
-            GUILayout.Label(
-                HasUnappliedChanges ? "Dirty preview" : "Clean",
-                HasUnappliedChanges ? DecorationEditorTheme.Warning : DecorationEditorTheme.Mini,
-                GUILayout.Width(EsuHudLayout.Scale(92f)));
-            GUILayout.EndHorizontal();
-            DecorationEditorTheme.Separator();
-            DrawStatusStrip();
-            DrawBottomTransformEditors();
-            GUILayout.Label(
-                "Tab switches ESU modes when clean | Ctrl+D/Esc closes and restores un-applied edits | Select rows or viewport centers | Move snaps 0.05m",
-                DecorationEditorTheme.Mini);
+            float headerHeight = EsuHudLayout.Scale(24f);
+            float separatorHeight = Mathf.Max(1f, EsuHudLayout.Scale(1f));
+            float statusHeight = EsuHudLayout.Scale(24f);
+            float transformHeight = EsuHudLayout.Scale(30f);
+            float footerHeight = EsuHudLayout.Scale(18f);
+            float y = 0f;
+            DrawBottomHeader(new Rect(0f, y, width, headerHeight));
+            y += headerHeight;
+            DrawCyanLine(new Rect(0f, y, width, separatorHeight));
+            y += separatorHeight + EsuHudLayout.Scale(3f);
+
+            if (IsSurfaceMode && _surfaceExtraShelfOpen)
+            {
+                float reserved = statusHeight + transformHeight + footerHeight + EsuHudLayout.Scale(9f);
+                float shelfHeight = Mathf.Max(EsuHudLayout.Scale(82f), height - y - reserved);
+                DrawSurfaceExtraShelf(new Rect(0f, y, width, shelfHeight));
+                y += shelfHeight + EsuHudLayout.Scale(3f);
+            }
+
+            GUI.Label(new Rect(0f, y, width, statusHeight), StatusLine(), DecorationEditorTheme.Status);
+            y += statusHeight + EsuHudLayout.Scale(3f);
+
+            DrawBottomTransformEditors(new Rect(0f, y, width, transformHeight));
+            y += transformHeight + EsuHudLayout.Scale(3f);
+
+            if (y < height)
+            {
+                GUI.Label(
+                    new Rect(0f, y, width, Mathf.Min(footerHeight, height - y)),
+                    "Tab switches ESU modes when clean | Ctrl+D/Esc closes and restores un-applied edits | Select rows or viewport centers | Move snaps 0.05m",
+                    DecorationEditorTheme.Mini);
+            }
         }
 
-        private void DrawBottomAnchorFollowToggle()
+        private void DrawBottomHeader(Rect rect)
         {
+            bool surface = IsSurfaceMode;
+            BottomHeaderLayout slots = BottomHeaderRects(rect);
+
+            GUI.Label(slots.Title, surface ? "Surface Builder" : "Decoration Edit Mode", DecorationEditorTheme.SubHeader);
+            GUI.Label(
+                slots.Mode,
+                surface ? "Mode: Surface | Tab to Build when clean" : "Mode: Deco | Tab to Surface when clean",
+                DecorationEditorTheme.Body);
+            if (surface)
+            {
+                DrawSurfaceExtraToggle(slots.AnchorSettings);
+            }
+            else
+            {
+                DrawBottomSelectionControls(slots.SelectControls);
+                DrawBottomAnchorFollowToggle(slots.AnchorFollow);
+                DrawBottomAnchorSettingsButton(slots.AnchorSettings);
+            }
+            GUI.Label(
+                slots.Clean,
+                HasUnappliedChanges ? "Dirty preview" : "Clean",
+                HasUnappliedChanges ? DecorationEditorTheme.Warning : DecorationEditorTheme.Mini);
+        }
+
+        private void DrawSurfaceExtraToggle(Rect rect)
+        {
+            if (GUI.Button(
+                    rect,
+                    new GUIContent(
+                        _surfaceExtraShelfOpen ? "Extra: on" : "Extra tools",
+                        "Open pipe, cable, rail, and circle generators for Surface Builder."),
+                    DecorationEditorTheme.ToolButton(_surfaceExtraShelfOpen)))
+            {
+                _surfaceExtraShelfOpen = !_surfaceExtraShelfOpen;
+                s_surfaceExtraShelfOpen = _surfaceExtraShelfOpen;
+                if (_surfaceExtraShelfOpen)
+                {
+                    _generatorDraft.SetTool(_surfaceExtraTool);
+                    _generatorMessage = "Extra Tools: draw a path or place a circle center.";
+                }
+            }
+        }
+
+        private void DrawSurfaceExtraShelf(Rect rect)
+        {
+            GUI.BeginGroup(rect);
+            float inset = EsuHudLayout.Scale(4f);
+            Rect inner = new Rect(inset, 0f, Mathf.Max(1f, rect.width - inset * 2f), rect.height);
+            GUILayout.BeginArea(inner);
+            _generatorScroll = GUILayout.BeginScrollView(
+                _generatorScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: false,
+                GUILayout.Width(inner.width),
+                GUILayout.Height(inner.height));
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                    new GUIContent("Path", "Draw a path from clicked craft-surface points."),
+                    DecorationEditorTheme.ToolButton(_surfaceExtraTool == SurfaceExtraTool.Path),
+                    GUILayout.Width(EsuHudLayout.Scale(64f))))
+                SetSurfaceExtraTool(SurfaceExtraTool.Path);
+            if (GUILayout.Button(
+                    new GUIContent("Circle", "Place a center point and generate a segmented circle."),
+                    DecorationEditorTheme.ToolButton(_surfaceExtraTool == SurfaceExtraTool.Circle),
+                    GUILayout.Width(EsuHudLayout.Scale(72f))))
+                SetSurfaceExtraTool(SurfaceExtraTool.Circle);
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            DrawGeneratorStyleButton(DecorationGeneratorStyle.Pipe);
+            DrawGeneratorStyleButton(DecorationGeneratorStyle.Cable);
+            DrawGeneratorStyleButton(DecorationGeneratorStyle.Rail);
             GUILayout.Space(EsuHudLayout.Scale(8f));
             if (GUILayout.Button(
                     new GUIContent(
+                        _generatorSettings.UseSelectedMesh ? "Mesh: selected" : "Mesh: preset",
+                        "Use the style preset mesh, or override with the selected Mesh Palette mesh."),
+                    DecorationEditorTheme.ToolButton(_generatorSettings.UseSelectedMesh),
+                    GUILayout.Width(EsuHudLayout.Scale(116f))))
+            {
+                _generatorSettings.UseSelectedMesh = !_generatorSettings.UseSelectedMesh;
+                InvalidateGeneratorPlan("Generator mesh source changed.");
+            }
+            GUILayout.Label(GeneratorMeshSourceLabel(), DecorationEditorTheme.Mini, GUILayout.ExpandWidth(true));
+            DrawGeneratorActionButtons();
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawGeneratorNumberField("Diameter", ref _generatorDiameterText, ApplyGeneratorDiameterText, EsuHudLayout.Scale(58f));
+            DrawGeneratorNumberField("Color", ref _generatorColorText, ApplyGeneratorColorText, EsuHudLayout.Scale(42f));
+            DrawGeneratorMaterialControl();
+            DrawGeneratorLengthAxisControl();
+            if (_surfaceExtraTool == SurfaceExtraTool.Circle)
+            {
+                DrawGeneratorNumberField("Radius", ref _generatorRadiusText, ApplyGeneratorRadiusText, EsuHudLayout.Scale(58f));
+                DrawGeneratorNumberField("Segments", ref _generatorSegmentsText, ApplyGeneratorSegmentsText, EsuHudLayout.Scale(42f));
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(GeneratorSummary(), DecorationEditorTheme.BodyWrap, GUILayout.Width(Mathf.Min(inner.width * 0.48f, EsuHudLayout.Scale(560f))));
+            GUILayout.Label(_generatorMessage, GeneratorMessageStyle(), GUILayout.ExpandWidth(true));
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+            GUI.EndGroup();
+        }
+
+        private void DrawGeneratorStyleButton(DecorationGeneratorStyle style)
+        {
+            if (GUILayout.Button(
+                    new GUIContent(style.ToString(), "Use the " + style.ToString().ToLowerInvariant() + " generator preset."),
+                    DecorationEditorTheme.ToolButton(_generatorSettings.Style == style),
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
+            {
+                _generatorSettings.Style = style;
+                InvalidateGeneratorPlan("Generator style changed.");
+            }
+        }
+
+        private void DrawGeneratorActionButtons()
+        {
+            if (GUILayout.Button(
+                    new GUIContent("Preview", "Rebuild the generated decoration preview."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(72f))))
+                RebuildGeneratorPreview(showMessage: true);
+
+            bool canPlace = _generatorPlan != null && _generatorPlan.DecorationCount > 0;
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && canPlace;
+            if (GUILayout.Button(
+                    new GUIContent("Place", "Create the generated decorations."),
+                    DecorationEditorTheme.ToolButton(false, canPlace),
+                    GUILayout.Width(EsuHudLayout.Scale(62f))))
+                PlaceGeneratorPlan();
+            GUI.enabled = previous;
+
+            if (GUILayout.Button(
+                    new GUIContent("Clear", "Clear the current generator draft."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
+                ClearGeneratorDraft(notify: true);
+            if (GUILayout.Button(
+                    new GUIContent("Delete", "Delete the selected generator point."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(62f))))
+                DeleteGeneratorSelection();
+        }
+
+        private void DrawGeneratorNumberField(
+            string label,
+            ref string text,
+            Action apply,
+            float fieldWidth)
+        {
+            GUILayout.Label(label, DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(58f)));
+            text = GUILayout.TextField(text ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Width(fieldWidth));
+            EsuCursorTooltip.RegisterLast("Type the generator " + label.ToLowerInvariant() + ".");
+            if (GUILayout.Button(
+                    new GUIContent("Set", "Apply the typed " + label.ToLowerInvariant() + "."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(38f))))
+                apply();
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+        }
+
+        private void DrawGeneratorLengthAxisControl()
+        {
+            GUILayout.Label("Axis", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(34f)));
+            DrawGeneratorAxisButton(DecorationEditAxis.X);
+            DrawGeneratorAxisButton(DecorationEditAxis.Y);
+            DrawGeneratorAxisButton(DecorationEditAxis.Z);
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+        }
+
+        private void DrawGeneratorAxisButton(DecorationEditAxis axis)
+        {
+            if (GUILayout.Button(
+                    new GUIContent(axis.ToString(), "Scale the generated segment length along mesh " + axis + "."),
+                    DecorationEditorTheme.ToolButton(_generatorSettings.LengthAxis == axis),
+                    GUILayout.Width(EsuHudLayout.Scale(26f))))
+            {
+                _generatorSettings.LengthAxis = axis;
+                InvalidateGeneratorPlan("Generator length axis changed.");
+            }
+        }
+
+        private void DrawGeneratorMaterialControl()
+        {
+            GUILayout.Label("Material", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(58f)));
+            if (GUILayout.Button(
+                    new GUIContent("<", "Previous generator material override."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(24f))))
+                StepGeneratorMaterial(-1);
+            GUILayout.Label(
+                CompactText(MaterialDisplayName(_generatorSettings.MaterialReplacement), 32),
+                DecorationEditorTheme.Body,
+                GUILayout.Width(EsuHudLayout.Scale(176f)));
+            if (GUILayout.Button(
+                    new GUIContent(">", "Next generator material override."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(24f))))
+                StepGeneratorMaterial(1);
+            if (GUILayout.Button(
+                    new GUIContent("GUID", "Apply the typed material GUID for generated decorations."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(44f))))
+                ApplyGeneratorMaterialText();
+            _generatorMaterialText = GUILayout.TextField(
+                _generatorMaterialText ?? string.Empty,
+                DecorationEditorTheme.TextField,
+                GUILayout.Width(EsuHudLayout.Scale(92f)));
+            EsuCursorTooltip.RegisterLast("Type a material GUID, or leave blank for default.");
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+        }
+
+        private void SetSurfaceExtraTool(SurfaceExtraTool tool)
+        {
+            _surfaceExtraTool = tool == SurfaceExtraTool.None ? SurfaceExtraTool.Path : tool;
+            s_surfaceExtraTool = _surfaceExtraTool;
+            _generatorDraft.SetTool(_surfaceExtraTool);
+            InvalidateGeneratorPlan("Generator tool changed.");
+        }
+
+        private void SyncGeneratorTextFromSettings()
+        {
+            _generatorDiameterText = _generatorSettings.Diameter.ToString("0.###", CultureInfo.InvariantCulture);
+            _generatorRadiusText = _generatorSettings.CircleRadius.ToString("0.###", CultureInfo.InvariantCulture);
+            _generatorSegmentsText = _generatorSettings.CircleSegments.ToString(CultureInfo.InvariantCulture);
+            _generatorColorText = _generatorSettings.ColorIndex.ToString(CultureInfo.InvariantCulture);
+            _generatorMaterialText = _generatorSettings.MaterialReplacement == Guid.Empty
+                ? string.Empty
+                : _generatorSettings.MaterialReplacement.ToString("D");
+        }
+
+        private void InvalidateGeneratorPlan(string message)
+        {
+            _generatorPlan = null;
+            if (!string.IsNullOrEmpty(message))
+                _generatorMessage = message;
+        }
+
+        private GUIStyle GeneratorMessageStyle()
+        {
+            if (_generatorMessage.IndexOf("rejected", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                _generatorMessage.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                _generatorMessage.IndexOf("no valid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                _generatorMessage.IndexOf("unavailable", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return DecorationEditorTheme.Error;
+            }
+
+            return _generatorMessage.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0
+                ? DecorationEditorTheme.Warning
+                : DecorationEditorTheme.MiniWrap;
+        }
+
+        private string GeneratorSummary()
+        {
+            string preview = _generatorPlan == null
+                ? "no preview"
+                : _generatorPlan.DecorationCount.ToString("N0", CultureInfo.InvariantCulture) + " deco";
+            string mesh = TryResolveGeneratorMesh(out DecorationMeshCatalogEntry entry, out string _)
+                ? CompactText(entry.Name, 30)
+                : "mesh unavailable";
+            string draft = _surfaceExtraTool == SurfaceExtraTool.Circle
+                ? (_generatorDraft.HasCircleCenter ? "circle center set" : "no circle center")
+                : _generatorDraft.PathPoints.Count.ToString(CultureInfo.InvariantCulture) + " path points";
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Extra: {0} | {1} | {2} | diameter {3:0.###} | color {4} | {5} | {6}",
+                _surfaceExtraTool,
+                _generatorSettings.Style,
+                mesh,
+                _generatorSettings.Diameter,
+                _generatorSettings.ColorIndex,
+                draft,
+                preview);
+        }
+
+        private string GeneratorMeshSourceLabel()
+        {
+            if (TryResolveGeneratorMesh(out DecorationMeshCatalogEntry entry, out string reason))
+                return (_generatorSettings.UseSelectedMesh ? "Selected: " : "Preset: ") + CompactText(entry.Name, 42);
+            return reason;
+        }
+
+        private bool TryResolveGeneratorMesh(
+            out DecorationMeshCatalogEntry entry,
+            out string reason)
+        {
+            entry = null;
+            reason = null;
+            DecorationMeshCatalogEntry selected = _selectedMesh;
+            DecorationMeshCatalogEntry preset = FindGeneratorPresetMesh(_generatorSettings.Style);
+            if (_generatorSettings.UseSelectedMesh && selected != null)
+            {
+                entry = selected;
+                return true;
+            }
+
+            if (preset != null)
+            {
+                entry = preset;
+                return true;
+            }
+
+            if (selected != null)
+            {
+                entry = selected;
+                reason = "Preset mesh unavailable; selected mesh will be used.";
+                return true;
+            }
+
+            reason = "No generator mesh is available. Select a mesh or choose a preset that exists in the catalog.";
+            return false;
+        }
+
+        private DecorationMeshCatalogEntry FindGeneratorPresetMesh(DecorationGeneratorStyle style)
+        {
+            string[] tokens;
+            switch (style)
+            {
+                case DecorationGeneratorStyle.Cable:
+                    tokens = new[] { "cable", "wire", "rope", "hose", "pipe", "pole" };
+                    break;
+                case DecorationGeneratorStyle.Rail:
+                    tokens = new[] { "rail", "bar", "rod", "pole", "beam" };
+                    break;
+                default:
+                    tokens = new[] { "pipe", "tube", "cylinder", "pole", "rod" };
+                    break;
+            }
+
+            foreach (string token in tokens)
+            {
+                DecorationMeshCatalogEntry match = _meshCatalog.FirstOrDefault(entry =>
+                    entry != null &&
+                    entry.SearchText.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (match != null)
+                    return match;
+            }
+
+            return null;
+        }
+
+        private bool PrepareGeneratorSettings(out string reason)
+        {
+            if (!TryResolveGeneratorMesh(out DecorationMeshCatalogEntry entry, out reason))
+            {
+                _generatorSettings.MeshGuid = Guid.Empty;
+                return false;
+            }
+
+            _generatorSettings.MeshGuid = entry.Guid;
+            return _generatorSettings.IsValid(out reason);
+        }
+
+        private void ApplyGeneratorDiameterText()
+        {
+            if (!FlexibleFloatParser.TryParse(_generatorDiameterText, out float value))
+            {
+                InfoStore.Add("Generator diameter must be a finite number.");
+                return;
+            }
+
+            if (!DecorationEditMath.IsFinite(value) || value <= 0f)
+            {
+                InfoStore.Add("Generator diameter must be greater than zero.");
+                return;
+            }
+
+            _generatorSettings.Diameter = value;
+            _generatorDiameterText = value.ToString("0.###", CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Generator diameter changed.");
+        }
+
+        private void ApplyGeneratorRadiusText()
+        {
+            if (!FlexibleFloatParser.TryParse(_generatorRadiusText, out float value))
+            {
+                InfoStore.Add("Circle radius must be a finite number.");
+                return;
+            }
+
+            if (!DecorationEditMath.IsFinite(value) || value <= 0f)
+            {
+                InfoStore.Add("Circle radius must be greater than zero.");
+                return;
+            }
+
+            _generatorSettings.CircleRadius = value;
+            _generatorRadiusText = value.ToString("0.###", CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Circle radius changed.");
+        }
+
+        private void ApplyGeneratorSegmentsText()
+        {
+            if (!int.TryParse(_generatorSegmentsText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+            {
+                InfoStore.Add("Circle segments must be a whole number.");
+                return;
+            }
+
+            value = Mathf.Clamp(value, 3, 256);
+            _generatorSettings.CircleSegments = value;
+            _generatorSegmentsText = value.ToString(CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Circle segment count changed.");
+        }
+
+        private void ApplyGeneratorColorText()
+        {
+            if (!int.TryParse(_generatorColorText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+            {
+                InfoStore.Add("Generator color must be 0 through 31.");
+                return;
+            }
+
+            value = Mathf.Clamp(value, 0, 31);
+            _generatorSettings.ColorIndex = value;
+            _generatorColorText = value.ToString(CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Generator color changed.");
+        }
+
+        private void ApplyGeneratorMaterialText()
+        {
+            string text = (_generatorMaterialText ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(text) || text.Equals("default", StringComparison.OrdinalIgnoreCase))
+            {
+                SetGeneratorMaterial(Guid.Empty);
+                return;
+            }
+
+            if (Guid.TryParse(text, out Guid material))
+            {
+                SetGeneratorMaterial(material);
+                return;
+            }
+
+            InfoStore.Add("Generator material must be empty/default or a GUID.");
+        }
+
+        private void StepGeneratorMaterial(int delta)
+        {
+            var guids = new List<Guid> { Guid.Empty };
+            guids.AddRange((_materialCatalog ?? Enumerable.Empty<MaterialCatalogEntry>()).Select(material => material.Guid));
+            int index = guids.IndexOf(_generatorSettings.MaterialReplacement);
+            if (index < 0)
+                index = 0;
+            int next = (index + delta) % guids.Count;
+            if (next < 0)
+                next += guids.Count;
+            SetGeneratorMaterial(guids[next]);
+        }
+
+        private void SetGeneratorMaterial(Guid material)
+        {
+            _generatorSettings.MaterialReplacement = material;
+            _generatorMaterialText = material == Guid.Empty ? string.Empty : material.ToString("D");
+            InvalidateGeneratorPlan("Generator material changed.");
+        }
+
+        private static BottomHeaderLayout BottomHeaderRects(Rect rect)
+        {
+            float gap = EsuHudLayout.Scale(8f);
+            float titleWidth = EsuHudLayout.Scale(168f);
+            float cleanWidth = EsuHudLayout.Scale(92f);
+            float settingsWidth = EsuHudLayout.Scale(132f);
+            float anchorWidth = EsuHudLayout.Scale(132f);
+            float selectWidth = EsuHudLayout.Scale(188f);
+            Rect cleanRect = new Rect(rect.xMax - cleanWidth, rect.y, cleanWidth, rect.height);
+            Rect settingsRect = new Rect(cleanRect.x - gap - settingsWidth, rect.y, settingsWidth, rect.height);
+            Rect anchorRect = new Rect(settingsRect.x - gap - anchorWidth, rect.y, anchorWidth, rect.height);
+            Rect selectRect = new Rect(anchorRect.x - gap - selectWidth, rect.y, selectWidth, rect.height);
+            Rect titleRect = new Rect(rect.x, rect.y, titleWidth, rect.height);
+            Rect modeRect = new Rect(
+                titleRect.xMax + gap,
+                rect.y,
+                Mathf.Max(1f, selectRect.x - titleRect.xMax - gap * 2f),
+                rect.height);
+            return new BottomHeaderLayout(
+                titleRect,
+                modeRect,
+                selectRect,
+                anchorRect,
+                settingsRect,
+                cleanRect);
+        }
+
+        private void DrawBottomSelectionControls(Rect rect)
+        {
+            float gap = EsuHudLayout.Scale(4f);
+            float height = Mathf.Min(rect.height, EsuHudLayout.Scale(24f));
+            float y = rect.y + (rect.height - height) * 0.5f;
+            float singleWidth = EsuHudLayout.Scale(58f);
+            float boxWidth = EsuHudLayout.Scale(46f);
+            float xrayWidth = EsuHudLayout.Scale(58f);
+            float total = singleWidth + boxWidth + xrayWidth + gap * 2f;
+            float x = rect.x + Mathf.Max(0f, (rect.width - total) * 0.5f);
+
+            if (GUI.Button(
+                    new Rect(x, y, singleWidth, height),
+                    new GUIContent("Single", "Click the nearest decoration center."),
+                    DecorationEditorTheme.ToolButton(_selectionMode == DecorationSelectionMode.Single)))
+            {
+                SetActiveTool(DecorationEditorTool.Select);
+                _selectionMode = DecorationSelectionMode.Single;
+                CancelBoxSelection();
+            }
+
+            x += singleWidth + gap;
+            if (GUI.Button(
+                    new Rect(x, y, boxWidth, height),
+                    new GUIContent("Box", "Drag a rectangle to select decoration centers."),
+                    DecorationEditorTheme.ToolButton(_selectionMode == DecorationSelectionMode.Box)))
+            {
+                SetActiveTool(DecorationEditorTool.Select);
+                _selectionMode = DecorationSelectionMode.Box;
+            }
+
+            x += boxWidth + gap;
+            if (GUI.Button(
+                    new Rect(x, y, xrayWidth, height),
+                    new GUIContent("X-ray", "When enabled, box select can select decorations behind blocks."),
+                    DecorationEditorTheme.ToolButton(_selectionXray)))
+            {
+                _selectionXray = !_selectionXray;
+                if (_boxSelecting)
+                    _boxSelectCandidateCount = CountBoxSelectionCandidates(BoxSelectionRect(), _selectionXray);
+            }
+        }
+
+        private void DrawBottomAnchorFollowToggle(Rect rect)
+        {
+            if (GUI.Button(
+                    rect,
+                    new GUIContent(
                         _anchorFollowDecoration ? "Anchor follow: on" : "Anchor follow: off",
                         "When enabled, moving a decoration retethers its anchor to the nearest valid block once the center is outside the follow range."),
-                    DecorationEditorTheme.ToolButton(_anchorFollowDecoration),
-                    GUILayout.Width(EsuHudLayout.Scale(132f)),
-                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+                    DecorationEditorTheme.ToolButton(_anchorFollowDecoration)))
             {
                 ToggleAnchorFollow();
             }
         }
 
-        private void DrawStatusStrip()
+        private void DrawBottomAnchorSettingsButton(Rect rect)
         {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(StatusLine(), DecorationEditorTheme.Status);
-            GUILayout.EndHorizontal();
+            if (GUI.Button(
+                    rect,
+                    new GUIContent(
+                        "Anchor settings",
+                        "Open anchor follow range and preset settings."),
+                    DecorationEditorTheme.ToolButton(_anchorMenuOpen)))
+            {
+                _anchorMenuOpen = !_anchorMenuOpen;
+                _viewModeMenuOpen = false;
+            }
         }
 
-        private void DrawBottomTransformEditors()
+        private struct BottomHeaderLayout
         {
-            Rect row = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(30f), GUILayout.ExpandWidth(true));
+            internal BottomHeaderLayout(
+                Rect title,
+                Rect mode,
+                Rect selectControls,
+                Rect anchorFollow,
+                Rect anchorSettings,
+                Rect clean)
+            {
+                Title = title;
+                Mode = mode;
+                SelectControls = selectControls;
+                AnchorFollow = anchorFollow;
+                AnchorSettings = anchorSettings;
+                Clean = clean;
+            }
+
+            internal Rect Title { get; }
+            internal Rect Mode { get; }
+            internal Rect SelectControls { get; }
+            internal Rect AnchorFollow { get; }
+            internal Rect AnchorSettings { get; }
+            internal Rect Clean { get; }
+        }
+
+        private static void DrawCyanLine(Rect rect)
+        {
+            Color previous = GUI.color;
+            GUI.color = DecorationEditorTheme.Cyan;
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = previous;
+        }
+
+        private void DrawBottomTransformEditors(Rect row)
+        {
             float edgePadding = EsuHudLayout.Scale(4f);
             float gap = EsuHudLayout.Scale(8f);
             float availableWidth = Mathf.Max(1f, row.width - edgePadding * 2f);
@@ -2673,8 +3950,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Action<Vector3> apply)
         {
             bool hasSelection = _selected != null && !_selected.IsDeleted;
-            float fieldHeight = EsuHudLayout.Scale(24f);
-            float verticalOffset = EsuHudLayout.Scale(3f);
+            float fieldHeight = Mathf.Min(EsuHudLayout.Scale(24f), rect.height);
+            float verticalOffset = Mathf.Max(0f, (rect.height - fieldHeight) * 0.5f);
             float setWidth = EsuHudLayout.Scale(40f);
             float axisWidth = EsuHudLayout.Scale(18f);
             float gap = EsuHudLayout.Scale(4f);
@@ -2703,7 +3980,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         rect.y + verticalOffset,
                         setWidth,
                         fieldHeight),
-                    "Set",
+                    new GUIContent("Set", "Apply the typed " + label.ToLowerInvariant() + " values."),
                     hasSelection ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton) &&
                 hasSelection)
             {
@@ -2726,18 +4003,20 @@ namespace DecoLimitLifter.DecorationEditMode
             float gap,
             bool hasSelection)
         {
+            float centeredY = y + Mathf.Max(0f, (EsuHudLayout.Scale(30f) - fieldHeight) * 0.5f);
             GUI.Label(
-                new Rect(x, y + EsuHudLayout.Scale(4f), axisWidth, fieldHeight),
+                new Rect(x, centeredY, axisWidth, fieldHeight),
                 axis.ToString(),
                 BottomVectorAxisStyle(axis));
             x += axisWidth + gap;
-            Rect fieldRect = new Rect(x, y + EsuHudLayout.Scale(3f), fieldWidth, fieldHeight);
+            Rect fieldRect = new Rect(x, centeredY, fieldWidth, fieldHeight);
             if (hasSelection)
             {
                 values[index] = GUI.TextField(
                     fieldRect,
                     values[index] ?? string.Empty,
                     DecorationEditorTheme.TextField);
+                EsuCursorTooltip.Register(fieldRect, "Edit the " + axis + " component.");
             }
             else
             {
@@ -2782,7 +4061,14 @@ namespace DecoLimitLifter.DecorationEditMode
                     _surfaceDraft.Faces.Count,
                     _surfacePlan == null ? "no preview" : _surfacePlan.DecorationCount.ToString("N0", CultureInfo.InvariantCulture) + " deco")
                 : string.Empty;
-            return $"View: {ViewModeDisplayName(_viewMode)} | Tool: {_tool}{placing}{surface} | Selected: {selected} | Dirty: {(_dirty ? "yes" : "no")} | Undo {_history.UndoCount}/Redo {_history.RedoCount} | Save: {format} | {counts}";
+            string generator = _generatorDraft.HasDraft
+                ? string.Format(
+                    CultureInfo.InvariantCulture,
+                    " | Generator: {0}/{1}",
+                    _surfaceExtraTool,
+                    _generatorPlan == null ? "no preview" : _generatorPlan.DecorationCount.ToString("N0", CultureInfo.InvariantCulture) + " deco")
+                : string.Empty;
+            return $"View: {ViewModeDisplayName(_viewMode)} | Tool: {_tool}{placing}{surface}{generator} | Selected: {selected} | Dirty: {(_dirty ? "yes" : "no")} | Undo {_history.UndoCount}/Redo {_history.RedoCount} | Save: {format} | {counts}";
         }
 
         private static string ViewModeDisplayName(DecorationEditorViewMode mode)
@@ -2931,9 +4217,27 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (_generatorDragAxis != DecorationEditAxis.None)
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                if (!Input.GetMouseButton(0))
+                {
+                    _generatorDragAxis = DecorationEditAxis.None;
+                    RebuildGeneratorPreview(showMessage: false);
+                    return;
+                }
+
+                TryUpdateGeneratorDrag(_lastMouseGui - _generatorDragMouseStart);
+                return;
+            }
+
             if (_tool == DecorationEditorTool.Surface)
             {
-                HandleSurfaceSceneInput();
+                if (_surfaceExtraShelfOpen && _surfaceExtraTool != SurfaceExtraTool.None)
+                    HandleGeneratorSceneInput();
+                else
+                    HandleSurfaceSceneInput();
                 return;
             }
 
@@ -2992,8 +4296,31 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (_boxSelecting)
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                if (Input.GetMouseButton(0))
+                {
+                    UpdateBoxSelectionDrag(_lastMouseGui);
+                    return;
+                }
+
+                CommitBoxSelectionDrag(_lastMouseGui);
+                return;
+            }
+
             if (!Input.GetMouseButtonDown(0))
                 return;
+
+            if (_tool == DecorationEditorTool.Select &&
+                _selectionMode == DecorationSelectionMode.Box)
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                BeginBoxSelection(_lastMouseGui);
+                return;
+            }
 
             if (_tool == DecorationEditorTool.Anchor &&
                 _selected != null && !_selected.IsDeleted &&
@@ -3010,6 +4337,20 @@ namespace DecoLimitLifter.DecorationEditMode
                 _transactions.TrackEdit(_selected, _anchorDragSnapshotStart);
                 _anchorDragSymmetryFollow = BeginSymmetryFollow(_anchorDragSnapshotStart, reportSkipped: true);
                 TryUpdateAnchorDrag(Vector2.zero);
+                return;
+            }
+
+            if (_tool == DecorationEditorTool.Rotate &&
+                TryGetMultiSelectionPivot(out Vector3 multiRotatePivot) &&
+                TryPickGroupRotateRing(multiRotatePivot, _lastMouseGui, out DecorationEditAxis multiRotateAxis) &&
+                TryCaptureMultiTransformStart(out multiRotatePivot))
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                _rotateDragAxis = multiRotateAxis;
+                _rotateDragMouseStart = _lastMouseGui;
+                TryProject(_selectedConstruct, multiRotatePivot, out _rotateDragCenterScreen);
+                _rotateDragStartVector = _lastMouseGui - _rotateDragCenterScreen;
                 return;
             }
 
@@ -3031,6 +4372,18 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             if (_tool == DecorationEditorTool.Scale &&
+                TryGetMultiSelectionPivot(out Vector3 multiScalePivot) &&
+                TryPickGroupHandle(multiScalePivot, _lastMouseGui, out DecorationEditAxis multiScaleAxis) &&
+                TryCaptureMultiTransformStart(out multiScalePivot))
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                _scaleDragAxis = multiScaleAxis;
+                _scaleDragMouseStart = _lastMouseGui;
+                return;
+            }
+
+            if (_tool == DecorationEditorTool.Scale &&
                 _selected != null && !_selected.IsDeleted &&
                 TryPickHandle(_selected, _selectedConstruct, _lastMouseGui, out DecorationEditAxis scaleAxis))
             {
@@ -3041,6 +4394,20 @@ namespace DecoLimitLifter.DecorationEditMode
                 _scaleStart = _selected.Scaling.Us;
                 _scaleDragSnapshotStart = new DecorationEditSnapshot(_selected);
                 _transactions.TrackEdit(_selected, _scaleDragSnapshotStart);
+                return;
+            }
+
+            if (_tool == DecorationEditorTool.Move &&
+                TryGetMultiSelectionPivot(out Vector3 multiMovePivot) &&
+                TryPickGroupMoveHandle(multiMovePivot, _lastMouseGui, out DecorationEditAxis multiMoveAxis) &&
+                TryCaptureMultiTransformStart(out multiMovePivot))
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                _dragAxis = multiMoveAxis;
+                _dragMouseStart = _lastMouseGui;
+                if (multiMoveAxis == DecorationEditAxis.Free)
+                    PrepareFreeDragFrameAt(_selectedConstruct, multiMovePivot);
                 return;
             }
 
@@ -3083,6 +4450,33 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void TryUpdateDrag(Vector2 mouseDelta)
         {
+            if (MultiTransformActive)
+            {
+                if (_dragAxis == DecorationEditAxis.Free)
+                {
+                    Vector3 freeDelta = _freeDragCameraRight * (mouseDelta.x * _freeDragMetresPerPixel) -
+                                        _freeDragCameraUp * (mouseDelta.y * _freeDragMetresPerPixel);
+                    TryApplyMultiMove(DecorationEditMath.Snap(freeDelta));
+                    return;
+                }
+
+                if (!TryProject(_selectedConstruct, _multiTransformPivotStart, out Vector2 multiOrigin))
+                    return;
+
+                Vector3 multiAxisVector = GroupTransformAxisVector(_dragAxis);
+                if (!TryProject(_selectedConstruct, _multiTransformPivotStart + multiAxisVector * HandleLength, out Vector2 multiAxisEnd))
+                    return;
+
+                float multiAxisDelta = DecorationEditMath.ProjectMouseDeltaToAxis(
+                    mouseDelta,
+                    multiOrigin,
+                    multiAxisEnd,
+                    HandleLength);
+                multiAxisDelta = DecorationEditMath.Snap(multiAxisDelta);
+                TryApplyMultiMove(multiAxisVector * multiAxisDelta);
+                return;
+            }
+
             if (_selected == null || _selected.IsDeleted || _selectedConstruct == null)
                 return;
 
@@ -3147,6 +4541,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void CommitDragEdit()
         {
+            if (MultiTransformActive)
+            {
+                RecordMultiTransformEdit("Move decorations");
+                return;
+            }
+
             DecorationEditSnapshot before = _dragSnapshotStart;
             _dragSnapshotStart = null;
             SymmetryFollowContext symmetryFollow = _dragSymmetryFollow;
@@ -3159,6 +4559,19 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void TryUpdateRotate(Vector2 mouseDelta)
         {
+            if (MultiTransformActive)
+            {
+                Vector2 multiCurrent = _lastMouseGui - _rotateDragCenterScreen;
+                if (_rotateDragStartVector.sqrMagnitude < 16f || multiCurrent.sqrMagnitude < 16f)
+                    return;
+
+                float multiDegrees = DecorationEditMath.Snap(
+                    Vector2.SignedAngle(_rotateDragStartVector, multiCurrent),
+                    RotateSnapDegrees);
+                TryApplyMultiRotate(_rotateDragAxis, multiDegrees);
+                return;
+            }
+
             if (_selected == null || _selected.IsDeleted || _selectedConstruct == null)
                 return;
 
@@ -3183,6 +4596,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void CommitRotateEdit()
         {
+            if (MultiTransformActive)
+            {
+                RecordMultiTransformEdit("Rotate decorations");
+                return;
+            }
+
             DecorationEditSnapshot before = _rotateDragSnapshotStart;
             _rotateDragSnapshotStart = null;
             if (before == null || _selected == null || _selected.IsDeleted)
@@ -3193,6 +4612,27 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void TryUpdateScale(Vector2 mouseDelta)
         {
+            if (MultiTransformActive)
+            {
+                if (!TryProject(_selectedConstruct, _multiTransformPivotStart, out Vector2 multiOrigin))
+                    return;
+
+                Vector3 multiAxis = GroupTransformAxisVector(_scaleDragAxis);
+                if (!TryProject(_selectedConstruct, _multiTransformPivotStart + multiAxis * HandleLength, out Vector2 multiAxisEnd))
+                    return;
+
+                float multiDelta = DecorationEditMath.ProjectMouseDeltaToAxis(
+                    mouseDelta,
+                    multiOrigin,
+                    multiAxisEnd,
+                    HandleLength);
+                float factor = Mathf.Max(
+                    MinimumScale,
+                    DecorationEditMath.Snap(1f + multiDelta, ScaleSnap));
+                TryApplyMultiScale(_scaleDragAxis, factor);
+                return;
+            }
+
             if (_selected == null || _selected.IsDeleted || _selectedConstruct == null)
                 return;
 
@@ -3221,6 +4661,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void CommitScaleEdit()
         {
+            if (MultiTransformActive)
+            {
+                RecordMultiTransformEdit("Scale decorations");
+                return;
+            }
+
             DecorationEditSnapshot before = _scaleDragSnapshotStart;
             _scaleDragSnapshotStart = null;
             if (before == null || _selected == null || _selected.IsDeleted)
@@ -3396,6 +4842,23 @@ namespace DecoLimitLifter.DecorationEditMode
         private Vector3 ActiveTransformAxisVector(DecorationEditAxis axis) =>
             ActiveTransformAxisVector(_selected, axis);
 
+        private Vector3 GroupTransformAxisVector(DecorationEditAxis axis)
+        {
+            Vector3 baseAxis = DecorationEditMath.AxisVector(axis);
+            if (_transformOrientation != DecorationTransformOrientation.Local ||
+                _selected == null ||
+                _selected.IsDeleted ||
+                baseAxis.sqrMagnitude < 0.0001f)
+            {
+                return baseAxis;
+            }
+
+            Vector3 oriented = Quaternion.Euler(_selected.Orientation.Us) * baseAxis;
+            return oriented.sqrMagnitude > 0.0001f && DecorationEditMath.IsFinite(oriented)
+                ? oriented.normalized
+                : baseAxis;
+        }
+
         private Vector3 ActiveTransformAxisVector(Decoration decoration, DecorationEditAxis axis)
         {
             Vector3 baseAxis = DecorationEditMath.AxisVector(axis);
@@ -3411,6 +4874,431 @@ namespace DecoLimitLifter.DecorationEditMode
             return oriented.sqrMagnitude > 0.0001f && DecorationEditMath.IsFinite(oriented)
                 ? oriented.normalized
                 : baseAxis;
+        }
+
+        private bool MultiTransformActive => _multiTransformDecorations.Length > 1;
+
+        private List<Decoration> CurrentPrimarySelectionDecorations()
+        {
+            var decorations = new List<Decoration>();
+            if (_selectedConstruct == null)
+                return decorations;
+
+            if (_selected != null &&
+                !_selected.IsDeleted &&
+                _selection.Contains(_selected))
+            {
+                decorations.Add(_selected);
+            }
+
+            foreach (Decoration decoration in _selection)
+            {
+                if (decoration == null ||
+                    decoration.IsDeleted ||
+                    ReferenceEquals(decoration, _selected) ||
+                    decorations.Contains(decoration))
+                {
+                    continue;
+                }
+
+                decorations.Add(decoration);
+            }
+
+            return decorations;
+        }
+
+        private bool TryGetMultiSelectionPivot(out Vector3 pivot)
+        {
+            pivot = Vector3.zero;
+            List<Decoration> decorations = CurrentPrimarySelectionDecorations();
+            if (decorations.Count <= 1)
+                return false;
+
+            Vector3 sum = Vector3.zero;
+            for (int index = 0; index < decorations.Count; index++)
+            {
+                Vector3 center = GetDecorationLocalCenter(decorations[index]);
+                if (!DecorationEditMath.IsFinite(center))
+                    return false;
+                sum += center;
+            }
+
+            pivot = sum / decorations.Count;
+            return DecorationEditMath.IsFinite(pivot);
+        }
+
+        private bool TryCaptureMultiTransformStart(out Vector3 pivot)
+        {
+            pivot = Vector3.zero;
+            ClearMultiTransformState();
+
+            List<Decoration> decorations = CurrentPrimarySelectionDecorations();
+            if (decorations.Count <= 1)
+                return false;
+
+            var before = new DecorationEditSnapshot[decorations.Count];
+            var centers = new Vector3[decorations.Count];
+            Vector3 sum = Vector3.zero;
+            for (int index = 0; index < decorations.Count; index++)
+            {
+                Decoration decoration = decorations[index];
+                before[index] = new DecorationEditSnapshot(decoration);
+                centers[index] = ToVector3(before[index].TetherPoint) + before[index].Positioning;
+                if (!DecorationEditMath.IsFinite(centers[index]))
+                    return false;
+                sum += centers[index];
+            }
+
+            pivot = sum / decorations.Count;
+            if (!DecorationEditMath.IsFinite(pivot))
+                return false;
+
+            _multiTransformDecorations = decorations.ToArray();
+            _multiTransformBefore = before;
+            _multiTransformStartCenters = centers;
+            _multiTransformPivotStart = pivot;
+            for (int index = 0; index < _multiTransformDecorations.Length; index++)
+                _transactions.TrackEdit(_multiTransformDecorations[index], _multiTransformBefore[index]);
+            return true;
+        }
+
+        private void ClearMultiTransformState()
+        {
+            _multiTransformDecorations = Array.Empty<Decoration>();
+            _multiTransformBefore = Array.Empty<DecorationEditSnapshot>();
+            _multiTransformStartCenters = Array.Empty<Vector3>();
+            _multiTransformPivotStart = Vector3.zero;
+        }
+
+        private bool TryPositioningFromCenter(
+            DecorationEditSnapshot snapshot,
+            Vector3 center,
+            out Vector3 positioning)
+        {
+            positioning = Vector3.zero;
+            if (snapshot == null || !DecorationEditMath.IsFinite(center))
+                return false;
+
+            positioning = center - ToVector3(snapshot.TetherPoint);
+            return DecorationEditMath.IsFinite(positioning) &&
+                   DecorationEditMath.IsWithinPositionLimit(positioning);
+        }
+
+        private bool TryResolveMultiTransformPlacement(
+            DecorationEditSnapshot snapshot,
+            Vector3 center,
+            Vector3 orientation,
+            Vector3 scale,
+            out MultiTransformPlacement placement)
+        {
+            placement = null;
+            if (snapshot == null ||
+                _selectedConstruct == null ||
+                !DecorationEditMath.IsFinite(center) ||
+                !DecorationEditMath.IsFinite(orientation) ||
+                !IsValidScale(scale))
+            {
+                return false;
+            }
+
+            Vector3 originalPositioning = center - ToVector3(snapshot.TetherPoint);
+            bool originalPositionValid =
+                DecorationEditMath.IsFinite(originalPositioning) &&
+                DecorationEditMath.IsWithinPositionLimit(originalPositioning);
+            float threshold = Mathf.Max(AnchorFollowMinimumDistance, _anchorFollowDistance);
+            bool shouldFollow =
+                _anchorFollowDecoration &&
+                (center - ToVector3(snapshot.TetherPoint)).sqrMagnitude >= threshold * threshold;
+            if (!shouldFollow && originalPositionValid)
+            {
+                placement = new MultiTransformPlacement(
+                    snapshot.TetherPoint,
+                    originalPositioning,
+                    orientation,
+                    scale);
+                return true;
+            }
+
+            if (_anchorFollowDecoration &&
+                TryFindAnchorFollowTarget(_selectedConstruct, center, snapshot.TetherPoint, out Vector3i target))
+            {
+                Vector3 followedPositioning = DecorationEditMath.Snap(center - ToVector3(target));
+                if (DecorationEditMath.IsFinite(followedPositioning) &&
+                    DecorationEditMath.IsWithinPositionLimit(followedPositioning))
+                {
+                    placement = new MultiTransformPlacement(
+                        target,
+                        followedPositioning,
+                        orientation,
+                        scale);
+                    return true;
+                }
+            }
+
+            if (originalPositionValid)
+            {
+                placement = new MultiTransformPlacement(
+                    snapshot.TetherPoint,
+                    originalPositioning,
+                    orientation,
+                    scale);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryApplyMultiTransformPlacements(MultiTransformPlacement[] placements)
+        {
+            if (!MultiTransformActive ||
+                placements == null ||
+                placements.Length != _multiTransformDecorations.Length)
+            {
+                return false;
+            }
+
+            var rollback = new DecorationEditSnapshot[_multiTransformDecorations.Length];
+            for (int index = 0; index < _multiTransformDecorations.Length; index++)
+            {
+                Decoration decoration = _multiTransformDecorations[index];
+                if (decoration == null ||
+                    decoration.IsDeleted ||
+                    placements[index] == null)
+                {
+                    return false;
+                }
+
+                rollback[index] = new DecorationEditSnapshot(decoration);
+            }
+
+            bool shiftedAny = false;
+            try
+            {
+                for (int index = 0; index < _multiTransformDecorations.Length; index++)
+                {
+                    Decoration decoration = _multiTransformDecorations[index];
+                    MultiTransformPlacement placement = placements[index];
+                    Vector3i current = decoration.TetherPoint.Us;
+                    if (!SameTether(current, placement.TetherPoint))
+                    {
+                        if (decoration.OurManager == null)
+                        {
+                            RestoreMultiTransformFrame(rollback);
+                            return false;
+                        }
+
+                        var shift = new Vector3i(
+                            placement.TetherPoint.x - current.x,
+                            placement.TetherPoint.y - current.y,
+                            placement.TetherPoint.z - current.z);
+                        if (!decoration.OurManager.ShiftDecoration(decoration, shift))
+                        {
+                            RestoreMultiTransformFrame(rollback);
+                            return false;
+                        }
+
+                        shiftedAny = true;
+                    }
+
+                    decoration.Positioning.Us = placement.Positioning;
+                    decoration.Orientation.Us = placement.Orientation;
+                    decoration.Scaling.Us = placement.Scaling;
+                    decoration.Changed();
+                }
+            }
+            catch (Exception exception)
+            {
+                RestoreMultiTransformFrame(rollback);
+                AdvLogger.LogException(
+                    "[EndlessShapes Unlimited] Multi-selection transform retether failed",
+                    exception,
+                    LogOptions._AlertDevInGame);
+                return false;
+            }
+
+            _dirty = true;
+            if (shiftedAny)
+                RefreshDecorationCache(force: true);
+            return true;
+        }
+
+        private void RestoreMultiTransformFrame(DecorationEditSnapshot[] rollback)
+        {
+            if (rollback == null)
+                return;
+
+            for (int index = 0; index < rollback.Length && index < _multiTransformDecorations.Length; index++)
+            {
+                Decoration decoration = _multiTransformDecorations[index];
+                rollback[index]?.TryRestore(decoration);
+            }
+
+            RefreshDecorationCache(force: true);
+        }
+
+        private bool TryApplyMultiMove(Vector3 delta)
+        {
+            if (!MultiTransformActive || !DecorationEditMath.IsFinite(delta))
+                return false;
+
+            var placements = new MultiTransformPlacement[_multiTransformDecorations.Length];
+            for (int index = 0; index < _multiTransformDecorations.Length; index++)
+            {
+                if (!TryResolveMultiTransformPlacement(
+                        _multiTransformBefore[index],
+                        _multiTransformStartCenters[index] + delta,
+                        _multiTransformBefore[index].Orientation,
+                        _multiTransformBefore[index].Scaling,
+                        out placements[index]))
+                {
+                    return false;
+                }
+            }
+
+            return TryApplyMultiTransformPlacements(placements);
+        }
+
+        private bool TryApplyMultiRotate(DecorationEditAxis axis, float degrees)
+        {
+            if (!MultiTransformActive)
+                return false;
+
+            Vector3 axisVector = GroupTransformAxisVector(axis);
+            if (axisVector.sqrMagnitude < 0.0001f || !DecorationEditMath.IsFinite(axisVector))
+                return false;
+
+            Quaternion rotation = Quaternion.AngleAxis(degrees, axisVector.normalized);
+            var placements = new MultiTransformPlacement[_multiTransformDecorations.Length];
+            var orientations = new Vector3[_multiTransformDecorations.Length];
+            for (int index = 0; index < _multiTransformDecorations.Length; index++)
+            {
+                Vector3 center = _multiTransformPivotStart +
+                                 rotation * (_multiTransformStartCenters[index] - _multiTransformPivotStart);
+                orientations[index] = (rotation * Quaternion.Euler(_multiTransformBefore[index].Orientation)).eulerAngles;
+                if (!DecorationEditMath.IsFinite(orientations[index]))
+                    return false;
+
+                if (!TryResolveMultiTransformPlacement(
+                        _multiTransformBefore[index],
+                        center,
+                        orientations[index],
+                        _multiTransformBefore[index].Scaling,
+                        out placements[index]))
+                {
+                    return false;
+                }
+            }
+
+            return TryApplyMultiTransformPlacements(placements);
+        }
+
+        private bool TryApplyMultiScale(DecorationEditAxis axis, float factor)
+        {
+            if (!MultiTransformActive ||
+                float.IsNaN(factor) ||
+                float.IsInfinity(factor) ||
+                factor < MinimumScale)
+            {
+                return false;
+            }
+
+            Vector3 axisVector = GroupTransformAxisVector(axis);
+            if (axisVector.sqrMagnitude < 0.0001f || !DecorationEditMath.IsFinite(axisVector))
+                return false;
+            axisVector.Normalize();
+
+            var placements = new MultiTransformPlacement[_multiTransformDecorations.Length];
+            var scales = new Vector3[_multiTransformDecorations.Length];
+            for (int index = 0; index < _multiTransformDecorations.Length; index++)
+            {
+                Vector3 offset = _multiTransformStartCenters[index] - _multiTransformPivotStart;
+                Vector3 axial = axisVector * Vector3.Dot(offset, axisVector);
+                Vector3 center = _multiTransformPivotStart + offset + axial * (factor - 1f);
+                scales[index] = ScaleVectorAlongAxis(_multiTransformBefore[index].Scaling, axis, factor);
+                if (!IsValidScale(scales[index]))
+                    return false;
+
+                if (!TryResolveMultiTransformPlacement(
+                        _multiTransformBefore[index],
+                        center,
+                        _multiTransformBefore[index].Orientation,
+                        scales[index],
+                        out placements[index]))
+                {
+                    return false;
+                }
+            }
+
+            return TryApplyMultiTransformPlacements(placements);
+        }
+
+        private static Vector3 ScaleVectorAlongAxis(Vector3 value, DecorationEditAxis axis, float factor)
+        {
+            switch (axis)
+            {
+                case DecorationEditAxis.X:
+                    return new Vector3(value.x * factor, value.y, value.z);
+                case DecorationEditAxis.Y:
+                    return new Vector3(value.x, value.y * factor, value.z);
+                case DecorationEditAxis.Z:
+                    return new Vector3(value.x, value.y, value.z * factor);
+                default:
+                    return value;
+            }
+        }
+
+        private void RecordMultiTransformEdit(string label)
+        {
+            Decoration[] decorations = _multiTransformDecorations;
+            DecorationEditSnapshot[] before = _multiTransformBefore;
+            ClearMultiTransformState();
+            if (decorations.Length <= 1 ||
+                before.Length != decorations.Length ||
+                _selectedConstruct == null)
+            {
+                UpdateDirtyFromSelection();
+                return;
+            }
+
+            var changedDecorations = new List<Decoration>();
+            var changedBefore = new List<DecorationEditSnapshot>();
+            var changedAfter = new List<DecorationEditSnapshot>();
+            int primaryIndex = 0;
+            for (int index = 0; index < decorations.Length; index++)
+            {
+                Decoration decoration = decorations[index];
+                if (decoration == null ||
+                    decoration.IsDeleted ||
+                    before[index] == null ||
+                    before[index].Matches(decoration))
+                {
+                    continue;
+                }
+
+                if (ReferenceEquals(decoration, _selected))
+                    primaryIndex = changedDecorations.Count;
+                changedDecorations.Add(decoration);
+                changedBefore.Add(before[index]);
+                changedAfter.Add(new DecorationEditSnapshot(decoration));
+                _transactions.TrackEdit(decoration, before[index]);
+            }
+
+            if (changedDecorations.Count == 0)
+            {
+                UpdateDirtyFromSelection();
+                return;
+            }
+
+            _history.Record(new DecorationSnapshotBatchCommand(
+                label,
+                _selectedConstruct,
+                changedDecorations.ToArray(),
+                changedBefore.ToArray(),
+                changedAfter.ToArray(),
+                primaryIndex));
+            UpdateDirtyFromSelection();
+            RefreshDecorationCache(force: true);
+            RefreshForecast(force: true);
         }
 
         private static void BuildAxisBasis(Vector3 normal, out Vector3 tangentA, out Vector3 tangentB)
@@ -3479,6 +5367,54 @@ namespace DecoLimitLifter.DecorationEditMode
             return TryPickHandle(decoration, construct, mouse, out axis);
         }
 
+        private bool TryPickGroupHandle(
+            Vector3 center,
+            Vector2 mouse,
+            out DecorationEditAxis axis)
+        {
+            axis = DecorationEditAxis.None;
+            if (_selectedConstruct == null)
+                return false;
+
+            if (!TryProject(_selectedConstruct, center, out Vector2 origin) ||
+                !TryProject(_selectedConstruct, center + GroupTransformAxisVector(DecorationEditAxis.X) * HandleLength, out Vector2 xEnd) ||
+                !TryProject(_selectedConstruct, center + GroupTransformAxisVector(DecorationEditAxis.Y) * HandleLength, out Vector2 yEnd) ||
+                !TryProject(_selectedConstruct, center + GroupTransformAxisVector(DecorationEditAxis.Z) * HandleLength, out Vector2 zEnd))
+            {
+                return false;
+            }
+
+            axis = DecorationEditMath.PickAxis(
+                mouse,
+                origin,
+                xEnd,
+                yEnd,
+                zEnd,
+                HandleRadiusPixels);
+            return axis != DecorationEditAxis.None;
+        }
+
+        private bool TryPickGroupMoveHandle(
+            Vector3 center,
+            Vector2 mouse,
+            out DecorationEditAxis axis)
+        {
+            axis = DecorationEditAxis.None;
+            if (_selectedConstruct == null)
+                return false;
+
+            if (!TryProject(_selectedConstruct, center, out Vector2 origin))
+                return false;
+
+            if (Vector2.Distance(mouse, origin) <= HandleRadiusPixels * 1.35f)
+            {
+                axis = DecorationEditAxis.Free;
+                return true;
+            }
+
+            return TryPickGroupHandle(center, mouse, out axis);
+        }
+
         private void PrepareFreeDragFrame(Decoration decoration, AllConstruct construct)
         {
             _freeDragCameraRight = Vector3.right;
@@ -3500,6 +5436,34 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             Vector3 center = GetDecorationLocalCenter(decoration);
+            if (TryProject(construct, center, out Vector2 origin) &&
+                TryProject(construct, center + _freeDragCameraRight, out Vector2 rightEnd))
+            {
+                float pixelsPerMetre = Mathf.Max(18f, Vector2.Distance(origin, rightEnd));
+                _freeDragMetresPerPixel = 1f / pixelsPerMetre;
+            }
+        }
+
+        private void PrepareFreeDragFrameAt(AllConstruct construct, Vector3 center)
+        {
+            _freeDragCameraRight = Vector3.right;
+            _freeDragCameraUp = Vector3.up;
+            _freeDragMetresPerPixel = 0.01f;
+            Camera camera = Camera.main;
+            if (camera == null || construct == null)
+                return;
+
+            try
+            {
+                _freeDragCameraRight = construct.myTransform.InverseTransformDirection(camera.transform.right).normalized;
+                _freeDragCameraUp = construct.myTransform.InverseTransformDirection(camera.transform.up).normalized;
+            }
+            catch
+            {
+                _freeDragCameraRight = Vector3.right;
+                _freeDragCameraUp = Vector3.up;
+            }
+
             if (TryProject(construct, center, out Vector2 origin) &&
                 TryProject(construct, center + _freeDragCameraRight, out Vector2 rightEnd))
             {
@@ -3637,6 +5601,220 @@ namespace DecoLimitLifter.DecorationEditMode
             (p1.x - p3.x) * (p2.y - p3.y) -
             (p2.x - p3.x) * (p1.y - p3.y);
 
+        private void BeginBoxSelection(Vector2 mouse)
+        {
+            _boxSelecting = true;
+            _boxSelectStartMouse = mouse;
+            _boxSelectCurrentMouse = mouse;
+            _boxSelectCandidateCount = 0;
+            RefreshDecorationCache(force: true);
+        }
+
+        private void UpdateBoxSelectionDrag(Vector2 mouse)
+        {
+            _boxSelectCurrentMouse = mouse;
+            Rect rect = BoxSelectionRect();
+            _boxSelectCandidateCount = rect.width >= BoxSelectionClickThresholdPixels &&
+                                       rect.height >= BoxSelectionClickThresholdPixels
+                ? CountBoxSelectionCandidates(rect, _selectionXray)
+                : 0;
+        }
+
+        private void CommitBoxSelectionDrag(Vector2 mouse)
+        {
+            _boxSelectCurrentMouse = mouse;
+            Rect rect = BoxSelectionRect();
+            _boxSelecting = false;
+            _boxSelectCandidateCount = 0;
+            if (rect.width < BoxSelectionClickThresholdPixels ||
+                rect.height < BoxSelectionClickThresholdPixels)
+            {
+                SelectNearest(_boxSelectStartMouse);
+                return;
+            }
+
+            SelectBox(rect, _selectionXray);
+        }
+
+        private void CancelBoxSelection()
+        {
+            _boxSelecting = false;
+            _boxSelectCandidateCount = 0;
+        }
+
+        private Rect BoxSelectionRect() =>
+            NormalizedScreenRect(_boxSelectStartMouse, _boxSelectCurrentMouse);
+
+        private static Rect NormalizedScreenRect(Vector2 start, Vector2 end)
+        {
+            float xMin = Mathf.Min(start.x, end.x);
+            float xMax = Mathf.Max(start.x, end.x);
+            float yMin = Mathf.Min(start.y, end.y);
+            float yMax = Mathf.Max(start.y, end.y);
+            return Rect.MinMaxRect(xMin, yMin, xMax, yMax);
+        }
+
+        private int CountBoxSelectionCandidates(Rect rect, bool xray)
+        {
+            int count = 0;
+            foreach (DecorationHit hit in EnumerateBoxSelectionHits(rect, xray, refresh: false))
+                count++;
+            return count;
+        }
+
+        private void SelectBox(Rect rect, bool xray)
+        {
+            List<DecorationHit> selected = EnumerateBoxSelectionHits(rect, xray, refresh: true).ToList();
+            if (selected.Count == 0)
+            {
+                InfoStore.Add("No decoration centers inside the selection box.");
+                return;
+            }
+
+            DecorationHit primary = selected
+                .OrderBy(hit => (hit.ScreenPoint - _boxSelectStartMouse).sqrMagnitude)
+                .First();
+            SetPrimarySelection(primary.Decoration, primary.Construct);
+            _selection.Clear();
+            foreach (DecorationHit hit in selected)
+                _selection.Add(hit.Decoration);
+            ResetInspectorFields();
+            InfoStore.Add(
+                selected.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                (selected.Count == 1 ? " decoration selected" : " decorations selected") +
+                (xray ? " with X-ray." : "."));
+        }
+
+        private IEnumerable<DecorationHit> EnumerateBoxSelectionHits(Rect rect, bool xray, bool refresh)
+        {
+            if (refresh)
+                RefreshDecorationCache(force: true);
+
+            AllConstruct primaryConstruct = BoxSelectionPrimaryConstruct();
+            if (primaryConstruct == null)
+                yield break;
+
+            foreach (DecorationHit hit in _hits)
+            {
+                if (hit.Decoration == null ||
+                    hit.Decoration.IsDeleted ||
+                    !ReferenceEquals(hit.Construct, primaryConstruct) ||
+                    !rect.Contains(hit.ScreenPoint))
+                {
+                    continue;
+                }
+
+                if (!xray && !IsDecorationHitVisible(hit, primaryConstruct))
+                    continue;
+
+                yield return hit;
+            }
+        }
+
+        private AllConstruct BoxSelectionPrimaryConstruct() =>
+            _selectedConstruct ?? FocusedConstruct();
+
+        private bool IsDecorationHitVisible(DecorationHit hit, AllConstruct primaryConstruct)
+        {
+            Camera camera = Camera.main ?? Camera.current;
+            if (camera == null || hit?.Construct == null || primaryConstruct == null)
+                return true;
+
+            Vector3 world;
+            try
+            {
+                world = hit.Construct.SafeLocalToGlobal(hit.LocalCenter);
+            }
+            catch
+            {
+                return false;
+            }
+
+            Vector3 origin = camera.transform.position;
+            Vector3 toCenter = world - origin;
+            float distance = toCenter.magnitude;
+            if (distance <= BoxSelectionVisibilityTolerance ||
+                !DecorationEditMath.IsFinite(toCenter))
+            {
+                return true;
+            }
+
+            Ray ray = new Ray(origin, toCenter / distance);
+            float rayDistance = Mathf.Max(0f, distance - BoxSelectionVisibilityTolerance);
+            if (rayDistance <= 0.0001f)
+                return true;
+
+            if (CraftBlockOccludesDecorationRay(ray, rayDistance, primaryConstruct, hit))
+                return false;
+
+            return !CraftBlockSamplingOccludesDecorationRay(ray, rayDistance, primaryConstruct, hit);
+        }
+
+        private bool CraftBlockOccludesDecorationRay(
+            Ray ray,
+            float rayDistance,
+            AllConstruct construct,
+            DecorationHit hit)
+        {
+            RaycastHit[] rayHits = Physics.RaycastAll(ray, rayDistance);
+            if (rayHits == null || rayHits.Length == 0)
+                return false;
+
+            Array.Sort(rayHits, (left, right) => left.distance.CompareTo(right.distance));
+            Vector3 direction = ray.direction.normalized;
+            for (int index = 0; index < rayHits.Length; index++)
+            {
+                RaycastHit rayHit = rayHits[index];
+                if (rayHit.distance <= 0.0001f ||
+                    rayHit.distance >= rayDistance)
+                {
+                    continue;
+                }
+
+                Vector3 sampleWorld = rayHit.point + direction * 0.06f;
+                if (OccludingCraftBlockAtWorld(sampleWorld, construct, hit))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool CraftBlockSamplingOccludesDecorationRay(
+            Ray ray,
+            float rayDistance,
+            AllConstruct construct,
+            DecorationHit hit)
+        {
+            const float step = 0.35f;
+            Vector3 direction = ray.direction.normalized;
+            for (float distance = BoxSelectionVisibilityTolerance; distance < rayDistance; distance += step)
+            {
+                Vector3 sampleWorld = ray.origin + direction * distance;
+                if (OccludingCraftBlockAtWorld(sampleWorld, construct, hit))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool OccludingCraftBlockAtWorld(
+            Vector3 world,
+            AllConstruct construct,
+            DecorationHit hit)
+        {
+            if (!TryWorldToLocal(construct, world, out Vector3 local))
+                return false;
+
+            var cell = new Vector3i(
+                Mathf.RoundToInt(local.x),
+                Mathf.RoundToInt(local.y),
+                Mathf.RoundToInt(local.z));
+            if (SameTether(cell, hit.Decoration.TetherPoint.Us))
+                return false;
+
+            return HasBlock(construct, cell);
+        }
+
         private void SelectNearest(Vector2 mouse)
         {
             if (!TryFindNearestDecoration(mouse, out DecorationHit best))
@@ -3690,6 +5868,24 @@ namespace DecoLimitLifter.DecorationEditMode
             if (decoration == null || decoration.IsDeleted || construct == null)
                 return;
 
+            SetPrimarySelection(decoration, construct);
+            _selection.Clear();
+            _selection.Add(decoration);
+            if (_tool != DecorationEditorTool.Anchor &&
+                _tool != DecorationEditorTool.Paint)
+            {
+                _tool = DecorationEditorTool.Move;
+            }
+            ResetInspectorFields();
+            if (notify)
+                InfoStore.Add("Decoration selected.");
+        }
+
+        private void SetPrimarySelection(Decoration decoration, AllConstruct construct)
+        {
+            if (decoration == null || decoration.IsDeleted || construct == null)
+                return;
+
             _selected = decoration;
             _selectedConstruct = construct;
             _snapshot = _transactions.GetOriginal(decoration) ?? new DecorationEditSnapshot(decoration);
@@ -3706,20 +5902,11 @@ namespace DecoLimitLifter.DecorationEditMode
             _anchorDragSnapshotStart = null;
             _anchorDragSymmetryFollow = null;
             _anchorPreviewValid = false;
-            _selection.Clear();
-            _selection.Add(decoration);
+            ClearMultiTransformState();
             DecorationMeshCatalogEntry matching = _meshCatalog.FirstOrDefault(
                 entry => entry.Guid == decoration.MeshGuid.Us);
             if (matching != null)
                 _selectedMesh = matching;
-            if (_tool != DecorationEditorTool.Anchor &&
-                _tool != DecorationEditorTool.Paint)
-            {
-                _tool = DecorationEditorTool.Move;
-            }
-            ResetInspectorFields();
-            if (notify)
-                InfoStore.Add("Decoration selected.");
         }
 
         private void ApplySelection(bool notify = true)
@@ -3729,6 +5916,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 _snapshot = new DecorationEditSnapshot(_selected);
             _transactions.Apply();
             ClearSurfaceDraft(notify: false);
+            ClearGeneratorDraft(notify: false);
             _selectedCreatedInSession = false;
             _dirty = false;
             _history.Clear();
@@ -3746,6 +5934,7 @@ namespace DecoLimitLifter.DecorationEditMode
             ClearApplyCancelAttention();
             CancelPlacement();
             ClearSurfaceDraft(notify: false);
+            ClearGeneratorDraft(notify: false);
             _history.Clear();
             _transactions.Cancel();
             if (notify)
@@ -4137,8 +6326,17 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3i current,
             out Vector3i target)
         {
+            return TryFindAnchorFollowTarget(_selectedConstruct, center, current, out target);
+        }
+
+        private bool TryFindAnchorFollowTarget(
+            AllConstruct construct,
+            Vector3 center,
+            Vector3i current,
+            out Vector3i target)
+        {
             target = current;
-            if (_selectedConstruct == null)
+            if (construct == null)
                 return false;
 
             Vector3i rounded = new Vector3i(
@@ -4157,7 +6355,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     for (int z = -searchRadius; z <= searchRadius; z++)
                     {
                         var candidate = new Vector3i(rounded.x + x, rounded.y + y, rounded.z + z);
-                        if (!HasBlock(_selectedConstruct, candidate))
+                        if (!HasBlock(construct, candidate))
                             continue;
 
                         Vector3 moved = DecorationEditMath.Snap(center - ToVector3(candidate));
@@ -4555,7 +6753,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
-            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit))
+            if (!_pointerProbe.TryProbe(DecorationPointerProbe.ProbeOptions.MeshPlacement, out DecorationPointerHit hit))
             {
                 HidePlacementGhost();
                 return;
@@ -4604,14 +6802,14 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
-                if (_surfaceDraft.SelectionKind != SurfaceSelectionKind.None)
+                if (_surfaceDraft.HasActiveSelection)
                 {
                     _surfaceDraft.ClearSelection();
                     _surfaceMessage = "Surface selection cleared.";
                 }
                 else
                 {
-                    ClearSurfaceDraft(notify: true);
+                    _surfaceMessage = "Surface selection is clear. Use Clear to remove the surface draft.";
                 }
                 return;
             }
@@ -4647,8 +6845,16 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (TryPickSurfaceEdge(_lastMouseGui, out SurfaceEdge edge))
             {
-                _surfaceDraft.SelectEdge(edge.A, edge.B);
-                _surfaceMessage = "Surface edge selected. Click a new point to extend.";
+                if (IsShiftHeld())
+                {
+                    if (!_surfaceDraft.ToggleBridgeEdge(edge, out _surfaceMessage))
+                        InfoStore.Add(_surfaceMessage);
+                }
+                else
+                {
+                    _surfaceDraft.SelectEdge(edge.A, edge.B);
+                    _surfaceMessage = "Surface edge selected. Click a new point to extend.";
+                }
                 return;
             }
 
@@ -4675,6 +6881,220 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             InvalidateSurfacePlan(_surfaceMessage);
+        }
+
+        private void HandleGeneratorSceneInput()
+        {
+            if (Input.GetMouseButtonDown(1))
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                if (_generatorDraft.HasActiveSelection)
+                {
+                    _generatorDraft.ClearSelection();
+                    _generatorMessage = "Generator selection cleared.";
+                }
+                else
+                {
+                    _generatorMessage = "Generator selection is clear. Use Clear to remove the draft.";
+                }
+                return;
+            }
+
+            if (!Input.GetMouseButtonDown(0))
+                return;
+
+            DecorationEditorInputScope.ClaimBuildInputForFrames();
+            DecorationEditorInputScope.ClaimCameraInputForFrames();
+
+            if (TryPickGeneratorHandle(_lastMouseGui, out DecorationEditAxis axis))
+            {
+                BeginGeneratorPointDrag(axis);
+                return;
+            }
+
+            if (TryPickGeneratorPoint(_lastMouseGui, out int pointIndex))
+            {
+                _generatorDraft.SelectPoint(pointIndex);
+                _generatorMessage = "Generator point selected.";
+                return;
+            }
+
+            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit))
+            {
+                _generatorMessage = "Point at a real craft block to place a generator point.";
+                return;
+            }
+
+            if (_surfaceExtraTool == SurfaceExtraTool.Circle)
+            {
+                Vector3 normal = LocalNormalFromHit(hit);
+                if (!_generatorDraft.TrySetCircleCenter(hit.Construct, hit.LocalHit, normal, out _generatorMessage))
+                {
+                    InfoStore.Add(_generatorMessage);
+                    return;
+                }
+            }
+            else
+            {
+                if (!_generatorDraft.TryAddPathPoint(hit.Construct, hit.LocalHit, out _generatorMessage))
+                {
+                    InfoStore.Add(_generatorMessage);
+                    return;
+                }
+            }
+
+            InvalidateGeneratorPlan(_generatorMessage);
+        }
+
+        private bool TryPickGeneratorHandle(Vector2 mouse, out DecorationEditAxis axis)
+        {
+            axis = DecorationEditAxis.None;
+            if (_generatorDraft.SelectedPoint < 0 ||
+                _generatorDraft.Construct == null)
+            {
+                return false;
+            }
+
+            Vector3 center = _generatorDraft.PointAt(_generatorDraft.SelectedPoint);
+            if (!TryProject(_generatorDraft.Construct, center, out Vector2 origin))
+                return false;
+
+            if (Vector2.Distance(mouse, origin) <= HandleRadiusPixels * 1.35f)
+            {
+                axis = DecorationEditAxis.Free;
+                return true;
+            }
+
+            if (!TryProject(_generatorDraft.Construct, center + Vector3.right * HandleLength, out Vector2 xEnd) ||
+                !TryProject(_generatorDraft.Construct, center + Vector3.up * HandleLength, out Vector2 yEnd) ||
+                !TryProject(_generatorDraft.Construct, center + Vector3.forward * HandleLength, out Vector2 zEnd))
+            {
+                return false;
+            }
+
+            axis = DecorationEditMath.PickAxis(mouse, origin, xEnd, yEnd, zEnd, HandleRadiusPixels);
+            return axis != DecorationEditAxis.None;
+        }
+
+        private void BeginGeneratorPointDrag(DecorationEditAxis axis)
+        {
+            if (_generatorDraft.SelectedPoint < 0)
+                return;
+
+            _generatorDragAxis = axis;
+            _generatorDragMouseStart = _lastMouseGui;
+            _generatorDragPointStart = _generatorDraft.PointAt(_generatorDraft.SelectedPoint);
+            if (axis == DecorationEditAxis.Free)
+                PrepareGeneratorFreeDragFrame(_generatorDragPointStart, _generatorDraft.Construct);
+        }
+
+        private void TryUpdateGeneratorDrag(Vector2 mouseDelta)
+        {
+            if (_generatorDraft.SelectedPoint < 0 ||
+                _generatorDraft.Construct == null)
+            {
+                return;
+            }
+
+            Vector3 next;
+            if (_generatorDragAxis == DecorationEditAxis.Free)
+            {
+                Vector3 freeDelta = _generatorFreeDragCameraRight * (mouseDelta.x * _generatorFreeDragMetresPerPixel) -
+                                    _generatorFreeDragCameraUp * (mouseDelta.y * _generatorFreeDragMetresPerPixel);
+                next = _generatorDragPointStart + freeDelta;
+            }
+            else
+            {
+                if (!TryProject(_generatorDraft.Construct, _generatorDragPointStart, out Vector2 origin))
+                    return;
+
+                Vector3 axisVector = DecorationEditMath.AxisVector(_generatorDragAxis);
+                if (!TryProject(_generatorDraft.Construct, _generatorDragPointStart + axisVector * HandleLength, out Vector2 axisEnd))
+                    return;
+
+                float axisDelta = DecorationEditMath.ProjectMouseDeltaToAxis(
+                    mouseDelta,
+                    origin,
+                    axisEnd,
+                    HandleLength);
+                next = _generatorDragPointStart + axisVector * DecorationEditMath.Snap(axisDelta);
+            }
+
+            if (_generatorDraft.TryMoveSelectedPoint(next, _generatorDraft.CircleNormal, out string message))
+            {
+                _generatorMessage = "Generator point moved.";
+                _generatorPlan = null;
+            }
+            else if (!string.IsNullOrEmpty(message))
+            {
+                _generatorMessage = message;
+            }
+        }
+
+        private void PrepareGeneratorFreeDragFrame(Vector3 center, AllConstruct construct)
+        {
+            _generatorFreeDragCameraRight = Vector3.right;
+            _generatorFreeDragCameraUp = Vector3.up;
+            _generatorFreeDragMetresPerPixel = 0.01f;
+            Camera camera = Camera.main;
+            if (camera == null || construct == null)
+                return;
+
+            try
+            {
+                _generatorFreeDragCameraRight = construct.myTransform.InverseTransformDirection(camera.transform.right).normalized;
+                _generatorFreeDragCameraUp = construct.myTransform.InverseTransformDirection(camera.transform.up).normalized;
+            }
+            catch
+            {
+                _generatorFreeDragCameraRight = Vector3.right;
+                _generatorFreeDragCameraUp = Vector3.up;
+            }
+
+            if (TryProject(construct, center, out Vector2 origin) &&
+                TryProject(construct, center + _generatorFreeDragCameraRight, out Vector2 rightEnd))
+            {
+                float pixelsPerMetre = Mathf.Max(18f, Vector2.Distance(origin, rightEnd));
+                _generatorFreeDragMetresPerPixel = 1f / pixelsPerMetre;
+            }
+        }
+
+        private bool TryPickGeneratorPoint(Vector2 mouse, out int pointIndex)
+        {
+            pointIndex = -1;
+            if (_generatorDraft.Construct == null)
+                return false;
+
+            float best = SelectionRadiusPixels;
+            for (int index = 0; index < _generatorDraft.PointCount; index++)
+            {
+                if (!TryProject(_generatorDraft.Construct, _generatorDraft.PointAt(index), out Vector2 screen))
+                    continue;
+                float distance = Vector2.Distance(mouse, screen);
+                if (distance >= best)
+                    continue;
+                best = distance;
+                pointIndex = index;
+            }
+
+            return pointIndex >= 0;
+        }
+
+        private static Vector3 LocalNormalFromHit(DecorationPointerHit hit)
+        {
+            if (hit?.Construct == null || !DecorationEditMath.IsFinite(hit.WorldNormal))
+                return Vector3.up;
+
+            try
+            {
+                Vector3 local = hit.Construct.myTransform.InverseTransformDirection(hit.WorldNormal);
+                return local.sqrMagnitude > 0.0001f ? local.normalized : Vector3.up;
+            }
+            catch
+            {
+                return Vector3.up;
+            }
         }
 
         private bool TryPickSurfaceHandle(Vector2 mouse, out DecorationEditAxis axis)
@@ -4883,7 +7303,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private bool RebuildSurfacePreview(bool showMessage)
         {
-            if (!SurfaceDecorationPlanner.TryPlan(
+            if (!SurfaceDecorationPlanner.TryPlanWithSymmetry(
                     _surfaceDraft,
                     new ConstructSurfaceAnchorResolver(_surfaceDraft.Construct),
                     out _surfacePlan,
@@ -4899,6 +7319,37 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceMessage = message;
             if (showMessage)
                 InfoStore.Add("Surface preview: " + message);
+            return true;
+        }
+
+        private bool RebuildGeneratorPreview(bool showMessage)
+        {
+            if (!PrepareGeneratorSettings(out string reason))
+            {
+                _generatorPlan = null;
+                _generatorMessage = reason;
+                if (showMessage && !string.IsNullOrEmpty(reason))
+                    InfoStore.Add("Generator preview rejected: " + reason);
+                return false;
+            }
+
+            if (!DecorationGeneratorPlanner.TryPlanWithSymmetry(
+                    _generatorDraft,
+                    _generatorSettings,
+                    new ConstructSurfaceAnchorResolver(_generatorDraft.Construct),
+                    out _generatorPlan,
+                    out string message))
+            {
+                _generatorPlan = null;
+                _generatorMessage = message;
+                if (showMessage && !string.IsNullOrEmpty(message))
+                    InfoStore.Add("Generator preview rejected: " + message);
+                return false;
+            }
+
+            _generatorMessage = message;
+            if (showMessage)
+                InfoStore.Add("Generator preview: " + message);
             return true;
         }
 
@@ -4974,6 +7425,81 @@ namespace DecoLimitLifter.DecorationEditMode
             _tool = DecorationEditorTool.Move;
         }
 
+        private void PlaceGeneratorPlan()
+        {
+            if (!RebuildGeneratorPreview(showMessage: false) || _generatorPlan == null)
+            {
+                if (!string.IsNullOrEmpty(_generatorMessage))
+                    InfoStore.Add("Generator placement rejected: " + _generatorMessage);
+                return;
+            }
+
+            AllConstruct construct = _generatorPlan.Construct;
+            var decorations = construct?.Decorations as AllConstructDecorations;
+            if (decorations == null)
+            {
+                InfoStore.Add("Generator placement rejected: decoration manager is unavailable.");
+                return;
+            }
+
+            long requestedTotal = (long)decorations.DecorationCount + _generatorPlan.DecorationCount;
+            if (requestedTotal > AllConstructDecorations._limitPerPacketManager)
+            {
+                InfoStore.Add(
+                    "Generator placement rejected: needs " +
+                    _generatorPlan.DecorationCount.ToString("N0", CultureInfo.InvariantCulture) +
+                    " decorations, but the manager has insufficient remaining capacity.");
+                return;
+            }
+
+            var created = new List<Decoration>(_generatorPlan.DecorationCount);
+            try
+            {
+                for (int index = 0; index < _generatorPlan.Placements.Count; index++)
+                {
+                    DecorationGeneratorPlacement placement = _generatorPlan.Placements[index];
+                    Decoration decoration = decorations.NewDecoration(
+                        placement.Anchor,
+                        force: true,
+                        playSound: index == 0,
+                        forceEvenIfMaxReached: true);
+                    if (decoration == null)
+                        throw new InvalidOperationException("FTD rejected a generated decoration.");
+
+                    decoration.MeshGuid.Us = placement.MeshGuid;
+                    decoration.Positioning.Us = placement.Positioning;
+                    decoration.Scaling.Us = placement.Scaling;
+                    decoration.Orientation.Us = placement.Orientation;
+                    decoration.Color.Us = placement.Color;
+                    decoration.MaterialReplacement.Us = placement.MaterialReplacement;
+                    decoration.Changed();
+                    created.Add(decoration);
+                }
+            }
+            catch (Exception exception)
+            {
+                for (int index = created.Count - 1; index >= 0; index--)
+                {
+                    try { created[index]?.Delete(); }
+                    catch { }
+                }
+
+                InfoStore.Add("Generator placement failed and was rolled back: " + exception.Message);
+                return;
+            }
+
+            int placed = created.Count;
+            DecorationMeshCatalogEntry mesh = null;
+            _meshByGuid.TryGetValue(_generatorSettings.MeshGuid, out mesh);
+            ClearGeneratorDraft(notify: false);
+            FinishCreatedDecorations(
+                construct,
+                created,
+                mesh,
+                "Generator placed " + placed.ToString("N0", CultureInfo.InvariantCulture) + " decorations.");
+            _tool = DecorationEditorTool.Move;
+        }
+
         private void ClearSurfaceDraft(bool notify)
         {
             _surfaceDraft.Clear();
@@ -4982,6 +7508,16 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceMessage = "Click three block-surface points to seed a freeform surface.";
             if (notify)
                 InfoStore.Add("Surface draft cleared.");
+        }
+
+        private void ClearGeneratorDraft(bool notify)
+        {
+            _generatorDraft.Clear();
+            _generatorPlan = null;
+            _generatorDragAxis = DecorationEditAxis.None;
+            _generatorMessage = "Generator draft cleared. Draw a path or place a circle center.";
+            if (notify)
+                InfoStore.Add("Generator draft cleared.");
         }
 
         private void DeleteSurfaceSelection()
@@ -4996,6 +7532,30 @@ namespace DecoLimitLifter.DecorationEditMode
             InfoStore.Add(_surfaceMessage);
         }
 
+        private void DeleteGeneratorSelection()
+        {
+            if (!_generatorDraft.TryDeleteSelection(out _generatorMessage))
+            {
+                InfoStore.Add(_generatorMessage);
+                return;
+            }
+
+            _generatorPlan = null;
+            InfoStore.Add(_generatorMessage);
+        }
+
+        private void BridgeSurfaceEdges()
+        {
+            if (!_surfaceDraft.TryBridgeSelectedEdges(out _surfaceMessage))
+            {
+                InfoStore.Add(_surfaceMessage);
+                return;
+            }
+
+            InvalidateSurfacePlan(_surfaceMessage);
+            InfoStore.Add(_surfaceMessage);
+        }
+
         private void InvalidateSurfacePlan(string message)
         {
             _surfacePlan = null;
@@ -5007,42 +7567,9 @@ namespace DecoLimitLifter.DecorationEditMode
             Input.GetKey(KeyCode.LeftControl) ||
             Input.GetKey(KeyCode.RightControl);
 
-        internal bool HandleEscape()
-        {
-            if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
-            {
-                DecoLimitLifter.EsuSymmetry.CancelPending();
-                InfoStore.Add("Symmetry plane placement cancelled.");
-                return true;
-            }
-
-            if (_surfaceDragAxis != DecorationEditAxis.None)
-            {
-                _surfaceDragAxis = DecorationEditAxis.None;
-                _surfaceMessage = "Surface point move cancelled.";
-                return true;
-            }
-
-            if (_tool == DecorationEditorTool.Surface && _surfaceDraft.HasDraft)
-            {
-                if (_surfaceDraft.SelectionKind != SurfaceSelectionKind.None)
-                {
-                    _surfaceDraft.ClearSelection();
-                    _surfaceMessage = "Surface selection cleared.";
-                }
-                else
-                {
-                    ClearSurfaceDraft(notify: true);
-                }
-                return true;
-            }
-
-            if (_placingMesh == null)
-                return false;
-
-            CancelPlacement();
-            return true;
-        }
+        private static bool IsShiftHeld() =>
+            Input.GetKey(KeyCode.LeftShift) ||
+            Input.GetKey(KeyCode.RightShift);
 
         private void PlacePendingSymmetryPlane()
         {
@@ -5479,7 +8006,9 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawNearestHint();
             DrawPlacementGhost();
             DrawSurfaceOverlay();
+            DrawGeneratorOverlay();
             DrawSymmetryOverlay();
+            DrawSelectedSetHints();
             if (_selected == null || _selected.IsDeleted || _selectedConstruct == null)
                 return;
 
@@ -5498,25 +8027,59 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditorOverlay.Circle(centerWorld, 0.24f * selectedScale, Color.yellow, Vector3.up, selectedWidth, 24);
             DecorationEditorOverlay.Cross(centerWorld, 0.32f * selectedScale, Color.yellow, selectedWidth);
 
+            bool multiTransform = TryGetMultiSelectionPivot(out Vector3 multiPivot);
+            Vector3 gizmoCenterLocal = multiTransform ? multiPivot : centerLocal;
+            if (multiTransform)
+            {
+                Vector3 pivotWorld = _selectedConstruct.SafeLocalToGlobal(gizmoCenterLocal);
+                DecorationEditorOverlay.Circle(pivotWorld, 0.28f * selectedScale, new Color(0.1f, 0.95f, 1f, 1f), Vector3.up, selectedWidth, 24);
+                DecorationEditorOverlay.Cross(pivotWorld, 0.34f * selectedScale, new Color(0.1f, 0.95f, 1f, 1f), selectedWidth);
+            }
+
             if (_tool == DecorationEditorTool.Move)
             {
-                DrawAxis(centerLocal, DecorationEditAxis.X);
-                DrawAxis(centerLocal, DecorationEditAxis.Y);
-                DrawAxis(centerLocal, DecorationEditAxis.Z);
+                DrawAxis(gizmoCenterLocal, DecorationEditAxis.X, multiTransform);
+                DrawAxis(gizmoCenterLocal, DecorationEditAxis.Y, multiTransform);
+                DrawAxis(gizmoCenterLocal, DecorationEditAxis.Z, multiTransform);
                 if (_dragAxis == DecorationEditAxis.Free)
-                    DecorationEditorOverlay.Circle(centerWorld, 0.34f * selectedScale, Color.yellow, Vector3.up, 4f, 28);
+                    DecorationEditorOverlay.Circle(_selectedConstruct.SafeLocalToGlobal(gizmoCenterLocal), 0.34f * selectedScale, Color.yellow, Vector3.up, 4f, 28);
             }
             else if (_tool == DecorationEditorTool.Rotate)
             {
-                DrawRotateGizmo(centerLocal);
+                DrawRotateGizmo(gizmoCenterLocal, multiTransform);
             }
             else if (_tool == DecorationEditorTool.Scale)
             {
-                DrawScaleGizmo(centerLocal);
+                DrawScaleGizmo(gizmoCenterLocal, multiTransform);
             }
             else if (_tool == DecorationEditorTool.Anchor)
             {
                 DrawAnchorGizmo(anchorLocal);
+            }
+        }
+
+        private void DrawSelectedSetHints()
+        {
+            if (_selection.Count <= 1)
+                return;
+
+            int drawn = 0;
+            Color color = new Color(0.1f, 0.95f, 1f, 0.82f);
+            foreach (DecorationHit hit in _hits)
+            {
+                if (hit.Decoration == null ||
+                    hit.Decoration.IsDeleted ||
+                    ReferenceEquals(hit.Decoration, _selected) ||
+                    !_selection.Contains(hit.Decoration))
+                {
+                    continue;
+                }
+
+                Vector3 world = hit.Construct.SafeLocalToGlobal(hit.LocalCenter);
+                DecorationEditorOverlay.Circle(world, 0.21f, color, Vector3.up, 2.4f, 14);
+                drawn++;
+                if (drawn >= MaxWorldHintLines)
+                    break;
             }
         }
 
@@ -5635,6 +8198,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 DrawSurfaceEdge(face.C, face.A, edgeColor);
             }
 
+            DrawMirroredSurfaceOverlay(
+                construct,
+                _surfacePlan == null
+                    ? new Color(1f, 0.25f, 0.2f, 0.13f)
+                    : new Color(0.2f, 1f, 0.55f, 0.14f),
+                _surfacePlan == null
+                    ? new Color(1f, 0.35f, 0.25f, 0.78f)
+                    : new Color(0.1f, 0.95f, 1f, 0.58f));
+
             for (int index = 0; index < _surfaceDraft.Points.Count; index++)
             {
                 Vector3 world = construct.SafeLocalToGlobal(_surfaceDraft.Points[index]);
@@ -5668,6 +8240,273 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        private void DrawMirroredSurfaceOverlay(
+            AllConstruct construct,
+            Color fill,
+            Color edgeColor)
+        {
+            if (!DecoLimitLifter.EsuSymmetry.HasActivePlanes ||
+                !DecoLimitLifter.EsuSymmetry.CanUseWith(construct, out string _))
+            {
+                return;
+            }
+
+            foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
+                     DecoLimitLifter.EsuSymmetry.Variants())
+            {
+                if (variant.IsIdentity)
+                    continue;
+
+                SurfaceDraft mirrored = _surfaceDraft.CreateMirroredForSymmetry(variant);
+                if (SurfaceDecorationPlanner.SameGeometry(_surfaceDraft, mirrored))
+                    continue;
+
+                for (int index = 0; index < mirrored.Faces.Count; index++)
+                {
+                    SurfaceFace face = mirrored.Faces[index];
+                    Vector3 a = construct.SafeLocalToGlobal(mirrored.Points[face.A]);
+                    Vector3 b = construct.SafeLocalToGlobal(mirrored.Points[face.B]);
+                    Vector3 c = construct.SafeLocalToGlobal(mirrored.Points[face.C]);
+                    DecorationEditorOverlay.Quad(a, b, c, c, fill);
+                    DrawSurfacePreviewEdge(construct, mirrored, face.A, face.B, edgeColor);
+                    DrawSurfacePreviewEdge(construct, mirrored, face.B, face.C, edgeColor);
+                    DrawSurfacePreviewEdge(construct, mirrored, face.C, face.A, edgeColor);
+                }
+
+                for (int index = 0; index < mirrored.Points.Count; index++)
+                {
+                    Vector3 world = construct.SafeLocalToGlobal(mirrored.Points[index]);
+                    DecorationEditorOverlay.Circle(world, 0.14f, edgeColor, Vector3.up, 1.8f, 16);
+                    DecorationEditorOverlay.Cross(world, 0.17f, edgeColor, 1.8f);
+                }
+            }
+        }
+
+        private void DrawGeneratorOverlay()
+        {
+            if (!_generatorDraft.HasDraft || _generatorDraft.Construct == null)
+                return;
+
+            AllConstruct construct = _generatorDraft.Construct;
+            Color lineColor = _generatorPlan == null
+                ? new Color(1f, 0.65f, 0.18f, 0.92f)
+                : new Color(0.1f, 0.95f, 1f, 0.92f);
+            Color pointColor = new Color(0.1f, 0.95f, 1f, 1f);
+            Color selected = new Color(1f, 0.9f, 0.2f, 1f);
+
+            DrawGeneratorDraftOverlay(_generatorDraft, lineColor, pointColor, selected, drawHandles: true);
+            DrawMirroredGeneratorOverlay(
+                construct,
+                _generatorPlan == null
+                    ? new Color(1f, 0.45f, 0.2f, 0.48f)
+                    : new Color(0.1f, 0.95f, 1f, 0.48f));
+        }
+
+        private void DrawGeneratorDraftOverlay(
+            DecorationGeneratorDraft draft,
+            Color lineColor,
+            Color pointColor,
+            Color selected,
+            bool drawHandles)
+        {
+            if (draft == null || draft.Construct == null)
+                return;
+
+            if (draft.Tool == SurfaceExtraTool.Circle)
+            {
+                if (!draft.HasCircleCenter)
+                    return;
+
+                Vector3 centerWorld = draft.Construct.SafeLocalToGlobal(draft.CircleCenter);
+                Vector3 normalWorld = GeneratorNormalWorld(draft.Construct, draft.CircleNormal);
+                DecorationEditorOverlay.Circle(
+                    centerWorld,
+                    _generatorSettings.CircleRadius,
+                    lineColor,
+                    normalWorld,
+                    _generatorPlan == null ? 2.2f : 3f,
+                    Mathf.Clamp(_generatorSettings.CircleSegments, 12, 96));
+                DrawGeneratorPoint(draft, 0, pointColor, selected);
+            }
+            else
+            {
+                for (int index = 0; index < draft.PathPoints.Count - 1; index++)
+                {
+                    DecorationEditorOverlay.Line(
+                        draft.Construct.SafeLocalToGlobal(draft.PathPoints[index]),
+                        draft.Construct.SafeLocalToGlobal(draft.PathPoints[index + 1]),
+                        lineColor,
+                        _generatorPlan == null ? 2.2f : 3f);
+                }
+
+                for (int index = 0; index < draft.PathPoints.Count; index++)
+                    DrawGeneratorPoint(draft, index, pointColor, selected);
+            }
+
+            if (drawHandles &&
+                draft.SelectedPoint >= 0 &&
+                draft.Construct == _generatorDraft.Construct)
+            {
+                Vector3 center = draft.PointAt(draft.SelectedPoint);
+                DrawGeneratorAxis(center, DecorationEditAxis.X);
+                DrawGeneratorAxis(center, DecorationEditAxis.Y);
+                DrawGeneratorAxis(center, DecorationEditAxis.Z);
+                if (_generatorDragAxis == DecorationEditAxis.Free)
+                {
+                    DecorationEditorOverlay.Circle(
+                        draft.Construct.SafeLocalToGlobal(center),
+                        0.32f,
+                        selected,
+                        Vector3.up,
+                        4f,
+                        28);
+                }
+            }
+        }
+
+        private void DrawGeneratorPoint(
+            DecorationGeneratorDraft draft,
+            int index,
+            Color pointColor,
+            Color selected)
+        {
+            Vector3 world = draft.Construct.SafeLocalToGlobal(draft.PointAt(index));
+            bool isSelected = ReferenceEquals(draft, _generatorDraft) && draft.SelectedPoint == index;
+            Color color = isSelected ? selected : pointColor;
+            float radius = isSelected ? 0.24f : 0.17f;
+            DecorationEditorOverlay.Circle(world, radius, color, Vector3.up, isSelected ? 3.4f : 2.2f, 20);
+            DecorationEditorOverlay.Cross(world, radius * 1.18f, color, isSelected ? 3.4f : 2.2f);
+        }
+
+        private void DrawMirroredGeneratorOverlay(AllConstruct construct, Color color)
+        {
+            if (!DecoLimitLifter.EsuSymmetry.HasActivePlanes ||
+                !DecoLimitLifter.EsuSymmetry.CanUseWith(construct, out string _))
+            {
+                return;
+            }
+
+            foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
+                     DecoLimitLifter.EsuSymmetry.Variants())
+            {
+                if (variant.IsIdentity)
+                    continue;
+
+                DecorationGeneratorDraft mirrored = _generatorDraft.CreateMirroredForSymmetry(variant);
+                DrawGeneratorDraftOverlay(mirrored, color, color, color, drawHandles: false);
+            }
+        }
+
+        private void DrawGeneratorAxis(Vector3 centerLocal, DecorationEditAxis axis)
+        {
+            if (_generatorDraft.Construct == null)
+                return;
+
+            Color color = DecorationEditMath.AxisColor(axis);
+            float width = _generatorDragAxis == axis ? 4f : 2.5f;
+            Vector3 start = _generatorDraft.Construct.SafeLocalToGlobal(centerLocal);
+            Vector3 end = _generatorDraft.Construct.SafeLocalToGlobal(
+                centerLocal + DecorationEditMath.AxisVector(axis) * HandleLength);
+            DecorationEditorOverlay.Arrow(start, end, color, width, 0.18f);
+        }
+
+        private static Vector3 GeneratorNormalWorld(AllConstruct construct, Vector3 localNormal)
+        {
+            if (construct == null || !DecorationEditMath.IsFinite(localNormal))
+                return Vector3.up;
+
+            try
+            {
+                Vector3 world = construct.myTransform.TransformDirection(localNormal);
+                return world.sqrMagnitude > 0.0001f ? world.normalized : Vector3.up;
+            }
+            catch
+            {
+                return Vector3.up;
+            }
+        }
+
+        private bool TryPickGroupRotateRing(
+            Vector3 center,
+            Vector2 mouse,
+            out DecorationEditAxis axis)
+        {
+            axis = DecorationEditAxis.None;
+            if (_selectedConstruct == null)
+                return false;
+
+            if (!TryProject(_selectedConstruct, center, out Vector2 origin))
+                return false;
+
+            float best = HandleRadiusPixels * 1.35f;
+            DecorationEditAxis pickedAxis = DecorationEditAxis.None;
+            TryRing(DecorationEditAxis.X);
+            TryRing(DecorationEditAxis.Y);
+            TryRing(DecorationEditAxis.Z);
+            axis = pickedAxis;
+            return axis != DecorationEditAxis.None;
+
+            void TryRing(DecorationEditAxis candidate)
+            {
+                BuildAxisBasis(
+                    GroupTransformAxisVector(candidate),
+                    out Vector3 tangentA,
+                    out Vector3 tangentB);
+                const int steps = 40;
+                bool havePrevious = false;
+                Vector2 previous = origin;
+                for (int step = 0; step <= steps; step++)
+                {
+                    float angle = step * Mathf.PI * 2f / steps;
+                    Vector3 local = center +
+                                    (tangentA * Mathf.Cos(angle) + tangentB * Mathf.Sin(angle)) *
+                                    RotateGizmoRadius;
+                    if (!TryProject(_selectedConstruct, local, out Vector2 projected))
+                    {
+                        havePrevious = false;
+                        continue;
+                    }
+
+                    if (havePrevious)
+                    {
+                        float distance = DistanceToSegment(mouse, previous, projected);
+                        if (distance < best)
+                        {
+                            best = distance;
+                            pickedAxis = candidate;
+                        }
+                    }
+
+                    previous = projected;
+                    havePrevious = true;
+                }
+            }
+        }
+
+        private static void DrawSurfacePreviewEdge(
+            AllConstruct construct,
+            SurfaceDraft draft,
+            int a,
+            int b,
+            Color color)
+        {
+            if (construct == null ||
+                draft == null ||
+                a < 0 ||
+                b < 0 ||
+                a >= draft.Points.Count ||
+                b >= draft.Points.Count)
+            {
+                return;
+            }
+
+            DecorationEditorOverlay.Line(
+                construct.SafeLocalToGlobal(draft.Points[a]),
+                construct.SafeLocalToGlobal(draft.Points[b]),
+                color,
+                1.8f);
+        }
+
         private void DrawSurfaceEdge(int a, int b, Color defaultColor)
         {
             if (_surfaceDraft.Construct == null ||
@@ -5681,8 +8520,13 @@ namespace DecoLimitLifter.DecorationEditMode
 
             bool active = _surfaceDraft.SelectionKind == SurfaceSelectionKind.Edge &&
                           _surfaceDraft.SelectedEdge.Matches(a, b);
-            Color color = active ? new Color(1f, 0.9f, 0.2f, 1f) : defaultColor;
-            float width = active ? 4f : 2.2f;
+            bool bridge = _surfaceDraft.IsBridgeEdgeSelected(a, b);
+            Color color = active
+                ? new Color(1f, 0.9f, 0.2f, 1f)
+                : bridge
+                    ? new Color(0.2f, 1f, 0.55f, 1f)
+                    : defaultColor;
+            float width = active ? 4f : bridge ? 3.5f : 2.2f;
             DecorationEditorOverlay.Line(
                 _surfaceDraft.Construct.SafeLocalToGlobal(_surfaceDraft.Points[a]),
                 _surfaceDraft.Construct.SafeLocalToGlobal(_surfaceDraft.Points[b]),
@@ -5930,9 +8774,11 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditorOverlay.Circle(world, radius, new Color(0.1f, 0.9f, 1f, 1f), Vector3.up, width, 12);
         }
 
-        private void DrawAxis(Vector3 centerLocal, DecorationEditAxis axis)
+        private void DrawAxis(Vector3 centerLocal, DecorationEditAxis axis, bool groupTransform)
         {
-            Vector3 axisVector = ActiveTransformAxisVector(axis);
+            Vector3 axisVector = groupTransform
+                ? GroupTransformAxisVector(axis)
+                : ActiveTransformAxisVector(axis);
             Color color = DecorationEditMath.AxisColor(axis);
             float width = _dragAxis == axis ? 4.5f : 3f;
             Vector3 start = _selectedConstruct.SafeLocalToGlobal(centerLocal);
@@ -5940,18 +8786,18 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditorOverlay.Arrow(start, end, color, width, 0.2f);
         }
 
-        private void DrawRotateGizmo(Vector3 centerLocal)
+        private void DrawRotateGizmo(Vector3 centerLocal, bool groupTransform)
         {
-            DrawRotationRing(centerLocal, DecorationEditAxis.X);
-            DrawRotationRing(centerLocal, DecorationEditAxis.Y);
-            DrawRotationRing(centerLocal, DecorationEditAxis.Z);
+            DrawRotationRing(centerLocal, DecorationEditAxis.X, groupTransform);
+            DrawRotationRing(centerLocal, DecorationEditAxis.Y, groupTransform);
+            DrawRotationRing(centerLocal, DecorationEditAxis.Z, groupTransform);
         }
 
-        private void DrawRotationRing(Vector3 centerLocal, DecorationEditAxis axis)
+        private void DrawRotationRing(Vector3 centerLocal, DecorationEditAxis axis, bool groupTransform)
         {
             Vector3 centerWorld = _selectedConstruct.SafeLocalToGlobal(centerLocal);
             Vector3 normalWorld = _selectedConstruct.SafeLocalToGlobal(
-                centerLocal + ActiveTransformAxisVector(axis)) - centerWorld;
+                centerLocal + (groupTransform ? GroupTransformAxisVector(axis) : ActiveTransformAxisVector(axis))) - centerWorld;
             if (normalWorld.sqrMagnitude < 0.0001f)
                 normalWorld = DecorationEditMath.AxisVector(axis);
 
@@ -5960,16 +8806,18 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditorOverlay.Circle(centerWorld, RotateGizmoRadius, color, normalWorld.normalized, width, 48);
         }
 
-        private void DrawScaleGizmo(Vector3 centerLocal)
+        private void DrawScaleGizmo(Vector3 centerLocal, bool groupTransform)
         {
-            DrawScaleAxis(centerLocal, DecorationEditAxis.X);
-            DrawScaleAxis(centerLocal, DecorationEditAxis.Y);
-            DrawScaleAxis(centerLocal, DecorationEditAxis.Z);
+            DrawScaleAxis(centerLocal, DecorationEditAxis.X, groupTransform);
+            DrawScaleAxis(centerLocal, DecorationEditAxis.Y, groupTransform);
+            DrawScaleAxis(centerLocal, DecorationEditAxis.Z, groupTransform);
         }
 
-        private void DrawScaleAxis(Vector3 centerLocal, DecorationEditAxis axis)
+        private void DrawScaleAxis(Vector3 centerLocal, DecorationEditAxis axis, bool groupTransform)
         {
-            Vector3 axisVector = ActiveTransformAxisVector(axis);
+            Vector3 axisVector = groupTransform
+                ? GroupTransformAxisVector(axis)
+                : ActiveTransformAxisVector(axis);
             Color color = DecorationEditMath.AxisColor(axis);
             float width = _scaleDragAxis == axis ? 4.5f : 3f;
             Vector3 start = _selectedConstruct.SafeLocalToGlobal(centerLocal);
@@ -6409,6 +9257,33 @@ namespace DecoLimitLifter.DecorationEditMode
             return Vector2.Distance(point, start + segment * t);
         }
 
+        private static bool TryWorldToLocal(AllConstruct construct, Vector3 world, out Vector3 local)
+        {
+            local = Vector3.zero;
+            if (construct == null)
+                return false;
+
+            try
+            {
+                local = construct.SafeGlobalToLocal(world);
+                return true;
+            }
+            catch
+            {
+                try
+                {
+                    if (construct.myTransform == null)
+                        return false;
+                    local = construct.myTransform.InverseTransformPoint(world);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
         private static bool TryProject(AllConstruct construct, Vector3 local, out Vector2 screenPoint)
         {
             screenPoint = Vector2.zero;
@@ -6435,6 +9310,29 @@ namespace DecoLimitLifter.DecorationEditMode
                 value.x,
                 value.y,
                 value.z);
+
+        private sealed class MultiTransformPlacement
+        {
+            internal MultiTransformPlacement(
+                Vector3i tetherPoint,
+                Vector3 positioning,
+                Vector3 orientation,
+                Vector3 scaling)
+            {
+                TetherPoint = tetherPoint;
+                Positioning = positioning;
+                Orientation = orientation;
+                Scaling = scaling;
+            }
+
+            internal Vector3i TetherPoint { get; }
+
+            internal Vector3 Positioning { get; }
+
+            internal Vector3 Orientation { get; }
+
+            internal Vector3 Scaling { get; }
+        }
 
         private sealed class SymmetryFollowContext
         {

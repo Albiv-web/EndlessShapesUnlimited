@@ -145,8 +145,13 @@ game windows, has an options-screen manual scale multiplier plus layout reset,
 and the left/right panel stacks can be resized in-game. The top toolbar keeps a
 stable mode/notification slot across Decoration Edit, Surface Builder, and Smart
 Builder; notification text has no icon, the slot stays fixed-height, and long
-messages show a **Details** button without changing top-panel padding. A blocked
-mode switch makes **Apply** and **Cancel** flash without toolbar movement.
+messages show a **Details** button without changing top-panel padding. The same
+slot includes a fixed **Log** button that opens the in-memory ESU console across
+Decoration Edit Mode, Surface Builder, and Smart Builder. A blocked mode switch
+makes **Apply** and **Cancel** flash without toolbar movement. ESU-owned cursor
+tooltips appear near the cursor after hovering interactive controls for two
+seconds; clicks, scrolls, drags, panel resizing, and transform dragging reset the
+tooltip timer without handing control back to vanilla hover popups.
 
 Decoration Edit Mode HUD reference:
 
@@ -165,8 +170,9 @@ Decoration Edit Mode HUD reference:
 - **Paint** enables viewport click painting and material/color replacement.
 - **View** opens the ESU/native view menu for mixed, wireframe, decoration-only,
   mass, drag, cost, surface, important, and normal views.
-- **Warning/Details** is the fixed notification slot. Short messages appear
-  inline; long messages open through **Details**.
+- **Warning/Details/Log** is the fixed notification slot. Short messages appear
+  inline, long messages open through **Details**, and **Log** opens the shared
+  ESU console with filters, copy, clear, drag, and resize controls.
 - **Pal**, **Out**, **Insp**, and **Anch** toggle the Mesh Palette, Outliner,
   Inspector, and Selected Anchor panels.
 - **U/R** undo and redo un-applied editor actions.
@@ -227,7 +233,10 @@ In-game smoke checks should include: no `Colored with paint #N` tooltip while an
 ESU editor is active; press Ctrl alone and confirm the screen does not show the
 vanilla vehicle-control overlay; `Ctrl+Shift+B` remains open after the first
 frame; Surface Builder Ctrl-click behavior still works; and a long ESU warning
-opens through **Details** without changing top-panel padding.
+opens through **Details** without changing top-panel padding. Hover toolbar,
+panel, notification, console, row, card, field, and resize-grip controls for two
+seconds and confirm the ESU tooltip appears, clamps to the screen, and disappears
+when the mouse moves, clicks, scrolls, or starts a drag.
 
 ### Surface Builder
 
@@ -240,6 +249,9 @@ Surface Builder HUD reference:
 
 - **Surf** is the first toolbar slot and indicates Surface Builder. Press `Tab`
   while clean to continue to Smart Block Builder.
+- **X**, **Y**, and **Z** use the shared construct-local symmetry planes. Pending
+  plane clicks are handled before draft point placement, and active planes draw
+  vehicle-sized wire overlays on the relevant construct axes.
 - **Preview** rebuilds the generated decoration preview from the current draft.
 - **Place** commits the previewed surface decorations to the craft.
 - **Clear** removes the current surface draft.
@@ -256,6 +268,12 @@ Surface Builder HUD reference:
   extend it, or Ctrl-click existing points to create a face from any three.
 - The shared **Out**, **Anch**, **Apply**, **Cancel**, **Close**, notification
   slot, and bottom status strip behave the same as Decoration Edit Mode.
+
+When symmetry is active, Surface Builder mirrors the draft preview visually and
+plans the generated surface decorations for every active X/Y/Z variant. Placement
+is atomic: if any mirrored surface cannot resolve a valid nearest anchor or
+would exceed FTD's positioning limits/capacity, none of the surfaces are placed.
+Draft geometry that lies on a symmetry plane is deduped instead of double-placed.
 
 ### Smart Block Builder
 
@@ -331,13 +349,14 @@ binaries, PDBs, local paths, and secrets, and create a deterministic runtime ZIP
 under `artifacts`. The script accepts Release configuration only and derives the
 archive version from `plugin.json`.
 
-The automated suite currently has 229 checks covering exact Harmony methods,
+The automated suite currently has 247 checks covering exact Harmony methods,
 legacy byte compatibility, serialization boundaries and corruption handling,
 shared-buffer growth, locale parsing, image limits, geometry and 100,000-entry
 processing, atomic tether rollback, exporter transactions, scoped serialization
 telemetry, forecasts, HUD profiles, decoration edit-mode math/wiring, native
-editor shell, runtime icon catalog, outliner/inspector checks, package identity,
-runtime assets, and legacy EndlessShapes2 bindings.
+editor shell, runtime icon catalog, outliner/inspector checks, ESU runtime log
+and tooltip behavior, surface/smart symmetry planning, package identity, runtime
+assets, and legacy EndlessShapes2 bindings.
 
 Automated checks do not replace the required in-game acceptance pass for UI,
 Unity rendering, construct import/export, multiplayer, and save/load behavior.

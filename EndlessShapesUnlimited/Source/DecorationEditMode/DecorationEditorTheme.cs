@@ -28,6 +28,12 @@ namespace DecoLimitLifter.DecorationEditMode
         Important
     }
 
+    internal enum DecorationSelectionMode
+    {
+        Single,
+        Box
+    }
+
     internal enum DecorationTransformOrientation
     {
         Global,

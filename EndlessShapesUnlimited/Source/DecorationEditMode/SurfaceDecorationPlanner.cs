@@ -134,6 +134,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private readonly List<Vector3> _points = new List<Vector3>();
         private readonly List<SurfaceFace> _faces = new List<SurfaceFace>();
         private readonly List<int> _manualFaceSelection = new List<int>(3);
+        private readonly List<int> _freeTriangleSelection = new List<int>(3);
+        private readonly List<SurfaceEdge> _bridgeEdgeSelection = new List<SurfaceEdge>(2);
 
         internal AllConstruct Construct { get; private set; }
 
@@ -153,9 +155,18 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal IReadOnlyList<int> ManualFaceSelection => _manualFaceSelection;
 
+        internal IReadOnlyList<SurfaceEdge> BridgeEdgeSelection => _bridgeEdgeSelection;
+
+        internal int FreeTriangleSelectionCount => _freeTriangleSelection.Count;
+
         internal bool HasDraft => _points.Count > 0 || _faces.Count > 0;
 
         internal bool HasPlaceableFaces => _faces.Count > 0;
+
+        internal bool HasActiveSelection =>
+            SelectionKind != SurfaceSelectionKind.None ||
+            _manualFaceSelection.Count > 0 ||
+            _bridgeEdgeSelection.Count > 0;
 
         internal void SetConstructForTests(AllConstruct construct) =>
             Construct = construct;
@@ -163,11 +174,31 @@ namespace DecoLimitLifter.DecorationEditMode
         internal void AddPointForTests(Vector3 local) =>
             _points.Add(local);
 
+        internal SurfaceDraft CreateMirroredForSymmetry(
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
+        {
+            var mirrored = new SurfaceDraft();
+            mirrored.Construct = Construct;
+            CopySettings(Settings, mirrored.Settings);
+            for (int index = 0; index < _points.Count; index++)
+                mirrored._points.Add(variant.Mirror(_points[index]));
+
+            bool flipWinding = variant.AxisCount % 2 == 1;
+            for (int index = 0; index < _faces.Count; index++)
+            {
+                SurfaceFace face = _faces[index];
+                mirrored._faces.Add(flipWinding ? face.Flipped() : face);
+            }
+
+            return mirrored;
+        }
+
         internal void Clear()
         {
             Construct = null;
             _points.Clear();
             _faces.Clear();
+            _freeTriangleSelection.Clear();
             ClearSelection();
         }
 
@@ -178,6 +209,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(-1, -1);
             _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
         }
 
         internal bool TryAddPoint(
@@ -195,6 +227,30 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
+            return TryAddAcceptedPoint(local, extendSelectedEdge, out message);
+        }
+
+        internal bool TryAddPointForTests(
+            Vector3 local,
+            bool extendSelectedEdge,
+            out string message)
+        {
+            message = null;
+            if (!DecorationEditMath.IsFinite(local))
+            {
+                message = "Surface point must be finite.";
+                return false;
+            }
+
+            return TryAddAcceptedPoint(local, extendSelectedEdge, out message);
+        }
+
+        private bool TryAddAcceptedPoint(
+            Vector3 local,
+            bool extendSelectedEdge,
+            out string message)
+        {
+            message = null;
             local = DecorationEditMath.Snap(local);
             int index = _points.Count;
             _points.Add(local);
@@ -218,17 +274,28 @@ namespace DecoLimitLifter.DecorationEditMode
                 return true;
             }
 
-            if (_points.Count == 3)
+            SelectedEdge = new SurfaceEdge(-1, -1);
+            _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
+            _freeTriangleSelection.Add(index);
+            if (_freeTriangleSelection.Count == 3)
             {
-                if (!TryAddFace(0, 1, 2, out message))
+                int a = _freeTriangleSelection[0];
+                int b = _freeTriangleSelection[1];
+                int c = _freeTriangleSelection[2];
+                _freeTriangleSelection.Clear();
+                bool baseTriangle = _faces.Count == 0;
+                if (!TryAddFace(a, b, c, out message))
                     return false;
-                message = "Surface base triangle created.";
+                message = baseTriangle
+                    ? "Surface base triangle created."
+                    : "Surface triangle created from free points.";
             }
             else
             {
-                message = _points.Count < 3
-                    ? "Surface point " + _points.Count.ToString(CultureInfo.InvariantCulture) + "/3 placed."
-                    : "Surface point placed. Select an edge before clicking to extend a face.";
+                message = "Surface point " +
+                          _freeTriangleSelection.Count.ToString(CultureInfo.InvariantCulture) +
+                          "/3 placed for the next triangle.";
             }
 
             return true;
@@ -261,6 +328,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = index;
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(-1, -1);
+            _bridgeEdgeSelection.Clear();
         }
 
         internal void SelectEdge(int a, int b)
@@ -272,6 +340,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(a, b);
             _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
         }
 
         internal void SelectFace(int index)
@@ -283,6 +352,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = index;
             SelectedEdge = new SurfaceEdge(-1, -1);
             _manualFaceSelection.Clear();
+            _bridgeEdgeSelection.Clear();
         }
 
         internal bool ToggleManualFacePoint(int index, out string message)
@@ -317,6 +387,87 @@ namespace DecoLimitLifter.DecorationEditMode
             return created;
         }
 
+        internal bool ToggleBridgeEdge(SurfaceEdge edge, out string message)
+        {
+            message = null;
+            if (!edge.IsValid ||
+                edge.A >= _points.Count ||
+                edge.B >= _points.Count ||
+                !FacesContainEdge(edge))
+            {
+                message = "Select an existing surface edge to bridge.";
+                return false;
+            }
+
+            int existing = _bridgeEdgeSelection.FindIndex(candidate => candidate.Matches(edge.A, edge.B));
+            if (existing >= 0)
+            {
+                _bridgeEdgeSelection.RemoveAt(existing);
+                message = "Bridge edge removed. " +
+                          _bridgeEdgeSelection.Count.ToString(CultureInfo.InvariantCulture) +
+                          "/2 edges selected.";
+                return true;
+            }
+
+            if (_bridgeEdgeSelection.Count >= 2)
+            {
+                message = "Bridge already has 2/2 edges selected. Press Bridge or Shift-click a selected bridge edge to remove it.";
+                return false;
+            }
+
+            _bridgeEdgeSelection.Add(edge);
+            _manualFaceSelection.Clear();
+            SelectionKind = SurfaceSelectionKind.Edge;
+            SelectedPoint = -1;
+            SelectedFace = -1;
+            SelectedEdge = edge;
+            message = "Bridge edge " +
+                      _bridgeEdgeSelection.Count.ToString(CultureInfo.InvariantCulture) +
+                      "/2 selected.";
+            return true;
+        }
+
+        internal bool IsBridgeEdgeSelected(int a, int b) =>
+            _bridgeEdgeSelection.Any(edge => edge.Matches(a, b));
+
+        internal bool TryBridgeSelectedEdges(out string message)
+        {
+            message = null;
+            if (_bridgeEdgeSelection.Count != 2)
+            {
+                message = "Select two surface edges with Shift-click before bridging.";
+                return false;
+            }
+
+            SurfaceEdge first = _bridgeEdgeSelection[0];
+            SurfaceEdge second = _bridgeEdgeSelection[1];
+            if (!IsBridgeEdgeStillValid(first) || !IsBridgeEdgeStillValid(second))
+            {
+                message = "Bridge edges are no longer valid.";
+                return false;
+            }
+
+            List<List<SurfaceFace>> candidateSets = BuildBridgeCandidateSets(first, second, out message);
+            if (candidateSets == null || candidateSets.Count == 0)
+                return false;
+
+            string lastMessage = message;
+            for (int index = 0; index < candidateSets.Count; index++)
+            {
+                if (!TryAddBridgeCandidateSet(candidateSets[index], out lastMessage))
+                    continue;
+
+                _bridgeEdgeSelection.Clear();
+                message = candidateSets[index].Count == 1
+                    ? "Bridge created one surface face."
+                    : "Bridge created two surface faces.";
+                return true;
+            }
+
+            message = lastMessage ?? "Bridge faces could not be created.";
+            return false;
+        }
+
         internal bool TryDeleteSelection(out string message)
         {
             message = null;
@@ -342,6 +493,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
 
                 _points.RemoveAt(removed);
+                RemapFreeTriangleSelectionAfterPointDelete(removed);
                 ClearSelection();
                 if (_points.Count == 0)
                     Construct = null;
@@ -424,6 +576,151 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
+        private bool FacesContainEdge(SurfaceEdge edge) =>
+            _faces.Any(face => face.ContainsEdge(edge.A, edge.B));
+
+        private bool IsBridgeEdgeStillValid(SurfaceEdge edge) =>
+            edge.IsValid &&
+            edge.A < _points.Count &&
+            edge.B < _points.Count &&
+            FacesContainEdge(edge);
+
+        private bool TryAddBridgeCandidateSet(
+            IReadOnlyList<SurfaceFace> candidates,
+            out string message)
+        {
+            message = null;
+            var orientedFaces = new List<SurfaceFace>(candidates.Count);
+
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                SurfaceFace candidate = candidates[index];
+                if (!ArePointIndexesValid(candidate.A, candidate.B, candidate.C))
+                {
+                    message = "Surface face needs three different existing points.";
+                    return false;
+                }
+
+                if (_faces.Any(face => SameFace(face, candidate.A, candidate.B, candidate.C)) ||
+                    orientedFaces.Any(face => SameFace(face, candidate.A, candidate.B, candidate.C)))
+                {
+                    message = "Surface face already exists.";
+                    return false;
+                }
+
+                if (!TryOrientBridgeFace(candidate, out SurfaceFace oriented, out message))
+                    return false;
+
+                orientedFaces.Add(oriented);
+            }
+
+            _faces.AddRange(orientedFaces);
+            SelectFace(_faces.Count - 1);
+            return true;
+        }
+
+        private bool TryOrientBridgeFace(SurfaceFace candidate, out SurfaceFace oriented, out string message)
+        {
+            oriented = candidate;
+            message = null;
+            if (!TryGetFaceNormal(candidate, out Vector3 candidateNormal))
+            {
+                message = "Surface bridge face has zero area.";
+                return false;
+            }
+
+            if (TryGetReferenceNormal(out Vector3 referenceNormal) &&
+                Vector3.Dot(referenceNormal, candidateNormal) < 0f)
+            {
+                oriented = candidate.Flipped();
+            }
+
+            return true;
+        }
+
+        private List<List<SurfaceFace>> BuildBridgeCandidateSets(
+            SurfaceEdge first,
+            SurfaceEdge second,
+            out string message)
+        {
+            message = null;
+            int[] unique = { first.A, first.B, second.A, second.B };
+            var points = unique.Distinct().ToList();
+            if (points.Count < 3)
+            {
+                message = "Bridge needs two different edges.";
+                return null;
+            }
+
+            if (points.Count == 3)
+            {
+                return PermuteFace(points[0], points[1], points[2])
+                    .Select(face => new List<SurfaceFace> { face })
+                    .ToList();
+            }
+
+            if (points.Count != 4)
+            {
+                message = "Bridge supports only two triangle or quad-like edges.";
+                return null;
+            }
+
+            SurfaceFace firstA = new SurfaceFace(first.A, first.B, second.A);
+            SurfaceFace firstB = new SurfaceFace(first.B, second.B, second.A);
+            SurfaceFace secondA = new SurfaceFace(first.A, first.B, second.B);
+            SurfaceFace secondB = new SurfaceFace(first.B, second.A, second.B);
+            float firstPairing =
+                Vector3.Distance(_points[first.A], _points[second.A]) +
+                Vector3.Distance(_points[first.B], _points[second.B]);
+            float secondPairing =
+                Vector3.Distance(_points[first.A], _points[second.B]) +
+                Vector3.Distance(_points[first.B], _points[second.A]);
+
+            return firstPairing <= secondPairing
+                ? PermuteFacePair(firstA, firstB)
+                : PermuteFacePair(secondA, secondB);
+        }
+
+        private static List<List<SurfaceFace>> PermuteFacePair(SurfaceFace first, SurfaceFace second)
+        {
+            var result = new List<List<SurfaceFace>>();
+            foreach (SurfaceFace left in PermuteFace(first.A, first.B, first.C))
+            {
+                foreach (SurfaceFace right in PermuteFace(second.A, second.B, second.C))
+                {
+                    result.Add(new List<SurfaceFace> { left, right });
+                }
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<SurfaceFace> PermuteFace(int a, int b, int c)
+        {
+            yield return new SurfaceFace(a, b, c);
+            yield return new SurfaceFace(a, c, b);
+            yield return new SurfaceFace(b, a, c);
+            yield return new SurfaceFace(b, c, a);
+            yield return new SurfaceFace(c, a, b);
+            yield return new SurfaceFace(c, b, a);
+        }
+
+        private void RemapFreeTriangleSelectionAfterPointDelete(int removed)
+        {
+            for (int index = _freeTriangleSelection.Count - 1; index >= 0; index--)
+            {
+                int point = _freeTriangleSelection[index];
+                if (point == removed)
+                {
+                    _freeTriangleSelection.RemoveAt(index);
+                }
+                else if (point > removed)
+                {
+                    _freeTriangleSelection[index] = point - 1;
+                }
+            }
+        }
+
         private bool TryGetReferenceNormal(out Vector3 normal)
         {
             normal = Vector3.zero;
@@ -501,6 +798,17 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static int RemapAfterPointDelete(int index, int removed) =>
             index > removed ? index - 1 : index;
+
+        private static void CopySettings(
+            SurfaceDecorationSettings source,
+            SurfaceDecorationSettings destination)
+        {
+            destination.StructureBlockType = source.StructureBlockType;
+            destination.FaceThickness = source.FaceThickness;
+            destination.ColorIndex = source.ColorIndex;
+            destination.NormalReversal = source.NormalReversal;
+            destination.NearestAnchor = source.NearestAnchor;
+        }
     }
 
     internal sealed class SurfaceDecorationPlan
@@ -533,7 +841,9 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 scaling,
             Vector3 orientation,
             int color,
-            Vector3 thicknessAxis)
+            Vector3 thicknessAxis,
+            Vector3 transformThicknessAxis,
+            float transformPlaneDistance)
         {
             Anchor = anchor;
             MeshGuid = meshGuid;
@@ -542,6 +852,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Orientation = orientation;
             Color = color;
             ThicknessAxis = thicknessAxis;
+            TransformThicknessAxis = transformThicknessAxis;
+            TransformPlaneDistance = transformPlaneDistance;
         }
 
         internal Vector3i Anchor { get; }
@@ -557,11 +869,19 @@ namespace DecoLimitLifter.DecorationEditMode
         internal int Color { get; }
 
         internal Vector3 ThicknessAxis { get; }
+
+        internal Vector3 TransformThicknessAxis { get; }
+
+        internal float TransformPlaneDistance { get; }
     }
 
-    internal abstract class ISurfaceAnchorResolver
+    internal abstract class DecorationAnchorResolver
     {
         internal abstract bool TryResolveAnchor(Vector3 localCenter, out Vector3i anchor);
+    }
+
+    internal abstract class ISurfaceAnchorResolver : DecorationAnchorResolver
+    {
     }
 
     internal sealed class ConstructSurfaceAnchorResolver : ISurfaceAnchorResolver
@@ -773,6 +1093,149 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
+        internal static bool TryPlanWithSymmetry(
+            SurfaceDraft draft,
+            ISurfaceAnchorResolver anchorResolver,
+            out SurfaceDecorationPlan plan,
+            out string message)
+        {
+            plan = null;
+            if (draft == null)
+            {
+                message = "Create a surface draft on a construct before previewing.";
+                return false;
+            }
+
+            if (!DecoLimitLifter.EsuSymmetry.CanUseWith(draft.Construct, out message))
+                return false;
+
+            return TryPlanMirroredVariants(
+                draft,
+                anchorResolver,
+                DecoLimitLifter.EsuSymmetry.Variants(),
+                out plan,
+                out message);
+        }
+
+        internal static bool TryPlanMirroredVariants(
+            SurfaceDraft draft,
+            ISurfaceAnchorResolver anchorResolver,
+            IEnumerable<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variants,
+            out SurfaceDecorationPlan plan,
+            out string message)
+        {
+            plan = null;
+            message = null;
+            if (draft == null)
+            {
+                message = "Create a surface draft on a construct before previewing.";
+                return false;
+            }
+
+            List<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variantList =
+                (variants ?? DecoLimitLifter.EsuSymmetry.Variants()).ToList();
+            if (variantList.Count == 0)
+                variantList.Add(new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()));
+
+            var placements = new List<SurfaceDecorationPlacement>();
+            var warnings = new List<string>();
+            var placementKeys = new HashSet<string>();
+            var geometryKeys = new HashSet<string>();
+            int plannedVariants = 0;
+            for (int index = 0; index < variantList.Count; index++)
+            {
+                DecoLimitLifter.EsuSymmetry.SymmetryVariant variant = variantList[index];
+                SurfaceDraft variantDraft = variant.IsIdentity
+                    ? draft
+                    : draft.CreateMirroredForSymmetry(variant);
+                if (!geometryKeys.Add(GeometryKey(variantDraft)))
+                    continue;
+
+                if (!TryPlan(variantDraft, anchorResolver, out SurfaceDecorationPlan variantPlan, out string variantMessage))
+                {
+                    message = variant.IsIdentity
+                        ? variantMessage
+                        : "Surface symmetry placement rejected: " + variantMessage;
+                    return false;
+                }
+
+                plannedVariants++;
+                foreach (SurfaceDecorationPlacement placement in variantPlan.Placements)
+                {
+                    if (placementKeys.Add(PlacementKey(placement)))
+                        placements.Add(placement);
+                }
+
+                foreach (string warning in variantPlan.Warnings)
+                {
+                    if (!warnings.Contains(warning))
+                        warnings.Add(warning);
+                }
+            }
+
+            if (placements.Count == 0)
+            {
+                message = "Surface draft produced no decorations.";
+                return false;
+            }
+
+            plan = new SurfaceDecorationPlan(draft.Construct, placements, warnings);
+            message = plannedVariants > 1
+                ? "Surface symmetry: " +
+                  placements.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                  " decoration(s) ready across " +
+                  plannedVariants.ToString("N0", CultureInfo.InvariantCulture) +
+                  " variant(s)."
+                : placements.Count.ToString("N0", CultureInfo.InvariantCulture) + " decoration(s) ready.";
+            return true;
+        }
+
+        internal static bool SameGeometry(SurfaceDraft left, SurfaceDraft right) =>
+            string.Equals(GeometryKey(left), GeometryKey(right), StringComparison.Ordinal);
+
+        private static string GeometryKey(SurfaceDraft draft)
+        {
+            if (draft == null)
+                return string.Empty;
+
+            var builder = new System.Text.StringBuilder();
+            for (int index = 0; index < draft.Points.Count; index++)
+            {
+                Vector3 point = draft.Points[index];
+                builder.Append(FloatKey(point.x)).Append(',')
+                    .Append(FloatKey(point.y)).Append(',')
+                    .Append(FloatKey(point.z)).Append(';');
+            }
+
+            builder.Append('|');
+            foreach (SurfaceFace face in draft.Faces)
+            {
+                int[] indexes = { face.A, face.B, face.C };
+                Array.Sort(indexes);
+                builder.Append(indexes[0]).Append(',')
+                    .Append(indexes[1]).Append(',')
+                    .Append(indexes[2]).Append(';');
+            }
+
+            return builder.ToString();
+        }
+
+        private static string PlacementKey(SurfaceDecorationPlacement placement) =>
+            placement.MeshGuid.ToString("N") + "|" +
+            CellKey(placement.Anchor) + "|" +
+            VectorKey(placement.Positioning);
+
+        private static string CellKey(Vector3i value) =>
+            value.x.ToString(CultureInfo.InvariantCulture) + ":" +
+            value.y.ToString(CultureInfo.InvariantCulture) + ":" +
+            value.z.ToString(CultureInfo.InvariantCulture);
+
+        private static string VectorKey(Vector3 value) =>
+            FloatKey(value.x) + ":" + FloatKey(value.y) + ":" + FloatKey(value.z);
+
+        private static string FloatKey(float value) =>
+            value.ToString("0.####", CultureInfo.InvariantCulture);
+
         private static void AddFacePlacements(
             SurfaceDraft draft,
             SurfaceFace face,
@@ -846,6 +1309,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (!draft.Settings.NearestAnchor)
                     warnings.Add("Nearest anchoring is off; generated offsets are relative to 0,0,0.");
 
+                Vector3 transformThicknessAxis = DecorationTransformThicknessAxis(polygon, orientation);
+                float transformPlaneDistance = Vector3.Dot(
+                    transformThicknessAxis,
+                    ToVector3(anchor) + positioning);
+
                 placements.Add(new SurfaceDecorationPlacement(
                     anchor,
                     meshGuid,
@@ -853,7 +1321,9 @@ namespace DecoLimitLifter.DecorationEditMode
                     scaling,
                     orientation,
                     color,
-                    thicknessAxis));
+                    thicknessAxis,
+                    transformThicknessAxis,
+                    transformPlaneDistance));
             }
         }
 
@@ -1041,6 +1511,66 @@ namespace DecoLimitLifter.DecorationEditMode
 
             axis.Normalize();
             return axis;
+        }
+
+        private static Vector3 DecorationTransformThicknessAxis(PolygonData polygon, Vector3 orientation)
+        {
+            Vector3 localAxis;
+            switch (polygon.PolyType)
+            {
+                case PolygonType.RightTriangle:
+                case PolygonType.OtherTriangle_F:
+                case PolygonType.OtherTriangle_B:
+                case PolygonType.Rectangle:
+                    localAxis = Vector3.right;
+                    break;
+                case PolygonType.IsoscelesTriangle:
+                    localAxis = Vector3.up;
+                    break;
+                case PolygonType.Ellipse:
+                    localAxis = Vector3.forward;
+                    break;
+                default:
+                    localAxis = Vector3.forward;
+                    break;
+            }
+
+            Vector3 axis = RotateEuler(orientation, localAxis);
+            if (!DecorationEditMath.IsFinite(axis) ||
+                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            {
+                return Vector3.zero;
+            }
+
+            axis.Normalize();
+            return axis;
+        }
+
+        private static Vector3 RotateEuler(Vector3 degrees, Vector3 vector)
+        {
+            double halfX = degrees.x * Math.PI / 360d;
+            double halfY = degrees.y * Math.PI / 360d;
+            double halfZ = degrees.z * Math.PI / 360d;
+            double cx = Math.Cos(halfX);
+            double sx = Math.Sin(halfX);
+            double cy = Math.Cos(halfY);
+            double sy = Math.Sin(halfY);
+            double cz = Math.Cos(halfZ);
+            double sz = Math.Sin(halfZ);
+
+            double qw = cx * cy * cz + sx * sy * sz;
+            double qx = sx * cy * cz - cx * sy * sz;
+            double qy = cx * sy * cz + sx * cy * sz;
+            double qz = cx * cy * sz - sx * sy * cz;
+
+            double tx = 2d * (qy * vector.z - qz * vector.y);
+            double ty = 2d * (qz * vector.x - qx * vector.z);
+            double tz = 2d * (qx * vector.y - qy * vector.x);
+
+            return new Vector3(
+                (float)(vector.x + qw * tx + qy * tz - qz * ty),
+                (float)(vector.y + qw * ty + qz * tx - qx * tz),
+                (float)(vector.z + qw * tz + qx * ty - qy * tx));
         }
 
         private static InvalidOperationException SurfaceGeometryError(int faceIndex, string message) =>

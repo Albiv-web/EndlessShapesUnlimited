@@ -18,7 +18,7 @@ namespace DecoLimitLifter.SmartBuildMode
             out string message)
         {
             message = null;
-            if (build == null || plan?.Volume?.Construct == null)
+            if (build == null || plan?.Construct == null)
             {
                 message = "No valid construct is available.";
                 return false;
@@ -50,15 +50,15 @@ namespace DecoLimitLifter.SmartBuildMode
 
                     foreach (Vector3i cell in placement.CoveredCells())
                     {
-                        if (plan.Volume.Construct.AllBasics.GetBlockViaLocalPosition(cell) != null)
+                        if (plan.Construct.AllBasics.GetBlockViaLocalPosition(cell) != null)
                             throw new InvalidOperationException("A target cell became occupied before commit.");
                     }
 
-                    if (!PlacementTouchesConstructOrPlacedCells(placement, plan.Volume.Construct, committedCells))
+                    if (!PlacementTouchesConstructOrPlacedCells(placement, plan.Construct, committedCells))
                         throw new InvalidOperationException("A planned block is disconnected from the construct.");
 
                     var command = new PlaceBlockCommand(
-                        plan.Volume.Construct,
+                        plan.Construct,
                         placement.Position,
                         placement.Rotation,
                         placement.Candidate.Definition,
@@ -99,7 +99,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 int index = remaining.FindIndex(
                     placement => PlacementTouchesConstructOrPlacedCells(
                         placement,
-                        plan.Volume.Construct,
+                        plan.Construct,
                         placedCells));
                 if (index < 0)
                 {
