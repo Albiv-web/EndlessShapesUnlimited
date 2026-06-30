@@ -163,6 +163,25 @@ namespace DecoLimitLifter.DecorationEditMode
         internal void AddPointForTests(Vector3 local) =>
             _points.Add(local);
 
+        internal SurfaceDraft CreateMirroredForSymmetry(
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
+        {
+            var mirrored = new SurfaceDraft();
+            mirrored.Construct = Construct;
+            CopySettings(Settings, mirrored.Settings);
+            for (int index = 0; index < _points.Count; index++)
+                mirrored._points.Add(variant.Mirror(_points[index]));
+
+            bool flipWinding = variant.AxisCount % 2 == 1;
+            for (int index = 0; index < _faces.Count; index++)
+            {
+                SurfaceFace face = _faces[index];
+                mirrored._faces.Add(flipWinding ? face.Flipped() : face);
+            }
+
+            return mirrored;
+        }
+
         internal void Clear()
         {
             Construct = null;
@@ -501,6 +520,17 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static int RemapAfterPointDelete(int index, int removed) =>
             index > removed ? index - 1 : index;
+
+        private static void CopySettings(
+            SurfaceDecorationSettings source,
+            SurfaceDecorationSettings destination)
+        {
+            destination.StructureBlockType = source.StructureBlockType;
+            destination.FaceThickness = source.FaceThickness;
+            destination.ColorIndex = source.ColorIndex;
+            destination.NormalReversal = source.NormalReversal;
+            destination.NearestAnchor = source.NearestAnchor;
+        }
     }
 
     internal sealed class SurfaceDecorationPlan
@@ -533,7 +563,9 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 scaling,
             Vector3 orientation,
             int color,
-            Vector3 thicknessAxis)
+            Vector3 thicknessAxis,
+            Vector3 transformThicknessAxis,
+            float transformPlaneDistance)
         {
             Anchor = anchor;
             MeshGuid = meshGuid;
@@ -542,6 +574,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Orientation = orientation;
             Color = color;
             ThicknessAxis = thicknessAxis;
+            TransformThicknessAxis = transformThicknessAxis;
+            TransformPlaneDistance = transformPlaneDistance;
         }
 
         internal Vector3i Anchor { get; }
@@ -557,6 +591,10 @@ namespace DecoLimitLifter.DecorationEditMode
         internal int Color { get; }
 
         internal Vector3 ThicknessAxis { get; }
+
+        internal Vector3 TransformThicknessAxis { get; }
+
+        internal float TransformPlaneDistance { get; }
     }
 
     internal abstract class ISurfaceAnchorResolver
@@ -773,6 +811,149 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
+        internal static bool TryPlanWithSymmetry(
+            SurfaceDraft draft,
+            ISurfaceAnchorResolver anchorResolver,
+            out SurfaceDecorationPlan plan,
+            out string message)
+        {
+            plan = null;
+            if (draft == null)
+            {
+                message = "Create a surface draft on a construct before previewing.";
+                return false;
+            }
+
+            if (!DecoLimitLifter.EsuSymmetry.CanUseWith(draft.Construct, out message))
+                return false;
+
+            return TryPlanMirroredVariants(
+                draft,
+                anchorResolver,
+                DecoLimitLifter.EsuSymmetry.Variants(),
+                out plan,
+                out message);
+        }
+
+        internal static bool TryPlanMirroredVariants(
+            SurfaceDraft draft,
+            ISurfaceAnchorResolver anchorResolver,
+            IEnumerable<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variants,
+            out SurfaceDecorationPlan plan,
+            out string message)
+        {
+            plan = null;
+            message = null;
+            if (draft == null)
+            {
+                message = "Create a surface draft on a construct before previewing.";
+                return false;
+            }
+
+            List<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variantList =
+                (variants ?? DecoLimitLifter.EsuSymmetry.Variants()).ToList();
+            if (variantList.Count == 0)
+                variantList.Add(new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()));
+
+            var placements = new List<SurfaceDecorationPlacement>();
+            var warnings = new List<string>();
+            var placementKeys = new HashSet<string>();
+            var geometryKeys = new HashSet<string>();
+            int plannedVariants = 0;
+            for (int index = 0; index < variantList.Count; index++)
+            {
+                DecoLimitLifter.EsuSymmetry.SymmetryVariant variant = variantList[index];
+                SurfaceDraft variantDraft = variant.IsIdentity
+                    ? draft
+                    : draft.CreateMirroredForSymmetry(variant);
+                if (!geometryKeys.Add(GeometryKey(variantDraft)))
+                    continue;
+
+                if (!TryPlan(variantDraft, anchorResolver, out SurfaceDecorationPlan variantPlan, out string variantMessage))
+                {
+                    message = variant.IsIdentity
+                        ? variantMessage
+                        : "Surface symmetry placement rejected: " + variantMessage;
+                    return false;
+                }
+
+                plannedVariants++;
+                foreach (SurfaceDecorationPlacement placement in variantPlan.Placements)
+                {
+                    if (placementKeys.Add(PlacementKey(placement)))
+                        placements.Add(placement);
+                }
+
+                foreach (string warning in variantPlan.Warnings)
+                {
+                    if (!warnings.Contains(warning))
+                        warnings.Add(warning);
+                }
+            }
+
+            if (placements.Count == 0)
+            {
+                message = "Surface draft produced no decorations.";
+                return false;
+            }
+
+            plan = new SurfaceDecorationPlan(draft.Construct, placements, warnings);
+            message = plannedVariants > 1
+                ? "Surface symmetry: " +
+                  placements.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                  " decoration(s) ready across " +
+                  plannedVariants.ToString("N0", CultureInfo.InvariantCulture) +
+                  " variant(s)."
+                : placements.Count.ToString("N0", CultureInfo.InvariantCulture) + " decoration(s) ready.";
+            return true;
+        }
+
+        internal static bool SameGeometry(SurfaceDraft left, SurfaceDraft right) =>
+            string.Equals(GeometryKey(left), GeometryKey(right), StringComparison.Ordinal);
+
+        private static string GeometryKey(SurfaceDraft draft)
+        {
+            if (draft == null)
+                return string.Empty;
+
+            var builder = new System.Text.StringBuilder();
+            for (int index = 0; index < draft.Points.Count; index++)
+            {
+                Vector3 point = draft.Points[index];
+                builder.Append(FloatKey(point.x)).Append(',')
+                    .Append(FloatKey(point.y)).Append(',')
+                    .Append(FloatKey(point.z)).Append(';');
+            }
+
+            builder.Append('|');
+            foreach (SurfaceFace face in draft.Faces)
+            {
+                int[] indexes = { face.A, face.B, face.C };
+                Array.Sort(indexes);
+                builder.Append(indexes[0]).Append(',')
+                    .Append(indexes[1]).Append(',')
+                    .Append(indexes[2]).Append(';');
+            }
+
+            return builder.ToString();
+        }
+
+        private static string PlacementKey(SurfaceDecorationPlacement placement) =>
+            placement.MeshGuid.ToString("N") + "|" +
+            CellKey(placement.Anchor) + "|" +
+            VectorKey(placement.Positioning);
+
+        private static string CellKey(Vector3i value) =>
+            value.x.ToString(CultureInfo.InvariantCulture) + ":" +
+            value.y.ToString(CultureInfo.InvariantCulture) + ":" +
+            value.z.ToString(CultureInfo.InvariantCulture);
+
+        private static string VectorKey(Vector3 value) =>
+            FloatKey(value.x) + ":" + FloatKey(value.y) + ":" + FloatKey(value.z);
+
+        private static string FloatKey(float value) =>
+            value.ToString("0.####", CultureInfo.InvariantCulture);
+
         private static void AddFacePlacements(
             SurfaceDraft draft,
             SurfaceFace face,
@@ -846,6 +1027,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (!draft.Settings.NearestAnchor)
                     warnings.Add("Nearest anchoring is off; generated offsets are relative to 0,0,0.");
 
+                Vector3 transformThicknessAxis = DecorationTransformThicknessAxis(polygon, orientation);
+                float transformPlaneDistance = Vector3.Dot(
+                    transformThicknessAxis,
+                    ToVector3(anchor) + positioning);
+
                 placements.Add(new SurfaceDecorationPlacement(
                     anchor,
                     meshGuid,
@@ -853,7 +1039,9 @@ namespace DecoLimitLifter.DecorationEditMode
                     scaling,
                     orientation,
                     color,
-                    thicknessAxis));
+                    thicknessAxis,
+                    transformThicknessAxis,
+                    transformPlaneDistance));
             }
         }
 
@@ -1041,6 +1229,66 @@ namespace DecoLimitLifter.DecorationEditMode
 
             axis.Normalize();
             return axis;
+        }
+
+        private static Vector3 DecorationTransformThicknessAxis(PolygonData polygon, Vector3 orientation)
+        {
+            Vector3 localAxis;
+            switch (polygon.PolyType)
+            {
+                case PolygonType.RightTriangle:
+                case PolygonType.OtherTriangle_F:
+                case PolygonType.OtherTriangle_B:
+                case PolygonType.Rectangle:
+                    localAxis = Vector3.right;
+                    break;
+                case PolygonType.IsoscelesTriangle:
+                    localAxis = Vector3.up;
+                    break;
+                case PolygonType.Ellipse:
+                    localAxis = Vector3.forward;
+                    break;
+                default:
+                    localAxis = Vector3.forward;
+                    break;
+            }
+
+            Vector3 axis = RotateEuler(orientation, localAxis);
+            if (!DecorationEditMath.IsFinite(axis) ||
+                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            {
+                return Vector3.zero;
+            }
+
+            axis.Normalize();
+            return axis;
+        }
+
+        private static Vector3 RotateEuler(Vector3 degrees, Vector3 vector)
+        {
+            double halfX = degrees.x * Math.PI / 360d;
+            double halfY = degrees.y * Math.PI / 360d;
+            double halfZ = degrees.z * Math.PI / 360d;
+            double cx = Math.Cos(halfX);
+            double sx = Math.Sin(halfX);
+            double cy = Math.Cos(halfY);
+            double sy = Math.Sin(halfY);
+            double cz = Math.Cos(halfZ);
+            double sz = Math.Sin(halfZ);
+
+            double qw = cx * cy * cz + sx * sy * sz;
+            double qx = sx * cy * cz - cx * sy * sz;
+            double qy = cx * sy * cz + sx * cy * sz;
+            double qz = cx * cy * sz - sx * sy * cz;
+
+            double tx = 2d * (qy * vector.z - qz * vector.y);
+            double ty = 2d * (qz * vector.x - qx * vector.z);
+            double tz = 2d * (qx * vector.y - qy * vector.x);
+
+            return new Vector3(
+                (float)(vector.x + qw * tx + qy * tz - qz * ty),
+                (float)(vector.y + qw * ty + qz * tx - qx * tz),
+                (float)(vector.z + qw * tz + qx * ty - qy * tx));
         }
 
         private static InvalidOperationException SurfaceGeometryError(int faceIndex, string message) =>

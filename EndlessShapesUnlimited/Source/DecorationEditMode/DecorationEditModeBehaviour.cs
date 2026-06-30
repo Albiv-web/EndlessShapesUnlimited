@@ -24,6 +24,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (!DecorationEditModeRegistration.CanOpenNow(out string reason))
             {
+                EsuRuntimeLog.Warning("Decoration Edit", reason);
                 InfoStore.Add(reason);
                 return;
             }
@@ -38,6 +39,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (!DecorationEditModeRegistration.CanOpenFromModeSwitch(out string reason))
             {
+                EsuRuntimeLog.Warning("Decoration Edit", reason);
                 InfoStore.Add(reason);
                 return false;
             }
@@ -55,12 +57,14 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_session == null ||
                 !_session.CanSwitchToSmartBuild(out reason))
             {
+                EsuRuntimeLog.Warning("Decoration Edit", reason ?? "Apply or Cancel Decoration Edit changes before switching modes.");
                 InfoStore.Add(reason ?? "Apply or Cancel Decoration Edit changes before switching modes.");
                 return true;
             }
 
             if (!SmartBuildModeRegistration.CanOpenFromModeSwitch(out reason))
             {
+                EsuRuntimeLog.Warning("Decoration Edit", reason);
                 InfoStore.Add(reason);
                 return true;
             }
@@ -89,7 +93,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (_session.TrySwitchToSurfaceBuilder(out string reason))
                     InfoStore.Add("ESU mode: Surface Builder.");
                 else
+                {
+                    EsuRuntimeLog.Warning("Decoration Edit", reason ?? "Apply or Cancel Decoration Edit changes before switching modes.");
                     InfoStore.Add(reason ?? "Apply or Cancel Decoration Edit changes before switching modes.");
+                }
                 return true;
             }
 
@@ -174,6 +181,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             catch (Exception exception)
             {
+                EsuRuntimeLog.Exception("Decoration Edit", exception, "Decoration Edit Mode update failed");
                 AdvLogger.LogException(
                     "[EndlessShapes Unlimited] Decoration Edit Mode update failed",
                     exception,
@@ -195,6 +203,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             catch (Exception exception)
             {
+                EsuRuntimeLog.Exception("Decoration Edit", exception, "Decoration Edit Mode GUI failed");
                 AdvLogger.LogException(
                     "[EndlessShapes Unlimited] Decoration Edit Mode GUI failed",
                     exception,
@@ -208,6 +217,7 @@ namespace DecoLimitLifter.DecorationEditMode
             cBuild build = cBuild.GetSingleton();
             _session = new DecorationEditSession(build);
             _session.Begin();
+            EsuRuntimeLog.Info("Decoration Edit", modeSwitch ? "Decoration Edit Mode restored from mode switch." : "Decoration Edit Mode opened.");
             if (!modeSwitch)
                 InfoStore.Add("Decoration Edit Mode opened. Select one decoration; Apply commits, Cancel restores.");
         }
@@ -220,7 +230,10 @@ namespace DecoLimitLifter.DecorationEditMode
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
+            {
+                EsuRuntimeLog.Info("Decoration Edit", "Decoration Edit Mode closed.");
                 InfoStore.Add("Decoration Edit Mode closed.");
+            }
         }
     }
 }

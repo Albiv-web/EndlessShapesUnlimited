@@ -25,28 +25,18 @@ namespace DecoLimitLifter.DecorationEditMode
             Color previous = GUI.color;
             try
             {
-                Color amber = DecorationEditorTheme.WarningColor;
-                Color cyan = DecorationEditorTheme.Cyan;
-                Color color = Color.Lerp(amber, cyan, wave * 0.35f);
-                color.a = 0.38f + wave * 0.42f;
+                Color color = DecorationEditorTheme.ErrorColor;
+                color.a = 0.32f + wave * 0.48f;
                 GUI.color = color;
 
-                DrawBorder(
-                    new Rect(
-                        rect.x - EsuHudLayout.Scale(2f),
-                        rect.y - EsuHudLayout.Scale(2f),
-                        rect.width + EsuHudLayout.Scale(4f),
-                        rect.height + EsuHudLayout.Scale(4f)),
-                    EsuHudLayout.Scale(2f));
+                Rect inner = Inset(rect, EsuHudLayout.Scale(2f));
+                GUI.DrawTexture(inner, Texture2D.whiteTexture);
 
                 GUI.color = new Color(color.r, color.g, color.b, color.a * 0.35f);
-                DrawBorder(
-                    new Rect(
-                        rect.x - EsuHudLayout.Scale(4f),
-                        rect.y - EsuHudLayout.Scale(4f),
-                        rect.width + EsuHudLayout.Scale(8f),
-                        rect.height + EsuHudLayout.Scale(8f)),
-                    EsuHudLayout.Scale(1f));
+                DrawBorderInside(inner, EsuHudLayout.Scale(2f));
+
+                GUI.color = new Color(color.r, color.g, color.b, Mathf.Min(1f, color.a + 0.2f));
+                DrawBorderInside(Inset(inner, EsuHudLayout.Scale(2f)), EsuHudLayout.Scale(1f));
             }
             finally
             {
@@ -54,7 +44,17 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
-        private static void DrawBorder(Rect rect, float thickness)
+        private static Rect Inset(Rect rect, float amount)
+        {
+            amount = Mathf.Max(0f, amount);
+            return new Rect(
+                rect.x + amount,
+                rect.y + amount,
+                Mathf.Max(1f, rect.width - amount * 2f),
+                Mathf.Max(1f, rect.height - amount * 2f));
+        }
+
+        private static void DrawBorderInside(Rect rect, float thickness)
         {
             thickness = Mathf.Max(1f, thickness);
             GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, thickness), Texture2D.whiteTexture);

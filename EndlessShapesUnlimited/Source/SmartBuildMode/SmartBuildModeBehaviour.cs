@@ -26,6 +26,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (!SmartBuildModeRegistration.CanOpenNow(out string reason))
             {
+                EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
                 return;
             }
@@ -40,6 +41,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (!SmartBuildModeRegistration.CanOpenFromModeSwitch(out string reason))
             {
+                EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
                 return false;
             }
@@ -56,12 +58,14 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_session != null &&
                 !_session.CanSwitchToDecorationEdit(out string reason))
             {
+                EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
                 return true;
             }
 
             if (!DecorationEditModeRegistration.CanOpenFromModeSwitch(out reason))
             {
+                EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
                 return true;
             }
@@ -141,6 +145,7 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             catch (Exception exception)
             {
+                EsuRuntimeLog.Exception("Smart Builder", exception, "Smart Block Builder update failed");
                 AdvLogger.LogException(
                     "[EndlessShapes Unlimited] Smart Block Builder update failed",
                     exception,
@@ -162,6 +167,7 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             catch (Exception exception)
             {
+                EsuRuntimeLog.Exception("Smart Builder", exception, "Smart Block Builder GUI failed");
                 AdvLogger.LogException(
                     "[EndlessShapes Unlimited] Smart Block Builder GUI failed",
                     exception,
@@ -175,6 +181,7 @@ namespace DecoLimitLifter.SmartBuildMode
             cBuild build = cBuild.GetSingleton();
             _session = new SmartBuildSession(build);
             _session.Begin();
+            EsuRuntimeLog.Info("Smart Builder", modeSwitch ? "Smart Block Builder opened from mode switch." : "Smart Block Builder opened.");
             if (!modeSwitch)
                 InfoStore.Add("Smart Block Builder opened. Click the focused construct grid to create a runtime preview, then Apply to place blocks.");
         }
@@ -188,6 +195,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
             {
+                EsuRuntimeLog.Info(
+                    "Smart Builder",
+                    string.IsNullOrWhiteSpace(reason)
+                        ? "Smart Block Builder closed."
+                        : "Smart Block Builder closed: " + reason + ".");
                 InfoStore.Add(string.IsNullOrWhiteSpace(reason)
                     ? "Smart Block Builder closed."
                     : "Smart Block Builder closed: " + reason + ".");

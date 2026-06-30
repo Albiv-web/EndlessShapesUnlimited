@@ -135,6 +135,8 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!Active)
                 return;
 
+            EsuHudNotifications.SetActiveSource("Smart Builder");
+            RefreshMouseOverUiFromCurrentPointer();
             RefreshSelection();
             HandleKeyboard();
             HandleMouse();
@@ -147,6 +149,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             DecorationEditorTheme.Ensure();
+            EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed());
             if (Event.current.type == EventType.Repaint)
                 DecorationEditorOverlay.Render();
 
@@ -175,6 +178,9 @@ namespace DecoLimitLifter.SmartBuildMode
             _leftPanelRect = GUI.Window(_panelWindowId, _leftPanelRect, DrawLeftPanel, GUIContent.none, GUIStyle.none);
             GUI.Window(_statusWindowId, _statusRect, DrawStatusStrip, GUIContent.none, GUIStyle.none);
             EsuHudLayout.DrawResizeGrip(_leftPanelRect, leftEdge: false);
+            EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(_leftPanelRect, leftEdge: false), "Drag to resize the Smart Builder panel.");
+            EsuConsoleWindow.Draw();
+            EsuCursorTooltip.Draw();
 
             s_leftPanelRect = _leftPanelRect;
             s_layoutGeneration = _layoutResetGeneration;
@@ -192,6 +198,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 Event.current.Use();
             }
         }
+
+        private bool TooltipInputSuppressed() =>
+            _dragging ||
+            _resizingLeftPanel;
 
         private float ToolbarHeightScaled() =>
             EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight, Screen.width - EsuHudLayout.Scale(16f));
@@ -297,6 +307,7 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             catch (Exception exception)
             {
+                EsuRuntimeLog.Exception("Smart Builder", exception, "Smart Block Builder preview draw failed");
                 AdvLogger.LogException(
                     "[EndlessShapes Unlimited] Smart Block Builder preview draw failed",
                     exception,
@@ -498,10 +509,23 @@ namespace DecoLimitLifter.SmartBuildMode
                 return false;
 
             Vector3 localNormal = WorldNormalToLocal(hit);
-            SmartBuildAxis axis = SmartBuildAxisHelper.FromLargestComponent(localNormal, out int sign);
             construct = hit.Construct;
-            cell = hit.Anchor + SmartBuildAxisHelper.ToVector3i(axis, sign);
+            cell = AdjacentCellFromSurfaceHit(hit.Anchor, hit.LocalHit, localNormal);
             return construct != null;
+        }
+
+        internal static Vector3i AdjacentCellFromSurfaceHit(
+            Vector3i anchor,
+            Vector3 localHit,
+            Vector3 localNormal)
+        {
+            Vector3 center = new Vector3(anchor.x, anchor.y, anchor.z);
+            Vector3 offset = localHit - center;
+            SmartBuildAxis axis = SmartBuildAxisHelper.FromLargestComponent(offset, out int sign);
+            if (Mathf.Abs(SmartBuildAxisHelper.Get(offset, axis)) < 0.18f)
+                axis = SmartBuildAxisHelper.FromLargestComponent(localNormal, out sign);
+
+            return anchor + SmartBuildAxisHelper.ToVector3i(axis, sign >= 0 ? 1 : -1);
         }
 
         private bool TrySymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell)
@@ -1235,16 +1259,14 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void DrawToolbar(int id)
         {
+            EsuHudNotifications.SetActiveSource("Smart Builder");
             GUI.Box(new Rect(0f, 0f, _toolbarRect.width, _toolbarRect.height), GUIContent.none, DecorationEditorTheme.Panel);
             Rect inner = EsuHudLayout.LocalPanelInnerRect(_toolbarRect.width, _toolbarRect.height);
-            float leftRailWidth = EsuHudLayout.ToolbarLeftRailWidth(inner.width);
-            float notificationWidth = EsuHudLayout.ToolbarNotificationWidth(inner.width);
-            float rightRailWidth = EsuHudLayout.ToolbarRightControlsWidth(inner.width);
-            float gap = EsuHudLayout.ToolbarGap;
+            EsuHudLayout.ToolbarBudget budget = EsuHudLayout.CalculateToolbarBudget(inner.width);
 
             GUILayout.BeginArea(inner);
             GUILayout.BeginHorizontal();
-            GUILayout.BeginHorizontal(GUILayout.Width(leftRailWidth));
+            GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth));
             {
                 ModeSwitchButton();
                 ToolButton(SmartBuildTool.Draw, "create", "Draw", "Click the focused construct grid to create a 1x1x1 preview.");
@@ -1259,11 +1281,20 @@ namespace DecoLimitLifter.SmartBuildMode
                 GUILayout.FlexibleSpace();
             }
             GUILayout.EndHorizontal();
-            GUILayout.Space(gap);
-            EsuHudNotifications.DrawToolbarSlot(inner, notificationWidth, "ESU mode: Smart Builder.");
-            GUILayout.Space(gap);
-            GUILayout.BeginHorizontal(GUILayout.Width(rightRailWidth));
-            GUILayout.FlexibleSpace();
+            GUILayout.Space(budget.Gap);
+            EsuHudNotifications.DrawToolbarSlot(
+                inner,
+                budget.NotificationWidth,
+                "ESU mode: Smart Builder.",
+                new Vector2(_toolbarRect.x + inner.x, _toolbarRect.y + inner.y));
+            GUILayout.Space(budget.Gap);
+            GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));
+            ToolbarReservedSlot(44f);
+            ToolbarReservedSlot(44f);
+            ToolbarReservedSlot(44f);
+            ToolbarReservedSlot(44f);
+            ToolbarReservedSlot(54f);
+            ToolbarReservedSlot(54f);
             if (AttentionIconButton("save", "Apply", DecorationEditorTheme.Button, "Place the planned blocks.", !_planDirty && _plan != null && _plan.CanCommit))
                 ApplyPreview();
             if (AttentionIconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Clear the runtime preview.", _draft != null))
@@ -1273,6 +1304,15 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.EndHorizontal();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
+        }
+
+        private static void ToolbarReservedSlot(float baseWidth)
+        {
+            GUILayoutUtility.GetRect(
+                GUIContent.none,
+                DecorationEditorTheme.Button,
+                GUILayout.Width(EsuHudLayout.Scale(baseWidth)),
+                GUILayout.Height(EsuHudLayout.Scale(40f)));
         }
 
         private void ModeSwitchButton()
@@ -1446,7 +1486,7 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.BeginHorizontal();
             GUILayout.Label("Material", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
             if (GUILayout.Button(
-                    "<",
+                    new GUIContent("<", "Previous Smart Builder material."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(28f)),
                     GUILayout.Height(EsuHudLayout.Scale(22f))))
@@ -1458,7 +1498,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 SmartBlockFamilyCatalog.MaterialDisplayName(_selectedMaterial),
                 DecorationEditorTheme.BodyWrap);
             if (GUILayout.Button(
-                    ">",
+                    new GUIContent(">", "Next Smart Builder material."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(28f)),
                     GUILayout.Height(EsuHudLayout.Scale(22f))))
@@ -1937,6 +1977,21 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static bool ContainsMouse(Rect rect) =>
             rect.Contains(MouseGuiPosition());
+
+        private void RefreshMouseOverUiFromCurrentPointer()
+        {
+            Vector2 mouse = MouseGuiPosition();
+            bool overUi = _toolbarRect.Contains(mouse) ||
+                          EsuHudNotifications.ContainsMouse(mouse) ||
+                          _leftPanelRect.Contains(mouse) ||
+                          _statusRect.Contains(mouse);
+            SmartBuildInputScope.SetMouseOverUi(overUi);
+            if (overUi &&
+                Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
+            {
+                SmartBuildInputScope.ClaimMouseWheelInputForFrames();
+            }
+        }
 
         private static bool ShouldConsumeGuiEvent(Event current)
         {
