@@ -50,7 +50,7 @@ License.
    directory.
 2. Copy the complete `EndlessShapesUnlimited` runtime folder into FTD `Mods`.
 3. Start FTD and confirm the Alerts panel reports
-   `EndlessShapes Unlimited v1.0.2 Active!`.
+   `EndlessShapes Unlimited v1.0.3 Active!`.
 
 The runtime package must contain only:
 

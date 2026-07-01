@@ -31,7 +31,7 @@ namespace DecoLimitLifter
         private const string HarmonyId = "alb.endlessshapesunlimited";
 
         public string name => "EndlessShapes Unlimited";
-        public Version version => new Version(1, 0, 2, 0);
+        public Version version => new Version(1, 0, 3, 0);
 
         public void OnLoad()
         {
