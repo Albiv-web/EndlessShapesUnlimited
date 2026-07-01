@@ -293,24 +293,25 @@ and rolled back in reverse order on failure.
 
 ## Development
 
-Set `FTD_DIR` to the local From The Depths install before building:
+Set `FTD_DIR` to your local From The Depths install before building. Keep
+machine-specific paths out of committed docs and release notes:
 
 ```powershell
-$env:FTD_DIR = 'C:\Program Files (x86)\Steam\steamapps\common\From The Depths'
+$env:FTD_DIR = '<path-to-From-The-Depths-install>'
 dotnet build EndlessShapesUnlimited\Source\EndlessShapesUnlimited.csproj -c Release --nologo
 ```
 
 Run the verification harness:
 
 ```powershell
-$env:FTD_DIR = 'C:\Program Files (x86)\Steam\steamapps\common\From The Depths'
+$env:FTD_DIR = '<path-to-From-The-Depths-install>'
 dotnet run --project tools\EndlessShapesUnlimited.Verification\EndlessShapesUnlimited.Verification.csproj -c Release -p:NoWarn=MSB3277
 ```
 
 Package a release:
 
 ```powershell
-$env:FTD_DIR = 'C:\Program Files (x86)\Steam\steamapps\common\From The Depths'
+$env:FTD_DIR = '<path-to-From-The-Depths-install>'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 

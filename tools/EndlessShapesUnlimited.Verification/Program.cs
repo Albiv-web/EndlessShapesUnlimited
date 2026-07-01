@@ -851,15 +851,20 @@ f 0 2 3
 
     private static void VerifyFilePathInput()
     {
+        string quotedRelativePath = Path.Combine("Models With Spaces", "ship.obj");
         string normalized = FilePathInput.Normalize(
-            "  \"C:\\Models With Spaces\\ship.obj\"  ");
-        Assert(normalized == "C:\\Models With Spaces\\ship.obj",
+            $"  \"{quotedRelativePath}\"  ");
+        Assert(normalized == quotedRelativePath,
             "Pasted file paths preserve spaces while trimming whitespace and matching quotes.");
 
+        string privateProfilePath = Path.Combine(
+            "Example Profile",
+            "Downloads",
+            "ship.obj");
         string missing = FilePathInput.MissingFileMessage(
             "OBJ",
-            "C:\\Private Profile\\Downloads\\ship.obj");
-        Assert(missing.Contains("ship.obj") && !missing.Contains("Private Profile"),
+            privateProfilePath);
+        Assert(missing.Contains("ship.obj") && !missing.Contains("Example Profile"),
             "Missing-file feedback names the file without exposing its full local path in an alert.");
     }
 
@@ -1431,13 +1436,8 @@ f 0 2 3
 
     private static void VerifyBlueprintSerializationUsageSampleFiles()
     {
-        string folder = Path.Combine(
-            "F:\\",
-            "FTD saves",
-            "From The Depths",
-            "Player Profiles",
-            "New",
-            "Constructables");
+        string folder = Environment.GetEnvironmentVariable("ESU_BLUEPRINT_SAMPLE_DIR") ??
+                        Path.Combine("ExternalSamples", "Constructables");
         VerifyBlueprintSampleIfPresent(
             Path.Combine(folder, "OneBlockTest.blueprint"),
             expectedVehicleDataBytes: 652UL,

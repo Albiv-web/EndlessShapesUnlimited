@@ -70,7 +70,7 @@ Purpose: exact folder uploaded through From The Depths Workshop tools.
 Use either:
 
 - `artifacts/staging/EndlessShapesUnlimited`
-- `C:/Users/knuta/Documents/From The Depths/Mods/EndlessShapesUnlimited`
+- `<From-The-Depths-user-mods-folder>/EndlessShapesUnlimited`
 
 The Steam Workshop upload folder should match the GitHub release zip runtime
 contents exactly, with one extra practical requirement from FTD:
@@ -87,6 +87,8 @@ Exclude:
 - Source, tests, tools, and build scripts.
 - Local screenshots or work-in-progress notes.
 - Duplicate readmes such as `README Steam version.md`.
+- Real user-profile paths, machine names, local install paths, or screenshots
+  that show personal folders.
 
 ## Current Readme Split
 
@@ -103,7 +105,7 @@ Exclude:
 4. Run:
 
    ```powershell
-   $env:FTD_DIR = 'C:\Program Files (x86)\Steam\steamapps\common\From The Depths'
+   $env:FTD_DIR = '<path-to-From-The-Depths-install>'
    powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
    ```
 
