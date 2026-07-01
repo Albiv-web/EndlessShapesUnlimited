@@ -12,7 +12,6 @@ artifacts/
 
 # Local-only planning, research, and optional external tools
 *.local.md
-CHANGELOG.md
 TECHNICAL_LOG.md
 docs/
 tools/Beamification/

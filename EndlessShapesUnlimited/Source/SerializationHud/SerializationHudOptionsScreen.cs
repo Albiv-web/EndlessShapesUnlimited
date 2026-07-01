@@ -44,6 +44,20 @@ namespace DecoLimitLifter.SerializationHud
                     profile => profile.Enabled));
 
             CreateHeader(
+                "Vanilla compatibility",
+                new ToolTip(
+                    "Prevent ESU-only decoration saves while building for unmodded From The Depths."));
+            var compatibility = CreateTableSegment(2, 2);
+            compatibility.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Vanilla compatibility mode",
+                    new ToolTip(
+                        "When enabled, ESU blocks decoration creation and saves that would require ESU extended decoration data. Keeps saves vanilla-compatible when the craft stays under vanilla limits."),
+                    (profile, value) => profile.EnforceVanillaCompatibility = value,
+                    profile => profile.EnforceVanillaCompatibility));
+
+            CreateHeader(
                 "Blueprint saving",
                 new ToolTip(
                     "Optional streamed saving for very large blueprint JSON files."));
@@ -56,6 +70,39 @@ namespace DecoLimitLifter.SerializationHud
                         "When enabled, ESU streams blueprint JSON saves estimated at 64 MiB or larger without changing the file format."),
                     (profile, value) => profile.StreamLargeBlueprintJsonSaves = value,
                     profile => profile.StreamLargeBlueprintJsonSaves));
+
+            CreateHeader(
+                "Blueprint loading",
+                new ToolTip(
+                    "Experimental opt-in load acceleration for very large blueprint files. The saved blueprint schema is not changed."));
+            var blueprintLoading = CreateTableSegment(2, 2);
+            blueprintLoading.AddInterpretter(
+                SubjectiveButton<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Fast load tier",
+                    new ToolTip(
+                        "Cycles Off, V1, V2, and V3. Off keeps the vanilla load path. V3 falls back to V2 if ESU cannot prove bulk loading is safe."),
+                    profile => CycleFastBlueprintLoadTier(profile)));
+            blueprintLoading.AddInterpretter(
+                StringDisplay.Quick(
+                    "Current fast load tier",
+                    FastBlueprintLoadTierLabel(data.FastBlueprintLoadTier)));
+            blueprintLoading.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Fast load diagnostics",
+                    new ToolTip(
+                        "Log passive ESU timing information for blueprint load phases. This does not enable fast loading by itself."),
+                    (profile, value) => profile.FastBlueprintLoadDiagnostics = value,
+                    profile => profile.FastBlueprintLoadDiagnostics));
+            blueprintLoading.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Apply fast load to small blueprints",
+                    new ToolTip(
+                        "Testing override. When disabled, ESU only routes large blueprint loads through the selected fast-load tier."),
+                    (profile, value) => profile.FastBlueprintLoadSmallBlueprintTesting = value,
+                    profile => profile.FastBlueprintLoadSmallBlueprintTesting));
 
             CreateHeader(
                 "ESU editor HUD",
@@ -119,6 +166,32 @@ namespace DecoLimitLifter.SerializationHud
                     new ToolTip(
                         "Can only open while building on a craft. The keybind defaults to Ctrl+Shift+B."),
                     _ => SmartBuildModeRegistration.ToggleFromUi()));
+        }
+
+        private static void CycleFastBlueprintLoadTier(
+            SerializationHudProfile.ProfileData profile)
+        {
+            if (profile == null)
+                return;
+
+            profile.FastBlueprintLoadTier = profile.FastBlueprintLoadTier == FastBlueprintLoadTier.V3
+                ? FastBlueprintLoadTier.Off
+                : profile.FastBlueprintLoadTier + 1;
+        }
+
+        internal static string FastBlueprintLoadTierLabel(FastBlueprintLoadTier tier)
+        {
+            switch (tier)
+            {
+                case FastBlueprintLoadTier.V1:
+                    return "V1 - streamed JSON";
+                case FastBlueprintLoadTier.V2:
+                    return "V2 - parallel predecode";
+                case FastBlueprintLoadTier.V3:
+                    return "V3 - experimental bulk";
+                default:
+                    return "Off - vanilla";
+            }
         }
     }
 }

@@ -29,7 +29,9 @@ namespace DecoLimitLifter.SerializationHud
             global::Blueprint __result,
             SerializationTelemetryOperation __state)
         {
-            TryComplete(__state, constructable, __result);
+            TryRecordBlueprintUsage(__state, __result);
+            VanillaCompatibilityGuard.EnsureBlueprintSaveAllowed(constructable, __result);
+            TryComplete(__state, constructable);
         }
 
         internal static Exception Finalizer(
@@ -55,16 +57,25 @@ namespace DecoLimitLifter.SerializationHud
             }
         }
 
-        private static void TryComplete(
+        private static void TryRecordBlueprintUsage(
             SerializationTelemetryOperation operation,
-            MainConstruct construct,
             global::Blueprint blueprint)
         {
             try
             {
                 operation?.RecordBlueprintUsage(blueprint);
-                operation?.Complete(construct);
             }
+            catch (Exception exception)
+            {
+                LogTelemetryFailure("record blueprint save telemetry", exception);
+            }
+        }
+
+        private static void TryComplete(
+            SerializationTelemetryOperation operation,
+            MainConstruct construct)
+        {
+            try { operation?.Complete(construct); }
             catch (Exception exception)
             {
                 LogTelemetryFailure("complete blueprint save telemetry", exception);
@@ -104,44 +115,60 @@ namespace DecoLimitLifter.SerializationHud
     {
         internal static void Prefix(
             [HarmonyArgument(1)] global::Blueprint blueprint,
-            out SerializationTelemetryOperation __state)
+            out BlueprintLoadTelemetryState __state)
         {
+            IDisposable suppression = VanillaCompatibilityGuard.BeginSuppression("blueprint load");
+            BlueprintSerializationUsage usage = BlueprintSerializationUsage.Empty;
+            try { usage = BlueprintSerializationUsageAnalyzer.Analyze(blueprint); }
+            catch (Exception exception)
+            {
+                BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
+                    "analyze blueprint load compatibility",
+                    exception);
+            }
+
             if (SerializationTelemetry.HasCurrentOperation)
             {
-                __state = null;
+                __state = new BlueprintLoadTelemetryState(null, suppression, usage);
                 return;
             }
 
             try
             {
-                __state = SerializationTelemetry.Begin(SerializationOperationKind.Load);
-                __state.RecordBlueprintUsage(blueprint);
+                SerializationTelemetryOperation operation =
+                    SerializationTelemetry.Begin(SerializationOperationKind.Load);
+                operation.RecordBlueprintUsage(blueprint);
+                __state = new BlueprintLoadTelemetryState(operation, suppression, usage);
             }
             catch (Exception exception)
             {
                 BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
                     "begin blueprint load telemetry",
                     exception);
-                __state = null;
+                __state = new BlueprintLoadTelemetryState(null, suppression, usage);
             }
         }
 
         internal static void Postfix(
             MainConstruct __result,
-            SerializationTelemetryOperation __state)
+            BlueprintLoadTelemetryState __state)
         {
-            try { __state?.Complete(__result); }
+            try { __state?.Operation?.Complete(__result); }
             catch (Exception exception)
             {
                 BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
                     "complete blueprint load telemetry",
                     exception);
             }
+
+            VanillaCompatibilityGuard.WarnLoadedBlueprintIfNeeded(
+                __result,
+                __state?.BlueprintUsage ?? BlueprintSerializationUsage.Empty);
         }
 
         internal static Exception Finalizer(
             Exception __exception,
-            SerializationTelemetryOperation __state)
+            BlueprintLoadTelemetryState __state)
         {
             try { __state?.Dispose(); }
             catch (Exception exception)
@@ -151,6 +178,35 @@ namespace DecoLimitLifter.SerializationHud
                     exception);
             }
             return __exception;
+        }
+    }
+
+    internal sealed class BlueprintLoadTelemetryState : IDisposable
+    {
+        private readonly IDisposable _suppression;
+        private bool _disposed;
+
+        internal BlueprintLoadTelemetryState(
+            SerializationTelemetryOperation operation,
+            IDisposable suppression,
+            BlueprintSerializationUsage blueprintUsage)
+        {
+            Operation = operation;
+            _suppression = suppression;
+            BlueprintUsage = blueprintUsage ?? BlueprintSerializationUsage.Empty;
+        }
+
+        internal SerializationTelemetryOperation Operation { get; }
+
+        internal BlueprintSerializationUsage BlueprintUsage { get; }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            try { Operation?.Dispose(); }
+            finally { _suppression?.Dispose(); }
         }
     }
 

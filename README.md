@@ -97,8 +97,8 @@ ESU does not decide save format from a simple decoration count alone. The save
 format is calculated from each serialized decoration container's actual wire
 metadata and payload size.
 
-Vanilla-compatible legacy format is used while both conditions remain true for a
-serialized container:
+Legacy wire format is used while both conditions remain true for a serialized
+container:
 
 - Header record count is at or below 9,362 records.
 - Sorted decoration data is at or below 6,553,500 bytes.
@@ -112,9 +112,16 @@ format is still bounded:
 
 Why this matters:
 
-- Small and ordinary craft remain vanilla wire compatible.
-- Large craft that cross vanilla limits are saved in a format that requires ESU
-  to load.
+- Wire format, vanilla loading, and vanilla decoration editing are separate.
+  A craft can be `LEGACY WIRE` and still be over vanilla's 5,000-decoration
+  editor cap.
+- Small and ordinary craft remain fully vanilla-friendly when they are legacy
+  wire and every decoration manager stays at or below 5,000 decorations.
+- Legacy-wire craft above 5,000 decorations per manager have loaded in vanilla
+  testing, but vanilla decoration tools are capped/limited there. ESU is needed
+  to keep editing above the cap.
+- Craft that cross legacy wire limits are saved in sentinel format and require
+  ESU to load.
 - The calculation is per serialized container, not a single whole-craft sum.
   Main constructs and subconstruct containers are assessed by their own peak
   header/data usage.
@@ -134,9 +141,12 @@ The HUD reports:
 
 - Total decorations on the focused craft, including subconstructs.
 - Busiest decoration manager against the 100,000 ESU manager limit.
+- Vanilla load compatibility against ESU-only wire/buffer requirements.
+- Vanilla decoration editor cap status against the 5,000-decoration vanilla
+  manager limit.
 - Peak predicted header bytes for any one serialized container.
 - Peak predicted sorted data bytes for any one serialized container.
-- Forecast wire format: `LEGACY WIRE`, `SENTINEL`, or `OVER LIMIT`.
+- Forecast wire-byte format: `LEGACY WIRE`, `SENTINEL`, or `OVER LIMIT`.
 - Exact last loaded and saved formats when telemetry exists.
 
 Labels with `~` or `EST` are forecasts after craft changes. Loaded/saved labels
@@ -338,6 +348,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 - `tools/EndlessShapesUnlimited.Verification`: non-Unity verifier and regression
   harness.
 - `EndlessShapesUnlimited/README.md`: simplified Steam Workshop/player readme.
+- `CHANGELOG.md`: version-to-version release history.
 - `RELEASE_CHANNELS.md`: GitHub vs Steam Workshop packaging rules.
 - `LICENSES`: bundled third-party notices for runtime packaging.
 

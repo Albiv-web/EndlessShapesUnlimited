@@ -13,6 +13,7 @@ using BrilliantSkies.Modding.Containers;
 using BrilliantSkies.Modding.Types;
 using BrilliantSkies.Ui.Special.InfoStore;
 using BrilliantSkies.Ui.Tips;
+using DecoLimitLifter.SerializationHud;
 using EndlessShapes2.Polygon;
 using EndlessShapes2.UI;
 using UnityEngine;
@@ -248,6 +249,15 @@ namespace EndlessShapes2
             }
 
             long requestedTotal = (long)_decorations.DecorationCount + _polygonDataList.Count;
+            if (!VanillaCompatibilityGuard.TryAllowDecorationCreation(
+                    _decorations,
+                    _polygonDataList.Count,
+                    out string compatibilityMessage))
+            {
+                InfoStore.Add(compatibilityMessage);
+                return false;
+            }
+
             if (requestedTotal > AllConstructDecorations._limitPerPacketManager)
             {
                 InfoStore.Add(
@@ -522,17 +532,20 @@ namespace EndlessShapes2
 
         private void RollbackGeneratedContent(ICollection<Exception> errors)
         {
-            for (int index = _createdDuringRun.Count - 1; index >= 0; index--)
+            using (VanillaCompatibilityGuard.BeginSuppression("decoration builder cleanup"))
             {
-                try
+                for (int index = _createdDuringRun.Count - 1; index >= 0; index--)
                 {
-                    Decoration decoration = _createdDuringRun[index];
-                    if (decoration != null && !decoration.IsDeleted)
-                        decoration.Delete();
-                }
-                catch (Exception exception)
-                {
-                    errors.Add(exception);
+                    try
+                    {
+                        Decoration decoration = _createdDuringRun[index];
+                        if (decoration != null && !decoration.IsDeleted)
+                            decoration.Delete();
+                    }
+                    catch (Exception exception)
+                    {
+                        errors.Add(exception);
+                    }
                 }
             }
 

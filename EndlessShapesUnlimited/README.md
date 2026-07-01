@@ -7,25 +7,34 @@ https://discord.gg/6Us9UamUPx
 
 [b]IMPORTANT SAVE COMPATIBILITY[/b]
 
-ESU has two decoration save formats:
+ESU shows two different things:
 
-Vanilla format:
-Works without ESU, as long as every construct stays inside vanilla limits.
+Wire bytes / save format:
+This says whether the saved decoration bytes are still legacy wire or need ESU sentinel wire.
 
 ESU sentinel / extended format:
-Used when a construct exceeds vanilla decoration limits. The file still looks like a normal blueprint or vehicle save, but ESU is required to load the extended decoration data correctly.
+Used when the saved decoration byte data gets too large for the vanilla legacy wire format. The file still looks like a normal blueprint or vehicle save, but ESU is required to read the extended decoration data correctly.
+
+Vanilla load:
+This says whether vanilla From The Depths can read the saved decoration data.
+
+Vanilla decoration tools:
+Vanilla has a 5,000 decoration cap per construct/manager for decoration editing and creation.
 
 Important rule:
-- If any one construct has more than 5,000 decorations, the craft saves in ESU extended format.
+- LEGACY WIRE is about save bytes only.
+- More than 5,000 decorations does not automatically mean ESU is required to load the craft.
+- In testing, vanilla could load legacy-wire craft above 5,000 decorations, but vanilla decoration tools were capped / limited once the craft was already over the vanilla limit.
+- A craft over 5,000 decorations can still say LEGACY WIRE if the byte data is small enough.
 - This applies separately to the main vehicle and every subobject / subconstruct.
-- Staying at 5,000 decorations or less per construct keeps the craft vanilla-save compatible.
+- Staying at 5,000 decorations or less per construct, and staying out of sentinel/buffer limits, keeps the craft both vanilla-load compatible and vanilla-editor friendly.
 - Using subobjects to spread decorations still works, because the vanilla 5k limit is per construct.
-- The mod will say if a vehicle was saved in vanilla or new format via the Serialization Hud, press F8 in-game to bring it up.
+- The Serialization HUD shows Wire bytes, Vanilla load, and Vanilla edit limit. Press F8 in-game to bring it up.
 
 Examples:
-- Main vehicle 4,900 decorations + turret 4,900 decorations = can still save vanilla.
-- Main vehicle 5,001 decorations = ESU required.
-- Subobject 5,001 decorations = ESU required, even if the main vehicle is under 5,000.
+- Main vehicle 4,900 decorations + turret 4,900 decorations = can still be vanilla-load compatible.
+- Main vehicle 5,001 decorations + LEGACY WIRE = vanilla may load it, but vanilla decoration tools are over cap.
+- Subobject 5,001 decorations = that subobject is over the vanilla decoration editor cap, even if the main vehicle is under 5,000.
 
 [b]OPTIONAL LARGE BLUEPRINT SAVE SETTING[/b]
 
@@ -143,7 +152,8 @@ If an OBJ is broken, too large, concave or has invalid geometry, ESU rejects it 
 
 - Remove standalone DecoLimitLifter and EndlessShapes2 before using this combined mod.
 - Multiplayer friends need the same ESU version if the craft uses ESU extended saves.
-- Workshop craft using ESU extended format should say that ESU is required.
+- Workshop craft using ESU sentinel/buffer data should say ESU is required to load.
+- Workshop craft over 5,000 decorations but still LEGACY WIRE should say vanilla may load it, but ESU is recommended/needed for decoration editing above the vanilla cap.
 - Back up important craft before heavy decoration edits or huge blueprint saves.
 
 [b]CREDITS[/b]

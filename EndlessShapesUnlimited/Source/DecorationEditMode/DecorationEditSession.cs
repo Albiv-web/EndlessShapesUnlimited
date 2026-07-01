@@ -7046,6 +7046,15 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!TryBuildDecorationPlacementPlans(localPosition, out List<DecorationPlacementPlan> plans))
                 return false;
 
+            if (!VanillaCompatibilityGuard.TryAllowDecorationCreation(
+                    decorations,
+                    plans.Count,
+                    out string compatibilityMessage))
+            {
+                InfoStore.Add(compatibilityMessage);
+                return false;
+            }
+
             created = new List<Decoration>(plans.Count);
             try
             {
@@ -7070,10 +7079,13 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             catch (Exception exception)
             {
-                for (int index = created.Count - 1; index >= 0; index--)
+                using (VanillaCompatibilityGuard.BeginSuppression("decoration placement cleanup"))
                 {
-                    try { created[index]?.Delete(); }
-                    catch { /* The creation failure is the actionable result. */ }
+                    for (int index = created.Count - 1; index >= 0; index--)
+                    {
+                        try { created[index]?.Delete(); }
+                        catch { /* The creation failure is the actionable result. */ }
+                    }
                 }
 
                 created = null;
@@ -8763,6 +8775,15 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             long requestedTotal = (long)decorations.DecorationCount + _surfacePlan.DecorationCount;
+            if (!VanillaCompatibilityGuard.TryAllowDecorationCreation(
+                    decorations,
+                    _surfacePlan.DecorationCount,
+                    out string compatibilityMessage))
+            {
+                InfoStore.Add(compatibilityMessage);
+                return;
+            }
+
             if (requestedTotal > AllConstructDecorations._limitPerPacketManager)
             {
                 InfoStore.Add(
@@ -8797,10 +8818,13 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             catch (Exception exception)
             {
-                for (int index = created.Count - 1; index >= 0; index--)
+                using (VanillaCompatibilityGuard.BeginSuppression("surface placement cleanup"))
                 {
-                    try { created[index]?.Delete(); }
-                    catch { }
+                    for (int index = created.Count - 1; index >= 0; index--)
+                    {
+                        try { created[index]?.Delete(); }
+                        catch { }
+                    }
                 }
 
                 InfoStore.Add("Surface placement failed and was rolled back: " + exception.Message);
@@ -8835,6 +8859,15 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             long requestedTotal = (long)decorations.DecorationCount + _generatorPlan.DecorationCount;
+            if (!VanillaCompatibilityGuard.TryAllowDecorationCreation(
+                    decorations,
+                    _generatorPlan.DecorationCount,
+                    out string compatibilityMessage))
+            {
+                InfoStore.Add(compatibilityMessage);
+                return;
+            }
+
             if (requestedTotal > AllConstructDecorations._limitPerPacketManager)
             {
                 InfoStore.Add(
@@ -8870,10 +8903,13 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             catch (Exception exception)
             {
-                for (int index = created.Count - 1; index >= 0; index--)
+                using (VanillaCompatibilityGuard.BeginSuppression("generator placement cleanup"))
                 {
-                    try { created[index]?.Delete(); }
-                    catch { }
+                    for (int index = created.Count - 1; index >= 0; index--)
+                    {
+                        try { created[index]?.Delete(); }
+                        catch { }
+                    }
                 }
 
                 InfoStore.Add("Generator placement failed and was rolled back: " + exception.Message);
@@ -9358,6 +9394,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
+            if (!VanillaCompatibilityGuard.TryAllowDecorationCreation(
+                    decorations,
+                    1,
+                    out string compatibilityMessage))
+            {
+                InfoStore.Add("Redo failed: " + compatibilityMessage);
+                return false;
+            }
+
             decoration = decorations.NewDecoration(
                 snapshot.TetherPoint,
                 force: true,
@@ -9371,8 +9416,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (!snapshot.TryRestore(decoration))
             {
-                try { decoration.Delete(); }
-                catch { /* The restore failure is the actionable result. */ }
+                using (VanillaCompatibilityGuard.BeginSuppression("redo restore cleanup"))
+                {
+                    try { decoration.Delete(); }
+                    catch { /* The restore failure is the actionable result. */ }
+                }
                 InfoStore.Add("Redo failed because FTD rejected the recreated decoration.");
                 return false;
             }

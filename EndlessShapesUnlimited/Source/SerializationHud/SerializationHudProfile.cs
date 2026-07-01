@@ -11,6 +11,7 @@ namespace DecoLimitLifter.SerializationHud
         public sealed class ProfileData
         {
             public bool Enabled { get; set; }
+            public bool EnforceVanillaCompatibility { get; set; } = true;
             public bool EsuEditorAutoScale { get; set; } = true;
             public float EsuEditorScale { get; set; } = 1f;
             public float DecorationMoveSnap { get; set; } = 0.05f;
@@ -20,6 +21,9 @@ namespace DecoLimitLifter.SerializationHud
             public float SmartBuildRotateSnapDegrees { get; set; } = 90f;
             public int SmartBuildScaleStepCells { get; set; } = 1;
             public bool StreamLargeBlueprintJsonSaves { get; set; }
+            public FastBlueprintLoadTier FastBlueprintLoadTier { get; set; }
+            public bool FastBlueprintLoadDiagnostics { get; set; }
+            public bool FastBlueprintLoadSmallBlueprintTesting { get; set; }
         }
 
         internal static ProfileData Data =>
@@ -29,6 +33,14 @@ namespace DecoLimitLifter.SerializationHud
 
         protected override string FilenameAndExtension =>
             "profile.endlessshapesunlimited";
+    }
+
+    public enum FastBlueprintLoadTier
+    {
+        Off,
+        V1,
+        V2,
+        V3
     }
 
     public enum SerializationHudKeyInput

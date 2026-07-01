@@ -128,12 +128,30 @@ namespace DecoLimitLifter.SerializationHud
                     styles.TextWithPadding,
                     R,
                     forecast.Format == SerializationWireFormat.OverLimit ? "risk" : "save",
-                    $"Wire format: {FormatName(forecast.Format)} ({exactLabel})",
+                    $"Wire bytes: {FormatName(forecast.Format)} ({exactLabel})",
                     forecast.Format == SerializationWireFormat.OverLimit
                         ? ErrorColor
                         : forecast.Format == SerializationWireFormat.Sentinel
                             ? WarningColor
                             : Color.white);
+                DrawRow(
+                    styles.TextWithPadding,
+                    R,
+                    "risk",
+                    VanillaCompatibilityGuard.FormatVanillaLoadStatus(forecast),
+                    VanillaCompatibilityGuard.VanillaLoadStatusColor(
+                        forecast,
+                        WarningColor,
+                        ErrorColor));
+                DrawRow(
+                    styles.TextWithPadding,
+                    R,
+                    "count",
+                    VanillaCompatibilityGuard.FormatVanillaEditorStatus(forecast),
+                    VanillaCompatibilityGuard.VanillaEditorStatusColor(
+                        forecast,
+                        WarningColor,
+                        ErrorColor));
                 DrawHeader(styles.InfoHeader, R, "EndlessShapes save");
             }
             catch (Exception exception)

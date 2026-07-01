@@ -15,6 +15,7 @@ Include:
 - Build and verification tooling, including `build.ps1` and
   `tools/EndlessShapesUnlimited.Verification`.
 - Technical root `README.md`.
+- Root `CHANGELOG.md` for version-to-version history.
 - Steam/player package readme at `EndlessShapesUnlimited/README.md`.
 - `RELEASE_CHANNELS.md`.
 - Runtime assets required to build the package, including `header.jpg`.
@@ -24,8 +25,8 @@ Exclude:
 
 - `artifacts/`.
 - `bin/`, `obj/`, `.vs/`, `.user`, `.suo`, `.pdb`.
-- Local-only planning files such as `*.local.md`, `CHANGELOG.md`, and
-  `TECHNICAL_LOG.md` unless intentionally promoted.
+- Local-only planning files such as `*.local.md` and `TECHNICAL_LOG.md` unless
+  intentionally promoted.
 - Local investigation folders or copied game/decompiled assets.
 - Personal paths, tokens, private keys, screenshots, and machine-specific
   configuration.
@@ -83,6 +84,7 @@ the root GitHub `README.md` as the Steam description.
 Exclude:
 
 - Root GitHub documentation.
+- `CHANGELOG.md`.
 - `RELEASE_CHANNELS.md`.
 - Source, tests, tools, and build scripts.
 - Local screenshots or work-in-progress notes.
@@ -101,25 +103,27 @@ Exclude:
 1. Update version metadata in `plugin.json`, `Plugin.cs`, and
    `Properties/AssemblyInfo.cs`.
 2. Update `EndlessShapesUnlimited/releases`.
-3. Update the packaged Steam/player readme in
+3. Update `CHANGELOG.md` with player-visible changes, packaging changes, and
+   compatibility notes for the new version.
+4. Update the packaged Steam/player readme in
    `EndlessShapesUnlimited/README.md`. This is also the source text for the
    Steam Workshop description artifact.
-4. Confirm `EndlessShapesUnlimited/header.jpg` exists and is below 1 MB.
-5. Run:
+5. Confirm `EndlessShapesUnlimited/header.jpg` exists and is below 1 MB.
+6. Run:
 
    ```powershell
    $env:FTD_DIR = '<path-to-From-The-Depths-install>'
    powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
    ```
 
-6. Confirm the verifier passes and record the zip SHA256 printed by
+7. Confirm the verifier passes and record the zip SHA256 printed by
    `build.ps1`.
-7. Copy `artifacts/staging/EndlessShapesUnlimited` to the local FTD Mods folder
+8. Copy `artifacts/staging/EndlessShapesUnlimited` to the local FTD Mods folder
    before Steam Workshop upload.
-8. Copy `EndlessShapesUnlimited/README.md` to
+9. Copy `EndlessShapesUnlimited/README.md` to
    `artifacts/SteamWorkshopDescription-vX.Y.Z.md` so the exact Steam text is
    archived locally.
-9. Scan the repository, generated zip, staged package, installed Workshop
+10. Scan the repository, generated zip, staged package, installed Workshop
    folder, Steam description text, GitHub release body, GitHub release asset,
    and GitHub source archive for:
 
@@ -129,15 +133,15 @@ Exclude:
    - tokens, passwords, private keys, or API keys;
    - copied source/build/debug files in the runtime package.
 
-10. Commit and push the release changes to `main`.
-11. Create or move the `vX.Y.Z` tag to the final release commit and push it.
-12. Create or update the GitHub release:
+11. Commit and push the release changes to `main`.
+12. Create or move the `vX.Y.Z` tag to the final release commit and push it.
+13. Create or update the GitHub release:
 
    - release name: `EndlessShapes Unlimited vX.Y.Z`;
    - attach only `EndlessShapesUnlimited-X.Y.Z.zip`;
    - include the exact SHA256 in the release body;
    - mention Steam Workshop when the release is also a Workshop release.
-13. Download the public GitHub release asset and source archive, then scan them
+14. Download the public GitHub release asset and source archive, then scan them
    again before announcing the release.
 
 Prefer a fresh version/tag for final public releases. Replacing an asset under

@@ -7,6 +7,7 @@ using Assets.Scripts;
 using Assets.Scripts.Persistence;
 using BrilliantSkies.Core.FilesAndFolders;
 using BrilliantSkies.Core.Logger;
+using BrilliantSkies.Core.Types;
 using BrilliantSkies.DataManagement.Saving;
 using BrilliantSkies.DataManagement.Saving.DeferredChanges;
 using BrilliantSkies.DataManagement.Packages;
@@ -141,6 +142,9 @@ namespace DecoLimitLifter
                 ResolveBlueprintLoadTarget(),
                 ResolveBlueprintFileJsonSaveTarget(),
                 ResolveBlueprintFileManagerFactoryTarget(),
+                ResolveFastBlueprintFileModelLoadTarget(),
+                ResolveConstructExtraInfoDataArrayTarget(),
+                ResolveVanillaDecorationCreationTarget(),
                 ResolveDecorationSaveTarget(),
                 ResolveDecorationLoadTarget(),
                 ResolveSerializationHudTarget(),
@@ -259,6 +263,25 @@ namespace DecoLimitLifter
                     typeof(Patches.FileManagerMaker_CreateBlueprintFileModelSaver_BlueprintJsonStreaming_Patch),
                     "Postfix"),
                 prefix: false);
+            VerifyExactPatch(
+                ResolveFastBlueprintFileModelLoadTarget(),
+                AccessTools.Method(
+                    typeof(Patches.BlueprintFile_Load_FastLoad_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveConstructExtraInfoDataArrayTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_DataArray_FastLoad_Patch),
+                    "Prefix"),
+                prefix: true);
+
+            VerifyExactPatch(
+                ResolveVanillaDecorationCreationTarget(),
+                AccessTools.Method(
+                    typeof(AllConstructDecorations_NewDecoration_VanillaCompatibility_Patch),
+                    "Prefix"),
+                prefix: true);
 
             VerifyExactPatch(
                 ResolveDecorationSaveTarget(),
@@ -379,6 +402,18 @@ namespace DecoLimitLifter
                 typeof(FileManagerMaker),
                 nameof(FileManagerMaker.CreateBlueprintFileModelSaver),
                 new[] { typeof(string) });
+
+        internal static MethodBase ResolveFastBlueprintFileModelLoadTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveBlueprintFileModelLoadDataTarget();
+
+        internal static MethodBase ResolveConstructExtraInfoDataArrayTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveConstructExtraInfoDataArrayTarget();
+
+        internal static MethodBase ResolveVanillaDecorationCreationTarget() =>
+            AccessTools.Method(
+                typeof(AllConstructDecorations),
+                nameof(AllConstructDecorations.NewDecoration),
+                new[] { typeof(Vector3i), typeof(bool), typeof(bool), typeof(bool) });
 
         internal static MethodBase ResolveDecorationSaveTarget() =>
             AccessTools.Method(

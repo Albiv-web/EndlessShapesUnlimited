@@ -128,7 +128,9 @@ internal static class Program
             VerifySerializationForecasting();
             VerifySerializationTelemetryScopes();
             VerifySerializationHudProfiles();
+            VerifyVanillaCompatibilityMode();
             VerifyBlueprintJsonStreamingSave();
+            VerifyFastBlueprintLoading();
             VerifyDecorationEditModeMvp();
             VerifyEsuRuntimeConsole();
             VerifyPointerFlushPlacement();
@@ -255,6 +257,14 @@ internal static class Program
                    typeof(FileManagerMaker_CreateBlueprintFileModelSaver_BlueprintJsonStreaming_Patch),
                    "Postfix") != null,
             "Blueprint JSON streaming patch targets and patch methods resolve in the verifier harness.");
+        Assert(Plugin.ResolveFastBlueprintFileModelLoadTarget() != null &&
+               AccessTools.Method(
+                   typeof(BlueprintFile_Load_FastLoad_Patch),
+                   "Prefix") != null &&
+               AccessTools.Method(
+                   typeof(ConstructExtraInfo_DataArray_FastLoad_Patch),
+                   "Prefix") != null,
+            "Fast blueprint load patch methods resolve in the verifier harness.");
         Assert(Plugin.ResolveDecorationEditorHudTarget("DrawRhs") != null &&
                Plugin.ResolveDecorationEditorHudTarget("DrawInteractionIcon") != null &&
                Plugin.ResolveDecorationEditorHudTarget("DrawWeaponInfo") != null &&
@@ -1672,8 +1682,14 @@ f 0 2 3
         var data = new SerializationHudProfile.ProfileData();
         Assert(!data.Enabled,
             "The serialization HUD is disabled by default for a new profile.");
+        Assert(data.EnforceVanillaCompatibility,
+            "Vanilla compatibility mode is enabled by default for a new profile.");
         Assert(!data.StreamLargeBlueprintJsonSaves,
             "Large blueprint JSON streaming saves are disabled by default for a new profile.");
+        Assert(data.FastBlueprintLoadTier == FastBlueprintLoadTier.Off &&
+               !data.FastBlueprintLoadDiagnostics &&
+               !data.FastBlueprintLoadSmallBlueprintTesting,
+            "Experimental fast blueprint loading defaults to vanilla/off for a new profile.");
         Assert(data.EsuEditorAutoScale &&
                Math.Abs(data.EsuEditorScale - 1f) < 0.001f &&
                Math.Abs(data.DecorationMoveSnap - 0.05f) < 0.001f &&
@@ -1713,6 +1729,7 @@ f 0 2 3
         Assert(profileSource.Contains("Q(Key.F8)") &&
                profileSource.Contains("MeasureUsage") &&
                profileSource.Contains("Q(Key.Shift, Key.F8)") &&
+               profileSource.Contains("EnforceVanillaCompatibility") &&
                profileSource.Contains("StreamLargeBlueprintJsonSaves") &&
                profileSource.Contains("EsuEditorAutoScale") &&
                profileSource.Contains("EsuEditorScale") &&
@@ -1721,18 +1738,27 @@ f 0 2 3
                profileSource.Contains("DecorationScaleSnap") &&
                profileSource.Contains("SmartBuildMoveStepCells") &&
                profileSource.Contains("SmartBuildRotateSnapDegrees") &&
-               profileSource.Contains("SmartBuildScaleStepCells"),
-            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/transform snap settings are profiled.");
+               profileSource.Contains("SmartBuildScaleStepCells") &&
+               profileSource.Contains("FastBlueprintLoadTier") &&
+               profileSource.Contains("FastBlueprintLoadDiagnostics") &&
+               profileSource.Contains("FastBlueprintLoadSmallBlueprintTesting"),
+            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/load/transform snap settings are profiled.");
         string optionsSource = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
             "EndlessShapesUnlimited",
             "Source",
             "SerializationHud",
             "SerializationHudOptionsScreen.cs"));
-        Assert(optionsSource.Contains("Blueprint saving") &&
+        Assert(optionsSource.Contains("Vanilla compatibility mode") &&
+               optionsSource.Contains("ESU extended decoration data") &&
+               optionsSource.Contains("Blueprint saving") &&
                optionsSource.Contains("Stream large blueprint JSON saves") &&
-               optionsSource.Contains("64 MiB"),
-            "The ESU options screen exposes the streamed large-blueprint JSON saving toggle.");
+               optionsSource.Contains("64 MiB") &&
+               optionsSource.Contains("Blueprint loading") &&
+               optionsSource.Contains("Fast load tier") &&
+               optionsSource.Contains("Fast load diagnostics") &&
+               optionsSource.Contains("Apply fast load to small blueprints"),
+            "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and experimental loading controls.");
         Assert(SerializationHudRenderer.FormatName(SerializationWireFormat.Legacy) == "LEGACY WIRE" &&
                SerializationHudRenderer.FormatBytes(1024UL) == "1 KiB",
             "Serialization HUD labels use readable invariant wire-format and byte text.");
@@ -1744,6 +1770,9 @@ f 0 2 3
             "SerializationHud",
             "SerializationHudRenderer.cs"));
         Assert(rendererSource.Contains("Payload total:") &&
+               rendererSource.Contains("Wire bytes:") &&
+               rendererSource.Contains("VanillaCompatibilityGuard.FormatVanillaLoadStatus") &&
+               rendererSource.Contains("VanillaCompatibilityGuard.FormatVanillaEditorStatus") &&
                rendererSource.Contains("Largest stream:") &&
                rendererSource.Contains("Save buffer:") &&
                rendererSource.Contains("Vanilla OK") &&
@@ -1761,6 +1790,171 @@ f 0 2 3
                SerializationHudRenderer.FormatDataLimit(540UL * 1024UL) == "6.25 MiB legacy" &&
                SerializationHudRenderer.FormatDataLimit(7_000_000UL) == "64 MiB ESU",
             "Serialization HUD labels vanilla legacy limits and ESU sentinel ceilings explicitly.");
+    }
+
+    private static void VerifyVanillaCompatibilityMode()
+    {
+        var vanillaUsage = new BlueprintSerializationUsage(
+            128UL,
+            256UL,
+            384UL,
+            7UL,
+            4UL,
+            7UL,
+            4UL,
+            1,
+            0,
+            0,
+            384UL,
+            384UL,
+            0UL,
+            0UL,
+            0UL,
+            0UL,
+            0);
+        var sentinelUsage = new BlueprintSerializationUsage(
+            128UL,
+            256UL,
+            384UL,
+            65_541UL,
+            4UL,
+            65_541UL,
+            4UL,
+            1,
+            1,
+            0,
+            384UL,
+            384UL,
+            0UL,
+            0UL,
+            0UL,
+            0UL,
+            0);
+        var modBufferUsage = new BlueprintSerializationUsage(
+            (ulong)DecoLimits.VanillaSaveBufferBytes + 1UL,
+            0UL,
+            (ulong)DecoLimits.VanillaSaveBufferBytes + 1UL,
+            7UL,
+            4UL,
+            7UL,
+            4UL,
+            1,
+            0,
+            0,
+            (ulong)DecoLimits.VanillaSaveBufferBytes + 1UL,
+            (ulong)DecoLimits.VanillaSaveBufferBytes + 1UL,
+            0UL,
+            0UL,
+            0UL,
+            0UL,
+            0);
+        Assert(!VanillaCompatibilityGuard.RequiresExtendedFormat(vanillaUsage) &&
+               VanillaCompatibilityGuard.RequiresExtendedFormat(sentinelUsage) &&
+               VanillaCompatibilityGuard.RequiresExtendedFormat(modBufferUsage),
+            "Vanilla compatibility guard allows legacy/vanilla output and rejects sentinel or ESU-buffer output.");
+
+        var withinLimit = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(null, VanillaCompatibilityGuard.VanillaDecorationLimit) },
+            VanillaCompatibilityGuard.VanillaDecorationLimit,
+            VanillaCompatibilityGuard.VanillaDecorationLimit);
+        var overLimit = new DecorationUsageSnapshot(
+            new[] { new DecorationManagerUsage(null, VanillaCompatibilityGuard.VanillaDecorationLimit + 1) },
+            VanillaCompatibilityGuard.VanillaDecorationLimit + 1L,
+            VanillaCompatibilityGuard.VanillaDecorationLimit + 1);
+        Assert(!VanillaCompatibilityGuard.TryFindOverVanillaDecorationLimit(withinLimit, out _) &&
+               VanillaCompatibilityGuard.TryFindOverVanillaDecorationLimit(overLimit, out DecorationManagerUsage overManager) &&
+               overManager.Count == VanillaCompatibilityGuard.VanillaDecorationLimit + 1,
+            "Vanilla compatibility guard enforces the 5,000 decoration cap per manager.");
+        Assert(VanillaCompatibilityGuard.ClassifyVanillaLoadCompatibility(withinLimit, vanillaUsage) ==
+                   VanillaLoadCompatibilityKind.VanillaCompatible &&
+               VanillaCompatibilityGuard.ClassifyVanillaLoadCompatibility(overLimit, vanillaUsage) ==
+                   VanillaLoadCompatibilityKind.VanillaCompatible &&
+               VanillaCompatibilityGuard.ClassifyVanillaLoadCompatibility(withinLimit, sentinelUsage) ==
+                   VanillaLoadCompatibilityKind.SentinelFormat &&
+               VanillaCompatibilityGuard.ClassifyVanillaLoadCompatibility(withinLimit, modBufferUsage) ==
+                   VanillaLoadCompatibilityKind.ModBuffer,
+            "Vanilla load compatibility is classified from wire/buffer requirements, not the 5,000 decoration editor cap.");
+        Assert(VanillaCompatibilityGuard.ClassifyVanillaEditorCompatibility(withinLimit) ==
+                   VanillaEditorCompatibilityKind.WithinLimit &&
+               VanillaCompatibilityGuard.ClassifyVanillaEditorCompatibility(overLimit) ==
+                   VanillaEditorCompatibilityKind.TooManyDecorations,
+            "The vanilla 5,000 decoration cap is classified as an editor/tool limit separate from load compatibility.");
+
+        string root = FindRepositoryRoot();
+        string guardSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "VanillaCompatibilityGuard.cs"));
+        string telemetrySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationTelemetryPatches.cs"));
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string builderSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EndlessShapes2",
+            "DecorationBuilder.cs"));
+        string pluginSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
+        string layoutSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "ExtendedSerialization",
+            "SuperSerialisationLayout.cs"));
+
+        Assert(guardSource.Contains("VanillaDecorationLimit = 5_000") &&
+               guardSource.Contains("CreationBlockedMessage") &&
+               guardSource.Contains("SaveExtendedFormatBlockedMessage") &&
+               guardSource.Contains("SentinelContainerCount > 0") &&
+               guardSource.Contains("usage.RequiresModBuffer") &&
+               guardSource.Contains("ClassifyVanillaLoadCompatibility") &&
+               guardSource.Contains("ClassifyVanillaEditorCompatibility") &&
+               guardSource.Contains("FormatVanillaLoadStatus") &&
+               guardSource.Contains("FormatVanillaEditorStatus") &&
+               guardSource.Contains("Vanilla edit limit: over 5k") &&
+               guardSource.Contains("Vanilla Compatibility Mode is OFF; save allowed") &&
+               guardSource.Contains("BeginSuppression") &&
+               guardSource.Contains("AllConstructDecorations_NewDecoration_VanillaCompatibility_Patch") &&
+               guardSource.Contains("TryAllowDecorationCreation") &&
+               guardSource.Contains("EnsureBlueprintSaveAllowed"),
+            "Vanilla compatibility guard centralizes the 5,000 editor cap, vanilla-load classification, mode-off warnings, load/cleanup suppression, and vanilla NewDecoration patch.");
+        Assert(telemetrySource.Contains("EnsureBlueprintSaveAllowed(constructable, __result)") &&
+               telemetrySource.Contains("BeginSuppression(\"blueprint load\")") &&
+               telemetrySource.Contains("BlueprintLoadTelemetryState") &&
+               telemetrySource.Contains("WarnLoadedBlueprintIfNeeded"),
+            "Blueprint conversion telemetry blocks incompatible saves but allows and warns on incompatible loads.");
+        Assert(sessionSource.Contains("plans.Count") &&
+               sessionSource.Contains("_surfacePlan.DecorationCount") &&
+               sessionSource.Contains("_generatorPlan.DecorationCount") &&
+               sessionSource.Contains("Redo failed: \" + compatibilityMessage") &&
+               builderSource.Contains("_polygonDataList.Count") &&
+               builderSource.Contains("BeginSuppression(\"decoration builder cleanup\")"),
+            "ESU mesh placement, Surface Builder, Path/Circle generator, redo recreation, OBJ builder, and cleanup scopes use the vanilla compatibility guard.");
+        bool verifiesVanillaPatch =
+            pluginSource.Contains("VerifyExactPatch(\r\n                ResolveVanillaDecorationCreationTarget()") ||
+            pluginSource.Contains("VerifyExactPatch(\n                ResolveVanillaDecorationCreationTarget()");
+        Assert(pluginSource.Contains("ResolveVanillaDecorationCreationTarget") &&
+               pluginSource.Contains("AllConstructDecorations_NewDecoration_VanillaCompatibility_Patch") &&
+               verifiesVanillaPatch,
+            "Plugin startup verifies the vanilla decoration creation guard patch.");
+        Assert(layoutSource.Contains("headerLength <= ushort.MaxValue && dataBytes <= MaximumLegacyDataBytes") &&
+               layoutSource.Contains("legacy ? SuperContainerFormat.Legacy : SuperContainerFormat.Sentinel"),
+            "Serializer legacy/sentinel selection remains the original byte-size calculation.");
     }
 
     private static void VerifyBlueprintJsonStreamingSave()
@@ -1872,6 +2066,101 @@ f 0 2 3
             {
             }
         }
+    }
+
+    private static void VerifyFastBlueprintLoading()
+    {
+        Assert(FastBlueprintLoadRouter.LargeBlueprintLoadThresholdBytes == 64L * 1024L * 1024L &&
+               !FastBlueprintLoadRouter.ShouldRouteForVerification(
+                   FastBlueprintLoadTier.Off,
+                   FastBlueprintLoadTier.V1,
+                   FastBlueprintLoadRouter.LargeBlueprintLoadThresholdBytes,
+                   smallBlueprintTesting: true) &&
+               !FastBlueprintLoadRouter.ShouldRouteForVerification(
+                   FastBlueprintLoadTier.V1,
+                   FastBlueprintLoadTier.V1,
+                   FastBlueprintLoadRouter.LargeBlueprintLoadThresholdBytes - 1,
+                   smallBlueprintTesting: false) &&
+               FastBlueprintLoadRouter.ShouldRouteForVerification(
+                   FastBlueprintLoadTier.V1,
+                   FastBlueprintLoadTier.V1,
+                   FastBlueprintLoadRouter.LargeBlueprintLoadThresholdBytes,
+                   smallBlueprintTesting: false) &&
+               FastBlueprintLoadRouter.ShouldRouteForVerification(
+                   FastBlueprintLoadTier.V3,
+                   FastBlueprintLoadTier.V2,
+                   1,
+                   smallBlueprintTesting: true),
+            "Fast blueprint load routing stays off by default, honors the 64 MiB large-blueprint gate, and treats tiers cumulatively.");
+
+        Assert(SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.Off).Contains("vanilla") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V1).Contains("streamed JSON") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V2).Contains("parallel predecode") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V3).Contains("experimental bulk"),
+            "Fast blueprint load tier labels describe Off, V1, V2, and V3.");
+
+        JsonConverter[] verificationConverters =
+        {
+            new VerificationVector3Converter(),
+            new VerificationVector4Converter(),
+            new VerificationQuaternionConverter(),
+            new VerificationColorConverter()
+        };
+        BlueprintFileModel model = NewBlueprintFileModelForJsonStreamingTest();
+        model.Blueprint = null;
+        string vanilla = JsonConvert.SerializeObject(
+            model,
+            Formatting.None,
+            verificationConverters);
+        BlueprintFileModel streamed =
+            FastBlueprintLoadRouter.LoadBlueprintFileModelFromJsonForVerification(
+                vanilla,
+                PreserveReferencesHandling.None,
+                verificationConverters);
+        Assert(streamed != null &&
+               streamed.Name == model.Name &&
+               streamed.SavedTotalBlockCount == model.SavedTotalBlockCount &&
+               streamed.Blueprint == null &&
+               streamed.ItemDictionary.Count == model.ItemDictionary.Count,
+            "V1 streamed blueprint JSON loading reconstructs representative BlueprintFileModel envelope data.");
+
+        byte[] first = SerialiseFixture(1U, 4U, 7UL, 3);
+        byte[] second = SerialiseFixture(1U, 8U, 2UL, 3);
+        byte[] blockData = first.Concat(second).ToArray();
+        FastBlueprintBlockDataRecord[] records =
+            FastBlueprintLoadRouter.ScanBlockDataForVerification(blockData);
+        int[] decodedIds =
+            FastBlueprintLoadRouter.PredecodeBlockIdsForVerification(blockData);
+        Assert(records.Length == 2 &&
+               records[0].Ordinal == 0 &&
+               records[0].BlockIndex == 7 &&
+               records[0].Start == 0U &&
+               records[0].End == (uint)first.Length &&
+               records[1].Ordinal == 1 &&
+               records[1].BlockIndex == 2 &&
+               records[1].Start == (uint)first.Length &&
+               records[1].End == (uint)blockData.Length &&
+               decodedIds.SequenceEqual(new[] { 7, 2 }),
+            "V2 block-data scanning and parallel predecode preserve block order, block ids, and byte boundaries.");
+
+        string pluginSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
+        string routerSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "Patches",
+            "FastBlueprintLoadRouter.cs"));
+        Assert(pluginSource.Contains("ResolveFastBlueprintFileModelLoadTarget") &&
+               pluginSource.Contains("ResolveConstructExtraInfoDataArrayTarget") &&
+               routerSource.Contains("BlueprintFile_Load_FastLoad_Patch") &&
+               routerSource.Contains("ConstructExtraInfo_DataArray_FastLoad_Patch") &&
+               routerSource.Contains("V3 bulk load preflight") &&
+               routerSource.Contains("falling back to V2"),
+            "Fast blueprint load startup verifies V1/V2 patch targets and V3 safely falls back to V2 when bulk loading is not proven safe.");
     }
 
     private static BlueprintFileModel NewBlueprintFileModelForJsonStreamingTest()
