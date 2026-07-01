@@ -7,7 +7,7 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
-## Unreleased
+## 1.0.4 - 2026-07-01
 
 ### Added
 

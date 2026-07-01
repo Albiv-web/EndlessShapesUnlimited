@@ -5182,7 +5182,7 @@ f 0 2 3
         string package = Path.Combine(root, "EndlessShapesUnlimited");
         string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
-               manifest.Contains("\"version\": \"1.0.3\"") &&
+               manifest.Contains("\"version\": \"1.0.4\"") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&
                manifest.Contains("\"EndlessShapes2\""),
