@@ -56,7 +56,8 @@ The runtime package must contain only:
 
 - `EndlessShapesUnlimited.dll`
 - `0Harmony.dll`
-- `plugin.json`, `header.header`, `releases`, `README.md`, license files
+- `plugin.json`, `header.header`, `header.jpg`, `releases`, `README.md`,
+  license files
 - `Assets`, `Character Items`, `Items`, and `Meshes`
 
 ## Keybinds
@@ -336,6 +337,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 - `tools/EndlessShapesUnlimited.Verification`: non-Unity verifier and regression
   harness.
 - `EndlessShapesUnlimited/README.md`: simplified Steam Workshop/player readme.
+- `RELEASE_CHANNELS.md`: GitHub vs Steam Workshop packaging rules.
 - `LICENSES`: bundled third-party notices for runtime packaging.
 
 ## Credits

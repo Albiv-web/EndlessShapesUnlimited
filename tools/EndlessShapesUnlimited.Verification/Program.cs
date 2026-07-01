@@ -3064,11 +3064,17 @@ f 0 2 3
             "Decoration Edit Mode native UI and FTD icon catalog are documented.");
 
         string[] copiedTextureExtensions = { ".png", ".jpg", ".jpeg", ".texture", ".uielements" };
+        string packageRoot = Path.Combine(root, "EndlessShapesUnlimited");
         bool copiedIconAsset = Directory
-            .EnumerateFiles(Path.Combine(root, "EndlessShapesUnlimited"), "*", SearchOption.AllDirectories)
-            .Any(path => copiedTextureExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase));
+            .EnumerateFiles(packageRoot, "*", SearchOption.AllDirectories)
+            .Any(path =>
+                copiedTextureExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase) &&
+                !string.Equals(
+                    Path.GetFullPath(path),
+                    Path.GetFullPath(Path.Combine(packageRoot, "header.jpg")),
+                    StringComparison.OrdinalIgnoreCase));
         Assert(!copiedIconAsset,
-            "Decoration Edit Mode packages no copied FTD icon texture or UI-element assets.");
+            "Decoration Edit Mode packages no copied FTD icon texture or UI-element assets besides the required Steam Workshop header.jpg.");
     }
 
     private static bool ToolbarBudgetsStayInsideAvailableWidth()
@@ -4892,6 +4898,11 @@ f 0 2 3
                manifest.Contains("\"DecoLimitLifter\"") &&
                manifest.Contains("\"EndlessShapes2\""),
             "Package manifest has the combined identity and standalone-mod conflicts.");
+        var workshopHeader = new FileInfo(Path.Combine(package, "header.jpg"));
+        Assert(workshopHeader.Exists &&
+               workshopHeader.Length > 0 &&
+               workshopHeader.Length < 1_000_000,
+            "Steam Workshop preview header.jpg is packaged and below the 1 MB upload limit.");
 
         string item = File.ReadAllText(Path.Combine(
             package,

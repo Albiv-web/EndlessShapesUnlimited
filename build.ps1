@@ -78,6 +78,7 @@ New-Item -ItemType Directory -Path $stagedPackage -Force | Out-Null
 $runtimeFiles = @(
     '0Harmony.dll',
     'EndlessShapesUnlimited.dll',
+    'header.jpg',
     'header.header',
     'plugin.json',
     'releases',
