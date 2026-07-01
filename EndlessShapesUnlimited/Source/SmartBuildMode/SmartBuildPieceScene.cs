@@ -4,6 +4,7 @@ using System.Linq;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Ftd.Avatar.Build;
 using DecoLimitLifter.DecorationEditMode;
+using UnityEngine;
 
 namespace DecoLimitLifter.SmartBuildMode
 {
@@ -414,6 +415,9 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPlacement placement,
             DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
         {
+            if (variant.Axes.Count == 0)
+                return placement;
+
             int sign = placement.AxisSign;
             if (variant.Axes.Any(axis => ToSmartAxis(axis) == placement.Axis))
                 sign *= -1;
@@ -423,9 +427,124 @@ namespace DecoLimitLifter.SmartBuildMode
                 placement.Candidate,
                 placement.Axis,
                 sign,
-                SmartBuildPlacement.RotationForAxis(placement.Axis, sign),
+                MirrorRotation(placement.Rotation, variant),
                 placement.CoveredCells().Select(variant.Mirror),
                 placement.DisplayName);
+        }
+
+        private static Quaternion MirrorRotation(
+            Quaternion rotation,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
+        {
+            Vector3 forward = MirrorDirection(rotation * Vector3.forward, variant);
+            Vector3 up = MirrorDirection(rotation * Vector3.up, variant);
+            forward = Normalize(forward);
+            up = Normalize(up);
+            Vector3 right = Normalize(Cross(up, forward));
+            if (forward.sqrMagnitude <= 0.0001f ||
+                up.sqrMagnitude <= 0.0001f ||
+                right.sqrMagnitude <= 0.0001f)
+            {
+                return rotation;
+            }
+
+            up = Normalize(Cross(forward, right));
+            return QuaternionFromBasis(right, up, forward);
+        }
+
+        private static Vector3 MirrorDirection(
+            Vector3 direction,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
+        {
+            foreach (DecorationEditAxis axis in variant.Axes)
+            {
+                switch (axis)
+                {
+                    case DecorationEditAxis.X:
+                        direction.x = -direction.x;
+                        break;
+                    case DecorationEditAxis.Y:
+                        direction.y = -direction.y;
+                        break;
+                    case DecorationEditAxis.Z:
+                        direction.z = -direction.z;
+                        break;
+                }
+            }
+
+            return direction;
+        }
+
+        private static Vector3 Normalize(Vector3 value)
+        {
+            float squared = value.x * value.x + value.y * value.y + value.z * value.z;
+            if (squared <= 0.0001f)
+                return Vector3.zero;
+
+            float scale = 1f / (float)Math.Sqrt(squared);
+            return new Vector3(value.x * scale, value.y * scale, value.z * scale);
+        }
+
+        private static Vector3 Cross(Vector3 a, Vector3 b) =>
+            new Vector3(
+                a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x);
+
+        private static Quaternion QuaternionFromBasis(
+            Vector3 right,
+            Vector3 up,
+            Vector3 forward)
+        {
+            float m00 = right.x;
+            float m01 = up.x;
+            float m02 = forward.x;
+            float m10 = right.y;
+            float m11 = up.y;
+            float m12 = forward.y;
+            float m20 = right.z;
+            float m21 = up.z;
+            float m22 = forward.z;
+            float trace = m00 + m11 + m22;
+
+            if (trace > 0f)
+            {
+                float scale = (float)Math.Sqrt(trace + 1f) * 2f;
+                return new Quaternion(
+                    (m21 - m12) / scale,
+                    (m02 - m20) / scale,
+                    (m10 - m01) / scale,
+                    0.25f * scale);
+            }
+
+            if (m00 > m11 && m00 > m22)
+            {
+                float scale = (float)Math.Sqrt(1f + m00 - m11 - m22) * 2f;
+                return new Quaternion(
+                    0.25f * scale,
+                    (m01 + m10) / scale,
+                    (m02 + m20) / scale,
+                    (m21 - m12) / scale);
+            }
+
+            if (m11 > m22)
+            {
+                float scale = (float)Math.Sqrt(1f + m11 - m00 - m22) * 2f;
+                return new Quaternion(
+                    (m01 + m10) / scale,
+                    0.25f * scale,
+                    (m12 + m21) / scale,
+                    (m02 - m20) / scale);
+            }
+
+            {
+                float scale = (float)Math.Sqrt(1f + m22 - m00 - m11) * 2f;
+                return new Quaternion(
+                    (m02 + m20) / scale,
+                    (m12 + m21) / scale,
+                    0.25f * scale,
+                    (m10 - m01) / scale);
+            }
         }
 
         private static SmartBuildAxis ToSmartAxis(DecorationEditAxis axis)

@@ -18,6 +18,12 @@ namespace DecoLimitLifter.SmartBuildMode
         SquareCorner
     }
 
+    internal enum SmartBuildSlopeSupportMode
+    {
+        Full,
+        Step
+    }
+
     internal readonly struct SmartBuildBounds
     {
         internal SmartBuildBounds(Vector3i min, Vector3i max)
@@ -65,6 +71,9 @@ namespace DecoLimitLifter.SmartBuildMode
     {
         private static int s_nextId;
         private Vector3i _cuboidSize;
+        private Vector3i _forwardStep;
+        private Vector3i _rightStep;
+        private Vector3i _dropStep;
 
         private SmartBuildPiece(
             int id,
@@ -78,7 +87,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int slopeWidth,
             SmartBuildAxis forwardAxis,
             int forwardSign,
-            bool includeSupportFill = true)
+            SmartBuildSlopeSupportMode supportMode = SmartBuildSlopeSupportMode.Full)
         {
             Id = id;
             Construct = construct;
@@ -89,7 +98,7 @@ namespace DecoLimitLifter.SmartBuildMode
             SlopeLength = Mathf.Clamp(slopeLength, 1, 4);
             SlopeSteps = Math.Max(1, slopeSteps);
             SlopeWidth = Math.Max(1, slopeWidth);
-            IncludeSupportFill = includeSupportFill;
+            SupportMode = supportMode;
             SetForward(forwardAxis, forwardSign);
         }
 
@@ -109,7 +118,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal int SlopeWidth { get; private set; }
 
-        internal bool IncludeSupportFill { get; private set; }
+        internal SmartBuildSlopeSupportMode SupportMode { get; private set; }
 
         internal SmartBuildAxis ForwardAxis { get; private set; }
 
@@ -118,6 +127,10 @@ namespace DecoLimitLifter.SmartBuildMode
         internal SmartBuildAxis RightAxis { get; private set; }
 
         internal int RightSign { get; private set; }
+
+        internal SmartBuildAxis DropAxis { get; private set; }
+
+        internal int DropSign { get; private set; }
 
         internal Vector3i Size => Bounds.Size;
 
@@ -139,16 +152,29 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal Vector3 CenterLocal => Bounds.Center;
 
+        internal Vector3 RotationPivotLocal => ToVector3(NearestCellToCenter(Bounds.Center));
+
         internal static SmartBuildPiece CreateCuboid(
             AllConstruct construct,
             Vector3i origin,
+            SmartBuildDrawPlane drawPlane) =>
+            CreateCuboid(
+                construct,
+                origin,
+                new Vector3i(1, 1, 1),
+                drawPlane);
+
+        internal static SmartBuildPiece CreateCuboid(
+            AllConstruct construct,
+            Vector3i origin,
+            Vector3i size,
             SmartBuildDrawPlane drawPlane) =>
             new SmartBuildPiece(
                 ++s_nextId,
                 construct,
                 SmartBuildShapeKind.Cuboid,
                 origin,
-                new Vector3i(1, 1, 1),
+                SmartBuildDraft.ClampSize(size),
                 drawPlane,
                 slopeLength: 1,
                 slopeSteps: 1,
@@ -164,7 +190,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int forwardSign,
             int width,
             SmartBuildDrawPlane drawPlane,
-            bool includeSupportFill = true) =>
+            SmartBuildSlopeSupportMode supportMode = SmartBuildSlopeSupportMode.Full) =>
             new SmartBuildPiece(
                 ++s_nextId,
                 construct,
@@ -177,10 +203,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 slopeWidth: Math.Max(1, width),
                 NormalizeForwardAxis(forwardAxis),
                 forwardSign,
-                includeSupportFill);
+                supportMode);
 
-        internal SmartBuildPiece Clone() =>
-            new SmartBuildPiece(
+        internal SmartBuildPiece Clone()
+        {
+            SmartBuildPiece clone = new SmartBuildPiece(
                 Id,
                 Construct,
                 ShapeKind,
@@ -192,10 +219,14 @@ namespace DecoLimitLifter.SmartBuildMode
                 SlopeWidth,
                 ForwardAxis,
                 ForwardSign,
-                IncludeSupportFill);
+                SupportMode);
+            clone.SetBasis(_forwardStep, _dropStep, _rightStep);
+            return clone;
+        }
 
-        internal SmartBuildPiece Duplicate(Vector3i offset) =>
-            new SmartBuildPiece(
+        internal SmartBuildPiece Duplicate(Vector3i offset)
+        {
+            SmartBuildPiece duplicate = new SmartBuildPiece(
                 ++s_nextId,
                 Construct,
                 ShapeKind,
@@ -207,7 +238,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 SlopeWidth,
                 ForwardAxis,
                 ForwardSign,
-                IncludeSupportFill);
+                SupportMode);
+            duplicate.SetBasis(_forwardStep, _dropStep, _rightStep);
+            return duplicate;
+        }
 
         internal void CopyFrom(SmartBuildPiece source)
         {
@@ -221,16 +255,16 @@ namespace DecoLimitLifter.SmartBuildMode
             SlopeLength = source.SlopeLength;
             SlopeSteps = source.SlopeSteps;
             SlopeWidth = source.SlopeWidth;
-            IncludeSupportFill = source.IncludeSupportFill;
-            SetForward(source.ForwardAxis, source.ForwardSign);
+            SupportMode = source.SupportMode;
+            SetBasis(source._forwardStep, source._dropStep, source._rightStep);
         }
 
-        internal void SetSupportFill(bool include)
+        internal void SetSupportMode(SmartBuildSlopeSupportMode mode)
         {
             if (ShapeKind != SmartBuildShapeKind.DownSlope)
                 return;
 
-            IncludeSupportFill = include;
+            SupportMode = mode;
         }
 
         internal string ShapeLabel()
@@ -265,7 +299,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     SlopeLength,
                     SlopeSteps,
                     SlopeWidth,
-                    IncludeSupportFill ? string.Empty : " | flat support");
+                    SupportMode == SmartBuildSlopeSupportMode.Step ? " | step support" : string.Empty);
             }
 
             Vector3i size = Size;
@@ -330,15 +364,33 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal void RotateYaw()
         {
-            if (ShapeKind == SmartBuildShapeKind.Cuboid)
+            RotateAroundAxis(DecorationEditAxis.Y, 1);
+        }
+
+        internal void RotateAroundAxis(
+            DecorationEditAxis axis,
+            int quarterTurns)
+        {
+            int turns = NormalizeQuarterTurns(quarterTurns);
+            if (axis == DecorationEditAxis.None ||
+                axis == DecorationEditAxis.Free ||
+                turns == 0)
             {
-                _cuboidSize = new Vector3i(_cuboidSize.z, _cuboidSize.y, _cuboidSize.x);
                 return;
             }
 
-            SmartBuildBounds bounds = Bounds;
-            SetForward(RightAxis, RightSign);
-            ApplyDownSlopeBounds(bounds, DecorationEditAxis.None, 1);
+            if (ShapeKind == SmartBuildShapeKind.Cuboid)
+            {
+                RotateCuboidAroundPivot(axis, turns, NearestCellToCenter(Bounds.Center));
+                return;
+            }
+
+            Vector3 pivot = RotationPivotLocal;
+            SetBasis(
+                RotateUnit(_forwardStep, axis, turns),
+                RotateUnit(_dropStep, axis, turns),
+                RotateUnit(_rightStep, axis, turns));
+            RecenterDownSlopeAround(pivot);
         }
 
         internal void FlipForward()
@@ -346,9 +398,10 @@ namespace DecoLimitLifter.SmartBuildMode
             if (ShapeKind != SmartBuildShapeKind.DownSlope)
                 return;
 
-            SmartBuildBounds bounds = Bounds;
-            SetForward(ForwardAxis, -ForwardSign);
-            ApplyDownSlopeBounds(bounds, DecorationEditAxis.None, 1);
+            Vector3 pivot = RotationPivotLocal;
+            Vector3i forward = Multiply(_forwardStep, -1);
+            SetBasis(forward, _dropStep, Cross(forward, _dropStep));
+            RecenterDownSlopeAround(pivot);
         }
 
         internal int ExtentAlong(SmartBuildAxis axis) => Bounds.Extent(axis);
@@ -384,9 +437,9 @@ namespace DecoLimitLifter.SmartBuildMode
             if (ShapeKind != SmartBuildShapeKind.DownSlope)
                 return Array.Empty<Vector3i>();
 
-            return IncludeSupportFill
+            return SupportMode == SmartBuildSlopeSupportMode.Full
                 ? EnumerateDownSlopeSupportCells()
-                : EnumerateDownSlopeFlatSupportCells();
+                : EnumerateDownSlopeStepSupportCells();
         }
 
         internal IEnumerable<IReadOnlyList<Vector3i>> EnumerateSlopeLines()
@@ -430,7 +483,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     candidate,
                     ForwardAxis,
                     ForwardSign,
-                    SmartBuildPlacement.RotationForAxis(ForwardAxis, ForwardSign),
+                    DownSlopeRotation(),
                     line,
                     candidate.DisplayName));
             }
@@ -475,22 +528,18 @@ namespace DecoLimitLifter.SmartBuildMode
                                   resizedAxis != DecorationEditAxis.Free;
             SmartBuildAxis changed = SmartBuildDraft.ToSmartAxis(resizedAxis);
             int runExtent = Math.Max(1, bounds.Extent(ForwardAxis));
-            int heightExtent = Math.Max(1, bounds.Extent(SmartBuildAxis.Y));
+            int dropExtent = Math.Max(1, bounds.Extent(DropAxis));
             int nextSteps;
-            if (resizedAxis == DecorationEditAxis.Y)
-                nextSteps = heightExtent;
+            if (hasResizedAxis && changed == DropAxis)
+                nextSteps = dropExtent;
             else if (hasResizedAxis && changed == ForwardAxis)
                 nextSteps = Math.Max(1, (runExtent + SlopeLength - 1) / SlopeLength);
             else
-                nextSteps = Math.Max(heightExtent, Math.Max(1, (runExtent + SlopeLength - 1) / SlopeLength));
+                nextSteps = Math.Max(dropExtent, Math.Max(1, (runExtent + SlopeLength - 1) / SlopeLength));
 
             SlopeSteps = Math.Max(1, nextSteps);
             SlopeWidth = Math.Max(1, bounds.Extent(RightAxis));
             int finalRun = SlopeSteps * SlopeLength;
-
-            int topY = bounds.Max.y;
-            if (resizedAxis == DecorationEditAxis.Y && resizedSign > 0)
-                topY = bounds.Min.y + SlopeSteps - 1;
 
             int startForward = StartComponentFromBounds(
                 bounds,
@@ -504,12 +553,78 @@ namespace DecoLimitLifter.SmartBuildMode
                 RightSign,
                 SlopeWidth,
                 hasResizedAxis && changed == RightAxis ? resizedSign : 0);
+            int startDrop = StartComponentFromBounds(
+                bounds,
+                DropAxis,
+                DropSign,
+                SlopeSteps,
+                hasResizedAxis && changed == DropAxis ? resizedSign : 0);
 
-            Vector3i origin = new Vector3i(0, topY, 0);
+            Vector3i origin = new Vector3i(0, 0, 0);
             origin = SmartBuildAxisHelper.Set(origin, ForwardAxis, startForward);
             origin = SmartBuildAxisHelper.Set(origin, RightAxis, startRight);
+            origin = SmartBuildAxisHelper.Set(origin, DropAxis, startDrop);
             Origin = origin;
         }
+
+        private void RotateCuboidAroundPivot(
+            DecorationEditAxis axis,
+            int turns,
+            Vector3i pivot)
+        {
+            SmartBuildBounds rotated = BoundsFromCells(
+                Bounds
+                    .EnumerateCells()
+                    .Select(cell => RotateCellAroundPivot(cell, pivot, axis, turns)));
+            Origin = rotated.Min;
+            _cuboidSize = rotated.Size;
+        }
+
+        private void RecenterDownSlopeAround(Vector3 targetCenter)
+        {
+            SmartBuildBounds relativeBounds = BoundsFromCells(
+                EnumerateDownSlopeCellsFrom(new Vector3i(0, 0, 0), includeSupport: true));
+            Vector3 origin = targetCenter - relativeBounds.Center;
+            Origin = RoundToCell(origin);
+        }
+
+        private static Vector3i RotateCellAroundPivot(
+            Vector3i cell,
+            Vector3i pivot,
+            DecorationEditAxis axis,
+            int turns)
+        {
+            Vector3 delta = ToVector3(cell - pivot);
+            for (int turn = 0; turn < NormalizeQuarterTurns(turns); turn++)
+            {
+                switch (axis)
+                {
+                    case DecorationEditAxis.X:
+                        delta = new Vector3(delta.x, -delta.z, delta.y);
+                        break;
+                    case DecorationEditAxis.Y:
+                        delta = new Vector3(delta.z, delta.y, -delta.x);
+                        break;
+                    case DecorationEditAxis.Z:
+                        delta = new Vector3(-delta.y, delta.x, delta.z);
+                        break;
+                }
+            }
+
+            return RoundToCell(ToVector3(pivot) + delta);
+        }
+
+        private static Vector3i NearestCellToCenter(Vector3 center) =>
+            new Vector3i(
+                Mathf.FloorToInt(center.x + 0.5f),
+                Mathf.FloorToInt(center.y + 0.5f),
+                Mathf.FloorToInt(center.z + 0.5f));
+
+        private static Vector3i RoundToCell(Vector3 value) =>
+            new Vector3i(
+                Mathf.RoundToInt(value.x),
+                Mathf.RoundToInt(value.y),
+                Mathf.RoundToInt(value.z));
 
         private static int StartComponentFromBounds(
             SmartBuildBounds bounds,
@@ -557,8 +672,13 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private IEnumerable<Vector3i> EnumerateDownSlopeCells(bool includeSupport)
         {
+            return EnumerateDownSlopeCellsFrom(Origin, includeSupport);
+        }
+
+        private IEnumerable<Vector3i> EnumerateDownSlopeCellsFrom(Vector3i origin, bool includeSupport)
+        {
             var cells = new Dictionary<string, Vector3i>();
-            foreach (IReadOnlyList<Vector3i> line in EnumerateDownSlopeLines())
+            foreach (IReadOnlyList<Vector3i> line in EnumerateDownSlopeLines(origin))
             {
                 foreach (Vector3i cell in line)
                     cells[DecoLimitLifter.EsuSymmetry.CellKey(cell)] = cell;
@@ -566,7 +686,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (includeSupport)
             {
-                foreach (Vector3i cell in EnumerateSupportCells())
+                IEnumerable<Vector3i> support = SupportMode == SmartBuildSlopeSupportMode.Full
+                    ? EnumerateDownSlopeSupportCells(origin)
+                    : EnumerateDownSlopeStepSupportCells(origin);
+                foreach (Vector3i cell in support)
                     cells[DecoLimitLifter.EsuSymmetry.CellKey(cell)] = cell;
             }
 
@@ -575,19 +698,22 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private IEnumerable<IReadOnlyList<Vector3i>> EnumerateDownSlopeLines()
         {
-            Vector3i forward = SmartBuildAxisHelper.ToVector3i(ForwardAxis, ForwardSign);
-            Vector3i right = SmartBuildAxisHelper.ToVector3i(RightAxis, RightSign);
+            return EnumerateDownSlopeLines(Origin);
+        }
+
+        private IEnumerable<IReadOnlyList<Vector3i>> EnumerateDownSlopeLines(Vector3i origin)
+        {
             for (int step = 0; step < SlopeSteps; step++)
             {
                 for (int width = 0; width < SlopeWidth; width++)
                 {
-                    Vector3i start = Origin +
-                                     Multiply(forward, step * SlopeLength) +
-                                     new Vector3i(0, -step, 0) +
-                                     Multiply(right, width);
+                    Vector3i start = origin +
+                                     Multiply(_forwardStep, step * SlopeLength) +
+                                     Multiply(_dropStep, step) +
+                                     Multiply(_rightStep, width);
                     var line = new List<Vector3i>(SlopeLength);
                     for (int index = 0; index < SlopeLength; index++)
-                        line.Add(start + Multiply(forward, index));
+                        line.Add(start + Multiply(_forwardStep, index));
                     yield return line;
                 }
             }
@@ -595,38 +721,59 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private IEnumerable<Vector3i> EnumerateDownSlopeSupportCells()
         {
-            int bottomY = Origin.y - SlopeSteps + 1;
-            foreach (IReadOnlyList<Vector3i> line in EnumerateDownSlopeLines())
+            return EnumerateDownSlopeSupportCells(Origin);
+        }
+
+        private IEnumerable<Vector3i> EnumerateDownSlopeSupportCells(Vector3i origin)
+        {
+            int bottomComponent = SmartBuildAxisHelper.Get(
+                origin + Multiply(_dropStep, SlopeSteps - 1),
+                DropAxis);
+            foreach (IReadOnlyList<Vector3i> line in EnumerateDownSlopeLines(origin))
             {
                 foreach (Vector3i slopeCell in line)
                 {
-                    for (int y = bottomY; y < slopeCell.y; y++)
-                        yield return new Vector3i(slopeCell.x, y, slopeCell.z);
+                    int slopeComponent = SmartBuildAxisHelper.Get(slopeCell, DropAxis);
+                    for (int component = bottomComponent;
+                         component != slopeComponent;
+                         component -= DropSign)
+                    {
+                        yield return SmartBuildAxisHelper.Set(slopeCell, DropAxis, component);
+                    }
                 }
             }
         }
 
-        private IEnumerable<Vector3i> EnumerateDownSlopeFlatSupportCells()
+        private IEnumerable<Vector3i> EnumerateDownSlopeStepSupportCells()
         {
-            int bottomY = Origin.y - SlopeSteps + 1;
-            var seen = new HashSet<string>();
-            foreach (Vector3i supportCell in EnumerateDownSlopeSupportCells())
-            {
-                if (supportCell.y != bottomY)
-                    continue;
+            return EnumerateDownSlopeStepSupportCells(Origin);
+        }
 
-                if (seen.Add(DecoLimitLifter.EsuSymmetry.CellKey(supportCell)))
-                    yield return supportCell;
+        private IEnumerable<Vector3i> EnumerateDownSlopeStepSupportCells(Vector3i origin)
+        {
+            var slopeKeys = new HashSet<string>(
+                EnumerateDownSlopeLines(origin)
+                    .SelectMany(line => line)
+                    .Select(DecoLimitLifter.EsuSymmetry.CellKey));
+            var seen = new HashSet<string>();
+            foreach (IReadOnlyList<Vector3i> line in EnumerateDownSlopeLines(origin))
+            {
+                foreach (Vector3i slopeCell in line)
+                {
+                    Vector3i supportCell = slopeCell + _dropStep;
+                    string key = DecoLimitLifter.EsuSymmetry.CellKey(supportCell);
+                    if (!slopeKeys.Contains(key) && seen.Add(key))
+                        yield return supportCell;
+                }
             }
         }
 
         private void SetForward(SmartBuildAxis axis, int sign)
         {
-            ForwardAxis = NormalizeForwardAxis(axis);
-            ForwardSign = sign >= 0 ? 1 : -1;
-            DeriveRight(ForwardAxis, ForwardSign, out SmartBuildAxis rightAxis, out int rightSign);
-            RightAxis = rightAxis;
-            RightSign = rightSign;
+            SmartBuildAxis forwardAxis = NormalizeForwardAxis(axis);
+            Vector3i forward = SmartBuildAxisHelper.ToVector3i(forwardAxis, sign >= 0 ? 1 : -1);
+            Vector3i drop = new Vector3i(0, -1, 0);
+            SetBasis(forward, drop, Cross(forward, drop));
         }
 
         private static SmartBuildAxis NormalizeForwardAxis(SmartBuildAxis axis) =>
@@ -648,6 +795,184 @@ namespace DecoLimitLifter.SmartBuildMode
             rightAxis = SmartBuildAxis.X;
             rightSign = forwardSign >= 0 ? 1 : -1;
         }
+
+        private void SetBasis(
+            Vector3i forward,
+            Vector3i drop,
+            Vector3i right)
+        {
+            _forwardStep = NormalizeUnit(forward, new Vector3i(0, 0, 1));
+            _dropStep = NormalizeUnit(drop, new Vector3i(0, -1, 0));
+            _rightStep = NormalizeUnit(right, Cross(_forwardStep, _dropStep));
+            if (IsZero(_rightStep) || Dot(_rightStep, _forwardStep) != 0 || Dot(_rightStep, _dropStep) != 0)
+                _rightStep = NormalizeUnit(Cross(_forwardStep, _dropStep), new Vector3i(1, 0, 0));
+
+            VectorToAxis(_forwardStep, out SmartBuildAxis forwardAxis, out int forwardSign);
+            VectorToAxis(_rightStep, out SmartBuildAxis rightAxis, out int rightSign);
+            VectorToAxis(_dropStep, out SmartBuildAxis dropAxis, out int dropSign);
+            ForwardAxis = forwardAxis;
+            ForwardSign = forwardSign;
+            RightAxis = rightAxis;
+            RightSign = rightSign;
+            DropAxis = dropAxis;
+            DropSign = dropSign;
+        }
+
+        private Quaternion DownSlopeRotation()
+        {
+            if (IsZero(_forwardStep) || IsZero(_dropStep) || IsZero(_rightStep))
+                return SmartBuildPlacement.RotationForAxis(ForwardAxis, ForwardSign);
+
+            return QuaternionFromBasis(
+                _rightStep,
+                Multiply(_dropStep, -1),
+                _forwardStep);
+        }
+
+        private static Quaternion QuaternionFromBasis(
+            Vector3i right,
+            Vector3i up,
+            Vector3i forward)
+        {
+            float m00 = right.x;
+            float m01 = up.x;
+            float m02 = forward.x;
+            float m10 = right.y;
+            float m11 = up.y;
+            float m12 = forward.y;
+            float m20 = right.z;
+            float m21 = up.z;
+            float m22 = forward.z;
+            float trace = m00 + m11 + m22;
+
+            if (trace > 0f)
+            {
+                float scale = (float)Math.Sqrt(trace + 1f) * 2f;
+                return new Quaternion(
+                    (m21 - m12) / scale,
+                    (m02 - m20) / scale,
+                    (m10 - m01) / scale,
+                    0.25f * scale);
+            }
+
+            if (m00 > m11 && m00 > m22)
+            {
+                float scale = (float)Math.Sqrt(1f + m00 - m11 - m22) * 2f;
+                return new Quaternion(
+                    0.25f * scale,
+                    (m01 + m10) / scale,
+                    (m02 + m20) / scale,
+                    (m21 - m12) / scale);
+            }
+
+            if (m11 > m22)
+            {
+                float scale = (float)Math.Sqrt(1f + m11 - m00 - m22) * 2f;
+                return new Quaternion(
+                    (m01 + m10) / scale,
+                    0.25f * scale,
+                    (m12 + m21) / scale,
+                    (m02 - m20) / scale);
+            }
+
+            {
+                float scale = (float)Math.Sqrt(1f + m22 - m00 - m11) * 2f;
+                return new Quaternion(
+                    (m02 + m20) / scale,
+                    (m12 + m21) / scale,
+                    0.25f * scale,
+                    (m10 - m01) / scale);
+            }
+        }
+
+        private static int NormalizeQuarterTurns(int turns) =>
+            ((turns % 4) + 4) % 4;
+
+        private static Vector3i RotateUnit(
+            Vector3i value,
+            DecorationEditAxis axis,
+            int quarterTurns)
+        {
+            Vector3i result = value;
+            for (int turn = 0; turn < NormalizeQuarterTurns(quarterTurns); turn++)
+            {
+                switch (axis)
+                {
+                    case DecorationEditAxis.X:
+                        result = new Vector3i(result.x, -result.z, result.y);
+                        break;
+                    case DecorationEditAxis.Y:
+                        result = new Vector3i(result.z, result.y, -result.x);
+                        break;
+                    case DecorationEditAxis.Z:
+                        result = new Vector3i(-result.y, result.x, result.z);
+                        break;
+                }
+            }
+
+            return result;
+        }
+
+        private static Vector3i NormalizeUnit(
+            Vector3i value,
+            Vector3i fallback)
+        {
+            if (Math.Abs(value.x) >= Math.Abs(value.y) &&
+                Math.Abs(value.x) >= Math.Abs(value.z) &&
+                value.x != 0)
+            {
+                return new Vector3i(value.x >= 0 ? 1 : -1, 0, 0);
+            }
+
+            if (Math.Abs(value.y) >= Math.Abs(value.z) &&
+                value.y != 0)
+            {
+                return new Vector3i(0, value.y >= 0 ? 1 : -1, 0);
+            }
+
+            if (value.z != 0)
+                return new Vector3i(0, 0, value.z >= 0 ? 1 : -1);
+
+            return fallback;
+        }
+
+        private static void VectorToAxis(
+            Vector3i value,
+            out SmartBuildAxis axis,
+            out int sign)
+        {
+            if (value.x != 0)
+            {
+                axis = SmartBuildAxis.X;
+                sign = value.x >= 0 ? 1 : -1;
+                return;
+            }
+
+            if (value.y != 0)
+            {
+                axis = SmartBuildAxis.Y;
+                sign = value.y >= 0 ? 1 : -1;
+                return;
+            }
+
+            axis = SmartBuildAxis.Z;
+            sign = value.z >= 0 ? 1 : -1;
+        }
+
+        private static Vector3i Cross(Vector3i a, Vector3i b) =>
+            new Vector3i(
+                a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x);
+
+        private static int Dot(Vector3i a, Vector3i b) =>
+            a.x * b.x + a.y * b.y + a.z * b.z;
+
+        private static bool IsZero(Vector3i value) =>
+            value.x == 0 && value.y == 0 && value.z == 0;
+
+        private static Vector3 ToVector3(Vector3i value) =>
+            new Vector3(value.x, value.y, value.z);
 
         private static Vector3i Multiply(Vector3i value, int amount) =>
             new Vector3i(value.x * amount, value.y * amount, value.z * amount);

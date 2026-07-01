@@ -47,6 +47,19 @@ namespace DecoLimitLifter.DecorationEditMode
                 LeftRailWidth + NotificationWidth + RightControlsWidth + Gap * 2f;
         }
 
+        internal struct CenteredToolbarFrame
+        {
+            internal CenteredToolbarFrame(Rect rect, ToolbarBudget budget)
+            {
+                Rect = rect;
+                Budget = budget;
+            }
+
+            internal Rect Rect { get; }
+
+            internal ToolbarBudget Budget { get; }
+        }
+
         internal static int ResetGeneration => _resetGeneration;
 
         internal static float CurrentScale => ScaleForScreen(Screen.width, Screen.height);
@@ -144,6 +157,20 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static ToolbarBudget CalculateToolbarBudget(float toolbarWidth) =>
             CalculateToolbarBudget(toolbarWidth, CurrentScale);
+
+        internal static CenteredToolbarFrame CalculateCenteredToolbarFrame(Rect innerRect) =>
+            CalculateCenteredToolbarFrame(innerRect, CurrentScale);
+
+        internal static CenteredToolbarFrame CalculateCenteredToolbarFrame(Rect innerRect, float scale)
+        {
+            float width = Mathf.Max(1f, innerRect.width);
+            ToolbarBudget budget = CalculateToolbarBudget(width, scale);
+            float contentWidth = Mathf.Min(width, Mathf.Max(1f, budget.TotalWidth));
+            float x = innerRect.x + Mathf.Max(0f, (width - contentWidth) * 0.5f);
+            return new CenteredToolbarFrame(
+                new Rect(x, innerRect.y, contentWidth, innerRect.height),
+                budget);
+        }
 
         internal static ToolbarBudget CalculateToolbarBudget(float toolbarWidth, float scale)
         {

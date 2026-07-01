@@ -282,23 +282,29 @@ Draft geometry that lies on a symmetry plane is deduped instead of double-placed
 Press `Ctrl+Shift+B` in build mode, or press `Tab` from a clean Surface Builder
 session, to open Smart Block Builder. The builder uses the same native ESU
 toolbar/panel/status styling as Decoration Edit Mode and creates a runtime-only
-wireframe preview on the focused construct grid. A click on an existing block
+multi-piece scene on the focused construct grid. A click on an existing block
 seeds the preview beside that face; a click in empty space seeds a snapped
 preview on the selected draw plane. Its left panel shares the ESU auto-scale
 settings, can be resized independently from Decoration Edit Mode panels, and has
 an internal material picker for Wood, Stone, Metal, Alloy, Glass, Lead, Heavy
-armour, and Rubber.
+  armour, and Rubber. The right-side shape panel owns shape selection and scene
+  controls, while the top toolbar stays focused on tools, material, symmetry,
+  Rotate, Undo/Redo, Yaw/Flip, Apply/Cancel, and Close.
 
 Smart Block Builder HUD reference:
 
 - **Build** is the first toolbar slot and indicates Smart Builder. Press it or
   `Tab` when clean to return to Decoration Edit Mode.
-- **Draw** seeds a new runtime-only 1x1x1 draft from a pointed block face or the
-  active free-space draw plane.
-- **Move** moves the draft by whole focused-grid cells.
-- **Scale** resizes the draft. Drag X/Y/Z handles or any of the six highlighted
-  preview faces; the opposite face stays anchored and the size never drops below
-  one cell.
+- **Add** seeds a new runtime-only piece from the selected shape-panel shape.
+  Choosing **Block** or **Down slope** arms Add mode and shows a snapped placement
+  ghost. After placement, the new piece is selected and **Scale** becomes active.
+- **Move** moves the selected piece by whole focused-grid cells.
+- **Scale** resizes the selected piece. The bottom strip exposes readable
+  **Gizmo**, **Face**, **Edge**, and **Corner** handle modes; all drag modes snap
+  to whole cells and the size never drops below one cell.
+- **Rotate** shows RGB rotation rings for the selected preview piece. Dragging a
+  ring rotates around that construct axis in snap steps and can be undone before
+  Apply.
 - **Plane Cam/X/Y/Z** selects the draw plane for free-space seeding.
 - **Skip/Block** chooses occupancy behavior. **Skip** omits occupied cells from
   the placement plan; **Block** makes any occupied cell invalidate Apply.
@@ -306,36 +312,69 @@ Smart Block Builder HUD reference:
   Rubber. The left panel arrows expose the same picker.
 - **X**, **Y**, and **Z** mirror the preview and final placement plan across
   construct-local symmetry planes.
-- **Apply** places the planned blocks atomically, **Cancel** removes the runtime
-  preview, and **Close** exits Smart Builder.
+- **Block** and **Down slope** are selected in the right shape palette. Down
+  slope **Slope length** buttons **1m**, **2m**, **3m**, and **4m** choose the
+  ramp piece length.
+- **Yaw** rotates the selected piece around vertical. **Flip** reverses the
+  forward direction for selected down-slope pieces. These collapse first on
+  narrow toolbars and remain available in the right-side shape panel.
+- **Undo** and **Redo** restore runtime preview-scene edits before Apply.
+- **Apply** places the planned blocks atomically, **Cancel** removes the full
+  runtime preview scene, and **Close** exits Smart Builder. Right click a preview
+  piece to open a small context menu; right click empty space cancels Add mode or
+  the active drag without clearing existing preview pieces.
+  Right click cancels only lightweight add/drag state unless a preview-piece
+  context menu action is chosen.
 
 Smart Builder panel and preview behavior:
 
 - The left panel shows material, active tool, draw plane, occupancy mode,
-  symmetry state, preview origin, size, cell count, and planned placements.
-- Large previews render as one lightweight outer corner/edge wireframe, not as a
-  translucent cube for every cell. Hovered or dragged faces get a temporary
-  highlight.
+  handle mode, symmetry state, selected-piece origin, size, cell count, and planned
+  placements.
+- The right shape panel selects Block or Down slope, edits the slope length,
+  lists compact scene rows, and exposes selected-piece Select, Duplicate,
+  Delete, Yaw, and Flip controls.
+- The bottom strip reports the current state, exposes handle modes with full
+  names, exposes **Wireframe/Material** preview modes, and shows
+  **Support: Full/Step** for down-slope support.
+- Down slopes use FtD 1m/2m/3m/4m down-slope geometry where available, snap
+  forward/down scaling to whole ramp steps, draw outer sloped hulls instead of
+  rectangular slope boxes, and show optional normal support fill separately below
+  raised slope segments.
+- Cuboid previews render as lightweight outer wireframes or translucent
+  material-tinted ghosts. Down-slope previews render complete sloped prism hulls
+  with support cells dimmed underneath; hovered or dragged faces/edges/corners
+  get bright green handle visuals.
 - The bottom status strip reports draft size, placement count, invalid material
   or occupancy reasons, and whether the builder is ready to apply.
 
-The preview is not saved and does not place blocks until **Apply**. Use **Move**
-and **Scale** handles, or drag any preview face in **Scale**, to adjust the
-rectangular volume. Cycle **Plane** for free-space drawing, cycle **Material** to
-choose the placed block type, and use **Skip** or **Block** occupancy mode to
-decide whether existing cells are skipped or make the plan invalid. By default,
-occupied cells are skipped and reported in the status strip. Active X/Y/Z
-symmetry planes mirror the draft preview and Apply commit as one atomic plan.
-Middle mouse can be used to show the FTD cursor without closing Smart Builder,
-and camera/WASD input remains live unless an ESU handle drag or ESU panel scroll
-owns that frame.
+The preview scene is not saved and does not place blocks until **Apply**. Use
+**Add** to place multiple pieces, click scene rows or preview pieces to select
+between them, then use **Move** and **Scale** with Gizmo/Face/Edge/Corner handles
+to adjust the selected piece. Cycle **Plane** for free-space drawing, cycle
+**Material** to choose the placed block type, and use **Skip** or **Block**
+occupancy mode to decide whether existing cells are skipped or make the plan
+invalid. By default, occupied cells are skipped and reported in the status strip.
+Support defaults to **Full** for new down slopes and can be changed to **Step**
+from the bottom strip. Step support places one support block under each
+down-slope cell instead of filling full vertical columns. Active X/Y/Z symmetry planes mirror the complete scene preview and
+Apply commit as one atomic plan. Middle mouse can be used to show the FTD cursor
+without closing Smart Builder, and camera/WASD input remains live unless an ESU
+handle drag or ESU panel scroll owns that frame.
 Implementation notes: `EsuBuildModeInputGate` owns the one-press mode-switch
 guard, `SmartBuildDraft` stays runtime-only until Apply, and Middle mouse may
 show the FTD cursor without closing Smart Builder; click empty space to seed on
 the selected draw plane and confirm middle mouse shows the FTD cursor without
-closing. Large-preview smoke checks should confirm the preview stays to a single
-outer wireframe, all six faces resize by whole cells, and each material preset
-places the expected basic block.
+closing. Smart Builder smoke checks should add a block, select down-slope sizes
+from the right palette, add separate slope pieces without applying, right click
+to cancel Add without clearing the scene, select between pieces from the scene
+list and world preview, scale forward/down/sideways, test Gizmo/Face/Edge/Corner
+handles, toggle Support Full/Step, Yaw, Flip, Rotate, Apply, undo/redo, and compare the committed
+FtD blocks to the preview. Confirm down-slope previews visibly slope, wide slope
+lanes line up with source faces, Step support follows each slope cell, and
+each material preset places the expected basic block. See
+`EndlessShapesUnlimited/SMART_BUILDER_HUD.md` for the compact HUD reference and
+current improvement backlog.
 
 ## Building and verification
 
