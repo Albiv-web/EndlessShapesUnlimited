@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using Assets.Scripts;
+using Assets.Scripts.Persistence;
+using BrilliantSkies.Core.FilesAndFolders;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.DataManagement.Saving;
 using BrilliantSkies.DataManagement.Saving.DeferredChanges;
@@ -137,6 +139,8 @@ namespace DecoLimitLifter
                 EndlessShapes2Patch.ResolveTarget(),
                 ResolveBlueprintSaveTarget(),
                 ResolveBlueprintLoadTarget(),
+                ResolveBlueprintFileJsonSaveTarget(),
+                ResolveBlueprintFileManagerFactoryTarget(),
                 ResolveDecorationSaveTarget(),
                 ResolveDecorationLoadTarget(),
                 ResolveSerializationHudTarget(),
@@ -242,6 +246,19 @@ namespace DecoLimitLifter
                 AccessTools.Method(
                     typeof(BlueprintConverter_LoadTelemetry_Patch),
                     nameof(BlueprintConverter_LoadTelemetry_Patch.Finalizer)));
+
+            VerifyExactPatch(
+                ResolveBlueprintFileJsonSaveTarget(),
+                AccessTools.Method(
+                    typeof(Patches.BlueprintFile_Save_BlueprintJsonStreaming_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveBlueprintFileManagerFactoryTarget(),
+                AccessTools.Method(
+                    typeof(Patches.FileManagerMaker_CreateBlueprintFileModelSaver_BlueprintJsonStreaming_Patch),
+                    "Postfix"),
+                prefix: false);
 
             VerifyExactPatch(
                 ResolveDecorationSaveTarget(),
@@ -350,6 +367,18 @@ namespace DecoLimitLifter
                 typeof(BlueprintConverter),
                 nameof(BlueprintConverter.Convert),
                 new[] { typeof(Force), typeof(Blueprint), typeof(SpawnInstructions) });
+
+        internal static MethodBase ResolveBlueprintFileJsonSaveTarget() =>
+            AccessTools.Method(
+                typeof(BlueprintFile),
+                nameof(BlueprintFile.Save),
+                new[] { typeof(Blueprint) });
+
+        internal static MethodBase ResolveBlueprintFileManagerFactoryTarget() =>
+            AccessTools.Method(
+                typeof(FileManagerMaker),
+                nameof(FileManagerMaker.CreateBlueprintFileModelSaver),
+                new[] { typeof(string) });
 
         internal static MethodBase ResolveDecorationSaveTarget() =>
             AccessTools.Method(

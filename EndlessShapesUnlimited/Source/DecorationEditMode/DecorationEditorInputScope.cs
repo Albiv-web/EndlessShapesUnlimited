@@ -137,6 +137,7 @@ namespace DecoLimitLifter.DecorationEditMode
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             ControlHeldWhileActive ||
             OwnsBuildInputThisFrame ||
+            (_active && DecoLimitLifter.EsuInputState.AnyEsuNumberShortcutDown()) ||
             ScrollWheelOverEditorUi ||
             SmartBuildInputScope.SuppressBuildInput();
 

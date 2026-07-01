@@ -15,30 +15,22 @@ namespace DecoLimitLifter.DecorationEditMode
         Circle
     }
 
-    internal enum DecorationGeneratorStyle
-    {
-        Pipe,
-        Cable,
-        Rail
-    }
-
     internal sealed class DecorationGeneratorSettings
     {
+        internal static readonly Guid MetalPole1mGuid = new Guid("ad00935b-e95c-4345-8ea7-646846bc16db");
+
         internal DecorationGeneratorSettings()
         {
-            Style = DecorationGeneratorStyle.Pipe;
-            LengthAxis = DecorationEditAxis.X;
-            Diameter = 0.1f;
+            MeshGuid = MetalPole1mGuid;
+            LengthAxis = DecorationEditAxis.Z;
+            Diameter = 0.05f;
             CircleRadius = 2f;
             CircleSegments = 24;
             ColorIndex = 0;
+            NearestAnchor = true;
         }
 
-        internal DecorationGeneratorStyle Style { get; set; }
-
         internal Guid MeshGuid { get; set; }
-
-        internal bool UseSelectedMesh { get; set; }
 
         internal DecorationEditAxis LengthAxis { get; set; }
 
@@ -49,6 +41,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal int CircleSegments { get; set; }
 
         internal int ColorIndex { get; set; }
+
+        internal bool NearestAnchor { get; set; }
 
         internal Guid MaterialReplacement { get; set; }
 
@@ -97,6 +91,162 @@ namespace DecoLimitLifter.DecorationEditMode
         }
     }
 
+    internal sealed class DecorationGeneratorSettingsSnapshot
+    {
+        internal DecorationGeneratorSettingsSnapshot(DecorationGeneratorSettings settings)
+        {
+            if (settings == null)
+                return;
+
+            MeshGuid = settings.MeshGuid;
+            LengthAxis = settings.LengthAxis;
+            Diameter = settings.Diameter;
+            CircleRadius = settings.CircleRadius;
+            CircleSegments = settings.CircleSegments;
+            ColorIndex = settings.ColorIndex;
+            NearestAnchor = settings.NearestAnchor;
+            MaterialReplacement = settings.MaterialReplacement;
+        }
+
+        internal Guid MeshGuid { get; }
+
+        internal DecorationEditAxis LengthAxis { get; }
+
+        internal float Diameter { get; }
+
+        internal float CircleRadius { get; }
+
+        internal int CircleSegments { get; }
+
+        internal int ColorIndex { get; }
+
+        internal bool NearestAnchor { get; }
+
+        internal Guid MaterialReplacement { get; }
+
+        internal void Restore(DecorationGeneratorSettings settings)
+        {
+            if (settings == null)
+                return;
+
+            settings.MeshGuid = MeshGuid;
+            settings.LengthAxis = LengthAxis;
+            settings.Diameter = Diameter;
+            settings.CircleRadius = CircleRadius;
+            settings.CircleSegments = CircleSegments;
+            settings.ColorIndex = ColorIndex;
+            settings.NearestAnchor = NearestAnchor;
+            settings.MaterialReplacement = MaterialReplacement;
+        }
+
+        internal bool SameAs(DecorationGeneratorSettingsSnapshot other) =>
+            other != null &&
+            MeshGuid == other.MeshGuid &&
+            LengthAxis == other.LengthAxis &&
+            SameFloat(Diameter, other.Diameter) &&
+            SameFloat(CircleRadius, other.CircleRadius) &&
+            CircleSegments == other.CircleSegments &&
+            ColorIndex == other.ColorIndex &&
+            NearestAnchor == other.NearestAnchor &&
+            MaterialReplacement == other.MaterialReplacement;
+
+        private static bool SameFloat(float left, float right) =>
+            Math.Abs(left - right) <= 0.0001f;
+    }
+
+    internal sealed class DecorationGeneratorEditSnapshot
+    {
+        internal DecorationGeneratorEditSnapshot(
+            DecorationGeneratorDraftSnapshot draft,
+            DecorationGeneratorSettingsSnapshot settings)
+        {
+            Draft = draft;
+            Settings = settings;
+        }
+
+        internal DecorationGeneratorDraftSnapshot Draft { get; }
+
+        internal DecorationGeneratorSettingsSnapshot Settings { get; }
+
+        internal bool SameAs(DecorationGeneratorEditSnapshot other) =>
+            other != null &&
+            (Draft == null ? other.Draft == null : Draft.SameAs(other.Draft)) &&
+            (Settings == null ? other.Settings == null : Settings.SameAs(other.Settings));
+    }
+
+    internal sealed class DecorationGeneratorDraftSnapshot
+    {
+        internal DecorationGeneratorDraftSnapshot(
+            SurfaceExtraTool tool,
+            AllConstruct construct,
+            IReadOnlyList<Vector3> pathPoints,
+            bool hasCircleCenter,
+            Vector3 circleCenter,
+            Vector3 circleNormal,
+            Vector3 circleTangentA,
+            Vector3 circleTangentB,
+            int selectedPoint)
+        {
+            Tool = tool;
+            Construct = construct;
+            PathPoints = (pathPoints ?? Array.Empty<Vector3>()).ToArray();
+            HasCircleCenter = hasCircleCenter;
+            CircleCenter = circleCenter;
+            CircleNormal = circleNormal;
+            CircleTangentA = circleTangentA;
+            CircleTangentB = circleTangentB;
+            SelectedPoint = selectedPoint;
+        }
+
+        internal SurfaceExtraTool Tool { get; }
+
+        internal AllConstruct Construct { get; }
+
+        internal Vector3[] PathPoints { get; }
+
+        internal bool HasCircleCenter { get; }
+
+        internal Vector3 CircleCenter { get; }
+
+        internal Vector3 CircleNormal { get; }
+
+        internal Vector3 CircleTangentA { get; }
+
+        internal Vector3 CircleTangentB { get; }
+
+        internal int SelectedPoint { get; }
+
+        internal bool SameAs(DecorationGeneratorDraftSnapshot other)
+        {
+            if (other == null ||
+                Tool != other.Tool ||
+                !ReferenceEquals(Construct, other.Construct) ||
+                HasCircleCenter != other.HasCircleCenter ||
+                SelectedPoint != other.SelectedPoint ||
+                !SameVector(CircleCenter, other.CircleCenter) ||
+                !SameVector(CircleNormal, other.CircleNormal) ||
+                !SameVector(CircleTangentA, other.CircleTangentA) ||
+                !SameVector(CircleTangentB, other.CircleTangentB) ||
+                PathPoints.Length != other.PathPoints.Length)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < PathPoints.Length; index++)
+            {
+                if (!SameVector(PathPoints[index], other.PathPoints[index]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool SameVector(Vector3 left, Vector3 right) =>
+            Math.Abs(left.x - right.x) <= 0.0001f &&
+            Math.Abs(left.y - right.y) <= 0.0001f &&
+            Math.Abs(left.z - right.z) <= 0.0001f;
+    }
+
     internal sealed class DecorationGeneratorDraft
     {
         private readonly List<Vector3> _pathPoints = new List<Vector3>();
@@ -112,6 +262,10 @@ namespace DecoLimitLifter.DecorationEditMode
         internal Vector3 CircleCenter { get; private set; }
 
         internal Vector3 CircleNormal { get; private set; } = Vector3.up;
+
+        internal Vector3 CircleTangentA { get; private set; } = Vector3.right;
+
+        internal Vector3 CircleTangentB { get; private set; } = Vector3.forward;
 
         internal int SelectedPoint { get; private set; } = -1;
 
@@ -130,6 +284,8 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (tool == SurfaceExtraTool.None)
                 tool = SurfaceExtraTool.Path;
+            if (Tool == tool)
+                return;
             Tool = tool;
             ClearSelection();
         }
@@ -141,6 +297,8 @@ namespace DecoLimitLifter.DecorationEditMode
             HasCircleCenter = false;
             CircleCenter = Vector3.zero;
             CircleNormal = Vector3.up;
+            CircleTangentA = Vector3.right;
+            CircleTangentB = Vector3.forward;
             ClearSelection();
         }
 
@@ -186,14 +344,43 @@ namespace DecoLimitLifter.DecorationEditMode
 
             Tool = SurfaceExtraTool.Circle;
             CircleCenter = DecorationEditMath.Snap(local);
-            CircleNormal = NormalizeOrDefault(normal, Vector3.up);
+            SetCircleBasisFromNormal(normal);
             HasCircleCenter = true;
             SelectedPoint = 0;
             message = "Circle center placed.";
             return true;
         }
 
-        internal bool TryMoveSelectedPoint(Vector3 local, Vector3 normal, out string message)
+        internal bool TrySetCircleCenterWithBasis(
+            AllConstruct construct,
+            Vector3 local,
+            Vector3 tangentA,
+            Vector3 tangentB,
+            out string message)
+        {
+            message = null;
+            if (!TryAcceptConstruct(construct, out message))
+                return false;
+
+            if (!DecorationEditMath.IsFinite(local))
+            {
+                message = "Circle center must be finite.";
+                return false;
+            }
+
+            Tool = SurfaceExtraTool.Circle;
+            CircleCenter = DecorationEditMath.Snap(local);
+            SetCircleBasis(tangentA, tangentB);
+            HasCircleCenter = true;
+            SelectedPoint = 0;
+            message = "Circle center placed.";
+            return true;
+        }
+
+        internal bool TryMoveSelectedPoint(Vector3 local, Vector3 normal, out string message) =>
+            TryMoveSelectedPoint(local, normal, DecorationEditMath.MoveSnapMetres, out message);
+
+        internal bool TryMoveSelectedPoint(Vector3 local, Vector3 normal, float snap, out string message)
         {
             message = null;
             if (SelectedPoint < 0)
@@ -216,9 +403,9 @@ namespace DecoLimitLifter.DecorationEditMode
                     return false;
                 }
 
-                CircleCenter = DecorationEditMath.Snap(local);
+                CircleCenter = DecorationEditMath.Snap(local, snap);
                 if (DecorationEditMath.IsFinite(normal) && normal.sqrMagnitude > 0.0001f)
-                    CircleNormal = normal.normalized;
+                    SetCircleBasisFromNormal(normal);
                 return true;
             }
 
@@ -228,7 +415,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
-            _pathPoints[SelectedPoint] = DecorationEditMath.Snap(local);
+            _pathPoints[SelectedPoint] = DecorationEditMath.Snap(local, snap);
             return true;
         }
 
@@ -294,12 +481,65 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 Vector3 mirroredCenter = variant.Mirror(CircleCenter);
                 Vector3 mirroredTip = variant.Mirror(CircleCenter + CircleNormal);
+                Vector3 mirroredA = variant.Mirror(CircleCenter + CircleTangentA) - mirroredCenter;
+                Vector3 mirroredB = variant.Mirror(CircleCenter + CircleTangentB) - mirroredCenter;
                 mirrored.CircleCenter = mirroredCenter;
                 mirrored.CircleNormal = NormalizeOrDefault(mirroredTip - mirroredCenter, CircleNormal);
+                mirrored.SetCircleBasis(mirroredA, mirroredB);
                 mirrored.HasCircleCenter = true;
             }
 
             return mirrored;
+        }
+
+        internal DecorationGeneratorDraftSnapshot CreateSnapshot() =>
+            new DecorationGeneratorDraftSnapshot(
+                Tool,
+                Construct,
+                _pathPoints,
+                HasCircleCenter,
+                CircleCenter,
+                CircleNormal,
+                CircleTangentA,
+                CircleTangentB,
+                SelectedPoint);
+
+        internal void Restore(DecorationGeneratorDraftSnapshot snapshot)
+        {
+            Clear();
+            if (snapshot == null)
+                return;
+
+            Tool = snapshot.Tool == SurfaceExtraTool.None ? SurfaceExtraTool.Path : snapshot.Tool;
+            Construct = snapshot.Construct;
+            _pathPoints.AddRange(snapshot.PathPoints ?? Array.Empty<Vector3>());
+            HasCircleCenter = snapshot.HasCircleCenter;
+            CircleCenter = snapshot.CircleCenter;
+            CircleNormal = NormalizeOrDefault(snapshot.CircleNormal, Vector3.up);
+            SetCircleBasis(snapshot.CircleTangentA, snapshot.CircleTangentB);
+            SelectPoint(snapshot.SelectedPoint);
+        }
+
+        internal bool TryRotateCircle(DecorationEditAxis axis, float degrees, out string message)
+        {
+            message = null;
+            if (Tool != SurfaceExtraTool.Circle || !HasCircleCenter)
+            {
+                message = "Place a circle before rotating it.";
+                return false;
+            }
+
+            if (axis != DecorationEditAxis.X &&
+                axis != DecorationEditAxis.Y &&
+                axis != DecorationEditAxis.Z)
+            {
+                message = "Circle rotation needs an X, Y, or Z axis.";
+                return false;
+            }
+
+            Quaternion rotation = Quaternion.AngleAxis(degrees, DecorationEditMath.AxisVector(axis));
+            SetCircleBasis(rotation * CircleTangentA, rotation * CircleTangentB);
+            return true;
         }
 
         private bool TryAcceptConstruct(AllConstruct construct, out string message)
@@ -333,6 +573,36 @@ namespace DecoLimitLifter.DecorationEditMode
             if (DecorationEditMath.IsFinite(fallback) && fallback.sqrMagnitude > 0.0001f)
                 return fallback.normalized;
             return Vector3.up;
+        }
+
+        private void SetCircleBasisFromNormal(Vector3 normal)
+        {
+            DecorationGeneratorPlanner.BuildCircleBasisForDraft(
+                NormalizeOrDefault(normal, Vector3.up),
+                out Vector3 tangentA,
+                out Vector3 tangentB);
+            SetCircleBasis(tangentA, tangentB);
+        }
+
+        private void SetCircleBasis(Vector3 tangentA, Vector3 tangentB)
+        {
+            tangentA = NormalizeOrDefault(tangentA, Vector3.right);
+            Vector3 normal = Vector3.Cross(tangentA, tangentB);
+            if (!DecorationEditMath.IsFinite(normal) || normal.sqrMagnitude <= 0.0001f)
+            {
+                normal = CircleNormal.sqrMagnitude > 0.0001f ? CircleNormal : Vector3.up;
+                DecorationGeneratorPlanner.BuildCircleBasisForDraft(normal, out tangentA, out tangentB);
+            }
+            else
+            {
+                normal.Normalize();
+                tangentB = Vector3.Cross(normal, tangentA);
+                tangentB = NormalizeOrDefault(tangentB, Vector3.forward);
+            }
+
+            CircleTangentA = tangentA;
+            CircleTangentB = tangentB;
+            CircleNormal = NormalizeOrDefault(Vector3.Cross(CircleTangentA, CircleTangentB), normal);
         }
     }
 
@@ -420,13 +690,14 @@ namespace DecoLimitLifter.DecorationEditMode
 
             var placements = new List<DecorationGeneratorPlacement>(segments.Count);
             var warnings = new List<string>();
+            var anchorContext = new GeneratorAnchorContext(settings.NearestAnchor, anchorResolver);
             for (int index = 0; index < segments.Count; index++)
             {
                 if (!TryCreatePlacement(
                         segments[index],
                         index,
                         settings,
-                        anchorResolver,
+                        anchorContext,
                         placements,
                         out message))
                 {
@@ -572,10 +843,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 return null;
             }
 
-            Vector3 normal = draft.CircleNormal.sqrMagnitude > GeometryEpsilon
-                ? draft.CircleNormal.normalized
-                : Vector3.up;
-            BuildCircleBasis(normal, out Vector3 tangentA, out Vector3 tangentB);
+            Vector3 tangentA = draft.CircleTangentA.sqrMagnitude > GeometryEpsilon
+                ? draft.CircleTangentA.normalized
+                : Vector3.right;
+            Vector3 tangentB = draft.CircleTangentB.sqrMagnitude > GeometryEpsilon
+                ? draft.CircleTangentB.normalized
+                : Vector3.forward;
             var points = new Vector3[settings.CircleSegments];
             for (int index = 0; index < points.Length; index++)
             {
@@ -595,7 +868,7 @@ namespace DecoLimitLifter.DecorationEditMode
             GeneratorSegment segment,
             int segmentIndex,
             DecorationGeneratorSettings settings,
-            DecorationAnchorResolver anchorResolver,
+            GeneratorAnchorContext anchorContext,
             List<DecorationGeneratorPlacement> placements,
             out string message)
         {
@@ -616,28 +889,32 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             Vector3 center = (segment.Start + segment.End) * 0.5f;
-            if (anchorResolver == null ||
-                !anchorResolver.TryResolveAnchor(center, out Vector3i anchor))
+            if (anchorContext == null ||
+                !anchorContext.TryResolveAnchor(center, segmentIndex, out Vector3i anchor, out message))
             {
-                message = "Generator segment " +
-                          (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
-                          " has no valid nearest anchor within +/-10m.";
                 return false;
             }
 
             Vector3 positioning = RoundPlacementPosition(center - ToVector3(anchor));
             if (!DecorationEditMath.IsWithinPositionLimit(positioning))
             {
-                message = "Generator segment " +
-                          (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
-                          " would exceed FTD's +/-10 positioning limit.";
+                message = anchorContext.NearestAnchor
+                    ? "Generator segment " +
+                      (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                      " would exceed FTD's +/-10 positioning limit."
+                    : "Generator same-anchor mode would exceed FTD's +/-10 positioning limit on segment " +
+                      (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                      ".";
                 return false;
             }
 
             Vector3 scaling = ScaleForAxis(settings.LengthAxis, length, settings.Diameter);
-            Vector3 orientation = EulerFromTo(
-                DecorationEditMath.AxisVector(settings.LengthAxis),
-                delta / length);
+            Vector3 direction = delta / length;
+            Vector3 orientation = settings.LengthAxis == DecorationEditAxis.Z
+                ? LookRotationEuler(direction, Vector3.up)
+                : EulerFromTo(
+                    DecorationEditMath.AxisVector(settings.LengthAxis),
+                    direction);
 
             placements.Add(new DecorationGeneratorPlacement(
                 anchor,
@@ -663,6 +940,9 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        internal static void BuildCircleBasisForDraft(Vector3 normal, out Vector3 tangentA, out Vector3 tangentB) =>
+            BuildCircleBasis(normal, out tangentA, out tangentB);
+
         private static void BuildCircleBasis(Vector3 normal, out Vector3 tangentA, out Vector3 tangentB)
         {
             normal = normal.sqrMagnitude > GeometryEpsilon ? normal.normalized : Vector3.up;
@@ -675,6 +955,23 @@ namespace DecoLimitLifter.DecorationEditMode
                 tangentA = Vector3.Cross(normal, Vector3.forward);
             tangentA = tangentA.normalized;
             tangentB = Vector3.Cross(normal, tangentA).normalized;
+        }
+
+        private static Vector3 LookRotationEuler(Vector3 forward, Vector3 upwards)
+        {
+            if (!DecorationEditMath.IsFinite(forward) || forward.sqrMagnitude <= GeometryEpsilon)
+                forward = Vector3.forward;
+            if (!DecorationEditMath.IsFinite(upwards) || upwards.sqrMagnitude <= GeometryEpsilon)
+                upwards = Vector3.up;
+
+            try
+            {
+                return Quaternion.LookRotation(forward.normalized, upwards.normalized).eulerAngles;
+            }
+            catch
+            {
+                return EulerFromTo(Vector3.forward, forward.normalized);
+            }
         }
 
         private static Vector3 EulerFromTo(Vector3 from, Vector3 to)
@@ -795,6 +1092,61 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static Vector3 ToVector3(Vector3i value) =>
             new Vector3(value.x, value.y, value.z);
+
+        private sealed class GeneratorAnchorContext
+        {
+            private readonly DecorationAnchorResolver _resolver;
+            private bool _hasSharedAnchor;
+            private Vector3i _sharedAnchor;
+
+            internal GeneratorAnchorContext(bool nearestAnchor, DecorationAnchorResolver resolver)
+            {
+                NearestAnchor = nearestAnchor;
+                _resolver = resolver;
+            }
+
+            internal bool NearestAnchor { get; }
+
+            internal bool TryResolveAnchor(
+                Vector3 center,
+                int segmentIndex,
+                out Vector3i anchor,
+                out string message)
+            {
+                anchor = new Vector3i(0, 0, 0);
+                message = null;
+                if (_resolver == null)
+                {
+                    message = "Generator anchor resolver is unavailable.";
+                    return false;
+                }
+
+                if (NearestAnchor)
+                {
+                    if (_resolver.TryResolveAnchor(center, out anchor))
+                        return true;
+
+                    message = "Generator segment " +
+                              (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                              " has no valid nearest anchor within +/-10m.";
+                    return false;
+                }
+
+                if (!_hasSharedAnchor)
+                {
+                    if (!_resolver.TryResolveAnchor(center, out _sharedAnchor))
+                    {
+                        message = "Generator same-anchor mode found no valid anchor within +/-10m.";
+                        return false;
+                    }
+
+                    _hasSharedAnchor = true;
+                }
+
+                anchor = _sharedAnchor;
+                return true;
+            }
+        }
 
         private readonly struct GeneratorSegment
         {

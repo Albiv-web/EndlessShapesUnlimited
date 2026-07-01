@@ -37,6 +37,29 @@ namespace DecoLimitLifter
             Input.GetKey(KeyCode.LeftControl) ||
             Input.GetKey(KeyCode.RightControl);
 
+        internal static bool IsEsuNumberShortcutDown(int shortcut)
+        {
+            switch (shortcut)
+            {
+                case 1:
+                    return Input.GetKeyDown(KeyCode.Alpha1) ||
+                           Input.GetKeyDown(KeyCode.Keypad1);
+                case 2:
+                    return Input.GetKeyDown(KeyCode.Alpha2) ||
+                           Input.GetKeyDown(KeyCode.Keypad2);
+                case 3:
+                    return Input.GetKeyDown(KeyCode.Alpha3) ||
+                           Input.GetKeyDown(KeyCode.Keypad3);
+                default:
+                    return false;
+            }
+        }
+
+        internal static bool AnyEsuNumberShortcutDown() =>
+            IsEsuNumberShortcutDown(1) ||
+            IsEsuNumberShortcutDown(2) ||
+            IsEsuNumberShortcutDown(3);
+
         internal static bool IsTextInputActive()
         {
             try

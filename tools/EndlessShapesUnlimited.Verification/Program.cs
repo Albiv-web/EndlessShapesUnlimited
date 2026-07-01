@@ -9,8 +9,11 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Threading;
-using BrilliantSkies.Core.Types;
+using Assets.Scripts.Persistence;
+using BrilliantSkies.Core.FilesAndFolders;
+using BrilliantSkies.Core.JsonPlus.Converters;
 using BrilliantSkies.Core.Serialisation.Bytes;
+using BrilliantSkies.Core.Types;
 using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.DataManagement.Serialisation.VariableTypes;
 using BrilliantSkies.Ftd.Avatar.Build;
@@ -26,6 +29,7 @@ using DecoLimitLifter.SmartBuildMode;
 using EndlessShapes2;
 using EndlessShapes2.Polygon;
 using HarmonyLib;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -124,6 +128,7 @@ internal static class Program
             VerifySerializationForecasting();
             VerifySerializationTelemetryScopes();
             VerifySerializationHudProfiles();
+            VerifyBlueprintJsonStreamingSave();
             VerifyDecorationEditModeMvp();
             VerifyEsuRuntimeConsole();
             VerifyPointerFlushPlacement();
@@ -241,6 +246,15 @@ internal static class Program
                 typeof(BlueprintConverter_LoadTelemetry_Patch),
                 nameof(BlueprintConverter_LoadTelemetry_Patch.Finalizer)),
             "Blueprint load telemetry finalizer is the exact required method.");
+        Assert(Plugin.ResolveBlueprintFileJsonSaveTarget() != null &&
+               AccessTools.Method(
+                   typeof(BlueprintFile_Save_BlueprintJsonStreaming_Patch),
+                   "Prefix") != null &&
+               Plugin.ResolveBlueprintFileManagerFactoryTarget() != null &&
+               AccessTools.Method(
+                   typeof(FileManagerMaker_CreateBlueprintFileModelSaver_BlueprintJsonStreaming_Patch),
+                   "Postfix") != null,
+            "Blueprint JSON streaming patch targets and patch methods resolve in the verifier harness.");
         Assert(Plugin.ResolveDecorationEditorHudTarget("DrawRhs") != null &&
                Plugin.ResolveDecorationEditorHudTarget("DrawInteractionIcon") != null &&
                Plugin.ResolveDecorationEditorHudTarget("DrawWeaponInfo") != null &&
@@ -1658,8 +1672,16 @@ f 0 2 3
         var data = new SerializationHudProfile.ProfileData();
         Assert(!data.Enabled,
             "The serialization HUD is disabled by default for a new profile.");
+        Assert(!data.StreamLargeBlueprintJsonSaves,
+            "Large blueprint JSON streaming saves are disabled by default for a new profile.");
         Assert(data.EsuEditorAutoScale &&
                Math.Abs(data.EsuEditorScale - 1f) < 0.001f &&
+               Math.Abs(data.DecorationMoveSnap - 0.05f) < 0.001f &&
+               Math.Abs(data.DecorationRotateSnapDegrees - 5f) < 0.001f &&
+               Math.Abs(data.DecorationScaleSnap - 0.05f) < 0.001f &&
+               data.SmartBuildMoveStepCells == 1 &&
+               Math.Abs(data.SmartBuildRotateSnapDegrees - 90f) < 0.001f &&
+               data.SmartBuildScaleStepCells == 1 &&
                EsuHudLayout.ScaleForScreen(1366, 768, autoScale: true, manualScale: 1f) < 1f &&
                Math.Abs(EsuHudLayout.ScaleForScreen(1920, 1080, autoScale: true, manualScale: 1f) - 1f) < 0.001f &&
                Math.Abs(EsuHudLayout.ScaleForScreen(1366, 768, autoScale: false, manualScale: 1f) - 1f) < 0.001f &&
@@ -1691,9 +1713,26 @@ f 0 2 3
         Assert(profileSource.Contains("Q(Key.F8)") &&
                profileSource.Contains("MeasureUsage") &&
                profileSource.Contains("Q(Key.Shift, Key.F8)") &&
+               profileSource.Contains("StreamLargeBlueprintJsonSaves") &&
                profileSource.Contains("EsuEditorAutoScale") &&
-               profileSource.Contains("EsuEditorScale"),
-            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor HUD scale settings are profiled.");
+               profileSource.Contains("EsuEditorScale") &&
+               profileSource.Contains("DecorationMoveSnap") &&
+               profileSource.Contains("DecorationRotateSnapDegrees") &&
+               profileSource.Contains("DecorationScaleSnap") &&
+               profileSource.Contains("SmartBuildMoveStepCells") &&
+               profileSource.Contains("SmartBuildRotateSnapDegrees") &&
+               profileSource.Contains("SmartBuildScaleStepCells"),
+            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/transform snap settings are profiled.");
+        string optionsSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudOptionsScreen.cs"));
+        Assert(optionsSource.Contains("Blueprint saving") &&
+               optionsSource.Contains("Stream large blueprint JSON saves") &&
+               optionsSource.Contains("64 MiB"),
+            "The ESU options screen exposes the streamed large-blueprint JSON saving toggle.");
         Assert(SerializationHudRenderer.FormatName(SerializationWireFormat.Legacy) == "LEGACY WIRE" &&
                SerializationHudRenderer.FormatBytes(1024UL) == "1 KiB",
             "Serialization HUD labels use readable invariant wire-format and byte text.");
@@ -1722,6 +1761,144 @@ f 0 2 3
                SerializationHudRenderer.FormatDataLimit(540UL * 1024UL) == "6.25 MiB legacy" &&
                SerializationHudRenderer.FormatDataLimit(7_000_000UL) == "64 MiB ESU",
             "Serialization HUD labels vanilla legacy limits and ESU sentinel ceilings explicitly.");
+    }
+
+    private static void VerifyBlueprintJsonStreamingSave()
+    {
+        BlueprintFileModel model = NewBlueprintFileModelForJsonStreamingTest();
+        JsonConverter[] verificationConverters =
+        {
+            new VerificationVector3Converter(),
+            new VerificationVector4Converter(),
+            new VerificationQuaternionConverter(),
+            new VerificationColorConverter()
+        };
+        string vanilla = JsonConvert.SerializeObject(
+            model,
+            Formatting.None,
+            verificationConverters);
+        string streamed = BlueprintJsonStreamingSave.SerializeToStringForVerification(
+            model,
+            Formatting.None,
+            PreserveReferencesHandling.None,
+            verificationConverters);
+        Assert(streamed == vanilla,
+            "Streamed blueprint JSON output is byte-equivalent to vanilla JsonConvert for representative models.");
+
+        long measured = BlueprintJsonStreamingSave.MeasureJsonBytesForVerification(
+            model,
+            Formatting.None,
+            PreserveReferencesHandling.None,
+            verificationConverters);
+        Assert(measured == Encoding.UTF8.GetByteCount(vanilla) &&
+               BlueprintJsonStreamingSave.StreamingThresholdBytes == 64L * 1024L * 1024L,
+            "Blueprint JSON streaming preflight counts UTF-8 bytes and keeps the 64 MiB threshold fixed.");
+
+        Assert(!BlueprintJsonStreamingSave.ShouldStreamForVerification(
+                   model,
+                   Formatting.None,
+                   PreserveReferencesHandling.None,
+                   thresholdBytes: 1L,
+                   enabled: false,
+                   out _,
+                   converters: verificationConverters),
+            "Disabled large-blueprint JSON streaming delegates to the vanilla save path.");
+        Assert(!BlueprintJsonStreamingSave.ShouldStreamForVerification(
+                   model,
+                   Formatting.None,
+                   PreserveReferencesHandling.None,
+                   thresholdBytes: measured + 1L,
+                   enabled: true,
+                   out _,
+                   converters: verificationConverters),
+            "Enabled large-blueprint JSON streaming delegates to vanilla below the threshold.");
+        Assert(BlueprintJsonStreamingSave.ShouldStreamForVerification(
+                   model,
+                   Formatting.None,
+                   PreserveReferencesHandling.None,
+                   thresholdBytes: measured,
+                   enabled: true,
+                   out long estimatedBytes,
+                   converters: verificationConverters) &&
+               estimatedBytes == measured,
+            "Enabled large-blueprint JSON streaming routes to the streamed writer at or above the threshold.");
+
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "esu-blueprint-json-streaming-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string path = Path.Combine(directory, "craft.blueprint");
+            File.WriteAllText(path, "old blueprint", Encoding.UTF8);
+            BlueprintJsonStreamingSave.StreamSaveForVerification(
+                path,
+                model,
+                Formatting.None,
+                PreserveReferencesHandling.None,
+                verificationConverters);
+            Assert(File.ReadAllText(path, Encoding.UTF8) == vanilla &&
+                   File.ReadAllText(path + "_backup", Encoding.UTF8) == "old blueprint",
+                "Streamed blueprint JSON save atomically replaces an existing file and preserves the normal backup.");
+
+            File.WriteAllText(path, "old after failure", Encoding.UTF8);
+            File.Delete(path + "_backup");
+            Directory.CreateDirectory(path + "_backup");
+            bool failed = false;
+            try
+            {
+                BlueprintJsonStreamingSave.StreamSaveForVerification(
+                    path,
+                    model,
+                    Formatting.None,
+                    PreserveReferencesHandling.None,
+                    verificationConverters);
+            }
+            catch
+            {
+                failed = true;
+            }
+
+            Assert(failed && File.ReadAllText(path, Encoding.UTF8) == "old after failure",
+                "Failed streamed blueprint JSON replacement leaves the original blueprint untouched.");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static BlueprintFileModel NewBlueprintFileModelForJsonStreamingTest()
+    {
+        Blueprint blueprint = NewBlueprintForUsageTest();
+        blueprint.BlockIds = new[] { 1, 2, 3 };
+        blueprint.BLP = Array.Empty<Vector3>();
+        blueprint.BLR = new[] { 0, 1, 2 };
+        blueprint.BCI = new[] { 0, 0, 1 };
+        blueprint.BlockData = new byte[] { 1, 2, 3, 4, 5, 6 };
+        blueprint.VehicleData = new byte[] { 7, 8, 9 };
+        blueprint.SCs = new List<Blueprint>();
+
+        return new BlueprintFileModel
+        {
+            Name = "stream-test",
+            Version = 1,
+            SavedTotalBlockCount = 3,
+            SavedMaterialCost = 12.5f,
+            ContainedMaterialCost = 1.5f,
+            ItemDictionary = new Dictionary<int, Guid>
+            {
+                { 1, Guid.Parse("11111111-1111-1111-1111-111111111111") },
+                { 2, Guid.Parse("22222222-2222-2222-2222-222222222222") }
+            },
+            Blueprint = blueprint
+        };
     }
 
     private static void VerifyDecorationEditModeMvp()
@@ -1796,6 +1973,22 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditModeBehaviour.cs"));
+        string smartBuildBehaviourSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildModeBehaviour.cs"));
+        string modeSwitchHandoffSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuModeSwitchHandoff.cs"));
+        string escapeCloseGuardSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuEscapeCloseGuard.cs"));
         string inputScopeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -1858,6 +2051,12 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditorOverlay.cs"));
+        string notificationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotifications.cs"));
         string serializationHudSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -1927,6 +2126,7 @@ f 0 2 3
                inputScopeSource.Contains("ForceResetIfActive") &&
                inputScopeSource.Contains("EsuInputFocusGuard.BeginEditor") &&
                inputScopeSource.Contains("EsuInputFocusGuard.EndEditor") &&
+               inputScopeSource.Contains("EsuEscapeCloseGuard.Active") &&
                sessionSource.Contains("DecorationEditorInputScope.End();") &&
                !inputScopeSource.Contains("SuppressBuildInput() => _active") &&
                inputScopeSource.Contains("ControlHeldWhileActive") &&
@@ -1982,12 +2182,12 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuHudLayout.cs"));
-        string notificationSource = File.ReadAllText(Path.Combine(
+        string transformSnapSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "DecorationEditMode",
-            "EsuHudNotifications.cs"));
+            "EsuTransformSnapSettings.cs"));
         string toolbarAttentionSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -2051,7 +2251,9 @@ f 0 2 3
                layoutSource.Contains("PanelInnerRect") &&
                layoutSource.Contains("ToolbarRect(float baseHeight)") &&
                layoutSource.Contains("internal struct ToolbarBudget") &&
+               layoutSource.Contains("internal struct CenteredToolbarFrame") &&
                layoutSource.Contains("CalculateToolbarBudget(float toolbarWidth, float scale)") &&
+               layoutSource.Contains("CalculateCenteredToolbarFrame(Rect innerRect") &&
                layoutSource.Contains("TotalWidth =>") &&
                layoutSource.Contains("ToolbarLeftRailWidth") &&
                layoutSource.Contains("ToolbarNotificationWidth") &&
@@ -2064,12 +2266,12 @@ f 0 2 3
                optionsSource.Contains("Automatic editor scaling") &&
                optionsSource.Contains("Editor scale {0:0.00}x") &&
                optionsSource.Contains("Reset ESU editor layout"),
-            "ESU editor HUD layout has shared automatic scaling, profile options, reset, panel clamping, and resize grip helpers.");
+            "ESU editor HUD layout has shared automatic scaling, centered toolbar frames, profile options, reset, panel clamping, and resize grip helpers.");
         Assert(ToolbarBudgetsStayInsideAvailableWidth(),
             "ESU toolbar rail budget always fits inside the available toolbar width across laptop, desktop, and 200% scale cases.");
 
         Assert(cursorTooltipSource.Contains("internal static class EsuCursorTooltip") &&
-               cursorTooltipSource.Contains("HoverDelaySeconds = 2f") &&
+               cursorTooltipSource.Contains("HoverDelaySeconds = 1f") &&
                cursorTooltipSource.Contains("GUI.tooltip") &&
                cursorTooltipSource.Contains("RegisterLast") &&
                cursorTooltipSource.Contains("Register(Rect rect") &&
@@ -2095,13 +2297,14 @@ f 0 2 3
                notificationSource.Contains("Open the ESU runtime log.") &&
                notificationSource.Contains("Show the full notification text.") &&
                smartBuildSessionSource.Contains("Drag to resize the Smart Builder panel."),
-            "ESU cursor tooltips use a 2-second ESU-owned delayed overlay, clamp near the cursor, reset on editing input, and are wired through Deco, Surface, Smart Builder, notifications, and common panel controls.");
+            "ESU cursor tooltips use a 1-second ESU-owned delayed overlay, clamp near the cursor, reset on editing input, and are wired through Deco, Surface, Smart Builder, notifications, and common panel controls.");
 
         Assert(sessionSource.Contains("DrawEditorShell") &&
                sessionSource.Contains("DrawTopToolbar") &&
                sessionSource.Contains("EsuHudLayout.PanelInnerRect(toolbarRect)") &&
                sessionSource.Contains("EsuHudLayout.PanelInnerRect(bottomRect)") &&
-               sessionSource.Contains("EsuHudLayout.CalculateToolbarBudget(toolbarRect.width)") &&
+               sessionSource.Contains("EsuHudLayout.CalculateCenteredToolbarFrame(toolbarRect)") &&
+               sessionSource.Contains("EsuHudLayout.ToolbarBudget budget = frame.Budget") &&
                sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth))") &&
                sessionSource.Contains("DrawAnchorMenu") &&
                sessionSource.Contains("AnchorMenuRect") &&
@@ -2174,7 +2377,8 @@ f 0 2 3
                sessionSource.Contains("GUI.BeginGroup(listRect)") &&
                sessionSource.Contains("if (listRect.height > 1f)") &&
                sessionSource.Contains("Mathf.Max(0f, listBottom - countRect.yMax)") &&
-               sessionSource.Contains("Mathf.Max(0f, inner.height - EsuHudLayout.Scale(332f))") &&
+               sessionSource.Contains("GUILayout.Height(SurfaceDraftListHeight(contentRect.height))") &&
+               sessionSource.Contains("SurfaceSettingsShelfHeight(inner.height, actionHeight, gap)") &&
                !sessionSource.Contains("float listHeight = Mathf.Max(EsuHudLayout.Scale(120f)") &&
                !sessionSource.Contains("float listHeight = Mathf.Max(EsuHudLayout.Scale(110f)") &&
                !sessionSource.Contains("float scrollHeight = Mathf.Max(EsuHudLayout.Scale(72f)") &&
@@ -2196,6 +2400,8 @@ f 0 2 3
                sessionSource.Contains("PanelToggle(\"outliner\"") &&
                sessionSource.Contains("PanelToggle(\"settings\"") &&
                sessionSource.Contains("PanelToggle(\"anchor\"") &&
+               sessionSource.Contains("PanelToggle(\"build\", \"Surf\", ref _showSurfacePanel") &&
+               sessionSource.Contains("PanelToggle(\"settings\", \"Tools\", ref _showSurfaceToolsPanel") &&
                  sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
                  sessionSource.Contains("toolbarScreenOrigin") &&
                sessionSource.Contains("CurrentModeToolbarLabel") &&
@@ -2206,18 +2412,34 @@ f 0 2 3
                sessionSource.Contains("private void DrawOutliner(float width, float height)") &&
                sessionSource.Contains("GUILayoutUtility.GetRect(1f, rowHeight") &&
                sessionSource.Contains("GUI.Button(rowRect, GUIContent.none, style)") &&
+               sessionSource.Contains("DrawOutlinerRow(rows, i)") &&
+               sessionSource.Contains("SelectOutlinerDecorationRow") &&
+               sessionSource.Contains("IsShiftHeld()") &&
+               sessionSource.Contains("bool control = IsControlHeld();") &&
+               sessionSource.Contains("SelectOutlinerDecorationRange") &&
+               sessionSource.Contains("ToggleOutlinerDecorationSelection") &&
+               sessionSource.Contains("_outlinerRangeAnchor") &&
+               sessionSource.Contains("ReferenceEquals(rows[anchorIndex].Construct, row.Construct)") &&
+               sessionSource.Contains("!ReferenceEquals(row.Construct, clicked.Construct)") &&
                sessionSource.Contains("OutlinerRowTextStyle") &&
                sessionSource.Contains("CompactHeaderTextStyle") &&
                smartBuildSessionSource.Contains("private const float ToolbarHeight = 54f") &&
                smartBuildSessionSource.Contains("_toolbarRect = EsuHudLayout.ToolbarRect(ToolbarHeight)") &&
-               smartBuildSessionSource.Contains("EsuHudLayout.CalculateToolbarBudget(inner.width)") &&
+               smartBuildSessionSource.Contains("EsuHudLayout.CalculateCenteredToolbarFrame(inner)") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
-                smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + inner.x") &&
-               smartBuildSessionSource.Contains("ESU mode: Smart Builder.") &&
-               smartBuildSessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth))") &&
-               smartBuildSessionSource.Contains("private static void ToolbarReservedSlot(float baseWidth)") &&
-               smartBuildSessionSource.Contains("ToolbarReservedSlot(44f)") &&
-               smartBuildSessionSource.Contains("ToolbarReservedSlot(54f)"),
+                smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
+                smartBuildSessionSource.Contains("ESU mode: Smart Builder.") &&
+                smartBuildSessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth))") &&
+                smartBuildSessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", ref _showLeftPanel") &&
+                smartBuildSessionSource.Contains("ToolbarPanelToggle(\"build\", \"Shapes\", ref _showRightPanel") &&
+                smartBuildSessionSource.Contains("DrawSmartSectionHeader(\"Scene\", ref _showSceneSection") &&
+                !smartBuildSessionSource.Contains("DrawPieceActionToolbar(budget.RightControlsWidth)") &&
+                !smartBuildSessionSource.Contains("private void ShapeQuickButton(") &&
+                !smartBuildSessionSource.Contains("private void SlopeQuickButton(int length)") &&
+                smartBuildSessionSource.Contains("private void YawQuickButton()") &&
+                smartBuildSessionSource.Contains("private void FlipQuickButton()") &&
+                smartBuildSessionSource.Contains("ShouldShowPieceActionButtons(rightControlsWidth)") &&
+               !smartBuildSessionSource.Contains("ToolbarReservedSlot("),
             "Decoration Edit Mode renders the native shell with a first-slot mode switch, compact toolbar, stable shared notification/right-control rail, independent Mesh/Inspector/Outliner/Anchor panels, bottom status strip, and panel toggles.");
 
         Assert(!sessionSource.Contains("Mesh/Add") &&
@@ -2229,7 +2451,7 @@ f 0 2 3
             "Decoration Edit Mode removed the dedicated Mesh/Add toolbar button and Add Here button; mesh placement starts from palette selection.");
 
         Assert(sessionSource.Contains("DrawViewModeMenu") &&
-               sessionSource.Contains("DrawAnchorMenu(toolbarRect)") &&
+               sessionSource.Contains("DrawAnchorMenu()") &&
                sessionSource.Contains("SelectViewMode") &&
                sessionSource.Contains("toolbarRect.xMax - width") &&
                sessionSource.Contains("ViewModeButtonsPerRow") &&
@@ -2243,8 +2465,11 @@ f 0 2 3
                sessionSource.Contains("private bool _anchorMenuOpen = s_anchorMenuOpen") &&
                sessionSource.Contains("s_anchorMenuOpen = _anchorMenuOpen") &&
                sessionSource.Contains("AnchorMenuButton") &&
-               sessionSource.Contains("Anchor follow is also available in the bottom status panel.") &&
-               sessionSourceNormalized.Contains("SetActiveTool(DecorationEditorTool.Anchor);\n                _anchorMenuOpen = !_anchorMenuOpen") &&
+               sessionSource.Contains("Anchor settings are in the bottom status panel.") &&
+               sessionSource.Contains("DrawBottomAnchorSettingsButton") &&
+               sessionSource.Contains("_anchorSettingsButtonScreenRect") &&
+               sessionSourceNormalized.Contains("SetActiveTool(DecorationEditorTool.Anchor);\n                _anchorMenuOpen = false") &&
+               sessionSource.Contains("_anchorMenuOpen = !_anchorMenuOpen") &&
                !toolButtonSource.Contains("DecorationEditorTool.Anchor") &&
                !toolButtonSource.Contains("_anchorMenuOpen = !_anchorMenuOpen") &&
                toolButtonSource.Contains("SetActiveTool(tool);") &&
@@ -2292,6 +2517,9 @@ f 0 2 3
                previewSource.Contains("BuildGeneratedMesh") &&
                previewSource.Contains("SafeMeshBase") &&
                sessionSource.Contains("_hoveredMesh = null") &&
+               sessionSource.Contains("_hoveredMeshHint = null") &&
+               sessionSource.Contains("DrawGeneratorMeshRows") &&
+               sessionSource.Contains("_hoveredMeshHint = \"Click: use for generated Path/Circle decorations.\"") &&
                sessionSource.Contains("bool mouseInListViewport = listRect.Contains(Event.current.mousePosition)") &&
                sessionSource.Contains("mouseInListViewport && row.Contains(Event.current.mousePosition)") &&
                sessionSource.Contains("mouseInListViewport && card.Contains(Event.current.mousePosition)") &&
@@ -2454,7 +2682,10 @@ f 0 2 3
         Assert(themeSource.Contains("DecorationSelectionMode") &&
                themeSource.Contains("Single") &&
                themeSource.Contains("Box") &&
-               sessionSource.Contains("DrawSelectionModeMenu") &&
+               !sessionSource.Contains("DrawSelectionModeMenu") &&
+               sessionSource.Contains("DrawBottomSelectionControls(slots.SelectControls)") &&
+               sessionSource.Contains("private void DrawBottomSelectionControls(Rect rect)") &&
+               sessionSource.Contains("SetActiveTool(DecorationEditorTool.Select);") &&
                sessionSource.Contains("DecorationSelectionMode.Single") &&
                sessionSource.Contains("DecorationSelectionMode.Box") &&
                sessionSource.Contains("_selectionXray") &&
@@ -2488,11 +2719,84 @@ f 0 2 3
                sessionSource.Contains("TryApplyMultiMove") &&
                sessionSource.Contains("TryApplyMultiRotate") &&
                sessionSource.Contains("TryApplyMultiScale") &&
+               sessionSource.Contains("TryResolveMultiTransformPlacement") &&
+               sessionSource.Contains("TryApplyMultiTransformPlacements") &&
+               sessionSource.Contains("RestoreMultiTransformFrame") &&
+               sessionSource.Contains("MultiTransformPlacement") &&
+               sessionSource.Contains("TryFindAnchorFollowTarget(_selectedConstruct, center, snapshot.TetherPoint") &&
+               sessionSource.Contains("decoration.OurManager.ShiftDecoration(decoration, shift)") &&
+               sessionSource.Contains("rollback[index]?.TryRestore(decoration)") &&
                sessionSource.Contains("RecordMultiTransformEdit") &&
                sessionSource.Contains("ScaleVectorAlongAxis") &&
                sessionSource.Contains("TryPositioningFromCenter") &&
                sessionSource.Contains("DecorationSnapshotBatchCommand("),
-            "Decoration Edit Mode exposes fixed-width Select/Box/X-ray controls, primary-construct box occlusion, and averaged multi-selection move/rotate/scale with batch history.");
+            "Decoration Edit Mode exposes fixed-width Select/Box/X-ray controls in the bottom header, primary-construct box occlusion, and averaged multi-selection move/rotate/scale with anchor-follow retether staging and batch history.");
+
+        Assert(modeSwitchHandoffSource.Contains("internal static class EsuModeSwitchHandoff") &&
+               modeSwitchHandoffSource.Contains("ConsumeInactiveCleanupFrame") &&
+               modeSwitchHandoffSource.Contains("HandoffFrames") &&
+               decorationBehaviourSource.Contains("EsuModeSwitchHandoff.Begin()") &&
+               decorationBehaviourSource.Contains("preserveSharedHud: true") &&
+               decorationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
+               smartBuildBehaviourSource.Contains("EsuModeSwitchHandoff.Begin()") &&
+               smartBuildBehaviourSource.Contains("preserveSharedHud: true") &&
+               smartBuildBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
+               smartBuildBehaviourSource.Contains("DrawModeSwitchHandoffGui()") &&
+               smartBuildBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
+               smartBuildBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
+               sessionSource.Contains("End(bool apply, bool notify = true, bool preserveSharedHud = false)") &&
+               sessionSourceNormalized.Contains("if (!preserveSharedHud)\n                    DecorationEditorOverlay.Clear();") &&
+               smartBuildSessionSource.Contains("End(bool preserveSharedHud = false)") &&
+               smartBuildSessionSource.Contains("SuspendForModeSwitchHandoff") &&
+               smartBuildSessionSource.Contains("DrawModeSwitchHandoffGui") &&
+               smartBuildSessionSource.Contains("DrawGui(interactive: false)") &&
+               smartBuildSessionSourceNormalized.Contains("if (!preserveSharedHud)\n                DecorationEditorOverlay.Clear();"),
+            "ESU Tab mode switching uses a short handoff guard, preserves shared HUD/overlay state, and draws a passive Smart Builder bridge frame during Decoration Edit <-> Smart Builder handoffs.");
+
+        Assert(escapeCloseGuardSource.Contains("internal static class EsuEscapeCloseGuard") &&
+               escapeCloseGuardSource.Contains("s_suppressInputUntilFrame >= Time.frameCount") &&
+               escapeCloseGuardSource.Contains("internal static void Arm") &&
+               decorationBehaviourSource.Contains("if (Active && Input.GetKeyDown(KeyCode.Escape))") &&
+               decorationBehaviourSource.Contains("EsuEscapeCloseGuard.Arm();") &&
+               decorationBehaviourSource.Contains("Close(apply: false);") &&
+               !decorationBehaviourSource.Contains("_session.HandleEscape()") &&
+               !sessionSource.Contains("internal bool HandleEscape()") &&
+               smartBuildBehaviourSource.Contains("if (Active && Input.GetKeyDown(KeyCode.Escape))") &&
+               smartBuildBehaviourSource.Contains("EsuEscapeCloseGuard.Arm();") &&
+               smartBuildBehaviourSource.Contains("Close(\"Escape pressed\")") &&
+               !smartBuildSessionSource.Contains("Input.GetKeyDown(KeyCode.Escape)") &&
+               inputScopeSource.Contains("EsuEscapeCloseGuard.Active") &&
+               smartInputScopeSource.Contains("EsuEscapeCloseGuard.Active"),
+            "Escape closes the active ESU editor mode directly and arms a short input guard so vanilla does not open the main menu on the same keypress.");
+
+        Assert(inputScopeSource.Contains("_active && DecoLimitLifter.EsuInputState.AnyEsuNumberShortcutDown()") &&
+               smartInputScopeSource.Contains("_active && DecoLimitLifter.EsuInputState.AnyEsuNumberShortcutDown()"),
+            "ESU input scopes suppress vanilla build input on 1/2/3 shortcut key-downs while an ESU editor is active.");
+
+        Assert(sessionSource.Contains("TryHandleEsuNumberShortcut()") &&
+               sessionSource.Contains("CycleCreateSelectShortcut()") &&
+               sessionSource.Contains("CycleTransformToolShortcut()") &&
+               sessionSource.Contains("CycleCommonViewModeShortcut()") &&
+               sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Draw)") &&
+               sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Path)") &&
+               sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Circle)") &&
+               sessionSource.Contains("SetActiveTool(DecorationEditorTool.Select)") &&
+               sessionSource.Contains("_selectionMode = DecorationSelectionMode.Box") &&
+               sessionSource.Contains("_selectionMode = DecorationSelectionMode.Single") &&
+               sessionSource.Contains("DecorationEditorViewMode.Mixed") &&
+               sessionSource.Contains("DecorationEditorViewMode.Wireframe") &&
+               sessionSource.Contains("DecorationEditorViewMode.DecorationOnly") &&
+               sessionSource.Contains("DecorationEditorViewMode.Normal") &&
+               smartBuildSessionSource.Contains("TryHandleEsuNumberShortcut()") &&
+               smartBuildSessionSource.Contains("CycleShapeShortcut()") &&
+               smartBuildSessionSource.Contains("CycleTransformToolShortcut()") &&
+               smartBuildSessionSource.Contains("CyclePreviewShortcut()") &&
+               smartBuildSessionSource.Contains("_selectedShape = _selectedShape == SmartBuildShapeKind.Cuboid") &&
+               smartBuildSessionSource.Contains("ArmAddMode();") &&
+               smartBuildSessionSource.Contains("SetActiveToolFromShortcut(next)") &&
+               smartBuildSessionSource.Contains("SmartBuildPreviewMode.Wireframe") &&
+               smartBuildSessionSource.Contains("SmartBuildPreviewMode.Material"),
+            "Decoration Edit Mode, Surface Builder, and Smart Builder bind 1/2/3 to create/select, transform, and display/preview cycles.");
 
         Assert(sessionSource.Contains("SerializationForecastCalculator.Calculate") &&
                sessionSource.Contains("FlexibleFloatParser.TryParse") &&
@@ -2508,13 +2812,27 @@ f 0 2 3
                sessionSourceNormalized.Contains("GUILayout.Label(\n                    MaterialOverrideButtonLabel(materialOverride)") &&
                sessionSourceNormalized.Contains("new GUIContent(\"Clear\", \"Remove the material override.\")") &&
                sessionSource.Contains("DrawBottomTransformEditors") &&
+               sessionSource.Contains("DrawBottomSnapControls") &&
+               sessionSource.Contains("ApplyDecorationSnapText") &&
+               sessionSource.Contains("DecorationMoveSnap => EsuTransformSnapSettings.DecorationMoveSnap") &&
+               sessionSource.Contains("DecorationRotateSnapDegrees => EsuTransformSnapSettings.DecorationRotateSnapDegrees") &&
+               sessionSource.Contains("DecorationScaleSnap => EsuTransformSnapSettings.DecorationScaleSnap") &&
+               sessionSource.Contains("DecorationEditMath.Snap(freeDelta, DecorationMoveSnap)") &&
+               sessionSource.Contains("DecorationEditMath.Snap(1f + multiDelta, DecorationScaleSnap)") &&
+               transformSnapSource.Contains("internal static class EsuTransformSnapSettings") &&
+               transformSnapSource.Contains("DefaultDecorationMoveSnap = 0.05f") &&
+               transformSnapSource.Contains("DefaultDecorationRotateSnapDegrees = 5f") &&
+               transformSnapSource.Contains("DefaultDecorationScaleSnap = 0.05f") &&
+               transformSnapSource.Contains("internal static class EsuTransformSnapHud") &&
                sessionSource.Contains("DrawBottomVectorEditor") &&
                sessionSource.Contains("DrawBottomVectorComponent") &&
                sessionSource.Contains("Mode: Deco | Tab to Surface when clean") &&
                sessionSource.Contains("Mode: Surface | Tab to Build when clean") &&
-               sessionSource.Contains("GUI.Label(titleRect, surface ? \"Surface Builder\" : \"Decoration Edit Mode\"") &&
+               sessionSource.Contains("GUI.Label(slots.Title, surface ? \"Surface Builder\" : \"Decoration Edit Mode\"") &&
                sessionSource.Contains("Rect anchorRect") &&
-               sessionSourceNormalized.Contains("if (!surface)\n                DrawBottomAnchorFollowToggle(anchorRect)") &&
+               sessionSource.Contains("DrawBottomSelectionControls(slots.SelectControls)") &&
+               sessionSource.Contains("DrawBottomAnchorFollowToggle(slots.AnchorFollow)") &&
+               sessionSource.Contains("DrawBottomAnchorSettingsButton(slots.AnchorSettings)") &&
                sessionSource.Contains("DrawBottomTransformEditors(new Rect") &&
                sessionSource.Contains("float edgePadding = EsuHudLayout.Scale(4f)") &&
                sessionSource.Contains("row.width - edgePadding * 2f") &&
@@ -2528,11 +2846,14 @@ f 0 2 3
                !sessionSource.Contains("GUI.enabled = previous && hasSelection") &&
                sessionSource.Contains("RefreshLiveTransformFields") &&
                sessionSourceNormalized.Contains("HandleSceneInput();\n            RefreshLiveTransformFields();") &&
-               sessionSource.Contains("Mathf.Clamp(Screen.height * 0.105f, EsuHudLayout.Scale(88f), EsuHudLayout.Scale(112f))") &&
+               sessionSource.Contains("Mathf.Clamp(Screen.height * 0.13f, EsuHudLayout.Scale(118f), EsuHudLayout.Scale(146f))") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Position\"") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Rotation\"") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Scale\"") &&
                sessionSource.Contains("Paint color") &&
+               sessionSource.Contains("_showInspectorColorPicker") &&
+               sessionSource.Contains("new GUIContent(_showInspectorColorPicker ? \"Hide list\" : \"Show list\"") &&
+               sessionSource.Contains("DrawPaintColorButton(") &&
                sessionSource.IndexOf("DrawColorEditor()", StringComparison.Ordinal) <
                sessionSource.IndexOf("LabelRow(\"Owner\"", StringComparison.Ordinal) &&
                sessionSource.IndexOf("DrawMaterialEditor()", StringComparison.Ordinal) <
@@ -2545,9 +2866,15 @@ f 0 2 3
 
         Assert(sessionSource.Contains("DrawPaintPalette") &&
                sessionSource.Contains("DrawPaintColorRow") &&
+               sessionSource.Contains("DrawPaintColorButton") &&
+               sessionSource.Contains("DrawPaintSwatchLayout") &&
                sessionSource.Contains("PaintPreviewColor") &&
                sessionSource.Contains("PaintNearest") &&
                sessionSource.Contains("TryFindNearestDecoration") &&
+               sessionSource.Contains("TryPaintPointedBlock") &&
+               sessionSource.Contains("block.SetColor") &&
+               sessionSource.Contains("ServerOutgoingRpcs.PaintBlock") &&
+               sessionSource.Contains("ClientOutgoingRpcs.PaintBlock") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Paint || _showMeshPalette") &&
                sessionSource.Contains("_toolBeforePaint") &&
                sessionSource.Contains("_showMeshPaletteBeforePaint") &&
@@ -2555,13 +2882,14 @@ f 0 2 3
                sessionSource.Contains("IsPaintRestorableTool") &&
                sessionSource.Contains("SetActiveTool(tool);") &&
                sessionSource.Contains("s_showMeshPalette = _tool == DecorationEditorTool.Paint") &&
-               sessionSource.Contains("Pick a color, then click decoration centers in the viewport to paint them.") &&
+               sessionSource.Contains("Pick a color, then click decoration centers or blocks in the viewport to paint them.") &&
                sessionSource.Contains("Painted decoration color #") &&
+               sessionSource.Contains("Painted block color #") &&
                sessionSource.Contains("_tool != DecorationEditorTool.Paint") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Paint)") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Surface ||") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Paint);"),
-            "Decoration Edit Mode Paint has a dedicated color-number palette and viewport click painting instead of only inspector color fields.");
+            "Decoration Edit Mode Paint has real color swatch palettes and viewport click painting for decorations and pointed blocks.");
 
         Assert(!sessionSource.Contains("color = Color.white;") &&
                !sessionSource.Contains("VectorLines.i.Current") &&
@@ -2625,8 +2953,7 @@ f 0 2 3
                notificationSource.Contains("fallbackMessage") &&
                notificationSource.Contains("hasTransientMessage") &&
                 notificationSource.Contains("Vector2 screenOrigin") &&
-                notificationSource.Contains("screenOrigin.x + rect.x") &&
-                !notificationSource.Contains("GUIUtility.GUIToScreenPoint") &&
+                notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
                notificationSource.Contains("DecorationEditorInputScope.Active") &&
                notificationSource.Contains("SmartBuildInputScope.Active") &&
                notificationSource.Contains("DisplaySeconds = 6f") &&
@@ -2660,7 +2987,7 @@ f 0 2 3
                 sessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
-                smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + inner.x") &&
+                smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
                smartBuildSessionSource.Contains("EsuHudNotifications.ContainsMouse(Event.current.mousePosition)") &&
                inGameTestPlanSource.Contains("slot stays fixed-height") &&
@@ -2710,10 +3037,18 @@ f 0 2 3
                inputStateSource.Contains("IsControlHeld()") &&
                inputStateSource.Contains("KeyCode.LeftControl") &&
                inputStateSource.Contains("KeyCode.RightControl") &&
+               inputStateSource.Contains("internal static bool IsEsuNumberShortcutDown(int shortcut)") &&
+               inputStateSource.Contains("KeyCode.Alpha1") &&
+               inputStateSource.Contains("KeyCode.Keypad1") &&
+               inputStateSource.Contains("KeyCode.Alpha2") &&
+               inputStateSource.Contains("KeyCode.Keypad2") &&
+               inputStateSource.Contains("KeyCode.Alpha3") &&
+               inputStateSource.Contains("KeyCode.Keypad3") &&
+               inputStateSource.Contains("internal static bool AnyEsuNumberShortcutDown()") &&
                inGameTestPlanSource.Contains("press Ctrl alone") &&
                inGameTestPlanSource.Contains("screen does not") &&
                inGameTestPlanSource.Contains("Surface Builder Ctrl-click behavior still works"),
-            "ESU hotkey guards inspect an existing ChatGUI instance without constructing ChatGUI/FtdKeyMap during boot and expose shared Ctrl state.");
+            "ESU hotkey guards inspect an existing ChatGUI instance without constructing ChatGUI/FtdKeyMap during boot and expose shared Ctrl and ESU number shortcut state.");
 
         Assert(serializationHudSource.Contains("DecorationEditorIconCatalog.GetRuntimeIcon(icon)") &&
                serializationHudSource.Contains("\"count\"") &&
@@ -2828,6 +3163,7 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditSession.cs"));
+        string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
         string smartBuildSessionSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -2853,7 +3189,7 @@ f 0 2 3
             "DecorationEditMode",
             "DecorationEditTransactionSet.cs"));
 
-        Assert(runtimeLogSource.Contains("internal const int Capacity = 100") &&
+        Assert(runtimeLogSource.Contains("internal const int Capacity = 25") &&
                runtimeLogSource.Contains("FormatForClipboard") &&
                runtimeLogSource.Contains("FromNotification") &&
                runtimeLogSource.Contains("ToSeverity") &&
@@ -2879,14 +3215,13 @@ f 0 2 3
                notificationSource.Contains("EsuConsoleWindow.Toggle") &&
                notificationSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
                notificationSource.Contains("Vector2 screenOrigin") &&
-               notificationSource.Contains("screenOrigin.x + rect.x") &&
-               !notificationSource.Contains("GUIUtility.GUIToScreenPoint") &&
+               notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
                sessionSource.Contains("EsuHudNotifications.SetActiveSource(CurrentModeLogSource())") &&
-               sessionSource.Contains("DrawTopToolbar(toolbarInner, toolbarInner.position)") &&
+               sessionSourceNormalized.Contains("DrawTopToolbar(\n                new Rect(0f, 0f, toolbarInner.width, toolbarInner.height),\n                toolbarInner.position)") &&
                sessionSource.Contains("toolbarScreenOrigin") &&
                sessionSource.Contains("EsuConsoleWindow.Draw()") &&
                smartBuildSessionSource.Contains("EsuHudNotifications.SetActiveSource(\"Smart Builder\")") &&
-               smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + inner.x, _toolbarRect.y + inner.y)") &&
+               smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x, _toolbarRect.y + frame.Rect.y)") &&
                smartBuildSessionSource.Contains("EsuConsoleWindow.Draw()") &&
                decorationBehaviourSource.Contains("EsuRuntimeLog.Exception(\"Decoration Edit\"") &&
                smartBehaviourSource.Contains("EsuRuntimeLog.Exception(\"Smart Builder\"") &&
@@ -3016,6 +3351,101 @@ f 0 2 3
                message.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0,
             "Surface draft rejects duplicate or reversed faces.");
 
+        var freeClick = new SurfaceDraft();
+        freeClick.SetConstructForTests(null);
+        Assert(freeClick.TryAddPointForTests(new Vector3(0f, 0f, 0f), extendSelectedEdge: false, out message) &&
+               freeClick.FreeTriangleSelectionCount == 1 &&
+               freeClick.TryAddPointForTests(new Vector3(1f, 0f, 0f), extendSelectedEdge: false, out message) &&
+               freeClick.FreeTriangleSelectionCount == 2 &&
+               freeClick.TryAddPointForTests(new Vector3(0f, 1f, 0f), extendSelectedEdge: false, out message) &&
+               freeClick.Faces.Count == 1 &&
+               freeClick.FreeTriangleSelectionCount == 0 &&
+               freeClick.TryAddPointForTests(new Vector3(2f, 0f, 0f), extendSelectedEdge: false, out message) &&
+               freeClick.TryAddPointForTests(new Vector3(3f, 0f, 0f), extendSelectedEdge: false, out message) &&
+               freeClick.TryAddPointForTests(new Vector3(2f, 1f, 0f), extendSelectedEdge: false, out message) &&
+               freeClick.Faces.Count == 2 &&
+               freeClick.FreeTriangleSelectionCount == 0,
+            "Surface draft normal free-click grouping creates another standalone triangle every three points.");
+
+        var edgeExtended = new SurfaceDraft();
+        edgeExtended.SetConstructForTests(null);
+        Assert(edgeExtended.TryAddPointForTests(new Vector3(0f, 0f, 0f), extendSelectedEdge: false, out message) &&
+               edgeExtended.TryAddPointForTests(new Vector3(1f, 0f, 0f), extendSelectedEdge: false, out message) &&
+               edgeExtended.TryAddPointForTests(new Vector3(0f, 1f, 0f), extendSelectedEdge: false, out message),
+            "Surface draft test setup creates the base triangle through point placement.");
+        edgeExtended.SelectEdge(1, 2);
+        Assert(edgeExtended.TryAddPointForTests(new Vector3(1f, 1f, 0f), extendSelectedEdge: true, out message) &&
+               edgeExtended.Faces.Count == 2 &&
+               edgeExtended.SelectionKind == SurfaceSelectionKind.Edge &&
+               edgeExtended.SelectedEdge.Matches(2, 3),
+            "Surface draft selected-edge extension still creates connected faces and advances the selected edge.");
+
+        var sharedBridge = new SurfaceDraft();
+        sharedBridge.SetConstructForTests(null);
+        sharedBridge.AddPointForTests(new Vector3(0f, 0f, 0f));
+        sharedBridge.AddPointForTests(new Vector3(1f, 0f, 0f));
+        sharedBridge.AddPointForTests(new Vector3(0f, 1f, 0f));
+        sharedBridge.AddPointForTests(new Vector3(0f, -1f, 0f));
+        sharedBridge.AddPointForTests(new Vector3(-1f, 0f, 0f));
+        Assert(sharedBridge.TryAddFace(0, 1, 2, out message) &&
+               sharedBridge.TryAddFace(0, 3, 4, out message) &&
+               sharedBridge.ToggleBridgeEdge(new SurfaceEdge(0, 1), out message) &&
+               sharedBridge.ToggleBridgeEdge(new SurfaceEdge(0, 3), out message) &&
+               sharedBridge.TryBridgeSelectedEdges(out message) &&
+               sharedBridge.Faces.Count == 3 &&
+               sharedBridge.BridgeEdgeSelection.Count == 0,
+            "Surface draft bridges two selected edges that share one point into one triangle.");
+
+        var quadBridge = new SurfaceDraft();
+        quadBridge.SetConstructForTests(null);
+        quadBridge.AddPointForTests(new Vector3(0f, 0f, 0f));
+        quadBridge.AddPointForTests(new Vector3(1f, 0f, 0f));
+        quadBridge.AddPointForTests(new Vector3(0f, 1f, 0f));
+        quadBridge.AddPointForTests(new Vector3(0f, 2f, 0f));
+        quadBridge.AddPointForTests(new Vector3(1f, 2f, 0f));
+        quadBridge.AddPointForTests(new Vector3(0f, 3f, 0f));
+        Assert(quadBridge.TryAddFace(0, 1, 2, out message) &&
+               quadBridge.TryAddFace(3, 4, 5, out message) &&
+               quadBridge.ToggleBridgeEdge(new SurfaceEdge(0, 1), out message) &&
+               quadBridge.ToggleBridgeEdge(new SurfaceEdge(3, 4), out message) &&
+               quadBridge.TryBridgeSelectedEdges(out message) &&
+               quadBridge.Faces.Count == 4,
+            "Surface draft bridges two selected four-point edges into two triangle faces.");
+
+        var sharedCenterRightTriangles = new SurfaceDraft();
+        sharedCenterRightTriangles.SetConstructForTests(null);
+        sharedCenterRightTriangles.AddPointForTests(new Vector3(-1f, 0f, 0f));
+        sharedCenterRightTriangles.AddPointForTests(new Vector3(1f, 0f, 0f));
+        sharedCenterRightTriangles.AddPointForTests(new Vector3(0f, 1f, 0f));
+        sharedCenterRightTriangles.AddPointForTests(new Vector3(0f, -2f, 0f));
+        sharedCenterRightTriangles.AddPointForTests(new Vector3(0f, 2f, 0f));
+        sharedCenterRightTriangles.AddPointForTests(new Vector3(2f, 0f, 0f));
+        bool sharedCenterFirstFace = sharedCenterRightTriangles.TryAddFace(0, 1, 2, out message);
+        bool sharedCenterSecondFace = sharedCenterRightTriangles.TryAddFace(3, 5, 4, out message);
+        bool sharedCenterPlanned = SurfaceDecorationPlanner.TryPlanMirroredVariants(
+            sharedCenterRightTriangles,
+            resolver,
+            new[]
+            {
+                new EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>())
+            },
+            out plan,
+            out message);
+        Assert(sharedCenterFirstFace &&
+               sharedCenterSecondFace &&
+               sharedCenterPlanned &&
+               plan.DecorationCount == 2 &&
+               SurfacePlacementsSharePositionButNotTransform(plan.Placements),
+            "Surface planner preserves distinct bridge-style right-triangle placements that share a generated center.");
+
+        SurfaceDraft duplicateBridge = SurfaceDraftForTests(Vector3.zero, Vector3.right, Vector3.up);
+        Assert(duplicateBridge.ToggleBridgeEdge(new SurfaceEdge(0, 1), out message) &&
+               duplicateBridge.ToggleBridgeEdge(new SurfaceEdge(0, 2), out message) &&
+               !duplicateBridge.TryBridgeSelectedEdges(out message) &&
+               duplicateBridge.Faces.Count == 1 &&
+               duplicateBridge.BridgeEdgeSelection.Count == 2,
+            "Surface draft rejects duplicate bridge faces without adding partial bridge geometry.");
+
         var repeated = new SurfaceDraft();
         repeated.SetConstructForTests(null);
         repeated.AddPointForTests(Vector3.zero);
@@ -3055,6 +3485,89 @@ f 0 2 3
                    out message) &&
                message.IndexOf("no valid nearest anchor", StringComparison.OrdinalIgnoreCase) >= 0,
             "Surface nearest-anchor planning rejects generated decorations with no valid nearby block.");
+
+        Guid generatorMesh = new Guid("11111111-2222-3333-4444-555555555555");
+        Guid generatorMaterial = new Guid("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var defaultGeneratorSettings = new DecorationGeneratorSettings
+        {
+            MeshGuid = generatorMesh
+        };
+        var defaultGeneratorDraft = new DecorationGeneratorDraft();
+        defaultGeneratorDraft.SetTool(SurfaceExtraTool.Path);
+        Assert(defaultGeneratorSettings.MeshGuid == generatorMesh &&
+               DecorationGeneratorSettings.MetalPole1mGuid == new Guid("ad00935b-e95c-4345-8ea7-646846bc16db") &&
+               defaultGeneratorSettings.LengthAxis == DecorationEditAxis.Z &&
+               Math.Abs(defaultGeneratorSettings.Diameter - 0.05f) < 0.0001f &&
+               defaultGeneratorDraft.TryAddPathPoint(null, new Vector3(0f, 0f, 0f), out message) &&
+               defaultGeneratorDraft.TryAddPathPoint(null, new Vector3(0f, 0f, 2f), out message) &&
+               DecorationGeneratorPlanner.TryPlan(
+                   defaultGeneratorDraft,
+                   defaultGeneratorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 1) }),
+                   out DecorationGeneratorPlan defaultGeneratorPlan,
+                   out message) &&
+               defaultGeneratorPlan.DecorationCount == 1 &&
+               Math.Abs(defaultGeneratorPlan.Placements[0].Scaling.x - 0.05f) < 0.0001f &&
+               Math.Abs(defaultGeneratorPlan.Placements[0].Scaling.y - 0.05f) < 0.0001f &&
+               Math.Abs(defaultGeneratorPlan.Placements[0].Scaling.z - 2f) < 0.0001f,
+            "Decoration generator defaults to the ES2 metal 1m pole contract: Z length axis, 0.05 diameter, and stretched pole segments.");
+
+        var generatorSettings = new DecorationGeneratorSettings
+        {
+            MeshGuid = generatorMesh,
+            LengthAxis = DecorationEditAxis.X,
+            Diameter = 0.25f,
+            ColorIndex = 9,
+            MaterialReplacement = generatorMaterial
+        };
+        var generatorDraft = new DecorationGeneratorDraft();
+        generatorDraft.SetTool(SurfaceExtraTool.Path);
+        Assert(generatorDraft.TryAddPathPoint(null, new Vector3(0f, 0f, 0f), out message) &&
+               generatorDraft.TryAddPathPoint(null, new Vector3(2f, 0f, 0f), out message) &&
+               DecorationGeneratorPlanner.TryPlan(
+                   generatorDraft,
+                   generatorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(1, 0, 0) }),
+                   out DecorationGeneratorPlan generatorPlan,
+                   out message) &&
+               generatorPlan.DecorationCount == 1 &&
+               generatorPlan.Placements[0].MeshGuid == generatorMesh &&
+               generatorPlan.Placements[0].Color == 9 &&
+               generatorPlan.Placements[0].MaterialReplacement == generatorMaterial &&
+               Math.Abs(generatorPlan.Placements[0].Scaling.x - 2f) < 0.0001f &&
+               Math.Abs(generatorPlan.Placements[0].Scaling.y - 0.25f) < 0.0001f,
+            "Decoration generator path with two points creates one scaled segment placement carrying mesh, color, and material.");
+        Assert(generatorDraft.TryAddPathPoint(null, new Vector3(2f, 1f, 0f), out message) &&
+               DecorationGeneratorPlanner.TryPlan(
+                   generatorDraft,
+                   generatorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(1, 0, 0), new Vector3i(2, 1, 0) }),
+                   out generatorPlan,
+                   out message) &&
+               generatorPlan.DecorationCount == 2,
+            "Decoration generator path with three points creates two segment placements.");
+
+        var circleDraft = new DecorationGeneratorDraft();
+        circleDraft.SetTool(SurfaceExtraTool.Circle);
+        generatorSettings.CircleRadius = 2f;
+        generatorSettings.CircleSegments = 8;
+        Assert(circleDraft.TrySetCircleCenter(null, Vector3.zero, Vector3.up, out message) &&
+               DecorationGeneratorPlanner.TryPlan(
+                   circleDraft,
+                   generatorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                   out generatorPlan,
+                   out message) &&
+               generatorPlan.DecorationCount == 8,
+            "Decoration generator circle creates the requested number of tangent segment placements.");
+        Assert(!DecorationGeneratorPlanner.TryPlan(
+                   circleDraft,
+                   generatorSettings,
+                   new SetSurfaceAnchorResolver(Array.Empty<Vector3i>()),
+                   out generatorPlan,
+                   out message) &&
+               message.IndexOf("no valid nearest anchor", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Decoration generator rejects the whole plan when no segment can resolve a nearest anchor.");
 
         try
         {
@@ -3108,12 +3621,21 @@ f 0 2 3
             xyzSymmetry.Settings.NearestAnchor = false;
             Assert(SurfaceDecorationPlanner.TryPlanMirroredVariants(
                        xyzSymmetry,
-                       new SetSurfaceAnchorResolver(Array.Empty<Vector3i>()),
+                       new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
                        EsuSymmetry.Variants(),
                        out plan,
                        out message) &&
                    plan.DecorationCount == 8,
                 "Surface symmetry combines X/Y/Z variants into eight distinct generated surface placements.");
+
+            Assert(!SurfaceDecorationPlanner.TryPlanMirroredVariants(
+                       xyzSymmetry,
+                       new SetSurfaceAnchorResolver(Array.Empty<Vector3i>()),
+                       EsuSymmetry.Variants(),
+                       out plan,
+                       out message) &&
+                   message.IndexOf("same-anchor", StringComparison.OrdinalIgnoreCase) >= 0,
+                "Surface same-anchor planning rejects drafts when no shared anchor can be resolved.");
 
             EsuSymmetry.Clear();
             EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
@@ -3124,12 +3646,32 @@ f 0 2 3
             onPlane.Settings.NearestAnchor = false;
             Assert(SurfaceDecorationPlanner.TryPlanMirroredVariants(
                        onPlane,
-                       new SetSurfaceAnchorResolver(Array.Empty<Vector3i>()),
+                       new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
                        EsuSymmetry.Variants(),
                        out plan,
                        out message) &&
                    plan.DecorationCount == 1,
                 "Surface symmetry dedupes mirrored draft geometry that lies on the active plane.");
+
+            EsuSymmetry.Clear();
+            EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
+            var symmetryGenerator = new DecorationGeneratorDraft();
+            symmetryGenerator.SetTool(SurfaceExtraTool.Path);
+            Assert(symmetryGenerator.TryAddPathPoint(null, new Vector3(1f, 0f, 0f), out message) &&
+                   symmetryGenerator.TryAddPathPoint(null, new Vector3(2f, 0f, 0f), out message) &&
+                   DecorationGeneratorPlanner.TryPlanMirroredVariants(
+                       symmetryGenerator,
+                       generatorSettings,
+                       new SetSurfaceAnchorResolver(new[]
+                       {
+                           new Vector3i(1, 0, 0),
+                           new Vector3i(-1, 0, 0)
+                       }),
+                       EsuSymmetry.Variants(),
+                       out generatorPlan,
+                       out message) &&
+                   generatorPlan.DecorationCount == 2,
+                "Decoration generator symmetry mirrors path segment placements and deduplicates them through the shared placement key path.");
         }
         finally
         {
@@ -3143,12 +3685,24 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "SurfaceDecorationPlanner.cs"));
+        string generatorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationGeneratorPlanner.cs"));
         string sessionSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "DecorationEditMode",
             "DecorationEditSession.cs"));
+        string historySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditHistory.cs"));
         string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
         string symmetrySource = File.ReadAllText(Path.Combine(
             root,
@@ -3163,6 +3717,7 @@ f 0 2 3
             "DecorationEditorTheme.cs"));
         Assert(themeSource.Contains("Surface") &&
                plannerSource.Contains("MADCD_PolygonInput.Start") &&
+               plannerSource.Contains("DecorationAnchorResolver") &&
                plannerSource.Contains("ConstructSurfaceAnchorResolver") &&
                plannerSource.Contains("ValidateSurfaceFace") &&
                plannerSource.Contains("TryOrientFace") &&
@@ -3185,14 +3740,88 @@ f 0 2 3
                sessionSource.Contains("DrawCompactIconHeader(\"Surface Builder\", \"build\")") &&
                sessionSource.Contains("HandleSurfaceSceneInput") &&
                sessionSource.Contains("DrawSurfaceOverlay") &&
+               sessionSource.Contains("SurfaceBuilderTool") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Draw") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Move") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Rotate") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Scale") &&
+               sessionSource.Contains("ToolButton(DecorationEditorTool.Focus, \"visibility\", \"View\"") &&
+               sessionSource.Contains("DrawSurfaceExtraToolsPanel") &&
+               !sessionSource.Contains("DrawSurfaceExtraShelf") &&
+               sessionSource.Contains("HandleGeneratorSceneInput") &&
+               sessionSource.Contains("UseGeneratorSceneInput") &&
+               sessionSource.Contains("DrawGeneratorColorEditor") &&
+               sessionSource.Contains("DrawGeneratorMaterialEditor") &&
+               sessionSource.Contains("DecorationGeneratorPlanner.TryPlanWithSymmetry") &&
+               sessionSource.Contains("DrawGeneratorOverlay") &&
+               sessionSource.Contains("MaterialReplacement.Us = placement.MaterialReplacement") &&
+               sessionSource.Contains("CaptureSurfaceSnapshot") &&
+               sessionSource.Contains("CaptureGeneratorEditSnapshot") &&
+               sessionSource.Contains("TryRestoreSurfaceDraftHistory") &&
+               sessionSource.Contains("TryRestoreGeneratorDraftHistory") &&
+               historySource.Contains("SurfaceDraftHistoryCommand") &&
+               historySource.Contains("GeneratorDraftHistoryCommand") &&
+               generatorSource.Contains("SurfaceExtraTool") &&
+               !generatorSource.Contains("DecorationGeneratorStyle") &&
+               generatorSource.Contains("DecorationGeneratorDraft") &&
+               generatorSource.Contains("DecorationGeneratorSettings") &&
+               generatorSource.Contains("MetalPole1mGuid") &&
+               generatorSource.Contains("LengthAxis = DecorationEditAxis.Z") &&
+               generatorSource.Contains("Diameter = 0.05f") &&
+               generatorSource.Contains("NearestAnchor = true") &&
+               generatorSource.Contains("CircleTangentA") &&
+               generatorSource.Contains("TrySetCircleCenterWithBasis") &&
+               generatorSource.Contains("DecorationGeneratorPlan") &&
+               generatorSource.Contains("DecorationGeneratorPlacement") &&
+               generatorSource.Contains("TryPlanWithSymmetry") &&
+               generatorSource.Contains("TryPlanMirroredVariants") &&
+               generatorSource.Contains("LookRotationEuler") &&
+               generatorSource.Contains("EulerFromTo") &&
+               generatorSource.Contains("MaterialReplacement") &&
+               sessionSource.Contains("DrawUnifiedSurfaceDraftRows") &&
+               sessionSource.Contains("ActiveSurfaceDraftActionTarget") &&
+               sessionSource.Contains("PreviewSurfaceActionTarget") &&
+               sessionSource.Contains("PlaceSurfaceActionTarget") &&
+               sessionSource.Contains("ClearSurfaceActionTarget") &&
+               sessionSource.Contains("DeleteSurfaceActionTarget") &&
+               sessionSource.Contains("TryOpenSurfacePointContextMenu") &&
+               sessionSource.Contains("TryOpenGeneratorPointContextMenu") &&
+               sessionSource.Contains("DrawSurfacePointContextMenu") &&
+               sessionSource.Contains("LocalNormalFromHit(hit)") &&
+               sessionSource.Contains("TrySetCircleCenter(hit.Construct, hit.LocalHit, normal") &&
+               !sessionSource.Contains("GetCameraCircleBasis") &&
+               sessionSource.Contains("DrawSurfaceSameAnchorPreview") &&
+               sessionSource.Contains("DrawGeneratorSameAnchorPreview") &&
+               sessionSource.Contains("DrawSameAnchorPreview") &&
+               sessionSource.Contains("PlannedAnchorLine") &&
+               sessionSource.Contains("DrawSurfaceActionBar") &&
+               !sessionSource.Contains("DrawGeneratorActionBar") &&
+               sessionSource.Contains("DrawGeneratorMeshEditor") &&
+               sessionSource.Contains("ResetGeneratorMesh") &&
+               sessionSource.Contains("DrawGeneratorDiameterPresets") &&
+               sessionSource.Contains("DrawGeneratorAnchorModeControl") &&
+               !sessionSource.Contains("DrawGeneratorStyleButton") &&
                sessionSource.Contains("IsSurfaceMode || _tool == DecorationEditorTool.Paint || _showMeshPalette") &&
                sessionSource.Contains("PlaceSurfacePlan") &&
                plannerSource.Contains("TryPlanWithSymmetry") &&
                plannerSource.Contains("TryPlanMirroredVariants") &&
                plannerSource.Contains("CreateMirroredForSymmetry") &&
+               plannerSource.Contains("BridgeEdgeSelection") &&
+               plannerSource.Contains("FreeTriangleSelectionCount") &&
+               plannerSource.Contains("ToggleBridgeEdge") &&
+               plannerSource.Contains("TryBridgeSelectedEdges") &&
+               plannerSource.Contains("IsBridgeEdgeSelected") &&
                plannerSource.Contains("variant.AxisCount % 2 == 1") &&
                plannerSource.Contains("SameGeometry") &&
                sessionSource.Contains("SurfaceDecorationPlanner.TryPlanWithSymmetry") &&
+               sessionSource.Contains("BridgeSurfaceEdges") &&
+               sessionSource.Contains("IsShiftHeld") &&
+               sessionSource.Contains("Use Clear to remove the surface draft.") &&
+               sessionSource.Contains("GUILayout.Height(SurfaceDraftListHeight(contentRect.height))") &&
+               sessionSource.Contains("SurfaceSettingsShelfHeight(inner.height, actionHeight, gap)") &&
+               sessionSource.Contains("Shift-click two edges, then Bridge, to connect them.") &&
                sessionSource.Contains("DrawMirroredSurfaceOverlay") &&
                sessionSource.Split(new[] { "SymmetryButton(DecorationEditAxis.X)" }, StringSplitOptions.None).Length >= 3 &&
                sessionSource.Split(new[] { "SymmetryButton(DecorationEditAxis.Y)" }, StringSplitOptions.None).Length >= 3 &&
@@ -3204,6 +3833,94 @@ f 0 2 3
                symmetrySource.Contains("MinimumPlaneSpan") &&
                symmetrySource.Contains("BoundsCacheSeconds"),
             "Decoration Edit Mode exposes Surface Builder as the second ESU mode in the Tab cycle, backed by ES2 polygon conversion.");
+
+        int surfacePanelIndex = sessionSource.IndexOf("private void DrawSurfacePanel", StringComparison.Ordinal);
+        int surfaceHelperIndex = sessionSource.IndexOf("Ctrl-click existing points", surfacePanelIndex, StringComparison.Ordinal);
+        int surfaceSettingsShelfIndex = sessionSource.IndexOf("GUILayout.BeginArea(settingsRect)", surfacePanelIndex, StringComparison.Ordinal);
+        int surfaceSettingsIndex = sessionSource.IndexOf("DrawSurfaceSettings();", surfaceSettingsShelfIndex, StringComparison.Ordinal);
+        int surfaceActionBarIndex = sessionSource.IndexOf("DrawSurfaceActionBar(actionRect)", surfaceSettingsIndex, StringComparison.Ordinal);
+        Assert(surfaceHelperIndex >= 0 &&
+               surfaceSettingsShelfIndex > surfaceHelperIndex &&
+               surfaceSettingsIndex > surfaceSettingsShelfIndex &&
+               surfaceActionBarIndex > surfaceSettingsIndex &&
+               sessionSource.Contains("private float SurfaceDraftListHeight(float contentHeight)") &&
+               sessionSource.Contains("UnifiedSurfaceDraftRowCount()") &&
+               sessionSource.Contains("DrawUnifiedSurfaceDraftRows();") &&
+               sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Draw)") &&
+               sessionSource.Contains("Current surface paint color #") &&
+               !sessionSource.Contains("GUILayout.ExpandHeight(true))"),
+            "Surface Builder caps the unified draft list height, exposes Draw in the left panel, and pins material, thickness, color, and anchor settings above the action buttons.");
+
+        int drawTopToolbar = sessionSourceNormalized.IndexOf("private void DrawTopToolbar", StringComparison.Ordinal);
+        int surfaceTopbar = sessionSourceNormalized.IndexOf("if (IsSurfaceMode)\n                {", drawTopToolbar, StringComparison.Ordinal);
+        int surfaceTopbarElse = sessionSourceNormalized.IndexOf("\n                }\n                else", surfaceTopbar, StringComparison.Ordinal);
+        string surfaceTopbarBlock = surfaceTopbar >= 0 && surfaceTopbarElse > surfaceTopbar
+            ? sessionSourceNormalized.Substring(surfaceTopbar, surfaceTopbarElse - surfaceTopbar)
+            : string.Empty;
+        int rightControls = sessionSourceNormalized.IndexOf("GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));", drawTopToolbar, StringComparison.Ordinal);
+        int surfaceRightControls = sessionSourceNormalized.IndexOf("if (IsSurfaceMode)\n            {", rightControls, StringComparison.Ordinal);
+        int surfaceRightControlsElse = sessionSourceNormalized.IndexOf("\n            }\n            else", surfaceRightControls, StringComparison.Ordinal);
+        string surfaceRightControlsBlock = surfaceRightControls >= 0 && surfaceRightControlsElse > surfaceRightControls
+            ? sessionSourceNormalized.Substring(surfaceRightControls, surfaceRightControlsElse - surfaceRightControls)
+            : string.Empty;
+        Assert(surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Draw") &&
+               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
+               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
+               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Move") &&
+               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Rotate") &&
+               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Scale") &&
+               surfaceTopbarBlock.Contains("ToolButton(DecorationEditorTool.Focus, \"visibility\", \"View\"") &&
+               surfaceRightControlsBlock.Contains("\"Tools\"") &&
+               !surfaceRightControlsBlock.Contains("\"Insp\"") &&
+               !surfaceRightControlsBlock.Contains("\"Pal\"") &&
+               !surfaceRightControlsBlock.Contains("\"Out\"") &&
+               !surfaceRightControlsBlock.Contains("\"Anch\""),
+            "Surface Builder top bar exposes Draw/Path/Circle/Move/Rotate/Scale/View and only the Tools panel toggle.");
+
+        int drawLeftPanel = sessionSourceNormalized.IndexOf("private void DrawLeftPanelStack", StringComparison.Ordinal);
+        int drawRightPanel = sessionSourceNormalized.IndexOf("private void DrawRightPanel", StringComparison.Ordinal);
+        string drawLeftPanelBlock = drawLeftPanel >= 0 && drawRightPanel > drawLeftPanel
+            ? sessionSourceNormalized.Substring(drawLeftPanel, drawRightPanel - drawLeftPanel)
+            : string.Empty;
+        Assert(drawLeftPanelBlock.Contains("if (IsSurfaceMode)") &&
+               drawLeftPanelBlock.Contains("ClearStackDividerDrag(StackDividerKind.Left)") &&
+               drawLeftPanelBlock.Contains("DrawMeshPalette(stackRect)") &&
+               drawLeftPanelBlock.Contains("return;"),
+            "Surface Builder uses the full left panel stack instead of splitting with the Inspector.");
+
+        int drawRightPanelEnd = sessionSourceNormalized.IndexOf("private static void SplitVerticalStack", drawRightPanel, StringComparison.Ordinal);
+        string drawRightPanelBlock = drawRightPanel >= 0 && drawRightPanelEnd > drawRightPanel
+            ? sessionSourceNormalized.Substring(drawRightPanel, drawRightPanelEnd - drawRightPanel)
+            : string.Empty;
+        Assert(drawRightPanelBlock.Contains("DrawSurfaceExtraToolsPanel(rightRect)") &&
+               drawRightPanelBlock.Contains("return;") &&
+               !drawRightPanelBlock.Contains("DrawGeneratorActionBar") &&
+               drawRightPanelBlock.IndexOf("DrawSurfaceExtraToolsPanel", StringComparison.Ordinal) <
+               drawRightPanelBlock.IndexOf("DrawOutlinerPanel", StringComparison.Ordinal),
+            "Surface Builder right panel draws settings-only Extra Tools before returning instead of showing Outliner, Selected Anchor, or duplicate action buttons.");
+
+        int surfaceInput = sessionSourceNormalized.IndexOf("private void HandleSurfaceSceneInput()", StringComparison.Ordinal);
+        int surfaceRightClick = sessionSourceNormalized.IndexOf("if (Input.GetMouseButtonDown(1))", surfaceInput, StringComparison.Ordinal);
+        int surfaceLeftClick = sessionSourceNormalized.IndexOf("if (!Input.GetMouseButtonDown(0))", surfaceRightClick, StringComparison.Ordinal);
+        string surfaceRightClickBlock = surfaceRightClick >= 0 && surfaceLeftClick > surfaceRightClick
+            ? sessionSourceNormalized.Substring(surfaceRightClick, surfaceLeftClick - surfaceRightClick)
+            : string.Empty;
+        int generatorInput = sessionSourceNormalized.IndexOf("private void HandleGeneratorSceneInput()", StringComparison.Ordinal);
+        int generatorRightClick = sessionSourceNormalized.IndexOf("if (Input.GetMouseButtonDown(1))", generatorInput, StringComparison.Ordinal);
+        int generatorLeftClick = sessionSourceNormalized.IndexOf("if (!Input.GetMouseButtonDown(0))", generatorRightClick, StringComparison.Ordinal);
+        string generatorRightClickBlock = generatorRightClick >= 0 && generatorLeftClick > generatorRightClick
+            ? sessionSourceNormalized.Substring(generatorRightClick, generatorLeftClick - generatorRightClick)
+            : string.Empty;
+        Assert(surfaceRightClickBlock.Contains("TryOpenSurfacePointContextMenu()") &&
+               surfaceRightClickBlock.Contains("HasActiveSelection") &&
+               surfaceRightClickBlock.Contains("ClearSelection") &&
+               surfaceRightClickBlock.Contains("Use Clear to remove the surface draft.") &&
+               generatorRightClickBlock.Contains("TryOpenGeneratorPointContextMenu()") &&
+               generatorRightClickBlock.Contains("HasActiveSelection") &&
+               generatorRightClickBlock.Contains("ClearSelection") &&
+               generatorRightClickBlock.Contains("Use Clear to remove the draft.") &&
+               !surfaceRightClickBlock.Contains("ClearSurfaceDraft"),
+            "Surface Builder right-click opens point context menus first, then clears only selection state and leaves full draft removal to the Clear button.");
 
         int handleScene = sessionSourceNormalized.IndexOf("private void HandleSceneInput()", StringComparison.Ordinal);
         int pendingInScene = sessionSourceNormalized.IndexOf(
@@ -3318,6 +4035,22 @@ f 0 2 3
 
         return true;
     }
+
+    private static bool SurfacePlacementsSharePositionButNotTransform(
+        IReadOnlyList<SurfaceDecorationPlacement> placements)
+    {
+        if (placements == null || placements.Count != 2)
+            return false;
+
+        return SameVector(placements[0].Positioning, placements[1].Positioning) &&
+               (!SameVector(placements[0].Scaling, placements[1].Scaling) ||
+                !SameVector(placements[0].Orientation, placements[1].Orientation));
+    }
+
+    private static bool SameVector(Vector3 left, Vector3 right) =>
+        Mathf.Abs(left.x - right.x) <= 0.0001f &&
+        Mathf.Abs(left.y - right.y) <= 0.0001f &&
+        Mathf.Abs(left.z - right.z) <= 0.0001f;
 
     private static void VerifySmartBlockBuilder()
     {
@@ -3462,6 +4195,258 @@ f 0 2 3
                overCap.FailureReason.Contains("hard cap"),
             "Smart Block Builder blocks commits above the placement hard cap.");
 
+        MethodInfo downSlopeGeometryParser = typeof(SmartBlockFamilyCatalog)
+            .GetMethod(
+                "TryLengthFromDownSlopeGeometry",
+                BindingFlags.Static | BindingFlags.NonPublic);
+        bool downSlopeGeometryNamesParse = downSlopeGeometryParser != null;
+        for (int length = 1; length <= 4 && downSlopeGeometryNamesParse; length++)
+        {
+            object[] args =
+            {
+                "DownSlope" + length.ToString(CultureInfo.InvariantCulture) + "m",
+                0
+            };
+            downSlopeGeometryNamesParse =
+                (bool)downSlopeGeometryParser.Invoke(null, args) &&
+                (int)args[1] == length;
+        }
+
+        Assert(downSlopeGeometryNamesParse,
+            "Smart Builder catalog parses DownSlope1m..4m geometry metadata for runtime slope discovery.");
+
+        var downSlopeFamily = new SmartBlockFamily(
+            "test down slopes",
+            Enumerable.Range(1, 4)
+                .Select(length => new SmartBlockCandidate(
+                    length.ToString(CultureInfo.InvariantCulture) + "m test down slope",
+                    length,
+                    null,
+                    SmartBuildShapeKind.DownSlope,
+                    "DownSlope" + length.ToString(CultureInfo.InvariantCulture) + "m")));
+        var smartSource = new SmartBuildSource(
+            null,
+            Guid.Empty,
+            "test material",
+            new Vector3i(1, 1, 1),
+            SmartBlockFamily.ForTests(1, 2, 3, 4),
+            downSlopeFamily);
+        SmartBuildPiece ramp = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(0, 2, 0),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 2,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        ramp.ResizeFromHandle(DecorationEditAxis.Z, sign: 1, delta: 8);
+        IReadOnlyList<SmartBuildPlacement> rampPlacements = ramp.BuildFixedPlacements(
+            smartSource,
+            out string rampReason);
+        var rampStarts = new HashSet<string>(
+            rampPlacements.Select(placement => EsuSymmetry.CellKey(placement.Position)));
+        Assert(string.IsNullOrWhiteSpace(rampReason) &&
+               ramp.SlopeSteps == 3 &&
+               ramp.SlopeLength == 4 &&
+               ramp.SlopeWidth == 2 &&
+               rampPlacements.Count == 6 &&
+               rampPlacements.All(placement => placement.CoveredCells().Count == 4) &&
+               rampStarts.SetEquals(new[]
+               {
+                   EsuSymmetry.CellKey(new Vector3i(0, 2, 0)),
+                   EsuSymmetry.CellKey(new Vector3i(1, 2, 0)),
+                   EsuSymmetry.CellKey(new Vector3i(0, 1, 4)),
+                   EsuSymmetry.CellKey(new Vector3i(1, 1, 4)),
+                   EsuSymmetry.CellKey(new Vector3i(0, 0, 8)),
+                   EsuSymmetry.CellKey(new Vector3i(1, 0, 8))
+               }),
+            "Smart Builder 4m down slopes place one segment per width lane and drop Y by one per snapped ramp step.");
+
+        Vector3i[] supportCells = ramp.EnumerateSupportCells().ToArray();
+        Assert(supportCells.Length == 24 &&
+               supportCells.Contains(new Vector3i(0, 0, 0)) &&
+               supportCells.Contains(new Vector3i(1, 1, 3)) &&
+               supportCells.Contains(new Vector3i(0, 0, 4)) &&
+               !supportCells.Contains(new Vector3i(0, 0, 8)),
+            "Smart Builder fills normal support cells under higher down-slope segments without filling below the bottom step.");
+
+        Vector3i[] slopePlacementCells = ramp.EnumeratePlacementCells().ToArray();
+        IReadOnlyList<Vector3i>[] slopeVisualLines = ramp.EnumerateSlopeLines().ToArray();
+        Assert(slopePlacementCells.Length == 24 &&
+               slopeVisualLines.Length == 6 &&
+               slopeVisualLines.All(slopeLine => slopeLine.Count == 4) &&
+               !supportCells.All(cell => slopePlacementCells.Contains(cell)) &&
+               ramp.EnumeratePreviewCells().Count() == 48,
+            "Smart Builder exposes down-slope placement lines separately from support cells so preview geometry can draw true slopes.");
+
+        SmartBuildPiece supportToggleRamp = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(0, 2, 0),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 2,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        supportToggleRamp.ResizeFromHandle(DecorationEditAxis.Z, sign: 1, delta: 8);
+        int fixedPlacementCountWithSupport = supportToggleRamp.BuildFixedPlacements(
+            smartSource,
+            out _).Count;
+        supportToggleRamp.SetSupportMode(SmartBuildSlopeSupportMode.Step);
+        Vector3i[] stepSupportCells = supportToggleRamp.EnumerateSupportCells().ToArray();
+        Vector3i[] expectedStepSupportCells = supportToggleRamp.EnumeratePlacementCells()
+            .Select(cell => cell + new Vector3i(0, -1, 0))
+            .GroupBy(EsuSymmetry.CellKey)
+            .Select(group => group.First())
+            .ToArray();
+        var stepSupportKeys = new HashSet<string>(stepSupportCells.Select(EsuSymmetry.CellKey));
+        var expectedStepSupportKeys = new HashSet<string>(expectedStepSupportCells.Select(EsuSymmetry.CellKey));
+        Assert(supportToggleRamp.SupportMode == SmartBuildSlopeSupportMode.Step &&
+               stepSupportCells.Length > 0 &&
+               stepSupportKeys.SetEquals(expectedStepSupportKeys) &&
+               stepSupportCells.Contains(new Vector3i(0, 1, 0)) &&
+               stepSupportCells.Contains(new Vector3i(0, 0, 4)) &&
+               stepSupportCells.Contains(new Vector3i(0, -1, 8)) &&
+               !stepSupportCells.Contains(new Vector3i(0, 0, 0)) &&
+               supportToggleRamp.EnumeratePreviewCells().Count() == supportToggleRamp.EnumeratePlacementCells().Count() + stepSupportCells.Length &&
+               supportToggleRamp.BuildFixedPlacements(smartSource, out _).Count == fixedPlacementCountWithSupport,
+            "Smart Builder down-slope Step support places one support block under each slope cell without changing fixed slope placements.");
+
+        SmartBuildPiece rotatedRamp = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(0, 0, 0),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 1,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        rotatedRamp.RotateAroundAxis(DecorationEditAxis.Z, 1);
+        SmartBuildPlacement rotatedPlacement = rotatedRamp.BuildFixedPlacements(
+            smartSource,
+            out _).Single();
+        MethodInfo mirrorPlacementMethod = AccessTools.Method(
+            typeof(SmartBuildPieceScene),
+            "MirrorPlacement");
+        EsuSymmetry.Clear();
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
+        var xMirrorVariant = new EsuSymmetry.SymmetryVariant(new[] { DecorationEditAxis.X });
+        SmartBuildPlacement mirroredRotatedPlacement = mirrorPlacementMethod == null
+            ? null
+            : (SmartBuildPlacement)mirrorPlacementMethod.Invoke(
+                null,
+                new object[] { rotatedPlacement, xMirrorVariant });
+        EsuSymmetry.Clear();
+        Vector3 sourceForward = rotatedPlacement.Rotation * Vector3.forward;
+        Vector3 sourceUp = rotatedPlacement.Rotation * Vector3.up;
+        Vector3 expectedMirroredForward = new Vector3(-sourceForward.x, sourceForward.y, sourceForward.z);
+        Vector3 expectedMirroredUp = new Vector3(-sourceUp.x, sourceUp.y, sourceUp.z);
+        Vector3 actualMirroredForward = mirroredRotatedPlacement == null
+            ? Vector3.zero
+            : mirroredRotatedPlacement.Rotation * Vector3.forward;
+        Vector3 actualMirroredUp = mirroredRotatedPlacement == null
+            ? Vector3.zero
+            : mirroredRotatedPlacement.Rotation * Vector3.up;
+        Assert(mirrorPlacementMethod != null &&
+               mirroredRotatedPlacement != null &&
+               VectorApproximately(actualMirroredForward.normalized, expectedMirroredForward.normalized, 0.0001f) &&
+               VectorApproximately(actualMirroredUp.normalized, expectedMirroredUp.normalized, 0.0001f),
+            "Smart Builder mirrored fixed placements preserve custom down-slope rotations instead of rebuilding rotation from axis/sign.");
+
+        SmartBuildPiece snappedForward = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(0, 0, 0),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 1,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        snappedForward.ResizeFromHandle(DecorationEditAxis.Z, sign: 1, delta: 1);
+        SmartBuildPiece snappedDown = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(0, 4, 0),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 1,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        snappedDown.ResizeFromHandle(DecorationEditAxis.Y, sign: -1, delta: -2);
+        Assert(snappedForward.SlopeSteps == 2 &&
+               snappedForward.Size.z == 8 &&
+               snappedForward.Size.y == 2 &&
+               snappedDown.SlopeSteps == 3 &&
+               snappedDown.Size.z == 12 &&
+               snappedDown.Size.y == 3,
+            "Smart Builder snaps down-slope forward and downward scaling to whole pitch-locked ramp steps.");
+
+        AllConstruct fakeConstruct = null;
+        var occupiedScene = new SmartBuildPieceScene(fakeConstruct);
+        SmartBuildPiece occupiedCuboid = SmartBuildPiece.CreateCuboid(
+            fakeConstruct,
+            new Vector3i(0, 0, 0),
+            SmartBuildDrawPlane.Camera);
+        occupiedCuboid.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 1);
+        occupiedScene.Add(occupiedCuboid);
+        SmartBuildPlan blockModePlan = occupiedScene.BuildPlan(
+            smartSource,
+            cell => cell.Equals(new Vector3i(0, 0, 0)),
+            new SmartBuildPlannerOptions
+            {
+                SkipOccupiedCells = false,
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        SmartBuildPlan skipModePlan = occupiedScene.BuildPlan(
+            smartSource,
+            cell => cell.Equals(new Vector3i(0, 0, 0)),
+            new SmartBuildPlannerOptions
+            {
+                SkipOccupiedCells = true,
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        Assert(!blockModePlan.CanCommit &&
+               blockModePlan.FailureReason.Contains("intersects") &&
+               skipModePlan.CanCommit &&
+               skipModePlan.SkippedCells.Count == 1 &&
+               skipModePlan.CoveredCellCount == 1,
+            "Smart Builder scene planning blocks or skips occupied footprints according to the selected occupancy mode.");
+
+        var overlapScene = new SmartBuildPieceScene(fakeConstruct);
+        overlapScene.Add(SmartBuildPiece.CreateCuboid(
+            fakeConstruct,
+            new Vector3i(0, 0, 0),
+            SmartBuildDrawPlane.Camera));
+        overlapScene.Add(SmartBuildPiece.CreateCuboid(
+            fakeConstruct,
+            new Vector3i(0, 0, 0),
+            SmartBuildDrawPlane.Camera));
+        SmartBuildPlan overlapPlan = overlapScene.BuildPlan(
+            smartSource,
+            _ => false,
+            new SmartBuildPlannerOptions
+            {
+                SkipOccupiedCells = false,
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        Assert(!overlapPlan.CanCommit &&
+               overlapPlan.FailureReason.Contains("overlap"),
+            "Smart Builder multi-piece scenes reject preview-piece footprint collisions before commit.");
+
+        var editScene = new SmartBuildPieceScene(fakeConstruct);
+        SmartBuildPiece editBlock = SmartBuildPiece.CreateCuboid(
+            fakeConstruct,
+            new Vector3i(4, 0, 0),
+            SmartBuildDrawPlane.Camera);
+        editScene.Add(editBlock);
+        SmartBuildPiece duplicate = editScene.DuplicateSelected(new Vector3i(1, 0, 0));
+        bool deletedDuplicate = editScene.DeleteSelected();
+        Assert(duplicate != null &&
+               duplicate.Id != editBlock.Id &&
+               editScene.SelectedPiece == editBlock &&
+               deletedDuplicate &&
+               editScene.Count == 1,
+            "Smart Builder multi-piece scenes can duplicate and delete selected pieces while preserving selection.");
+
         ConstructorInfo placeBlockConstructor = AccessTools.Constructor(
             typeof(PlaceBlockCommand),
             new[]
@@ -3559,12 +4544,30 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBlockFamilyCatalog.cs"));
+        string pieceSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildPiece.cs"));
+        string sceneSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildPieceScene.cs"));
         string committerSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "SmartBuildMode",
             "SmartBuildCommitter.cs"));
+        string notificationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotifications.cs"));
         string inputScopeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3584,6 +4587,10 @@ f 0 2 3
             "EsuVanillaInputBridge.cs"));
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
+        string smartBuilderHudDocSource = ReadDocumentationText(
+            root,
+            "EndlessShapesUnlimited",
+            "SMART_BUILDER_HUD.md");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
                profileSource.Contains("SwitchEsuBuildMode") &&
@@ -3626,10 +4633,15 @@ f 0 2 3
                catalogSource.Contains("2d519ca8-1f12-4a8e-9340-aa6648b5e799") &&
                catalogSource.Contains("6c0bab88-aa88-4825-9cf5-55df36aa12b8") &&
                catalogSource.Contains("3cc75979-18ac-46c4-9a5b-25b327d99410") &&
+               catalogSource.Contains("DownSlopeFromMaterial") &&
+               catalogSource.Contains("DragSettings?.Geometry") &&
+               catalogSource.Contains("TryLengthFromDownSlopeGeometry") &&
+               catalogSource.Contains("bdafa446-f615-49cb-94f3-d7652dde6cec") &&
                catalogSource.Contains("ModificationComponentContainerItem") &&
                committerSource.Contains("PlaceBlockCommand") &&
-               committerSource.Contains("MirrorInfo.none"),
-            "Smart Block Builder has an internal 8-material picker, keeps selected-item compatibility available, resolves FtD item definitions, and commits vanilla block commands.");
+               committerSource.Contains("MirrorInfo.none") &&
+               committerSource.Contains("plan.Construct"),
+            "Smart Block Builder has an internal 8-material picker, keeps selected-item compatibility available, resolves FtD item definitions and down-slope geometry metadata, and commits vanilla block commands.");
         Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
                tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
@@ -3653,52 +4665,171 @@ f 0 2 3
                !sessionSource.Contains("cell = hit.Anchor + SmartBuildAxisHelper.ToVector3i(axis, sign)") &&
                sessionSource.Contains("SmartBlockFamilyCatalog.TryCreateMaterialSource") &&
                !sessionSource.Contains("SmartBuildSelectionResolver.TryResolve") &&
-               sessionSource.Contains("MaterialButton()") &&
+               !sessionSource.Contains("MaterialButton()") &&
+               sessionSource.Contains("ViewButton()") &&
+               sessionSource.Contains("DrawViewModeMenu") &&
+               sessionSource.Contains("DecorationEditorViewModeController") &&
+               sessionSource.Contains("ApplyFocusView") &&
+               sessionSource.Contains("RestoreFocusView") &&
                sessionSource.Contains("DrawMaterialSelector") &&
                sessionSource.Contains("CycleSelectedMaterial") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.X)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z)") &&
                sessionSource.Contains("BuildPreviewSymmetrySets") &&
-               sessionSource.Contains("BuildPlanFromCells") &&
+               sceneSource.Contains("BuildPlanFromCells") &&
+               sceneSource.Contains("ISmartBuildPattern") &&
+               pieceSource.Contains("SmartBuildShapeKind") &&
+               pieceSource.Contains("CreateDownSlope") &&
+               pieceSource.Contains("EnumerateDownSlopeSupportCells") &&
                sessionSource.Contains("RefreshPreviewVolumesOnly") &&
                sessionSource.Contains("BuildPreviewVolumesOnly") &&
                sessionSource.Contains("DrawDraftFaceHighlight") &&
                sessionSource.Contains("TryPickFace") &&
-               sessionSource.Contains("TryPickFacePlane") &&
-               sessionSource.Contains("TryGetFaceWorldCorners") &&
-               sessionSource.Contains("_planDirty") &&
-               !sessionSource.Contains("DrawDraftCells") &&
+                sessionSource.Contains("TryPickFacePlane") &&
+                draftSource.Contains("SmartBuildEditHandleMode") &&
+                draftSource.Contains("SmartBuildPreviewMode") &&
+                sessionSource.Contains("HandleModeStripButton(new Rect") &&
+                sessionSource.Contains("SmartBuildEditHandleMode.Gizmo, \"Gizmo\"") &&
+                sessionSource.Contains("SmartBuildEditHandleMode.Face, \"Face\"") &&
+                sessionSource.Contains("SmartBuildEditHandleMode.Edge, \"Edge\"") &&
+                sessionSource.Contains("SmartBuildEditHandleMode.Corner, \"Corner\"") &&
+                sessionSource.Contains("PreviewModeStripButton(new Rect") &&
+                sessionSource.Contains("SmartBuildPreviewMode.Wireframe, \"Wireframe\"") &&
+                sessionSource.Contains("SmartBuildPreviewMode.Material, \"Material\"") &&
+                sessionSource.Contains("TryPickEdge") &&
+                sessionSource.Contains("TryPickCorner") &&
+                sessionSource.Contains("TryGetEdgeWorldCorners") &&
+                sessionSource.Contains("TryGetCornerWorld") &&
+                sessionSource.Contains("TryGetFaceWorldCorners") &&
+                sessionSource.Contains("_planDirty") &&
+                !sessionSource.Contains("DrawDraftCells") &&
                !sessionSource.Contains("MaxPreviewCellsWithFaces") &&
                sessionSource.Contains("EveryPreviewSetTouchesExistingConstruct") &&
                sessionSource.Contains("Every symmetry preview must touch an existing block before Apply.") &&
                sessionSource.Contains("CreatePreviewAtSeed") &&
-               sessionSource.Contains("CanPlaceDraftOrigin") &&
-               sessionSource.Contains("_tool = SmartBuildTool.Scale") &&
-               sessionSource.Contains("Smart Builder origin is occupied. Pick an empty cell.") &&
+               sessionSource.Contains("SmartBuildPieceScene") &&
+               sessionSource.Contains("TrySeedFromPreviewFace") &&
+               sessionSource.Contains("TrySelectPreviewPieceAtPointer") &&
+                sessionSource.Contains("TryOpenPreviewContextMenu") &&
+                sessionSource.Contains("DrawPreviewContextMenu") &&
+                sessionSource.Contains("DrawShapePanel") &&
+                sessionSource.Contains("DrawSlopeSizeButton") &&
+                sessionSource.Contains("Slope length") &&
+                sessionSource.Contains("+ \"m\"") &&
+                sessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", ref _showLeftPanel") &&
+                sessionSource.Contains("ToolbarPanelToggle(\"build\", \"Shapes\", ref _showRightPanel") &&
+                !sessionSource.Contains("DrawPieceActionToolbar(budget.RightControlsWidth)") &&
+                sessionSource.Contains("ToolButton(SmartBuildTool.Draw, \"create\", \"Add\"") &&
+                !sessionSource.Contains("\"S\" + length.ToString(CultureInfo.InvariantCulture)") &&
+                sessionSource.Contains("Place normal cuboids and beams.") &&
+                sessionSource.Contains("Place 1m to 4m down-slope ramp segments.") &&
+                sessionSource.Contains("ArmAddMode") &&
+                sessionSource.Contains("Scale mode active") &&
+                sessionSource.Contains("DuplicateSelectedPiece") &&
+                sessionSource.Contains("DeleteSelectedPiece") &&
+                pieceSource.Contains("Duplicate(Vector3i offset)") &&
+                pieceSource.Contains("CompactSceneLabel") &&
+                pieceSource.Contains("EnumeratePlacementCells") &&
+                pieceSource.Contains("EnumerateSlopeLines") &&
+                pieceSource.Contains("SmartBuildSlopeSupportMode") &&
+                pieceSource.Contains("EnumerateDownSlopeStepSupportCells") &&
+                !sessionSource.Contains("DrawSlopeLinePrism") &&
+                sessionSource.Contains("DrawPlacementGhost") &&
+                sessionSource.Contains("DrawSlopeStepHull") &&
+                sessionSource.Contains("DrawDoubleSidedSlopeQuad") &&
+                sessionSource.Contains("DrawSupportHulls") &&
+                sessionSource.Contains("DrawVolumeFaces") &&
+                sessionSource.Contains("SolidMaterialPreviewColor") &&
+                !sessionSource.Contains("private Color MaterialPreviewColor(") &&
+                sceneSource.Contains("MirrorRotation(placement.Rotation, variant)") &&
+                sceneSource.Contains("QuaternionFromBasis(right, up, forward)") &&
+                pieceSource.Contains("SupportMode") &&
+                pieceSource.Contains("SetSupportMode") &&
+                sessionSource.Contains("ToggleSlopeSupportMode") &&
+                sessionSource.Contains("Support: Step") &&
+                sessionSource.Contains("DrawCellWire") &&
+                sessionSource.Contains("private void YawQuickButton()") &&
+                sessionSource.Contains("private void FlipQuickButton()") &&
+               sessionSource.Contains("ShouldShowPieceActionButtons(rightControlsWidth)") &&
+               sessionSource.Contains("rightControlsWidth >= EsuHudLayout.Scale") &&
+               sessionSource.Contains("AttentionIconButton(\"save\", \"Apply\"") &&
+               sessionSource.Contains("AttentionIconButton(\"cancel\", \"Cancel\"") &&
+               sessionSource.Contains("IconButton(\"delete\", \"Close\"") &&
+               sessionSource.Contains("ToolButton(SmartBuildTool.Rotate") &&
+               sessionSource.Contains("DrawRotateGizmo") &&
+               sessionSource.Contains("DrawRotationRing") &&
+               sessionSource.Contains("TryPickRotationRing") &&
+               sessionSource.Contains("RotationPivotLocal") &&
+               sessionSource.Contains("BeginRotateDrag") &&
+               sessionSource.Contains("UpdateRotateDrag") &&
+               sessionSource.Contains("EndRotateDrag") &&
+               sessionSource.Contains("_rotateDragAccumulatedDegrees") &&
+               sessionSource.Contains("Mathf.DeltaAngle(previousAngle, currentAngle)") &&
+               !ExtractMethodSource(sessionSource, "UpdateRotateDrag").Contains("Vector2.SignedAngle") &&
+               sessionSource.Contains("RotateSnapDegrees = 90f") &&
+               sessionSource.Contains("TryPickDownSlopeFace") &&
+               sessionSource.Contains("EnumerateDownSlopeHandleFaces") &&
+               sessionSource.Contains("TryBuildSlopeStepHullLocal") &&
+               sessionSource.Contains("piece.DropAxis") &&
+               !sessionSource.Contains("WithY(") &&
+               pieceSource.Contains("RecenterDownSlopeAround") &&
+               pieceSource.Contains("NearestCellToCenter") &&
+               sessionSource.Contains("UndoSceneEdit") &&
+               sessionSource.Contains("RedoSceneEdit") &&
+               sessionSource.Contains("SmartBuildSceneSnapshot") &&
+               sceneSource.Contains("ReplaceWith") &&
+               !sessionSource.Contains("ToolbarReservedSlot(") &&
+               sessionSource.Contains("s_rightPanelRect") &&
+               sessionSource.Contains("RotateYaw") &&
+                sessionSource.Contains("CanPlaceDraftOrigin") &&
+                sessionSource.Contains("_tool = SmartBuildTool.Draw") &&
+                sessionSource.Contains("_tool = SmartBuildTool.Scale;") &&
+                sessionSource.Contains("IsShiftHeld()") &&
+                sessionSource.Contains("TrySeedFromPreviewFace(") &&
+                sessionSource.Contains("inheritPreviewScale") &&
+                sessionSource.Contains("SlabFromPreviewFace") &&
+                sessionSource.Contains("CuboidSize") &&
+                sessionSource.Contains("Smart Builder origin is occupied. Pick an empty cell.") &&
                sessionSource.Contains("HandleLeftPanelResize") &&
                sessionSource.Contains("EsuHudLayout.DrawResizeGrip(_leftPanelRect") &&
                sessionSource.Contains("MinLeftPanelWidth") &&
+               sessionSource.Contains("private const float LeftPanelDefaultHeight = 507f") &&
+               sessionSource.Contains("new Rect(18f, 110f, LeftPanelWidth, LeftPanelDefaultHeight)") &&
+               sessionSource.Contains("EsuHudLayout.Scale(LeftPanelDefaultHeight)") &&
                sessionSource.Contains("DefaultLeftPanelRect") &&
                sessionSource.Contains("PlanTouchesExistingConstruct") &&
                committerSource.Contains("TryOrderPlacementsForCommit") &&
                committerSource.Contains("PlacementTouchesConstructOrPlacedCells") &&
                committerSource.Contains("remaining planned blocks are disconnected") &&
-               sessionSource.Contains("SmartBuildOccupancyMode.SkipOccupied") &&
-               sessionSource.Contains("Input.GetMouseButtonDown(2)") &&
-               !behaviourSource.Contains("AllGameControlsEnabled") &&
-               sessionSource.Contains("DecorationEditorTheme") &&
-               sessionSource.Contains("DrawCompactIconHeader(\"Smart Block Builder\", \"build\")") &&
+                sessionSource.Contains("SmartBuildOccupancyMode.SkipOccupied") &&
+                sessionSource.Contains("Input.GetMouseButtonDown(2)") &&
+                !ExtractMethodSource(sessionSource, "HandleMouse").Contains("CancelPreview()") &&
+                !behaviourSource.Contains("AllGameControlsEnabled") &&
+                sessionSource.Contains("DecorationEditorTheme") &&
+                sessionSource.Contains("DrawSmartPanelHeader(\"Smart Block Builder\", \"build\", ref _showLeftPanel)") &&
+                sessionSource.Contains("DrawSmartPanelHeader(\"Shapes\", \"build\", ref _showRightPanel)") &&
                !sessionSource.Contains("new GUIContent(\" Smart Block Builder\", DecorationEditorIconCatalog.Get(\"build\"))") &&
                 sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth))") &&
                 sessionSource.Contains("EsuHudLayout.LocalPanelInnerRect(_toolbarRect.width, _toolbarRect.height)") &&
                 sessionSource.Contains("private void ModeSwitchButton()") &&
                 !sessionSource.Contains("IconButton(\"open\", \"Deco\"") &&
                 sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
-                sessionSource.Contains("new Vector2(_toolbarRect.x + inner.x") &&
-                sessionSource.Contains("DecorationEditorOverlay.Quad") &&
+                sessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
+               notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
+               sessionSource.Contains("DecorationEditorOverlay.Quad") &&
                overlaySource.Contains("OverlayQuad"),
-            "Smart Block Builder uses a runtime draft, internal material picker, first-slot mode switch, rejects occupied draw origins, mirrors symmetry previews, switches Draw to Scale, commits connected placements first, tolerates middle-mouse cursor input, draws lightweight corner/face wire previews, and shares the ESU toolbar notification slot.");
+            "Smart Block Builder uses a runtime multi-piece scene, arms Add from the palette, switches to Scale after placement, has readable bottom-handle controls, draws placement ghosts and outer slope/support hulls, avoids right-click scene clearing, commits connected placements first, tolerates middle-mouse cursor input, and shares the ESU toolbar notification slot.");
+        string smartStatusStripSource = ExtractMethodSource(sessionSource, "DrawStatusStrip");
+        Assert(sessionSource.Contains("Mathf.Clamp(Screen.height * 0.13f") &&
+               !sessionSource.Contains("private const float StatusHeight = 56f") &&
+               smartStatusStripSource.Contains("DrawSmartBottomHeader") &&
+               smartStatusStripSource.Contains("DrawCyanLine") &&
+               smartStatusStripSource.Contains("DrawSmartBottomControls") &&
+               !smartStatusStripSource.Contains("GUILayout.BeginHorizontal") &&
+               sessionSource.Contains("\"Smart Block Builder\"") &&
+               sessionSource.Contains("\"Mode: Smart | Tab to Deco when clean\""),
+            "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm instead of the old short GUILayout strip.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
                smartInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&
@@ -3709,6 +4840,7 @@ f 0 2 3
                sessionSource.Contains("RefreshMouseOverUiFromCurrentPointer();") &&
                sessionSource.Contains("private void RefreshMouseOverUiFromCurrentPointer()") &&
                sessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
+               sessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(mouse)") &&
                sessionSource.Contains("SmartBuildInputScope.ClaimMouseWheelInputForFrames();") &&
                sessionSource.Contains("ShouldConsumeGuiEvent(Event.current)") &&
                sessionSource.Contains("SwitchToDecorationEditRequested") &&
@@ -3717,7 +4849,22 @@ f 0 2 3
         Assert(readmeDocumentationSource.Contains("SmartBuildDraft") &&
                readmeDocumentationSource.Contains("Middle mouse may") &&
                readmeDocumentationSource.Contains("show the FTD cursor without closing Smart Builder") &&
+               readmeDocumentationSource.Contains("Right click cancels") &&
+               readmeDocumentationSource.Contains("RGB rotation rings") &&
+               readmeDocumentationSource.Contains("Support: Full/Step") &&
+               !readmeDocumentationSource.Contains("green yaw ring") &&
+               !readmeDocumentationSource.Contains("Support: Full/Flat") &&
+               !readmeDocumentationSource.Contains("changed to **Flat**") &&
+               smartBuilderHudDocSource.Contains("Right click cancels") &&
+               smartBuilderHudDocSource.Contains("Support: Full/Step") &&
+               !smartBuilderHudDocSource.Contains("Support: Full/Flat") &&
+               !smartBuilderHudDocSource.Contains("Flat support") &&
+               smartBuilderHudDocSource.Contains("Wireframe") &&
+               smartBuilderHudDocSource.Contains("context menu") &&
+               smartBuilderHudDocSource.Contains("wide slope") &&
                inGameTestPlanSource.Contains("click empty space") &&
+               inGameTestPlanSource.Contains("sloped placement ghost") &&
+               inGameTestPlanSource.Contains("Support: Step") &&
                inGameTestPlanSource.Contains("middle mouse shows") &&
                inGameTestPlanSource.Contains("without closing"),
             "Smart Block Builder editable-preview workflow is documented for implementation notes and in-game smoke testing.");
@@ -3941,6 +5088,96 @@ f 0 2 3
         if (cursor != (uint)bytes.Length)
             throw new InvalidOperationException("Fixture serializer did not fill the expected byte count.");
         return bytes;
+    }
+
+    private sealed class VerificationVector3Converter : JsonConverter
+    {
+        public override bool CanConvert(Type objectType) => objectType == typeof(Vector3);
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        {
+            var vector = (Vector3)value;
+            writer.WriteStartObject();
+            writer.WritePropertyName("x");
+            writer.WriteValue(vector.x);
+            writer.WritePropertyName("y");
+            writer.WriteValue(vector.y);
+            writer.WritePropertyName("z");
+            writer.WriteValue(vector.z);
+            writer.WriteEndObject();
+        }
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class VerificationVector4Converter : JsonConverter
+    {
+        public override bool CanConvert(Type objectType) => objectType == typeof(Vector4);
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        {
+            var vector = (Vector4)value;
+            writer.WriteStartObject();
+            writer.WritePropertyName("x");
+            writer.WriteValue(vector.x);
+            writer.WritePropertyName("y");
+            writer.WriteValue(vector.y);
+            writer.WritePropertyName("z");
+            writer.WriteValue(vector.z);
+            writer.WritePropertyName("w");
+            writer.WriteValue(vector.w);
+            writer.WriteEndObject();
+        }
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class VerificationQuaternionConverter : JsonConverter
+    {
+        public override bool CanConvert(Type objectType) => objectType == typeof(Quaternion);
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        {
+            var quaternion = (Quaternion)value;
+            writer.WriteStartObject();
+            writer.WritePropertyName("x");
+            writer.WriteValue(quaternion.x);
+            writer.WritePropertyName("y");
+            writer.WriteValue(quaternion.y);
+            writer.WritePropertyName("z");
+            writer.WriteValue(quaternion.z);
+            writer.WritePropertyName("w");
+            writer.WriteValue(quaternion.w);
+            writer.WriteEndObject();
+        }
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class VerificationColorConverter : JsonConverter
+    {
+        public override bool CanConvert(Type objectType) => objectType == typeof(Color);
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        {
+            var color = (Color)value;
+            writer.WriteStartObject();
+            writer.WritePropertyName("r");
+            writer.WriteValue(color.r);
+            writer.WritePropertyName("g");
+            writer.WriteValue(color.g);
+            writer.WritePropertyName("b");
+            writer.WriteValue(color.b);
+            writer.WritePropertyName("a");
+            writer.WriteValue(color.a);
+            writer.WriteEndObject();
+        }
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer) =>
+            throw new NotSupportedException();
     }
 
     private static Blueprint NewBlueprintForUsageTest() =>

@@ -44,6 +44,20 @@ namespace DecoLimitLifter.SerializationHud
                     profile => profile.Enabled));
 
             CreateHeader(
+                "Blueprint saving",
+                new ToolTip(
+                    "Optional streamed saving for very large blueprint JSON files."));
+            var blueprintSaving = CreateTableSegment(2, 2);
+            blueprintSaving.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Stream large blueprint JSON saves",
+                    new ToolTip(
+                        "When enabled, ESU streams blueprint JSON saves estimated at 64 MiB or larger without changing the file format."),
+                    (profile, value) => profile.StreamLargeBlueprintJsonSaves = value,
+                    profile => profile.StreamLargeBlueprintJsonSaves));
+
+            CreateHeader(
                 "ESU editor HUD",
                 new ToolTip(
                     "Scale and reset the Decoration Edit, Surface Builder, and Smart Builder overlays."));

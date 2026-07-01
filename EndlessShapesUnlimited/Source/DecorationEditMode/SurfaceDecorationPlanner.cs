@@ -129,6 +129,162 @@ namespace DecoLimitLifter.DecorationEditMode
         }
     }
 
+    internal sealed class SurfaceDecorationSettingsSnapshot
+    {
+        internal SurfaceDecorationSettingsSnapshot(SurfaceDecorationSettings settings)
+        {
+            if (settings == null)
+                return;
+
+            StructureBlockType = settings.StructureBlockType;
+            FaceThickness = settings.FaceThickness;
+            ColorIndex = settings.ColorIndex;
+            NormalReversal = settings.NormalReversal;
+            NearestAnchor = settings.NearestAnchor;
+        }
+
+        internal StructureBlockType StructureBlockType { get; }
+
+        internal float FaceThickness { get; }
+
+        internal int ColorIndex { get; }
+
+        internal bool NormalReversal { get; }
+
+        internal bool NearestAnchor { get; }
+
+        internal void Restore(SurfaceDecorationSettings settings)
+        {
+            if (settings == null)
+                return;
+
+            settings.StructureBlockType = StructureBlockType;
+            settings.FaceThickness = FaceThickness;
+            settings.ColorIndex = ColorIndex;
+            settings.NormalReversal = NormalReversal;
+            settings.NearestAnchor = NearestAnchor;
+        }
+
+        internal bool SameAs(SurfaceDecorationSettingsSnapshot other) =>
+            other != null &&
+            StructureBlockType == other.StructureBlockType &&
+            Math.Abs(FaceThickness - other.FaceThickness) <= 0.0001f &&
+            ColorIndex == other.ColorIndex &&
+            NormalReversal == other.NormalReversal &&
+            NearestAnchor == other.NearestAnchor;
+    }
+
+    internal sealed class SurfaceDraftSnapshot
+    {
+        internal SurfaceDraftSnapshot(
+            AllConstruct construct,
+            IReadOnlyList<Vector3> points,
+            IReadOnlyList<SurfaceFace> faces,
+            IReadOnlyList<int> manualFaceSelection,
+            IReadOnlyList<int> freeTriangleSelection,
+            IReadOnlyList<SurfaceEdge> bridgeEdgeSelection,
+            SurfaceSelectionKind selectionKind,
+            int selectedPoint,
+            int selectedFace,
+            SurfaceEdge selectedEdge,
+            SurfaceDecorationSettingsSnapshot settings)
+        {
+            Construct = construct;
+            Points = (points ?? Array.Empty<Vector3>()).ToArray();
+            Faces = (faces ?? Array.Empty<SurfaceFace>()).ToArray();
+            ManualFaceSelection = (manualFaceSelection ?? Array.Empty<int>()).ToArray();
+            FreeTriangleSelection = (freeTriangleSelection ?? Array.Empty<int>()).ToArray();
+            BridgeEdgeSelection = (bridgeEdgeSelection ?? Array.Empty<SurfaceEdge>()).ToArray();
+            SelectionKind = selectionKind;
+            SelectedPoint = selectedPoint;
+            SelectedFace = selectedFace;
+            SelectedEdge = selectedEdge;
+            Settings = settings;
+        }
+
+        internal AllConstruct Construct { get; }
+
+        internal Vector3[] Points { get; }
+
+        internal SurfaceFace[] Faces { get; }
+
+        internal int[] ManualFaceSelection { get; }
+
+        internal int[] FreeTriangleSelection { get; }
+
+        internal SurfaceEdge[] BridgeEdgeSelection { get; }
+
+        internal SurfaceSelectionKind SelectionKind { get; }
+
+        internal int SelectedPoint { get; }
+
+        internal int SelectedFace { get; }
+
+        internal SurfaceEdge SelectedEdge { get; }
+
+        internal SurfaceDecorationSettingsSnapshot Settings { get; }
+
+        internal bool SameAs(SurfaceDraftSnapshot other)
+        {
+            if (other == null ||
+                !ReferenceEquals(Construct, other.Construct) ||
+                SelectionKind != other.SelectionKind ||
+                SelectedPoint != other.SelectedPoint ||
+                SelectedFace != other.SelectedFace ||
+                !SelectedEdge.Matches(other.SelectedEdge.A, other.SelectedEdge.B) ||
+                !(Settings == null ? other.Settings == null : Settings.SameAs(other.Settings)) ||
+                Points.Length != other.Points.Length ||
+                Faces.Length != other.Faces.Length ||
+                ManualFaceSelection.Length != other.ManualFaceSelection.Length ||
+                FreeTriangleSelection.Length != other.FreeTriangleSelection.Length ||
+                BridgeEdgeSelection.Length != other.BridgeEdgeSelection.Length)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < Points.Length; index++)
+            {
+                if (!SameVector(Points[index], other.Points[index]))
+                    return false;
+            }
+
+            for (int index = 0; index < Faces.Length; index++)
+            {
+                if (Faces[index].A != other.Faces[index].A ||
+                    Faces[index].B != other.Faces[index].B ||
+                    Faces[index].C != other.Faces[index].C)
+                {
+                    return false;
+                }
+            }
+
+            for (int index = 0; index < ManualFaceSelection.Length; index++)
+            {
+                if (ManualFaceSelection[index] != other.ManualFaceSelection[index])
+                    return false;
+            }
+
+            for (int index = 0; index < FreeTriangleSelection.Length; index++)
+            {
+                if (FreeTriangleSelection[index] != other.FreeTriangleSelection[index])
+                    return false;
+            }
+
+            for (int index = 0; index < BridgeEdgeSelection.Length; index++)
+            {
+                if (!BridgeEdgeSelection[index].Matches(other.BridgeEdgeSelection[index].A, other.BridgeEdgeSelection[index].B))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool SameVector(Vector3 left, Vector3 right) =>
+            Math.Abs(left.x - right.x) <= 0.0001f &&
+            Math.Abs(left.y - right.y) <= 0.0001f &&
+            Math.Abs(left.z - right.z) <= 0.0001f;
+    }
+
     internal sealed class SurfaceDraft
     {
         private readonly List<Vector3> _points = new List<Vector3>();
@@ -210,6 +366,39 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedEdge = new SurfaceEdge(-1, -1);
             _manualFaceSelection.Clear();
             _bridgeEdgeSelection.Clear();
+        }
+
+        internal SurfaceDraftSnapshot CreateSnapshot() =>
+            new SurfaceDraftSnapshot(
+                Construct,
+                _points,
+                _faces,
+                _manualFaceSelection,
+                _freeTriangleSelection,
+                _bridgeEdgeSelection,
+                SelectionKind,
+                SelectedPoint,
+                SelectedFace,
+                SelectedEdge,
+                new SurfaceDecorationSettingsSnapshot(Settings));
+
+        internal void Restore(SurfaceDraftSnapshot snapshot)
+        {
+            Clear();
+            if (snapshot == null)
+                return;
+
+            Construct = snapshot.Construct;
+            _points.AddRange(snapshot.Points ?? Array.Empty<Vector3>());
+            _faces.AddRange(snapshot.Faces ?? Array.Empty<SurfaceFace>());
+            _manualFaceSelection.AddRange(snapshot.ManualFaceSelection ?? Array.Empty<int>());
+            _freeTriangleSelection.AddRange(snapshot.FreeTriangleSelection ?? Array.Empty<int>());
+            _bridgeEdgeSelection.AddRange(snapshot.BridgeEdgeSelection ?? Array.Empty<SurfaceEdge>());
+            SelectionKind = snapshot.SelectionKind;
+            SelectedPoint = snapshot.SelectedPoint;
+            SelectedFace = snapshot.SelectedFace;
+            SelectedEdge = snapshot.SelectedEdge;
+            snapshot.Settings?.Restore(Settings);
         }
 
         internal bool TryAddPoint(
@@ -301,7 +490,10 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
-        internal bool TryMovePoint(int index, Vector3 local, out string message)
+        internal bool TryMovePoint(int index, Vector3 local, out string message) =>
+            TryMovePoint(index, local, DecorationEditMath.MoveSnapMetres, out message);
+
+        internal bool TryMovePoint(int index, Vector3 local, float snap, out string message)
         {
             message = null;
             if (index < 0 || index >= _points.Count)
@@ -316,7 +508,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
-            _points[index] = DecorationEditMath.Snap(local);
+            _points[index] = DecorationEditMath.Snap(local, snap);
             return true;
         }
 
@@ -1062,6 +1254,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             var placements = new List<SurfaceDecorationPlacement>();
             var warnings = new List<string>();
+            var anchorContext = new SurfaceAnchorContext(draft.Settings.NearestAnchor, anchorResolver);
             try
             {
                 for (int faceIndex = 0; faceIndex < draft.Faces.Count; faceIndex++)
@@ -1071,7 +1264,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         draft,
                         face,
                         faceIndex,
-                        anchorResolver,
+                        anchorContext,
                         placements,
                         warnings);
                 }
@@ -1223,7 +1416,10 @@ namespace DecoLimitLifter.DecorationEditMode
         private static string PlacementKey(SurfaceDecorationPlacement placement) =>
             placement.MeshGuid.ToString("N") + "|" +
             CellKey(placement.Anchor) + "|" +
-            VectorKey(placement.Positioning);
+            VectorKey(placement.Positioning) + "|" +
+            VectorKey(placement.Scaling) + "|" +
+            VectorKey(placement.Orientation) + "|" +
+            placement.Color.ToString(CultureInfo.InvariantCulture);
 
         private static string CellKey(Vector3i value) =>
             value.x.ToString(CultureInfo.InvariantCulture) + ":" +
@@ -1240,7 +1436,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SurfaceDraft draft,
             SurfaceFace face,
             int faceIndex,
-            ISurfaceAnchorResolver anchorResolver,
+            SurfaceAnchorContext anchorContext,
             List<SurfaceDecorationPlacement> placements,
             List<string> warnings)
         {
@@ -1284,30 +1480,25 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (!data.TryGetStandaloneData(out meshGuid, out center, out scaling, out orientation, out color))
                     throw new InvalidOperationException("Surface polygon conversion did not produce standalone decoration data.");
 
-                Vector3i anchor = new Vector3i(0, 0, 0);
-                if (draft.Settings.NearestAnchor)
+                Vector3i anchor;
+                string anchorMessage = "Surface anchor resolver is unavailable.";
+                if (anchorContext == null ||
+                    !anchorContext.TryResolveAnchor(center, faceIndex, out anchor, out anchorMessage))
                 {
-                    if (anchorResolver == null ||
-                        !anchorResolver.TryResolveAnchor(center, out anchor))
-                    {
-                        throw new InvalidOperationException(
-                            "Surface face " +
-                            (faceIndex + 1).ToString(CultureInfo.InvariantCulture) +
-                            " has no valid nearest anchor within +/-10m.");
-                    }
+                    throw new InvalidOperationException(anchorMessage);
                 }
 
                 Vector3 positioning = RoundPlacementPosition(center - ToVector3(anchor));
                 if (!DecorationEditMath.IsWithinPositionLimit(positioning))
                 {
-                    throw new InvalidOperationException(
-                        "Surface face " +
-                        (faceIndex + 1).ToString(CultureInfo.InvariantCulture) +
-                        " generated a decoration outside FTD's +/-10 positioning limit.");
+                    throw new InvalidOperationException(anchorContext.NearestAnchor
+                        ? "Surface face " +
+                          (faceIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                          " generated a decoration outside FTD's +/-10 positioning limit."
+                        : "Surface same-anchor mode would exceed FTD's +/-10 positioning limit on face " +
+                          (faceIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                          ".");
                 }
-
-                if (!draft.Settings.NearestAnchor)
-                    warnings.Add("Nearest anchoring is off; generated offsets are relative to 0,0,0.");
 
                 Vector3 transformThicknessAxis = DecorationTransformThicknessAxis(polygon, orientation);
                 float transformPlaneDistance = Vector3.Dot(
@@ -1580,6 +1771,61 @@ namespace DecoLimitLifter.DecorationEditMode
                 " " +
                 message +
                 ".");
+
+        private sealed class SurfaceAnchorContext
+        {
+            private readonly ISurfaceAnchorResolver _resolver;
+            private bool _hasSharedAnchor;
+            private Vector3i _sharedAnchor;
+
+            internal SurfaceAnchorContext(bool nearestAnchor, ISurfaceAnchorResolver resolver)
+            {
+                NearestAnchor = nearestAnchor;
+                _resolver = resolver;
+            }
+
+            internal bool NearestAnchor { get; }
+
+            internal bool TryResolveAnchor(
+                Vector3 center,
+                int faceIndex,
+                out Vector3i anchor,
+                out string message)
+            {
+                anchor = new Vector3i(0, 0, 0);
+                message = null;
+                if (_resolver == null)
+                {
+                    message = "Surface anchor resolver is unavailable.";
+                    return false;
+                }
+
+                if (NearestAnchor)
+                {
+                    if (_resolver.TryResolveAnchor(center, out anchor))
+                        return true;
+
+                    message = "Surface face " +
+                              (faceIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                              " has no valid nearest anchor within +/-10m.";
+                    return false;
+                }
+
+                if (!_hasSharedAnchor)
+                {
+                    if (!_resolver.TryResolveAnchor(center, out _sharedAnchor))
+                    {
+                        message = "Surface same-anchor mode found no valid anchor within +/-10m.";
+                        return false;
+                    }
+
+                    _hasSharedAnchor = true;
+                }
+
+                anchor = _sharedAnchor;
+                return true;
+            }
+        }
 
         private static Vector3 ToVector3(Vector3i value) =>
             new Vector3(value.x, value.y, value.z);

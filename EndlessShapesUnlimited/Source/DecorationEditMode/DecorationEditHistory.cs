@@ -161,6 +161,58 @@ namespace DecoLimitLifter.DecorationEditMode
                 Label + " redo");
     }
 
+    internal sealed class SurfaceDraftHistoryCommand : IDecorationEditCommand
+    {
+        private readonly SurfaceDraftSnapshot _before;
+        private readonly SurfaceDraftSnapshot _after;
+
+        internal SurfaceDraftHistoryCommand(
+            string label,
+            SurfaceDraftSnapshot before,
+            SurfaceDraftSnapshot after)
+        {
+            Label = string.IsNullOrEmpty(label) ? "Edit surface draft" : label;
+            _before = before;
+            _after = after;
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreSurfaceDraftHistory(_before, Label + " undo");
+
+        public bool Redo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreSurfaceDraftHistory(_after, Label + " redo");
+    }
+
+    internal sealed class GeneratorDraftHistoryCommand : IDecorationEditCommand
+    {
+        private readonly DecorationGeneratorEditSnapshot _before;
+        private readonly DecorationGeneratorEditSnapshot _after;
+
+        internal GeneratorDraftHistoryCommand(
+            string label,
+            DecorationGeneratorEditSnapshot before,
+            DecorationGeneratorEditSnapshot after)
+        {
+            Label = string.IsNullOrEmpty(label) ? "Edit generator draft" : label;
+            _before = before;
+            _after = after;
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreGeneratorDraftHistory(_before, Label + " undo");
+
+        public bool Redo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreGeneratorDraftHistory(_after, Label + " redo");
+    }
+
     internal sealed class DecorationCreateCommand : IDecorationEditCommand
     {
         private readonly AllConstruct _construct;
