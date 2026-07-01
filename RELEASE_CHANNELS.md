@@ -101,14 +101,45 @@ Exclude:
 1. Update version metadata in `plugin.json`, `Plugin.cs`, and
    `Properties/AssemblyInfo.cs`.
 2. Update `EndlessShapesUnlimited/releases`.
-3. Confirm `EndlessShapesUnlimited/header.jpg` exists and is below 1 MB.
-4. Run:
+3. Update the packaged Steam/player readme in
+   `EndlessShapesUnlimited/README.md`. This is also the source text for the
+   Steam Workshop description artifact.
+4. Confirm `EndlessShapesUnlimited/header.jpg` exists and is below 1 MB.
+5. Run:
 
    ```powershell
    $env:FTD_DIR = '<path-to-From-The-Depths-install>'
    powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
    ```
 
-5. Confirm the zip SHA256 and release asset.
-6. Copy `artifacts/staging/EndlessShapesUnlimited` to the local FTD Mods folder
+6. Confirm the verifier passes and record the zip SHA256 printed by
+   `build.ps1`.
+7. Copy `artifacts/staging/EndlessShapesUnlimited` to the local FTD Mods folder
    before Steam Workshop upload.
+8. Copy `EndlessShapesUnlimited/README.md` to
+   `artifacts/SteamWorkshopDescription-vX.Y.Z.md` so the exact Steam text is
+   archived locally.
+9. Scan the repository, generated zip, staged package, installed Workshop
+   folder, Steam description text, GitHub release body, GitHub release asset,
+   and GitHub source archive for:
+
+   - real user-profile paths;
+   - machine names;
+   - local install paths;
+   - tokens, passwords, private keys, or API keys;
+   - copied source/build/debug files in the runtime package.
+
+10. Commit and push the release changes to `main`.
+11. Create or move the `vX.Y.Z` tag to the final release commit and push it.
+12. Create or update the GitHub release:
+
+   - release name: `EndlessShapes Unlimited vX.Y.Z`;
+   - attach only `EndlessShapesUnlimited-X.Y.Z.zip`;
+   - include the exact SHA256 in the release body;
+   - mention Steam Workshop when the release is also a Workshop release.
+13. Download the public GitHub release asset and source archive, then scan them
+   again before announcing the release.
+
+Prefer a fresh version/tag for final public releases. Replacing an asset under
+the same GitHub release filename can be affected by download caching, so a fresh
+tag and fresh asset name is safer when publishing something users will install.
