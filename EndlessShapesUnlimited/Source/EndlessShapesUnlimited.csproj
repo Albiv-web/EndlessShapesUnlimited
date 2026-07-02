@@ -27,6 +27,10 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Modding.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Steamworks">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Steamworks.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>

@@ -35,6 +35,8 @@ GitHub history, but short enough that it can be copied into release notes.
   block-data application in original block order.
 - Added passive fast-load diagnostics and a small-blueprint testing override,
   both default OFF.
+- Added a Steam Workshop update notifier that can show a non-error main-menu
+  mod status row when the Workshop description advertises a newer version.
 - Added this changelog.
 
 ### Changed
@@ -60,6 +62,8 @@ GitHub history, but short enough that it can be copied into release notes.
   saving, not a new save format.
 - The Steam/player readme now distinguishes `Wire bytes`, `Vanilla load`, and
   `Vanilla edit limit` compatibility.
+- Steam Workshop descriptions now need a `Mod latest version 1.0.4` line so
+  installed copies can check whether a newer Workshop version exists.
 - Fast blueprint loading does not change the `.blueprint` schema, does not write
   sidecar files, and keeps V3 conservative by falling back to V2 unless bulk
   loading can be proven safe.

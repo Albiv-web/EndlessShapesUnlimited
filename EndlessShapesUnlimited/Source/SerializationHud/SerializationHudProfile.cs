@@ -24,6 +24,9 @@ namespace DecoLimitLifter.SerializationHud
             public FastBlueprintLoadTier FastBlueprintLoadTier { get; set; }
             public bool FastBlueprintLoadDiagnostics { get; set; }
             public bool FastBlueprintLoadSmallBlueprintTesting { get; set; }
+            public bool FastBlueprintLoadForceV2BlockData { get; set; }
+            public bool FastBlueprintLoadBlockCountRouting { get; set; }
+            public FastBlueprintLoadUnsafeProbeMode FastBlueprintLoadUnsafeProbeMode { get; set; }
         }
 
         internal static ProfileData Data =>
@@ -41,6 +44,17 @@ namespace DecoLimitLifter.SerializationHud
         V1,
         V2,
         V3
+    }
+
+    public enum FastBlueprintLoadUnsafeProbeMode
+    {
+        Off,
+        SkipV3SyncRegistration,
+        SkipV3StatusRegistration,
+        SkipStage2ModuleExternalLinkup,
+        SkipV3ColliderLinkup,
+        SkipV3ShellLinkup,
+        SkipV3SkinCalc
     }
 
     public enum SerializationHudKeyInput

@@ -43,6 +43,8 @@ namespace DecoLimitLifter
             {
                 harmony = new Harmony(HarmonyId);
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
+                Patches.FastBlueprintLoadRouter.InstallOptionalV3BlockStatePatch(harmony);
+                Patches.FastBlueprintLoadRouter.InstallOptionalStage2ModuleExternalLinkupPatch(harmony);
                 DecorationTooltipSuppressor.Install(harmony);
 
                 Patches.ByteStorePatch.EnsureMegaBytes();
@@ -87,6 +89,7 @@ namespace DecoLimitLifter
             try
             {
                 RegisterActiveStatus();
+                WorkshopUpdateNotifier.Start(name, version);
             }
             catch (Exception exception)
             {
@@ -144,6 +147,10 @@ namespace DecoLimitLifter
                 ResolveBlueprintFileManagerFactoryTarget(),
                 ResolveFastBlueprintFileModelLoadTarget(),
                 ResolveConstructExtraInfoDataArrayTarget(),
+                ResolveConstructExtraInfoProvideInfoToBlocksTarget(),
+                ResolveConstructExtraInfoDoubleArrayTarget(),
+                ResolveConstructExtraInfoUpgradeConstructTarget(),
+                ResolveAllConstructInitialiseStage2Target(),
                 ResolveVanillaDecorationCreationTarget(),
                 ResolveDecorationSaveTarget(),
                 ResolveDecorationLoadTarget(),
@@ -275,6 +282,100 @@ namespace DecoLimitLifter
                     typeof(Patches.ConstructExtraInfo_DataArray_FastLoad_Patch),
                     "Prefix"),
                 prefix: true);
+            VerifyExactPatch(
+                ResolveConstructExtraInfoDataArrayTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_DataArray_FastLoad_Patch),
+                    "Postfix"),
+                prefix: false);
+            VerifyExactFinalizer(
+                ResolveConstructExtraInfoDataArrayTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_DataArray_FastLoad_Patch),
+                    "Finalizer"));
+            VerifyExactPatch(
+                ResolveConstructExtraInfoProvideInfoToBlocksTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_ProvideInfoToBlocks_V3BulkLoad_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveConstructExtraInfoProvideInfoToBlocksTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_ProvideInfoToBlocks_V3BulkLoad_Patch),
+                    "Postfix"),
+                prefix: false);
+            VerifyExactFinalizer(
+                ResolveConstructExtraInfoProvideInfoToBlocksTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_ProvideInfoToBlocks_V3BulkLoad_Patch),
+                    "Finalizer"));
+            VerifyExactPatch(
+                ResolveConstructExtraInfoDoubleArrayTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_DoubleArray_FastLoadDiagnostics_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveConstructExtraInfoDoubleArrayTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_DoubleArray_FastLoadDiagnostics_Patch),
+                    "Postfix"),
+                prefix: false);
+            VerifyExactFinalizer(
+                ResolveConstructExtraInfoDoubleArrayTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_DoubleArray_FastLoadDiagnostics_Patch),
+                    "Finalizer"));
+            VerifyExactPatch(
+                ResolveConstructExtraInfoUpgradeConstructTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_UpgradeConstruct_FastLoadDiagnostics_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveConstructExtraInfoUpgradeConstructTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_UpgradeConstruct_FastLoadDiagnostics_Patch),
+                    "Postfix"),
+                prefix: false);
+            VerifyExactFinalizer(
+                ResolveConstructExtraInfoUpgradeConstructTarget(),
+                AccessTools.Method(
+                    typeof(Patches.ConstructExtraInfo_UpgradeConstruct_FastLoadDiagnostics_Patch),
+                    "Finalizer"));
+            MethodBase v3BlockStateChanged = ResolveBlockBlockStateChangedTarget();
+            if (v3BlockStateChanged != null)
+            {
+                VerifyExactPatch(
+                    v3BlockStateChanged,
+                    AccessTools.Method(
+                        typeof(Patches.Block_BlockStateChanged_V3BulkLoad_Patch),
+                        "Prefix"),
+                    prefix: true);
+            }
+            VerifyExactPatch(
+                ResolveAllConstructInitialiseStage2Target(),
+                AccessTools.Method(
+                    typeof(Patches.AllConstruct_InitialiseStage2_FastLoadDiagnostics_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveAllConstructInitialiseStage2Target(),
+                AccessTools.Method(
+                    typeof(Patches.AllConstruct_InitialiseStage2_FastLoadDiagnostics_Patch),
+                    "Postfix"),
+                prefix: false);
+            VerifyExactFinalizer(
+                ResolveAllConstructInitialiseStage2Target(),
+                AccessTools.Method(
+                    typeof(Patches.AllConstruct_InitialiseStage2_FastLoadDiagnostics_Patch),
+                    "Finalizer"));
+            VerifyExactTranspiler(
+                ResolveAllConstructInitialiseStage2Target(),
+                AccessTools.Method(
+                    typeof(Patches.AllConstruct_InitialiseStage2_FastLoadDiagnostics_Patch),
+                    "Transpiler"));
 
             VerifyExactPatch(
                 ResolveVanillaDecorationCreationTarget(),
@@ -408,6 +509,30 @@ namespace DecoLimitLifter
 
         internal static MethodBase ResolveConstructExtraInfoDataArrayTarget() =>
             Patches.FastBlueprintLoadRouter.ResolveConstructExtraInfoDataArrayTarget();
+
+        internal static MethodBase ResolveConstructExtraInfoProvideInfoToBlocksTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveConstructExtraInfoProvideInfoToBlocksTarget();
+
+        internal static MethodBase ResolveConstructExtraInfoDoubleArrayTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveConstructExtraInfoDoubleArrayTarget();
+
+        internal static MethodBase ResolveConstructExtraInfoUpgradeConstructTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveConstructExtraInfoUpgradeConstructTarget();
+
+        internal static MethodBase ResolveBlockBlockStateChangedTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveBlockBlockStateChangedTarget();
+
+        internal static MethodBase ResolveAllConstructInitialiseStage2Target() =>
+            Patches.FastBlueprintLoadRouter.ResolveAllConstructInitialiseStage2Target();
+
+        internal static MethodBase ResolveStage2ModuleExternalLinkupTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolveStage2ModuleExternalLinkupTarget();
+
+        internal static MethodBase ResolvePartStatusRegisterCheckableBlockTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolvePartStatusRegisterCheckableBlockTarget();
+
+        internal static MethodBase ResolvePartStatusUnregisterCheckableBlockTarget() =>
+            Patches.FastBlueprintLoadRouter.ResolvePartStatusUnregisterCheckableBlockTarget();
 
         internal static MethodBase ResolveVanillaDecorationCreationTarget() =>
             AccessTools.Method(

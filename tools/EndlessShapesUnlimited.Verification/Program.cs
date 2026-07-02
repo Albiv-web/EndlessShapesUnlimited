@@ -121,6 +121,7 @@ internal static class Program
             VerifyExporterFormatting();
             VerifyUiPatchTarget();
             VerifyActiveStatusApi();
+            VerifyWorkshopUpdateNotifier();
             VerifySerializationHudTargets();
             VerifySerializationTelemetryAggregation();
             VerifyBlueprintSerializationUsageAnalyzer();
@@ -1317,6 +1318,91 @@ f 0 2 3
             "Current FTD active-mod status APIs resolve without forcing GUI activation during boot.");
     }
 
+    private static void VerifyWorkshopUpdateNotifier()
+    {
+        Assert(WorkshopUpdateNotifier.TryParseLatestVersionForVerification(
+                   "Intro\r\nMod latest version 1.2.3\r\nOther",
+                   out Version parsed) &&
+               parsed == new Version(1, 2, 3),
+            "Workshop update notifier parses the exact latest-version line prefix.");
+        Assert(WorkshopUpdateNotifier.IsWorkshopVersionNewerForVerification(
+                   new Version(1, 0, 4),
+                   "Mod latest version 1.0.5",
+                   out Version newer) &&
+               newer == new Version(1, 0, 5),
+            "Workshop update notifier detects a newer remote version.");
+        Assert(!WorkshopUpdateNotifier.IsWorkshopVersionNewerForVerification(
+                   new Version(1, 0, 4),
+                   "Mod latest version 1.0.4",
+                   out _),
+            "Workshop update notifier does not flag the installed version as stale when versions match.");
+        Assert(!WorkshopUpdateNotifier.IsWorkshopVersionNewerForVerification(
+                   new Version(1, 0, 4),
+                   "Mod latest version 1.0.3",
+                   out _),
+            "Workshop update notifier ignores older Workshop versions.");
+        Assert(!WorkshopUpdateNotifier.TryParseLatestVersionForVerification(
+                   "Mod latest version newest",
+                   out _) &&
+               !WorkshopUpdateNotifier.TryParseLatestVersionForVerification(
+                   "No version line here",
+                   out _),
+            "Workshop update notifier silently ignores malformed or missing Workshop version lines.");
+
+        string root = FindRepositoryRoot();
+        string modProject = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EndlessShapesUnlimited.csproj"));
+        string verifierProject = File.ReadAllText(Path.Combine(
+            root,
+            "tools",
+            "EndlessShapesUnlimited.Verification",
+            "EndlessShapesUnlimited.Verification.csproj"));
+        string pluginSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
+        string notifierSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "WorkshopUpdateNotifier.cs"));
+        string changelogSource = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"));
+        string releaseChannelsSource = File.ReadAllText(Path.Combine(root, "RELEASE_CHANNELS.md"));
+        string steamReadmeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "README.md"));
+
+        Assert(modProject.Contains("<Reference Include=\"Steamworks\">") &&
+               modProject.Contains("Steamworks.dll") &&
+               modProject.Contains("<Private>false</Private>") &&
+               verifierProject.Contains("<Reference Include=\"Steamworks\">") &&
+               verifierProject.Contains("Steamworks.dll") &&
+               verifierProject.Contains("<Private>false</Private>"),
+            "The mod and verifier reference Steamworks.dll without copying it into the runtime package.");
+        Assert(pluginSource.Contains("WorkshopUpdateNotifier.Start(name, version)"),
+            "Plugin startup starts the Workshop update notifier after normal startup succeeds.");
+        Assert(notifierSource.Contains("RequestUGCDetails") &&
+               notifierSource.Contains("CallResult<SteamUGCRequestUGCDetailsResult_t>") &&
+               notifierSource.Contains("LatestVersionPrefix = \"Mod latest version \"") &&
+               notifierSource.Contains("MaximumRequests = 5") &&
+               notifierSource.Contains("ModProblems.AddModProblem(") &&
+               notifierSource.Contains("\"New version released! v\"") &&
+               notifierSource.Contains("false);") &&
+               notifierSource.Contains("RefreshActiveGuis"),
+            "Workshop update notifier queries Steam UGC, writes a non-error ModProblems row, and refreshes active GUI screens.");
+        Assert(changelogSource.Contains("Steam Workshop update notifier") &&
+               changelogSource.Contains("Mod latest version 1.0.4") &&
+               releaseChannelsSource.Contains("Mod latest version X.Y.Z") &&
+               releaseChannelsSource.Contains("Mod latest version 1.0.4") &&
+               steamReadmeSource.Contains("Mod latest version 1.0.4"),
+            "Changelog and release-channel workflow document the Steam Workshop update version line.");
+    }
+
     private static void VerifySerializationHudTargets()
     {
         MethodBase[] targets =
@@ -1688,7 +1774,10 @@ f 0 2 3
             "Large blueprint JSON streaming saves are disabled by default for a new profile.");
         Assert(data.FastBlueprintLoadTier == FastBlueprintLoadTier.Off &&
                !data.FastBlueprintLoadDiagnostics &&
-               !data.FastBlueprintLoadSmallBlueprintTesting,
+               !data.FastBlueprintLoadSmallBlueprintTesting &&
+               !data.FastBlueprintLoadForceV2BlockData &&
+               !data.FastBlueprintLoadBlockCountRouting &&
+               data.FastBlueprintLoadUnsafeProbeMode == FastBlueprintLoadUnsafeProbeMode.Off,
             "Experimental fast blueprint loading defaults to vanilla/off for a new profile.");
         Assert(data.EsuEditorAutoScale &&
                Math.Abs(data.EsuEditorScale - 1f) < 0.001f &&
@@ -1741,7 +1830,16 @@ f 0 2 3
                profileSource.Contains("SmartBuildScaleStepCells") &&
                profileSource.Contains("FastBlueprintLoadTier") &&
                profileSource.Contains("FastBlueprintLoadDiagnostics") &&
-               profileSource.Contains("FastBlueprintLoadSmallBlueprintTesting"),
+               profileSource.Contains("FastBlueprintLoadSmallBlueprintTesting") &&
+               profileSource.Contains("FastBlueprintLoadForceV2BlockData") &&
+               profileSource.Contains("FastBlueprintLoadBlockCountRouting") &&
+               profileSource.Contains("FastBlueprintLoadUnsafeProbeMode") &&
+               profileSource.Contains("SkipV3SyncRegistration") &&
+               profileSource.Contains("SkipV3StatusRegistration") &&
+               profileSource.Contains("SkipStage2ModuleExternalLinkup") &&
+               profileSource.Contains("SkipV3ColliderLinkup") &&
+               profileSource.Contains("SkipV3ShellLinkup") &&
+               profileSource.Contains("SkipV3SkinCalc"),
             "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/load/transform snap settings are profiled.");
         string optionsSource = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -1757,8 +1855,55 @@ f 0 2 3
                optionsSource.Contains("Blueprint loading") &&
                optionsSource.Contains("Fast load tier") &&
                optionsSource.Contains("Fast load diagnostics") &&
-               optionsSource.Contains("Apply fast load to small blueprints"),
-            "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and experimental loading controls.");
+               optionsSource.Contains("Apply fast load to small blueprints") &&
+               optionsSource.Contains("Force V2 block-data fast path") &&
+               optionsSource.Contains("Apply V3 to block-count-heavy blueprints") &&
+               optionsSource.Contains("Unsafe probe mode") &&
+               optionsSource.Contains("can create invalid loaded constructs") &&
+               optionsSource.Contains("do_not_save=true") &&
+               optionsSource.Contains("UnsafeProbeCycle") &&
+               optionsSource.Contains("var blueprintLoading = CreateTableSegment(2, 4);"),
+            "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and experimental loading controls without clipping Blueprint loading rows.");
+        Assert(optionsSource.Contains("SubjectiveDisplay<SerializationHudProfile.ProfileData>.Quick") &&
+               optionsSource.Contains("FastBlueprintLoadTierStatus(profile)") &&
+               optionsSource.Contains("TriggerScreenRebuild()") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadTierStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadTier = FastBlueprintLoadTier.V2
+                   }).Contains("V2 - parallel predecode"),
+            "The ESU options screen updates the visible fast-load tier immediately after cycling it.");
+        Assert(SerializationHudOptionsScreen.FastBlueprintLoadUnsafeProbeStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadUnsafeProbeMode = FastBlueprintLoadUnsafeProbeMode.SkipV3SyncRegistration
+                   }).Contains("Skip V3 sync registration") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadUnsafeProbeStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadUnsafeProbeMode = FastBlueprintLoadUnsafeProbeMode.SkipV3StatusRegistration
+                   }).Contains("Skip V3 status registration") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadUnsafeProbeStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadUnsafeProbeMode = FastBlueprintLoadUnsafeProbeMode.SkipStage2ModuleExternalLinkup
+                   }).Contains("Skip Stage2 module linkup") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadUnsafeProbeStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadUnsafeProbeMode = FastBlueprintLoadUnsafeProbeMode.SkipV3ColliderLinkup
+                   }).Contains("Skip V3 collider linkup") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadUnsafeProbeStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadUnsafeProbeMode = FastBlueprintLoadUnsafeProbeMode.SkipV3ShellLinkup
+                   }).Contains("Skip V3 shell linkup") &&
+               SerializationHudOptionsScreen.FastBlueprintLoadUnsafeProbeStatus(
+                   new SerializationHudProfile.ProfileData
+                   {
+                       FastBlueprintLoadUnsafeProbeMode = FastBlueprintLoadUnsafeProbeMode.SkipV3SkinCalc
+                   }).Contains("Skip V3 skin calculation"),
+            "The ESU options screen displays the active unsafe fast-load probe mode immediately.");
         Assert(SerializationHudRenderer.FormatName(SerializationWireFormat.Legacy) == "LEGACY WIRE" &&
                SerializationHudRenderer.FormatBytes(1024UL) == "1 KiB",
             "Serialization HUD labels use readable invariant wire-format and byte text.");
@@ -2099,6 +2244,196 @@ f 0 2 3
                SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V3).Contains("experimental bulk"),
             "Fast blueprint load tier labels describe Off, V1, V2, and V3.");
 
+        Assert(!FastBlueprintLoadRouter.ShouldRouteV2BlockDataForVerification(
+                   17_606L,
+                   253,
+                   forceV2: false,
+                   smallBlueprintTesting: false,
+                   diagnostics: true,
+                   out string tinyReason) &&
+               tinyReason == "tiny-block-data" &&
+               FastBlueprintLoadRouter.ShouldRouteV2BlockDataForVerification(
+                   FastBlueprintLoadRouter.V2BlockDataPayloadThresholdBytes,
+                   1,
+                   forceV2: false,
+                   smallBlueprintTesting: false,
+                   diagnostics: false,
+                   out string payloadReason) &&
+               payloadReason == "large-block-data-payload" &&
+               FastBlueprintLoadRouter.ShouldRouteV2BlockDataForVerification(
+                   1L,
+                   FastBlueprintLoadRouter.V2BlockDataRecordThreshold,
+                   forceV2: false,
+                   smallBlueprintTesting: false,
+                   diagnostics: false,
+                   out string recordReason) &&
+               recordReason == "many-block-data-records" &&
+               FastBlueprintLoadRouter.ShouldRouteV2BlockDataForVerification(
+                   1L,
+                   1,
+                   forceV2: true,
+                   smallBlueprintTesting: false,
+                   diagnostics: false,
+                   out string forceReason) &&
+               forceReason == "forced-v2-block-data" &&
+               !FastBlueprintLoadRouter.ShouldRouteV2BlockDataForVerification(
+                   1L,
+                   1,
+                   forceV2: false,
+                   smallBlueprintTesting: true,
+                   diagnostics: true,
+                   out string diagnosticReason) &&
+               diagnosticReason == "tiny-block-data",
+            "V2 block-data routing skips tiny payloads and routes only large, many-record, or forced payloads.");
+
+        Assert(FastBlueprintLoadRouter.ShouldProbeV3MetadataForVerification(
+                   FastBlueprintLoadTier.V3,
+                   15L * 1024L * 1024L,
+                   smallBlueprintTesting: false,
+                   blockCountRouting: true) &&
+               !FastBlueprintLoadRouter.ShouldProbeV3MetadataForVerification(
+                   FastBlueprintLoadTier.V3,
+                   15L * 1024L * 1024L,
+                   smallBlueprintTesting: false,
+                   blockCountRouting: false) &&
+               !FastBlueprintLoadRouter.ShouldRouteV3ForVerification(
+                   FastBlueprintLoadTier.V3,
+                   15L * 1024L * 1024L,
+                   savedTotalBlocks: 659_851,
+                   blockIdsCount: 659_851,
+                   smallBlueprintTesting: false,
+                   blockCountRouting: false,
+                   out string disabledBlockCountReason) &&
+               disabledBlockCountReason == "block-count-routing-disabled" &&
+               FastBlueprintLoadRouter.ShouldRouteV3ForVerification(
+                   FastBlueprintLoadTier.V3,
+                   15L * 1024L * 1024L,
+                   savedTotalBlocks: 659_851,
+                   blockIdsCount: 659_851,
+                   smallBlueprintTesting: false,
+                   blockCountRouting: true,
+                   out string blockCountReason) &&
+               blockCountReason == "large-block-count" &&
+               !FastBlueprintLoadRouter.ShouldRouteV3ForVerification(
+                   FastBlueprintLoadTier.V3,
+                   2L * 1024L * 1024L,
+                   savedTotalBlocks: 38_508,
+                   blockIdsCount: 20_706,
+                   smallBlueprintTesting: false,
+                   blockCountRouting: true,
+                   out string smallBlockCountReason) &&
+               smallBlockCountReason == "below-v3-block-count-threshold",
+            "V3 block-count routing is disabled by default and only enables medium-file block-count-heavy blueprints through its explicit setting.");
+
+        Assert(!FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3SyncRegistration,
+                   diagnostics: false,
+                   tier: FastBlueprintLoadTier.V3) &&
+               !FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3SyncRegistration,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V2) &&
+               FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3SyncRegistration,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V3) &&
+               FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3StatusRegistration,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V3) &&
+               FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipStage2ModuleExternalLinkup,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V3) &&
+               FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3ColliderLinkup,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V3) &&
+               FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3ShellLinkup,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V3) &&
+               FastBlueprintLoadRouter.UnsafeProbeActiveForVerification(
+                   FastBlueprintLoadUnsafeProbeMode.SkipV3SkinCalc,
+                   diagnostics: true,
+                   tier: FastBlueprintLoadTier.V3),
+            "Unsafe fast-load probes only activate when diagnostics are enabled and V3 is selected.");
+
+        Assert(FastBlueprintLoadRouter.InitialiseStage2SubphaseForVerification(
+                   "InitialiseBlocksInConstructable",
+                   "IAllBasics") == "Stage2 InitialiseBlocksInConstructable" &&
+               FastBlueprintLoadRouter.InitialiseStage2SubphaseForVerification(
+                   "HookUpPackages",
+                   "AllConstructExtraTypes`3") == "Stage2 package hookup" &&
+               FastBlueprintLoadRouter.InitialiseStage2SubphaseForVerification(
+                   "set_InitialisationState",
+                   "AllConstruct") == "Stage2 init-state commit",
+            "Stage2 subphase timer matching covers block initialization, package hookup, and init-state commit calls.");
+
+        string tracePath = FastBlueprintLoadRouter.BuildTracePathForVerification(
+            Path.Combine("profile-root"),
+            "bad:name/../ship.blueprint",
+            new DateTime(2026, 7, 2, 12, 34, 56, DateTimeKind.Utc),
+            "ab/cd");
+        Assert(tracePath.Contains(Path.Combine("EndlessShapesUnlimited", "Logs")) &&
+               tracePath.EndsWith(
+                   Path.Combine(
+                       "EndlessShapesUnlimited",
+                       "Logs",
+                       "FastBlueprintLoad-20260702-123456-bad_name_._ship.blueprint-ab_cd.log"),
+                   StringComparison.Ordinal) &&
+               FastBlueprintLoadRouter.SanitizeTraceFileNameForVerification("bad:name/../ship.blueprint") ==
+                   "bad_name_._ship.blueprint",
+            "Fast blueprint load trace path generation sanitizes names and stays under EndlessShapesUnlimited/Logs.");
+
+        string offDecision = FastBlueprintLoadRouter.FormatRouteDecisionForVerification(
+            FastBlueprintLoadTier.Off,
+            diagnostics: true,
+            smallBlueprintTesting: false,
+            fileBytes: FastBlueprintLoadRouter.LargeBlueprintLoadThresholdBytes,
+            routed: false,
+            reason: "tier-off");
+        string v3Decision = FastBlueprintLoadRouter.FormatRouteDecisionForVerification(
+            FastBlueprintLoadTier.V3,
+            diagnostics: true,
+            smallBlueprintTesting: true,
+            fileBytes: 1L,
+            routed: true,
+            reason: "routed-v1-json-then-v3-safe-bulk");
+        Assert(offDecision.Contains("tier=\"Off\"") &&
+               offDecision.Contains("routed=false") &&
+               offDecision.Contains("reason=\"tier-off\"") &&
+               v3Decision.Contains("tier=\"V3\"") &&
+               v3Decision.Contains("small_testing=true") &&
+               v3Decision.Contains("routed=true") &&
+               v3Decision.Contains("reason=\"routed-v1-json-then-v3-safe-bulk\""),
+            "Fast blueprint load route-decision formatting covers disabled, routed, large-file, and small-blueprint override cases.");
+
+        Assert(FastBlueprintLoadRouter.V3PreflightTargetsAvailableForVerification(),
+            "V3 safe-bulk verification records the current FtD Block.BlockStateChanged metadata token without forcing fragile runtime reflection.");
+        Assert(Plugin.ResolvePartStatusRegisterCheckableBlockTarget() != null &&
+               Plugin.ResolvePartStatusUnregisterCheckableBlockTarget() != null,
+            "V3 status registration preflight resolves the FtD IStatusHandler checkable-block methods.");
+
+        BlockStateChangeType[] v3CapturedTypes =
+        {
+            BlockStateChangeType.Initiated,
+            BlockStateChangeType.InitiatedNewPlacement,
+            BlockStateChangeType.InitiatedInUnrepairedState
+        };
+        BlockStateChangeType[] v3SkippedTypes =
+        {
+            BlockStateChangeType.Loaded,
+            BlockStateChangeType.FullyLoadedAndInitiated,
+            BlockStateChangeType.DamageReceived,
+            BlockStateChangeType.RemovedFromDesign,
+            BlockStateChangeType.Repaired,
+            BlockStateChangeType.Killed
+        };
+        Assert(v3CapturedTypes.All(type => FastBlueprintLoadRouter.V3CaptureDecisionForVerification(type).Capture) &&
+               v3SkippedTypes.All(type => !FastBlueprintLoadRouter.V3CaptureDecisionForVerification(type).Capture),
+            "V3 safe-bulk capture only suppresses initial positive load state changes and leaves loaded/damaged/removed/repaired/killed changes vanilla.");
+
         JsonConverter[] verificationConverters =
         {
             new VerificationVector3Converter(),
@@ -2143,6 +2478,22 @@ f 0 2 3
                decodedIds.SequenceEqual(new[] { 7, 2 }),
             "V2 block-data scanning and parallel predecode preserve block order, block ids, and byte boundaries.");
 
+        byte[] firstDistinct = SerialiseFixture(1U, 4U, 7UL, 3, 321U, 10);
+        byte[] secondDistinct = SerialiseFixture(1U, 8U, 2UL, 3, 654U, 40);
+        SuperLoader[] retainedLoaders =
+            FastBlueprintLoadRouter.PredecodeBlockLoadersForVerification(
+                firstDistinct.Concat(secondDistinct).ToArray());
+        Assert(retainedLoaders.Length == 2 &&
+               !ReferenceEquals(retainedLoaders[0].Header, retainedLoaders[1].Header) &&
+               !ReferenceEquals(retainedLoaders[0].DataSorted, retainedLoaders[1].DataSorted) &&
+               ByteConversion.ConvertOut(retainedLoaders[0].Header, 0U, 3) == 321U &&
+               ByteConversion.ConvertOut(retainedLoaders[1].Header, 0U, 3) == 654U &&
+               retainedLoaders[0].DataSorted[0] == 11 &&
+               retainedLoaders[0].DataSorted[3] == 14 &&
+               retainedLoaders[1].DataSorted[0] == 41 &&
+               retainedLoaders[1].DataSorted[7] == 48,
+            "V2 block-data predecode retains independent loader buffers until serial apply.");
+
         string pluginSource = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
             "EndlessShapesUnlimited",
@@ -2154,13 +2505,137 @@ f 0 2 3
             "Source",
             "Patches",
             "FastBlueprintLoadRouter.cs"));
+        string traceSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "Patches",
+            "FastBlueprintLoadTrace.cs"));
+        string telemetrySource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationTelemetryPatches.cs"));
         Assert(pluginSource.Contains("ResolveFastBlueprintFileModelLoadTarget") &&
                pluginSource.Contains("ResolveConstructExtraInfoDataArrayTarget") &&
+               pluginSource.Contains("ResolveConstructExtraInfoProvideInfoToBlocksTarget") &&
+               pluginSource.Contains("ResolveConstructExtraInfoDoubleArrayTarget") &&
+               pluginSource.Contains("ResolveConstructExtraInfoUpgradeConstructTarget") &&
+               pluginSource.Contains("ResolveBlockBlockStateChangedTarget") &&
+               pluginSource.Contains("InstallOptionalV3BlockStatePatch") &&
+               pluginSource.Contains("InstallOptionalStage2ModuleExternalLinkupPatch") &&
+               pluginSource.Contains("ResolveAllConstructInitialiseStage2Target") &&
+               pluginSource.Contains("ResolveStage2ModuleExternalLinkupTarget") &&
+               pluginSource.Contains("ResolvePartStatusRegisterCheckableBlockTarget") &&
+               pluginSource.Contains("ResolvePartStatusUnregisterCheckableBlockTarget") &&
                routerSource.Contains("BlueprintFile_Load_FastLoad_Patch") &&
                routerSource.Contains("ConstructExtraInfo_DataArray_FastLoad_Patch") &&
-               routerSource.Contains("V3 bulk load preflight") &&
-               routerSource.Contains("falling back to V2"),
-            "Fast blueprint load startup verifies V1/V2 patch targets and V3 safely falls back to V2 when bulk loading is not proven safe.");
+               routerSource.Contains("ConstructExtraInfo_ProvideInfoToBlocks_V3BulkLoad_Patch") &&
+               routerSource.Contains("ConstructExtraInfo_DoubleArray_FastLoadDiagnostics_Patch") &&
+               routerSource.Contains("ConstructExtraInfo_UpgradeConstruct_FastLoadDiagnostics_Patch") &&
+               routerSource.Contains("Block_BlockStateChanged_V3BulkLoad_Patch") &&
+               routerSource.Contains("AllConstruct_Stage2ModuleExternalLinkup_FastLoadDiagnostics_Patch") &&
+               routerSource.Contains("InstallOptionalStage2ModuleCallsitePatch") &&
+               !pluginSource.Contains("InstallOptionalStage2ModuleCallsitePatch") &&
+               routerSource.Contains("InstallOptionalStage2ModuleExternalLinkupPatch") &&
+               !routerSource.Contains("[HarmonyPatch]\r\n    internal static class AllConstruct_Stage2ModuleExternalLinkup_FastLoadDiagnostics_Patch") &&
+               !routerSource.Contains("[HarmonyPatch]\n    internal static class AllConstruct_Stage2ModuleExternalLinkup_FastLoadDiagnostics_Patch") &&
+               routerSource.Contains("AddInitialiseStage2SubphaseTimers") &&
+               routerSource.Contains("AddStage2ModuleExternalLinkupCallsiteTimers") &&
+               routerSource.Contains("BrilliantSkies.Common.Modules.AllConstructExtraTypes`3") &&
+               routerSource.Contains("FindLoadedTypeByFullName") &&
+               routerSource.Contains("ShouldUseStage2ModuleCallsiteDiagnostics") &&
+               routerSource.Contains("CallStage2ModuleDictionaryLinkupWithDiagnostics") &&
+               routerSource.Contains("CallStage2ModuleExternalLinkupWithDiagnostics") &&
+               routerSource.Contains("OpCodes.Brfalse_S") &&
+               routerSource.Contains("AddLabelUntyped") &&
+               routerSource.Contains("MoveMetadataUntyped") &&
+               routerSource.Contains("stage2-module-callsite-loop-start") &&
+               routerSource.Contains("stage2-module-callsite-loop-complete") &&
+               routerSource.Contains("stage2-module-callsite-loop-fallback") &&
+               routerSource.Contains("stage2-module-callsite-linkup") &&
+               routerSource.Contains("v3d-collider-linkup") &&
+               routerSource.Contains("v3d-shell-linkup") &&
+               routerSource.Contains("v3d-skin-calc-linkup") &&
+               routerSource.Contains("v3d-collider-subphase") &&
+               routerSource.Contains("v3d-shell-subphase") &&
+               routerSource.Contains("v3d-skin-calc-subphase") &&
+               routerSource.Contains("v3d-unsafe-skip") &&
+               routerSource.Contains("v3d-target-unsupported") &&
+               routerSource.Contains("ConstructableColliders") &&
+               routerSource.Contains("AllConstructShell") &&
+               routerSource.Contains("MainConstructSkinCalc") &&
+               routerSource.Contains("InvokeStage2ModuleDictionaryLinkup(moduleDictionary)") &&
+               routerSource.Contains("stage2-module-linkup") &&
+               routerSource.Contains("IAllConstructModule") &&
+               routerSource.Contains("SkipStage2ModuleExternalLinkupForDiagnostics &&") &&
+               routerSource.Contains("_stage2ModuleExternalLinkupPatchInstalled") &&
+               routerSource.Contains("BlockBlockStateChangedMetadataToken = 0x06000D86") &&
+               routerSource.Contains("InstallOptionalV3BlockStatePatch") &&
+               routerSource.Contains("new SuperLoader(useStaticArrays: false)") &&
+               routerSource.Contains("V2BlockDataPayloadThresholdBytes") &&
+               routerSource.Contains("V2BlockDataRecordThreshold") &&
+               routerSource.Contains("V3BlockCountThreshold") &&
+               routerSource.Contains("v3-metadata-route") &&
+               routerSource.Contains("v2-skip") &&
+               routerSource.Contains("routed-v1-json-then-v3-safe-bulk") &&
+               routerSource.Contains("v3-preflight") &&
+               routerSource.Contains("v3-scope-start") &&
+               routerSource.Contains("v3-presize") &&
+               routerSource.Contains("v3-status-bulk-preflight") &&
+               routerSource.Contains("v3-status-bulk-complete") &&
+               routerSource.Contains("v3-status-bulk-fallback") &&
+               routerSource.Contains("v3-capture-summary") &&
+               routerSource.Contains("missing_targets") &&
+               routerSource.Contains("IStatusHandler.RegisterCheckableBlock(ICheckState)") &&
+               routerSource.Contains("BrilliantSkies.Common.StatusChecking.IStatusHandler") &&
+               routerSource.Contains("BrilliantSkies.Common.StatusChecking.ICheckState") &&
+               routerSource.Contains("BrilliantSkies.Common.StatusChecking.StatusHandler") &&
+               routerSource.Contains("AddNestedStatusHandlerSnapshots") &&
+               routerSource.Contains("v3-flush-start") &&
+               routerSource.Contains("v3-flush-complete") &&
+               routerSource.Contains("v3-flush-registry") &&
+               routerSource.Contains("\"v3.flush.\" + name") &&
+               routerSource.Contains("\"syncRegistration\"") &&
+               routerSource.Contains("\"statusSkipped\"") &&
+               routerSource.Contains("SkipV3StatusRegistration") &&
+               routerSource.Contains("SkipStage2ModuleExternalLinkup") &&
+               routerSource.Contains("SkipV3ColliderLinkupForDiagnostics") &&
+               routerSource.Contains("SkipV3ShellLinkupForDiagnostics") &&
+               routerSource.Contains("SkipV3SkinCalcForDiagnostics") &&
+               routerSource.Contains("correctness_valid\", !unsafeActive") &&
+               routerSource.Contains("unsafe_probe_active") &&
+               routerSource.Contains("correctness_valid") &&
+               routerSource.Contains("do_not_save") &&
+               routerSource.Contains("correctness_invalid") &&
+               routerSource.Contains("v3-flush-failed") &&
+               routerSource.Contains("v3-fallback") &&
+               routerSource.Contains("FlushV3BeforeBlockData") &&
+               routerSource.Contains("ConditionalWeakTable<Blueprint, FastBlueprintLoadTrace>") &&
+               routerSource.Contains("BeginBlueprintConversionTrace") &&
+               routerSource.Contains("CompleteBlueprintConversionTrace") &&
+               routerSource.Contains("FailBlueprintConversionTrace") &&
+               routerSource.Contains("BlueprintTraceName") &&
+               routerSource.Contains("standalone_trace") &&
+               traceSource.Contains("FileHeartbeatInterval = TimeSpan.FromSeconds(30)") &&
+               traceSource.Contains("AdvLoggerHeartbeatInterval = TimeSpan.FromMinutes(5)") &&
+               traceSource.Contains("CraftLoadStart") &&
+               traceSource.Contains("craft-load-start") &&
+               traceSource.Contains("CraftLoadComplete") &&
+               traceSource.Contains("craft-load-complete") &&
+               traceSource.Contains("CraftLoadFailed") &&
+               traceSource.Contains("craft-load-failed") &&
+               traceSource.Contains("total_elapsed_ms") &&
+               traceSource.Contains("FastBlueprintLoadProgressStream") &&
+               traceSource.Contains("_trace?.Heartbeat") &&
+               traceSource.Contains("ProfileRootDir") &&
+               traceSource.Contains("EndlessShapesUnlimited") &&
+               traceSource.Contains("Logs") &&
+               telemetrySource.Contains("BeginBlueprintConversionTrace(blueprint)") &&
+               telemetrySource.Contains("CompleteFastLoadTrace") &&
+               telemetrySource.Contains("FailFastLoadTrace(__exception)"),
+            "Fast blueprint load startup verifies V1/V2 patch targets, V3 safe-bulk hooks, shareable trace files, heartbeat progress, end-to-end load timers, and conversion trace bridging.");
     }
 
     private static BlueprintFileModel NewBlueprintFileModelForJsonStreamingTest()
@@ -5183,6 +5658,7 @@ f 0 2 3
         string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
                manifest.Contains("\"version\": \"1.0.4\"") &&
+               manifest.Contains("\"workshop_id\": 3755667314") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&
                manifest.Contains("\"EndlessShapes2\""),
@@ -5371,14 +5847,16 @@ f 0 2 3
         uint headerCount,
         uint dataBytes,
         ulong objectId,
-        byte objectIdBytes)
+        byte objectIdBytes,
+        uint headerId = 123U,
+        byte dataOffset = 0)
     {
         SuperSaver saver = NewSaver(headerCount, dataBytes);
         if (headerCount > 0U)
-            ByteConversion.ConvertIn(saver.Header, 0U, 3, 123U);
+            ByteConversion.ConvertIn(saver.Header, 0U, 3, headerId);
         int bytesToWrite = checked((int)dataBytes);
         for (int i = 0; i < bytesToWrite; i++)
-            saver.DataSorted[i] = (byte)(i + 1);
+            saver.DataSorted[i] = (byte)(dataOffset + i + 1);
 
         SuperSerialisationLayout layout =
             SuperSerialisationLayout.Create(headerCount, dataBytes, objectIdBytes);

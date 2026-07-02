@@ -7,6 +7,7 @@ using BrilliantSkies.DataManagement.Saving.DeferredChanges;
 using BrilliantSkies.DataManagement.Packages;
 using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
+using DecoLimitLifter.Patches;
 using HarmonyLib;
 
 namespace DecoLimitLifter.SerializationHud
@@ -117,6 +118,15 @@ namespace DecoLimitLifter.SerializationHud
             [HarmonyArgument(1)] global::Blueprint blueprint,
             out BlueprintLoadTelemetryState __state)
         {
+            FastBlueprintLoadConversionScope fastLoadTrace = null;
+            try { fastLoadTrace = FastBlueprintLoadRouter.BeginBlueprintConversionTrace(blueprint); }
+            catch (Exception exception)
+            {
+                BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
+                    "begin fast blueprint load trace",
+                    exception);
+            }
+
             IDisposable suppression = VanillaCompatibilityGuard.BeginSuppression("blueprint load");
             BlueprintSerializationUsage usage = BlueprintSerializationUsage.Empty;
             try { usage = BlueprintSerializationUsageAnalyzer.Analyze(blueprint); }
@@ -129,7 +139,11 @@ namespace DecoLimitLifter.SerializationHud
 
             if (SerializationTelemetry.HasCurrentOperation)
             {
-                __state = new BlueprintLoadTelemetryState(null, suppression, usage);
+                __state = new BlueprintLoadTelemetryState(
+                    null,
+                    suppression,
+                    usage,
+                    fastLoadTrace);
                 return;
             }
 
@@ -138,14 +152,22 @@ namespace DecoLimitLifter.SerializationHud
                 SerializationTelemetryOperation operation =
                     SerializationTelemetry.Begin(SerializationOperationKind.Load);
                 operation.RecordBlueprintUsage(blueprint);
-                __state = new BlueprintLoadTelemetryState(operation, suppression, usage);
+                __state = new BlueprintLoadTelemetryState(
+                    operation,
+                    suppression,
+                    usage,
+                    fastLoadTrace);
             }
             catch (Exception exception)
             {
                 BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
                     "begin blueprint load telemetry",
                     exception);
-                __state = new BlueprintLoadTelemetryState(null, suppression, usage);
+                __state = new BlueprintLoadTelemetryState(
+                    null,
+                    suppression,
+                    usage,
+                    fastLoadTrace);
             }
         }
 
@@ -161,6 +183,14 @@ namespace DecoLimitLifter.SerializationHud
                     exception);
             }
 
+            try { __state?.CompleteFastLoadTrace(__result); }
+            catch (Exception exception)
+            {
+                BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
+                    "complete fast blueprint load trace",
+                    exception);
+            }
+
             VanillaCompatibilityGuard.WarnLoadedBlueprintIfNeeded(
                 __result,
                 __state?.BlueprintUsage ?? BlueprintSerializationUsage.Empty);
@@ -170,6 +200,17 @@ namespace DecoLimitLifter.SerializationHud
             Exception __exception,
             BlueprintLoadTelemetryState __state)
         {
+            if (__exception != null)
+            {
+                try { __state?.FailFastLoadTrace(__exception); }
+                catch (Exception exception)
+                {
+                    BlueprintConverter_SaveTelemetry_Patch.LogTelemetryFailure(
+                        "fail fast blueprint load trace",
+                        exception);
+                }
+            }
+
             try { __state?.Dispose(); }
             catch (Exception exception)
             {
@@ -184,21 +225,38 @@ namespace DecoLimitLifter.SerializationHud
     internal sealed class BlueprintLoadTelemetryState : IDisposable
     {
         private readonly IDisposable _suppression;
+        private readonly FastBlueprintLoadConversionScope _fastLoadTrace;
         private bool _disposed;
 
         internal BlueprintLoadTelemetryState(
             SerializationTelemetryOperation operation,
             IDisposable suppression,
-            BlueprintSerializationUsage blueprintUsage)
+            BlueprintSerializationUsage blueprintUsage,
+            FastBlueprintLoadConversionScope fastLoadTrace)
         {
             Operation = operation;
             _suppression = suppression;
             BlueprintUsage = blueprintUsage ?? BlueprintSerializationUsage.Empty;
+            _fastLoadTrace = fastLoadTrace;
         }
 
         internal SerializationTelemetryOperation Operation { get; }
 
         internal BlueprintSerializationUsage BlueprintUsage { get; }
+
+        internal void CompleteFastLoadTrace(MainConstruct construct)
+        {
+            FastBlueprintLoadRouter.CompleteBlueprintConversionTrace(
+                _fastLoadTrace,
+                construct);
+        }
+
+        internal void FailFastLoadTrace(Exception exception)
+        {
+            FastBlueprintLoadRouter.FailBlueprintConversionTrace(
+                _fastLoadTrace,
+                exception);
+        }
 
         public void Dispose()
         {
@@ -206,7 +264,11 @@ namespace DecoLimitLifter.SerializationHud
                 return;
             _disposed = true;
             try { Operation?.Dispose(); }
-            finally { _suppression?.Dispose(); }
+            finally
+            {
+                try { _fastLoadTrace?.Dispose(); }
+                finally { _suppression?.Dispose(); }
+            }
         }
     }
 

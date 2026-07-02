@@ -18,6 +18,17 @@ namespace DecoLimitLifter.SerializationHud
     public sealed class SerializationHudOptionsScreen :
         KeyMappingUi<SerializationHudKeyInput>
     {
+        private static readonly FastBlueprintLoadUnsafeProbeMode[] UnsafeProbeCycle =
+        {
+            FastBlueprintLoadUnsafeProbeMode.Off,
+            FastBlueprintLoadUnsafeProbeMode.SkipV3SyncRegistration,
+            FastBlueprintLoadUnsafeProbeMode.SkipV3StatusRegistration,
+            FastBlueprintLoadUnsafeProbeMode.SkipStage2ModuleExternalLinkup,
+            FastBlueprintLoadUnsafeProbeMode.SkipV3ColliderLinkup,
+            FastBlueprintLoadUnsafeProbeMode.SkipV3ShellLinkup,
+            FastBlueprintLoadUnsafeProbeMode.SkipV3SkinCalc
+        };
+
         public SerializationHudOptionsScreen(ConsoleWindow window)
             : base(window, ProfileManager.Instance.GetModule<SerializationHudKeyMap>())
         {
@@ -75,24 +86,29 @@ namespace DecoLimitLifter.SerializationHud
                 "Blueprint loading",
                 new ToolTip(
                     "Experimental opt-in load acceleration for very large blueprint files. The saved blueprint schema is not changed."));
-            var blueprintLoading = CreateTableSegment(2, 2);
+            var blueprintLoading = CreateTableSegment(2, 4);
             blueprintLoading.AddInterpretter(
                 SubjectiveButton<SerializationHudProfile.ProfileData>.Quick(
                     data,
                     "Fast load tier",
                     new ToolTip(
-                        "Cycles Off, V1, V2, and V3. Off keeps the vanilla load path. V3 falls back to V2 if ESU cannot prove bulk loading is safe."),
-                    profile => CycleFastBlueprintLoadTier(profile)));
+                        "Cycles Off, V1, V2, and V3. Off keeps the vanilla load path. V3 bulk-defers verified base block registrations and falls back to V2 if ESU cannot prove the hooks are safe."),
+                    profile =>
+                    {
+                        CycleFastBlueprintLoadTier(profile);
+                        TriggerScreenRebuild();
+                    }));
             blueprintLoading.AddInterpretter(
-                StringDisplay.Quick(
-                    "Current fast load tier",
-                    FastBlueprintLoadTierLabel(data.FastBlueprintLoadTier)));
+                SubjectiveDisplay<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    M.m<SerializationHudProfile.ProfileData>(
+                        profile => FastBlueprintLoadTierStatus(profile))));
             blueprintLoading.AddInterpretter(
                 SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
                     data,
                     "Fast load diagnostics",
                     new ToolTip(
-                        "Log passive ESU timing information for blueprint load phases. This does not enable fast loading by itself."),
+                        "Log passive ESU blueprint load timings to FtD and write a shareable EndlessShapesUnlimited/Logs fast-load trace file. This does not enable fast loading by itself."),
                     (profile, value) => profile.FastBlueprintLoadDiagnostics = value,
                     profile => profile.FastBlueprintLoadDiagnostics));
             blueprintLoading.AddInterpretter(
@@ -103,6 +119,38 @@ namespace DecoLimitLifter.SerializationHud
                         "Testing override. When disabled, ESU only routes large blueprint loads through the selected fast-load tier."),
                     (profile, value) => profile.FastBlueprintLoadSmallBlueprintTesting = value,
                     profile => profile.FastBlueprintLoadSmallBlueprintTesting));
+            blueprintLoading.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Force V2 block-data fast path",
+                    new ToolTip(
+                        "Diagnostics override. When enabled, ESU runs V2 block-data predecode even when the BlockData payload is small."),
+                    (profile, value) => profile.FastBlueprintLoadForceV2BlockData = value,
+                    profile => profile.FastBlueprintLoadForceV2BlockData));
+            blueprintLoading.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Apply V3 to block-count-heavy blueprints",
+                    new ToolTip(
+                        "Explicit V3 opt-in. Allows below-64 MiB blueprints with very high saved block counts to use V3. Leave off for normal testing unless you are measuring huge block-count craft."),
+                    (profile, value) => profile.FastBlueprintLoadBlockCountRouting = value,
+                    profile => profile.FastBlueprintLoadBlockCountRouting));
+            blueprintLoading.AddInterpretter(
+                SubjectiveButton<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Unsafe probe mode",
+                    new ToolTip(
+                        "Diagnostics only. Cycles one unsafe V3 timing probe at a time. These can create invalid loaded constructs, log do_not_save=true, and must not be used for normal play, saving, or correctness testing."),
+                    profile =>
+                    {
+                        CycleFastBlueprintLoadUnsafeProbeMode(profile);
+                        TriggerScreenRebuild();
+                    }));
+            blueprintLoading.AddInterpretter(
+                SubjectiveDisplay<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    M.m<SerializationHudProfile.ProfileData>(
+                        profile => FastBlueprintLoadUnsafeProbeStatus(profile))));
 
             CreateHeader(
                 "ESU editor HUD",
@@ -193,5 +241,53 @@ namespace DecoLimitLifter.SerializationHud
                     return "Off - vanilla";
             }
         }
+
+        internal static string FastBlueprintLoadTierStatus(
+            SerializationHudProfile.ProfileData profile) =>
+            "Current fast load tier: " +
+            FastBlueprintLoadTierLabel(profile?.FastBlueprintLoadTier ?? FastBlueprintLoadTier.Off);
+
+        private static void CycleFastBlueprintLoadUnsafeProbeMode(
+            SerializationHudProfile.ProfileData profile)
+        {
+            if (profile == null)
+                return;
+
+            int index = System.Array.IndexOf(
+                UnsafeProbeCycle,
+                profile.FastBlueprintLoadUnsafeProbeMode);
+            if (index < 0)
+                index = 0;
+            profile.FastBlueprintLoadUnsafeProbeMode =
+                UnsafeProbeCycle[(index + 1) % UnsafeProbeCycle.Length];
+        }
+
+        internal static string FastBlueprintLoadUnsafeProbeLabel(
+            FastBlueprintLoadUnsafeProbeMode mode)
+        {
+            switch (mode)
+            {
+                case FastBlueprintLoadUnsafeProbeMode.SkipV3SyncRegistration:
+                    return "Skip V3 sync registration";
+                case FastBlueprintLoadUnsafeProbeMode.SkipV3StatusRegistration:
+                    return "Skip V3 status registration";
+                case FastBlueprintLoadUnsafeProbeMode.SkipStage2ModuleExternalLinkup:
+                    return "Skip Stage2 module linkup";
+                case FastBlueprintLoadUnsafeProbeMode.SkipV3ColliderLinkup:
+                    return "Skip V3 collider linkup";
+                case FastBlueprintLoadUnsafeProbeMode.SkipV3ShellLinkup:
+                    return "Skip V3 shell linkup";
+                case FastBlueprintLoadUnsafeProbeMode.SkipV3SkinCalc:
+                    return "Skip V3 skin calculation";
+                default:
+                    return "Off";
+            }
+        }
+
+        internal static string FastBlueprintLoadUnsafeProbeStatus(
+            SerializationHudProfile.ProfileData profile) =>
+            "Unsafe probe: " +
+            FastBlueprintLoadUnsafeProbeLabel(
+                profile?.FastBlueprintLoadUnsafeProbeMode ?? FastBlueprintLoadUnsafeProbeMode.Off);
     }
 }

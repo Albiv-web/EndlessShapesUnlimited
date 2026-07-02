@@ -24,8 +24,16 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\DataManagement.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Common">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Modding">
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Modding.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Steamworks">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Steamworks.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="FtD">

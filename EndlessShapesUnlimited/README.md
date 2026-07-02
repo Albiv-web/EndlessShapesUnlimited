@@ -2,6 +2,8 @@ EndlessShapes Unlimited is a From The Depths mod for builders who want higher de
 
 It combines DecoLimitLifter-style extended decoration saving with the OBJ import/export and building tools from EndlessShapes2.
 
+Mod latest version 1.0.4
+
 DISCORD SERVER FOR BUG REPORTS, IDEAS, FEEDBACK OR HELP:
 https://discord.gg/6Us9UamUPx
 
