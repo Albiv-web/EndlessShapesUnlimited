@@ -47,11 +47,13 @@ namespace DecoLimitLifter.DecorationEditMode
             Generator
         }
 
-        private enum SurfacePointContextKind
+        private enum SurfaceContextTargetKind
         {
             None,
-            Surface,
-            Generator
+            SurfacePoint,
+            SurfaceEdge,
+            SurfaceFace,
+            GeneratorPoint
         }
 
         private const float HandleLength = 1.25f;
@@ -297,9 +299,10 @@ namespace DecoLimitLifter.DecorationEditMode
         private Vector2 _generatorMaterialScroll;
         private List<MaterialCatalogEntry> _materialCatalog;
         private SurfaceBuilderTool _surfaceBuilderTool = s_surfaceBuilderTool;
-        private SurfacePointContextKind _surfacePointContextKind = SurfacePointContextKind.None;
-        private Rect _surfacePointContextRect;
-        private int _surfacePointContextIndex = -1;
+        private SurfaceContextTargetKind _surfaceContextTargetKind = SurfaceContextTargetKind.None;
+        private Rect _surfaceContextRect;
+        private int _surfaceContextIndex = -1;
+        private SurfaceEdge _surfaceContextEdge = new SurfaceEdge(-1, -1);
 
         internal bool Active { get; private set; }
 
@@ -680,7 +683,7 @@ namespace DecoLimitLifter.DecorationEditMode
                                EsuHudNotifications.ContainsMouse(mouse) ||
                                (_viewModeMenuOpen && ViewModeMenuRect(toolbarRect).Contains(mouse)) ||
                                (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
-                               IsSurfacePointContextMenuAt(mouse) ||
+                               IsSurfaceContextMenuAt(mouse) ||
                                (rightStackVisible && rightRect.Contains(mouse)) ||
                                bottomRect.Contains(mouse) ||
                                (leftStackVisible && meshRect.Contains(mouse));
@@ -754,7 +757,7 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawAnchorMenu();
 
             DrawMeshPreviewCard();
-            DrawSurfacePointContextMenu();
+            DrawSurfaceContextMenu();
             DrawBoxSelectionMarquee();
             EsuConsoleWindow.Draw();
             EsuCursorTooltip.Draw();
@@ -895,7 +898,7 @@ namespace DecoLimitLifter.DecorationEditMode
             EsuHudNotifications.ContainsMouse(mouse) ||
             (_viewModeMenuOpen && ViewModeMenuRect(ToolbarRect()).Contains(mouse)) ||
             (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
-            IsSurfacePointContextMenuAt(mouse) ||
+            IsSurfaceContextMenuAt(mouse) ||
             (IsRightPanelStackVisible() && RightPanelRect().Contains(mouse)) ||
             StatusRect(RightPanelRect()).Contains(mouse) ||
             (IsLeftPanelStackVisible() && MeshPaletteRect().Contains(mouse));
@@ -7845,7 +7848,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
-                if (TryOpenSurfacePointContextMenu())
+                if (TryOpenSurfaceContextMenu())
                     return;
 
                 if (_surfaceDraft.HasActiveSelection)
@@ -8045,6 +8048,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 before);
         }
 
+        private bool TryOpenSurfaceContextMenu()
+        {
+            if (TryOpenSurfacePointContextMenu())
+                return true;
+            if (TryOpenSurfaceEdgeContextMenu())
+                return true;
+            return TryOpenSurfaceFaceContextMenu();
+        }
+
         private bool TryOpenSurfacePointContextMenu()
         {
             if (!TryPickSurfacePoint(_lastMouseGui, out int pointIndex))
@@ -8052,10 +8064,41 @@ namespace DecoLimitLifter.DecorationEditMode
 
             _surfaceDraft.SelectPoint(pointIndex);
             _generatorDraft.ClearSelection();
-            _surfacePointContextKind = SurfacePointContextKind.Surface;
-            _surfacePointContextIndex = pointIndex;
-            _surfacePointContextRect = SurfacePointContextRect(buttonCount: 3);
+            _surfaceContextTargetKind = SurfaceContextTargetKind.SurfacePoint;
+            _surfaceContextIndex = pointIndex;
+            _surfaceContextEdge = new SurfaceEdge(-1, -1);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 3);
             _surfaceMessage = "Surface point selected.";
+            return true;
+        }
+
+        private bool TryOpenSurfaceEdgeContextMenu()
+        {
+            if (!TryPickSurfaceEdge(_lastMouseGui, out SurfaceEdge edge))
+                return false;
+
+            _surfaceDraft.SelectEdge(edge.A, edge.B, preserveBridgeSelection: true);
+            _generatorDraft.ClearSelection();
+            _surfaceContextTargetKind = SurfaceContextTargetKind.SurfaceEdge;
+            _surfaceContextIndex = -1;
+            _surfaceContextEdge = edge;
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 4);
+            _surfaceMessage = "Surface edge selected. Click a new point to extend.";
+            return true;
+        }
+
+        private bool TryOpenSurfaceFaceContextMenu()
+        {
+            if (!TryPickSurfaceFace(_lastMouseGui, out int faceIndex))
+                return false;
+
+            _surfaceDraft.SelectFace(faceIndex);
+            _generatorDraft.ClearSelection();
+            _surfaceContextTargetKind = SurfaceContextTargetKind.SurfaceFace;
+            _surfaceContextIndex = faceIndex;
+            _surfaceContextEdge = new SurfaceEdge(-1, -1);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 3);
+            _surfaceMessage = "Surface face selected.";
             return true;
         }
 
@@ -8066,9 +8109,10 @@ namespace DecoLimitLifter.DecorationEditMode
 
             _surfaceDraft.ClearSelection();
             _generatorDraft.SelectPoint(pointIndex);
-            _surfacePointContextKind = SurfacePointContextKind.Generator;
-            _surfacePointContextIndex = pointIndex;
-            _surfacePointContextRect = SurfacePointContextRect(
+            _surfaceContextTargetKind = SurfaceContextTargetKind.GeneratorPoint;
+            _surfaceContextIndex = pointIndex;
+            _surfaceContextEdge = new SurfaceEdge(-1, -1);
+            _surfaceContextRect = SurfaceContextRect(
                 _generatorDraft.Tool == SurfaceExtraTool.Circle ? 5 : 3);
             _generatorMessage = _generatorDraft.Tool == SurfaceExtraTool.Circle
                 ? "Circle center selected."
@@ -8076,7 +8120,7 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
-        private Rect SurfacePointContextRect(int buttonCount)
+        private Rect SurfaceContextRect(int buttonCount)
         {
             Vector2 mouse = _lastMouseGui;
             float width = EsuHudLayout.Scale(148f);
@@ -8087,67 +8131,98 @@ namespace DecoLimitLifter.DecorationEditMode
             return rect;
         }
 
-        private void DrawSurfacePointContextMenu()
+        private void DrawSurfaceContextMenu()
         {
-            if (_surfacePointContextKind == SurfacePointContextKind.None)
+            if (_surfaceContextTargetKind == SurfaceContextTargetKind.None)
                 return;
 
             Event current = Event.current;
             if (current != null &&
                 current.type == EventType.MouseDown &&
-                !_surfacePointContextRect.Contains(current.mousePosition))
+                !_surfaceContextRect.Contains(current.mousePosition))
             {
                 CloseSurfacePointContextMenu();
                 return;
             }
 
-            if (!SurfacePointContextTargetValid())
+            if (!SurfaceContextTargetValid())
             {
                 CloseSurfacePointContextMenu();
                 return;
             }
 
-            GUI.Box(_surfacePointContextRect, GUIContent.none, DecorationEditorTheme.Panel);
-            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(_surfacePointContextRect, 5f));
-            bool generator = _surfacePointContextKind == SurfacePointContextKind.Generator;
+            GUI.Box(_surfaceContextRect, GUIContent.none, DecorationEditorTheme.Panel);
+            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(_surfaceContextRect, 5f));
+            bool generator = _surfaceContextTargetKind == SurfaceContextTargetKind.GeneratorPoint;
             bool circle = generator && _generatorDraft.Tool == SurfaceExtraTool.Circle;
+            bool surfaceEdge = _surfaceContextTargetKind == SurfaceContextTargetKind.SurfaceEdge;
+            bool surfaceFace = _surfaceContextTargetKind == SurfaceContextTargetKind.SurfaceFace;
             GUILayout.Label(
-                generator ? (circle ? "Circle center" : "Path point") : "Surface point",
+                generator
+                    ? (circle ? "Circle center" : "Path point")
+                    : surfaceEdge
+                        ? "Surface edge"
+                        : surfaceFace
+                            ? "Surface face"
+                            : "Surface point",
                 DecorationEditorTheme.SubHeader);
 
             if (GUILayout.Button(new GUIContent("Select", "Select this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                SelectSurfacePointContextTarget();
+                SelectSurfaceContextTarget();
                 CloseSurfacePointContextMenu();
             }
 
-            if (GUILayout.Button(new GUIContent("Move", "Move this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (!surfaceEdge && !surfaceFace &&
+                GUILayout.Button(new GUIContent("Move", "Move this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                SelectSurfacePointContextTarget();
+                SelectSurfaceContextTarget();
                 SetSurfaceBuilderTool(SurfaceBuilderTool.Move);
                 CloseSurfacePointContextMenu();
+            }
+
+            if ((surfaceEdge || surfaceFace) &&
+                GUILayout.Button(new GUIContent("Preview", "Rebuild the surface decoration preview without placing it."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SelectSurfaceContextTarget();
+                RebuildSurfacePreview(showMessage: true);
+                CloseSurfacePointContextMenu();
+            }
+
+            if (surfaceEdge)
+            {
+                bool previous = GUI.enabled;
+                bool canBridge = _surfaceDraft.BridgeEdgeSelection.Count == 2;
+                GUI.enabled = previous && canBridge;
+                if (GUILayout.Button(new GUIContent("Bridge", "Create surface face(s) between the two Shift-selected edges."), DecorationEditorTheme.ToolButton(false, canBridge), GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    BridgeSurfaceEdges();
+                    CloseSurfacePointContextMenu();
+                }
+                GUI.enabled = previous;
             }
 
             if (circle)
             {
                 if (GUILayout.Button(new GUIContent("Rotate", "Rotate this generator circle."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
                 {
-                    SelectSurfacePointContextTarget();
+                    SelectSurfaceContextTarget();
                     SetSurfaceBuilderTool(SurfaceBuilderTool.Rotate);
                     CloseSurfacePointContextMenu();
                 }
 
                 if (GUILayout.Button(new GUIContent("Scale", "Scale this generator circle."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
                 {
-                    SelectSurfacePointContextTarget();
+                    SelectSurfaceContextTarget();
                     SetSurfaceBuilderTool(SurfaceBuilderTool.Scale);
                     CloseSurfacePointContextMenu();
                 }
             }
 
-            if (GUILayout.Button(new GUIContent("Delete", "Delete this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (!surfaceEdge &&
+                GUILayout.Button(new GUIContent("Delete", generator ? "Delete this generator point." : surfaceFace ? "Delete this surface face." : "Delete this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                SelectSurfacePointContextTarget();
+                SelectSurfaceContextTarget();
                 DeleteSurfaceActionTarget(generator ? SurfaceDraftActionTarget.Generator : SurfaceDraftActionTarget.Surface);
                 CloseSurfacePointContextMenu();
             }
@@ -8155,43 +8230,65 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.EndArea();
         }
 
-        private bool SurfacePointContextTargetValid()
+        private bool SurfaceContextTargetValid()
         {
-            if (_surfacePointContextIndex < 0)
-                return false;
-
-            if (_surfacePointContextKind == SurfacePointContextKind.Surface)
-                return _surfacePointContextIndex < _surfaceDraft.Points.Count;
-            if (_surfacePointContextKind == SurfacePointContextKind.Generator)
-                return _surfacePointContextIndex < _generatorDraft.PointCount;
-            return false;
+            switch (_surfaceContextTargetKind)
+            {
+                case SurfaceContextTargetKind.SurfacePoint:
+                    return _surfaceContextIndex >= 0 &&
+                           _surfaceContextIndex < _surfaceDraft.Points.Count;
+                case SurfaceContextTargetKind.SurfaceEdge:
+                    return _surfaceContextEdge.IsValid &&
+                           _surfaceContextEdge.A < _surfaceDraft.Points.Count &&
+                           _surfaceContextEdge.B < _surfaceDraft.Points.Count;
+                case SurfaceContextTargetKind.SurfaceFace:
+                    return _surfaceContextIndex >= 0 &&
+                           _surfaceContextIndex < _surfaceDraft.Faces.Count;
+                case SurfaceContextTargetKind.GeneratorPoint:
+                    return _surfaceContextIndex >= 0 &&
+                           _surfaceContextIndex < _generatorDraft.PointCount;
+                default:
+                    return false;
+            }
         }
 
-        private void SelectSurfacePointContextTarget()
+        private void SelectSurfaceContextTarget()
         {
-            if (!SurfacePointContextTargetValid())
+            if (!SurfaceContextTargetValid())
                 return;
 
-            if (_surfacePointContextKind == SurfacePointContextKind.Surface)
+            switch (_surfaceContextTargetKind)
             {
-                SelectSurfaceDraftPointRow(_surfacePointContextIndex);
-                SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
-            }
-            else
-            {
-                SelectGeneratorDraftPointRow(_surfacePointContextIndex);
+                case SurfaceContextTargetKind.SurfacePoint:
+                    SelectSurfaceDraftPointRow(_surfaceContextIndex);
+                    SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+                    break;
+                case SurfaceContextTargetKind.SurfaceEdge:
+                    _surfaceDraft.SelectEdge(_surfaceContextEdge.A, _surfaceContextEdge.B);
+                    _generatorDraft.ClearSelection();
+                    SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+                    _surfaceMessage = "Surface edge selected. Click a new point to extend.";
+                    break;
+                case SurfaceContextTargetKind.SurfaceFace:
+                    SelectSurfaceDraftFaceRow(_surfaceContextIndex);
+                    SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+                    break;
+                case SurfaceContextTargetKind.GeneratorPoint:
+                    SelectGeneratorDraftPointRow(_surfaceContextIndex);
+                    break;
             }
         }
 
-        private bool IsSurfacePointContextMenuAt(Vector2 mouse) =>
-            _surfacePointContextKind != SurfacePointContextKind.None &&
-            _surfacePointContextRect.Contains(mouse);
+        private bool IsSurfaceContextMenuAt(Vector2 mouse) =>
+            _surfaceContextTargetKind != SurfaceContextTargetKind.None &&
+            _surfaceContextRect.Contains(mouse);
 
         private void CloseSurfacePointContextMenu()
         {
-            _surfacePointContextKind = SurfacePointContextKind.None;
-            _surfacePointContextIndex = -1;
-            _surfacePointContextRect = Rect.zero;
+            _surfaceContextTargetKind = SurfaceContextTargetKind.None;
+            _surfaceContextIndex = -1;
+            _surfaceContextEdge = new SurfaceEdge(-1, -1);
+            _surfaceContextRect = Rect.zero;
         }
 
         private bool TryPickGeneratorHandle(Vector2 mouse, out DecorationEditAxis axis)

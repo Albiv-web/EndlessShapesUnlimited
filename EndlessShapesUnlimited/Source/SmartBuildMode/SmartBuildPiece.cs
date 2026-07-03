@@ -12,10 +12,19 @@ namespace DecoLimitLifter.SmartBuildMode
     internal enum SmartBuildShapeKind
     {
         Cuboid,
+        Pole,
         DownSlope,
+        FacingDownSlope,
         TriangleCorner,
+        InvertedTriangleCorner,
         Wedge,
-        SquareCorner
+        WedgeFront,
+        WedgeBack,
+        SquareCorner,
+        SquareBackedCorner,
+        SlopeTransition,
+        SlopeInverseTransition,
+        OffsetSlope
     }
 
     internal enum SmartBuildSlopeSupportMode
@@ -74,6 +83,9 @@ namespace DecoLimitLifter.SmartBuildMode
         private Vector3i _forwardStep;
         private Vector3i _rightStep;
         private Vector3i _dropStep;
+        private int _fixedForwardTiles;
+        private int _fixedRightTiles;
+        private int _fixedDropTiles;
 
         private SmartBuildPiece(
             int id,
@@ -87,17 +99,29 @@ namespace DecoLimitLifter.SmartBuildMode
             int slopeWidth,
             SmartBuildAxis forwardAxis,
             int forwardSign,
+            string shapeDescriptorKey = null,
+            int selectedLength = 1,
+            int fixedForwardTiles = 1,
+            int fixedRightTiles = 1,
+            int fixedDropTiles = 1,
             SmartBuildSlopeSupportMode supportMode = SmartBuildSlopeSupportMode.Full)
         {
             Id = id;
             Construct = construct;
             ShapeKind = shapeKind;
+            ShapeDescriptorKey = string.IsNullOrWhiteSpace(shapeDescriptorKey)
+                ? DescriptorKeyForKind(shapeKind)
+                : shapeDescriptorKey;
             Origin = origin;
             _cuboidSize = SmartBuildDraft.ClampSize(cuboidSize);
             DrawPlane = drawPlane;
             SlopeLength = Mathf.Clamp(slopeLength, 1, 4);
             SlopeSteps = Math.Max(1, slopeSteps);
             SlopeWidth = Math.Max(1, slopeWidth);
+            SelectedLength = Mathf.Clamp(selectedLength, 1, 4);
+            _fixedForwardTiles = Math.Max(1, fixedForwardTiles);
+            _fixedRightTiles = Math.Max(1, fixedRightTiles);
+            _fixedDropTiles = Math.Max(1, fixedDropTiles);
             SupportMode = supportMode;
             SetForward(forwardAxis, forwardSign);
         }
@@ -108,6 +132,8 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal SmartBuildShapeKind ShapeKind { get; private set; }
 
+        internal string ShapeDescriptorKey { get; private set; }
+
         internal Vector3i Origin { get; private set; }
 
         internal SmartBuildDrawPlane DrawPlane { get; set; }
@@ -117,6 +143,14 @@ namespace DecoLimitLifter.SmartBuildMode
         internal int SlopeSteps { get; private set; }
 
         internal int SlopeWidth { get; private set; }
+
+        internal int SelectedLength { get; private set; }
+
+        internal int FixedForwardTiles => _fixedForwardTiles;
+
+        internal int FixedRightTiles => _fixedRightTiles;
+
+        internal int FixedDropTiles => _fixedDropTiles;
 
         internal SmartBuildSlopeSupportMode SupportMode { get; private set; }
 
@@ -153,6 +187,14 @@ namespace DecoLimitLifter.SmartBuildMode
         internal Vector3 CenterLocal => Bounds.Center;
 
         internal Vector3 RotationPivotLocal => ToVector3(NearestCellToCenter(Bounds.Center));
+
+        internal bool IsFixedGeometry =>
+            Descriptor()?.IsFixedGeometry == true;
+
+        internal SmartBuildShapeDescriptor Descriptor() =>
+            SmartBuildShapeDescriptors.ByKey(ShapeDescriptorKey) ??
+            SmartBuildShapeDescriptors.ByKey(DescriptorKeyForKind(ShapeKind)) ??
+            SmartBuildShapeDescriptors.Cuboid;
 
         internal static SmartBuildPiece CreateCuboid(
             AllConstruct construct,
@@ -203,7 +245,63 @@ namespace DecoLimitLifter.SmartBuildMode
                 slopeWidth: Math.Max(1, width),
                 NormalizeForwardAxis(forwardAxis),
                 forwardSign,
-                supportMode);
+                shapeDescriptorKey: SmartBuildShapeDescriptors.DownSlopeKey,
+                selectedLength: slopeLength,
+                supportMode: supportMode);
+
+        internal static SmartBuildPiece CreateFixedShape(
+            AllConstruct construct,
+            Vector3i origin,
+            SmartBuildShapeDescriptor descriptor,
+            int selectedLength,
+            SmartBuildAxis forwardAxis,
+            int forwardSign,
+            int width,
+            SmartBuildDrawPlane drawPlane) =>
+            new SmartBuildPiece(
+                ++s_nextId,
+                construct,
+                descriptor?.Kind ?? SmartBuildShapeKind.Wedge,
+                origin,
+                new Vector3i(1, 1, 1),
+                drawPlane,
+                slopeLength: 1,
+                slopeSteps: 1,
+                slopeWidth: 1,
+                NormalizeForwardAxis(forwardAxis),
+                forwardSign,
+                shapeDescriptorKey: descriptor?.Key,
+                selectedLength: selectedLength,
+                fixedForwardTiles: 1,
+                fixedRightTiles: Math.Max(1, width),
+                fixedDropTiles: 1);
+
+        internal static SmartBuildPiece CreateFixedShapePreview(
+            AllConstruct construct,
+            Vector3i origin,
+            SmartBuildShapeDescriptor descriptor,
+            int selectedLength,
+            SmartBuildAxis forwardAxis,
+            int forwardSign,
+            int width,
+            SmartBuildDrawPlane drawPlane) =>
+            new SmartBuildPiece(
+                0,
+                construct,
+                descriptor?.Kind ?? SmartBuildShapeKind.Wedge,
+                origin,
+                new Vector3i(1, 1, 1),
+                drawPlane,
+                slopeLength: 1,
+                slopeSteps: 1,
+                slopeWidth: 1,
+                NormalizeForwardAxis(forwardAxis),
+                forwardSign,
+                shapeDescriptorKey: descriptor?.Key,
+                selectedLength: selectedLength,
+                fixedForwardTiles: 1,
+                fixedRightTiles: Math.Max(1, width),
+                fixedDropTiles: 1);
 
         internal SmartBuildPiece Clone()
         {
@@ -219,6 +317,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 SlopeWidth,
                 ForwardAxis,
                 ForwardSign,
+                ShapeDescriptorKey,
+                SelectedLength,
+                _fixedForwardTiles,
+                _fixedRightTiles,
+                _fixedDropTiles,
                 SupportMode);
             clone.SetBasis(_forwardStep, _dropStep, _rightStep);
             return clone;
@@ -238,6 +341,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 SlopeWidth,
                 ForwardAxis,
                 ForwardSign,
+                ShapeDescriptorKey,
+                SelectedLength,
+                _fixedForwardTiles,
+                _fixedRightTiles,
+                _fixedDropTiles,
                 SupportMode);
             duplicate.SetBasis(_forwardStep, _dropStep, _rightStep);
             return duplicate;
@@ -249,12 +357,17 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             ShapeKind = source.ShapeKind;
+            ShapeDescriptorKey = source.ShapeDescriptorKey;
             Origin = source.Origin;
             _cuboidSize = source._cuboidSize;
             DrawPlane = source.DrawPlane;
             SlopeLength = source.SlopeLength;
             SlopeSteps = source.SlopeSteps;
             SlopeWidth = source.SlopeWidth;
+            SelectedLength = source.SelectedLength;
+            _fixedForwardTiles = source._fixedForwardTiles;
+            _fixedRightTiles = source._fixedRightTiles;
+            _fixedDropTiles = source._fixedDropTiles;
             SupportMode = source.SupportMode;
             SetBasis(source._forwardStep, source._dropStep, source._rightStep);
         }
@@ -269,6 +382,14 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal string ShapeLabel()
         {
+            SmartBuildShapeDescriptor descriptor = Descriptor();
+            if (descriptor?.ProceduralDownSlope == true)
+                return SlopeLength.ToString(CultureInfo.InvariantCulture) + "m down slope";
+            if (descriptor != null && descriptor.IsFixedGeometry)
+                return descriptor.UsesLengthSelector
+                    ? SelectedLength.ToString(CultureInfo.InvariantCulture) + "m " + descriptor.Label.ToLowerInvariant()
+                    : descriptor.Label;
+
             switch (ShapeKind)
             {
                 case SmartBuildShapeKind.DownSlope:
@@ -280,6 +401,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal string ShapeCode()
         {
+            SmartBuildShapeDescriptor descriptor = Descriptor();
+            if (descriptor?.ProceduralDownSlope == true)
+                return "S" + SlopeLength.ToString(CultureInfo.InvariantCulture);
+            if (descriptor != null && descriptor.IsFixedGeometry)
+                return descriptor.Label;
+
             switch (ShapeKind)
             {
                 case SmartBuildShapeKind.DownSlope:
@@ -302,6 +429,17 @@ namespace DecoLimitLifter.SmartBuildMode
                     SupportMode == SmartBuildSlopeSupportMode.Step ? " | step support" : string.Empty);
             }
 
+            if (IsFixedGeometry)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}m x {1} forward x {2} wide x {3} deep",
+                    SelectedLength,
+                    _fixedForwardTiles,
+                    _fixedRightTiles,
+                    _fixedDropTiles);
+            }
+
             Vector3i size = Size;
             return $"{size.x} x {size.y} x {size.z}";
         }
@@ -319,6 +457,19 @@ namespace DecoLimitLifter.SmartBuildMode
                     SlopeWidth);
             }
 
+            if (IsFixedGeometry)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "#{0} | {1} | {2}m x {3}x{4}x{5}",
+                    Id,
+                    Descriptor()?.Label ?? ShapeKind.ToString(),
+                    SelectedLength,
+                    _fixedForwardTiles,
+                    _fixedRightTiles,
+                    _fixedDropTiles);
+            }
+
             Vector3i size = Size;
             return string.Format(
                 CultureInfo.InvariantCulture,
@@ -332,6 +483,15 @@ namespace DecoLimitLifter.SmartBuildMode
         internal SmartBuildVolume ToVolume()
         {
             SmartBuildBounds bounds = Bounds;
+            return SmartBuildVolume.FromBounds(Construct, bounds.Min, bounds.Max);
+        }
+
+        internal SmartBuildVolume ToVolume(SmartBuildSource source)
+        {
+            if (!IsFixedGeometry)
+                return ToVolume();
+
+            SmartBuildBounds bounds = BoundsFromCells(EnumeratePreviewCells(source));
             return SmartBuildVolume.FromBounds(Construct, bounds.Min, bounds.Max);
         }
 
@@ -355,6 +515,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
             {
                 ResizeCuboid(axis, sign, delta);
+                return;
+            }
+
+            if (IsFixedGeometry)
+            {
+                SmartBuildBounds fixedResized = ResizeBounds(Bounds, axis, sign, delta);
+                ApplyFixedGeometryBounds(fixedResized, axis, sign);
                 return;
             }
 
@@ -390,18 +557,24 @@ namespace DecoLimitLifter.SmartBuildMode
                 RotateUnit(_forwardStep, axis, turns),
                 RotateUnit(_dropStep, axis, turns),
                 RotateUnit(_rightStep, axis, turns));
-            RecenterDownSlopeAround(pivot);
+            if (ShapeKind == SmartBuildShapeKind.DownSlope)
+                RecenterDownSlopeAround(pivot);
+            else
+                RecenterFixedGeometryAround(pivot);
         }
 
         internal void FlipForward()
         {
-            if (ShapeKind != SmartBuildShapeKind.DownSlope)
+            if (ShapeKind != SmartBuildShapeKind.DownSlope && !IsFixedGeometry)
                 return;
 
             Vector3 pivot = RotationPivotLocal;
             Vector3i forward = Multiply(_forwardStep, -1);
             SetBasis(forward, _dropStep, Cross(forward, _dropStep));
-            RecenterDownSlopeAround(pivot);
+            if (ShapeKind == SmartBuildShapeKind.DownSlope)
+                RecenterDownSlopeAround(pivot);
+            else
+                RecenterFixedGeometryAround(pivot);
         }
 
         internal int ExtentAlong(SmartBuildAxis axis) => Bounds.Extent(axis);
@@ -421,6 +594,20 @@ namespace DecoLimitLifter.SmartBuildMode
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
                 return Bounds.EnumerateCells();
 
+            if (IsFixedGeometry)
+                return EnumerateFixedGeometryCells(null);
+
+            return EnumerateDownSlopeCells(includeSupport: true);
+        }
+
+        internal IEnumerable<Vector3i> EnumeratePreviewCells(SmartBuildSource source)
+        {
+            if (ShapeKind == SmartBuildShapeKind.Cuboid)
+                return Bounds.EnumerateCells();
+
+            if (IsFixedGeometry)
+                return EnumerateFixedGeometryCells(source);
+
             return EnumerateDownSlopeCells(includeSupport: true);
         }
 
@@ -428,6 +615,9 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
                 return Bounds.EnumerateCells();
+
+            if (IsFixedGeometry)
+                return EnumerateFixedGeometryCells(null);
 
             return EnumerateDownSlopeCells(includeSupport: false);
         }
@@ -455,6 +645,9 @@ namespace DecoLimitLifter.SmartBuildMode
             out string reason)
         {
             reason = null;
+            if (IsFixedGeometry)
+                return BuildFixedGeometryPlacements(source, out reason);
+
             if (ShapeKind != SmartBuildShapeKind.DownSlope)
                 return Array.Empty<SmartBuildPlacement>();
 
@@ -485,6 +678,54 @@ namespace DecoLimitLifter.SmartBuildMode
                     ForwardSign,
                     DownSlopeRotation(),
                     line,
+                    candidate.DisplayName));
+            }
+
+            return placements;
+        }
+
+        private IReadOnlyList<SmartBuildPlacement> BuildFixedGeometryPlacements(
+            SmartBuildSource source,
+            out string reason)
+        {
+            reason = null;
+            SmartBuildShapeDescriptor descriptor = Descriptor();
+            SmartBlockFamily family = source?.FamilyForShape(descriptor);
+            if (family == null || !family.IsSupported)
+            {
+                reason = family?.UnsupportedReason ??
+                         descriptor?.Label + " blocks are unavailable for this material.";
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            SmartBlockCandidate candidate = family.CandidateForLength(SelectedLength);
+            if (candidate == null)
+            {
+                reason = descriptor?.Label + " " +
+                         SelectedLength.ToString(CultureInfo.InvariantCulture) +
+                         "m is unavailable for this material.";
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            Quaternion rotation = FixedGeometryRotation();
+            Vector3i[] baseFootprint = candidate.CoveredCellsFrom(Origin, rotation).ToArray();
+            if (baseFootprint.Length == 0)
+                baseFootprint = new[] { Origin };
+
+            int forwardStride = Math.Max(1, FootprintExtent(baseFootprint, ForwardAxis));
+            int rightStride = Math.Max(1, FootprintExtent(baseFootprint, RightAxis));
+            int dropStride = Math.Max(1, FootprintExtent(baseFootprint, DropAxis));
+            var placements = new List<SmartBuildPlacement>();
+            foreach (Vector3i tileOrigin in EnumerateFixedGeometryOrigins(forwardStride, rightStride, dropStride))
+            {
+                Vector3i[] cells = candidate.CoveredCellsFrom(tileOrigin, rotation).ToArray();
+                placements.Add(new SmartBuildPlacement(
+                    tileOrigin,
+                    candidate,
+                    ForwardAxis,
+                    ForwardSign,
+                    rotation,
+                    cells,
                     candidate.DisplayName));
             }
 
@@ -567,6 +808,53 @@ namespace DecoLimitLifter.SmartBuildMode
             Origin = origin;
         }
 
+        private void ApplyFixedGeometryBounds(
+            SmartBuildBounds bounds,
+            DecorationEditAxis resizedAxis,
+            int resizedSign)
+        {
+            bool hasResizedAxis = resizedAxis != DecorationEditAxis.None &&
+                                  resizedAxis != DecorationEditAxis.Free;
+            SmartBuildAxis changed = SmartBuildDraft.ToSmartAxis(resizedAxis);
+            int baseForward = Math.Max(1, SelectedLength);
+            int runExtent = Math.Max(1, bounds.Extent(ForwardAxis));
+            int rightExtent = Math.Max(1, bounds.Extent(RightAxis));
+            int dropExtent = Math.Max(1, bounds.Extent(DropAxis));
+
+            if (!hasResizedAxis || changed == ForwardAxis)
+                _fixedForwardTiles = Math.Max(1, (runExtent + baseForward - 1) / baseForward);
+            if (!hasResizedAxis || changed == RightAxis)
+                _fixedRightTiles = Math.Max(1, rightExtent);
+            if (!hasResizedAxis || changed == DropAxis)
+                _fixedDropTiles = Math.Max(1, dropExtent);
+
+            int finalRun = _fixedForwardTiles * baseForward;
+            int startForward = StartComponentFromBounds(
+                bounds,
+                ForwardAxis,
+                ForwardSign,
+                finalRun,
+                hasResizedAxis && changed == ForwardAxis ? resizedSign : 0);
+            int startRight = StartComponentFromBounds(
+                bounds,
+                RightAxis,
+                RightSign,
+                _fixedRightTiles,
+                hasResizedAxis && changed == RightAxis ? resizedSign : 0);
+            int startDrop = StartComponentFromBounds(
+                bounds,
+                DropAxis,
+                DropSign,
+                _fixedDropTiles,
+                hasResizedAxis && changed == DropAxis ? resizedSign : 0);
+
+            Vector3i origin = new Vector3i(0, 0, 0);
+            origin = SmartBuildAxisHelper.Set(origin, ForwardAxis, startForward);
+            origin = SmartBuildAxisHelper.Set(origin, RightAxis, startRight);
+            origin = SmartBuildAxisHelper.Set(origin, DropAxis, startDrop);
+            Origin = origin;
+        }
+
         private void RotateCuboidAroundPivot(
             DecorationEditAxis axis,
             int turns,
@@ -584,6 +872,14 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             SmartBuildBounds relativeBounds = BoundsFromCells(
                 EnumerateDownSlopeCellsFrom(new Vector3i(0, 0, 0), includeSupport: true));
+            Vector3 origin = targetCenter - relativeBounds.Center;
+            Origin = RoundToCell(origin);
+        }
+
+        private void RecenterFixedGeometryAround(Vector3 targetCenter)
+        {
+            SmartBuildBounds relativeBounds = BoundsFromCells(
+                EnumerateFixedGeometryCellsFrom(new Vector3i(0, 0, 0), null));
             Vector3 origin = targetCenter - relativeBounds.Center;
             Origin = RoundToCell(origin);
         }
@@ -768,6 +1064,97 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
+        private IEnumerable<Vector3i> EnumerateFixedGeometryCells(SmartBuildSource source)
+        {
+            return EnumerateFixedGeometryCellsFrom(Origin, source);
+        }
+
+        private IEnumerable<Vector3i> EnumerateFixedGeometryCellsFrom(
+            Vector3i origin,
+            SmartBuildSource source)
+        {
+            SmartBlockCandidate candidate = source?
+                .FamilyForShape(Descriptor())?
+                .CandidateForLength(SelectedLength);
+            Quaternion rotation = FixedGeometryRotation();
+            Vector3i[] baseFootprint = candidate?.CoveredCellsFrom(origin, rotation).ToArray() ??
+                                       FallbackFixedGeometryFootprint(origin).ToArray();
+            if (baseFootprint.Length == 0)
+                baseFootprint = new[] { origin };
+
+            int forwardStride = Math.Max(1, FootprintExtent(baseFootprint, ForwardAxis));
+            int rightStride = Math.Max(1, FootprintExtent(baseFootprint, RightAxis));
+            int dropStride = Math.Max(1, FootprintExtent(baseFootprint, DropAxis));
+            var seen = new HashSet<string>();
+            foreach (Vector3i tileOrigin in EnumerateFixedGeometryOrigins(
+                         origin,
+                         forwardStride,
+                         rightStride,
+                         dropStride))
+            {
+                IEnumerable<Vector3i> cells = candidate != null
+                    ? candidate.CoveredCellsFrom(tileOrigin, rotation)
+                    : FallbackFixedGeometryFootprint(tileOrigin);
+                foreach (Vector3i cell in cells)
+                {
+                    if (seen.Add(DecoLimitLifter.EsuSymmetry.CellKey(cell)))
+                        yield return cell;
+                }
+            }
+        }
+
+        private IEnumerable<Vector3i> FallbackFixedGeometryFootprint(Vector3i origin)
+        {
+            int length = Math.Max(1, SelectedLength);
+            for (int index = 0; index < length; index++)
+                yield return origin + Multiply(_forwardStep, index);
+        }
+
+        private IEnumerable<Vector3i> EnumerateFixedGeometryOrigins(
+            int forwardStride,
+            int rightStride,
+            int dropStride)
+        {
+            return EnumerateFixedGeometryOrigins(Origin, forwardStride, rightStride, dropStride);
+        }
+
+        private IEnumerable<Vector3i> EnumerateFixedGeometryOrigins(
+            Vector3i origin,
+            int forwardStride,
+            int rightStride,
+            int dropStride)
+        {
+            for (int drop = 0; drop < _fixedDropTiles; drop++)
+                for (int right = 0; right < _fixedRightTiles; right++)
+                    for (int forward = 0; forward < _fixedForwardTiles; forward++)
+                    {
+                        yield return origin +
+                                     Multiply(_forwardStep, forward * Math.Max(1, forwardStride)) +
+                                     Multiply(_rightStep, right * Math.Max(1, rightStride)) +
+                                     Multiply(_dropStep, drop * Math.Max(1, dropStride));
+                    }
+        }
+
+        private Quaternion FixedGeometryRotation() => DownSlopeRotation();
+
+        private static int FootprintExtent(IEnumerable<Vector3i> cells, SmartBuildAxis axis)
+        {
+            Vector3i[] values = cells?.ToArray() ?? Array.Empty<Vector3i>();
+            if (values.Length == 0)
+                return 1;
+
+            int min = SmartBuildAxisHelper.Get(values[0], axis);
+            int max = min;
+            for (int index = 1; index < values.Length; index++)
+            {
+                int component = SmartBuildAxisHelper.Get(values[index], axis);
+                min = Math.Min(min, component);
+                max = Math.Max(max, component);
+            }
+
+            return max - min + 1;
+        }
+
         private void SetForward(SmartBuildAxis axis, int sign)
         {
             SmartBuildAxis forwardAxis = NormalizeForwardAxis(axis);
@@ -778,6 +1165,19 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static SmartBuildAxis NormalizeForwardAxis(SmartBuildAxis axis) =>
             axis == SmartBuildAxis.X ? SmartBuildAxis.X : SmartBuildAxis.Z;
+
+        private static string DescriptorKeyForKind(SmartBuildShapeKind kind)
+        {
+            switch (kind)
+            {
+                case SmartBuildShapeKind.DownSlope:
+                    return SmartBuildShapeDescriptors.DownSlopeKey;
+                case SmartBuildShapeKind.Cuboid:
+                    return SmartBuildShapeDescriptors.CuboidKey;
+                default:
+                    return kind.ToString();
+            }
+        }
 
         private static void DeriveRight(
             SmartBuildAxis forwardAxis,

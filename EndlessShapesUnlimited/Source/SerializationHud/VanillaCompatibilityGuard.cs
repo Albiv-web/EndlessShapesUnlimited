@@ -339,6 +339,10 @@ namespace DecoLimitLifter.SerializationHud
         private static void AbortSave(string message)
         {
             ReportWarning(message);
+            EsuHudNotifications.ShowSystem(
+                "Vanilla compatibility",
+                message,
+                EsuHudNotificationKind.Error);
             throw new VanillaCompatibilityException(message);
         }
 

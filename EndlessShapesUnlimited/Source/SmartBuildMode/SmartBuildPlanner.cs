@@ -24,6 +24,25 @@ namespace DecoLimitLifter.SmartBuildMode
             ItemDefinition definition,
             SmartBuildShapeKind shapeKind,
             object geometry)
+            : this(
+                displayName,
+                length,
+                definition,
+                shapeKind,
+                geometry,
+                DescriptorFor(shapeKind, geometry),
+                geometry?.ToString())
+        {
+        }
+
+        internal SmartBlockCandidate(
+            string displayName,
+            int length,
+            ItemDefinition definition,
+            SmartBuildShapeKind shapeKind,
+            object geometry,
+            SmartBuildShapeDescriptor descriptor,
+            string geometryName)
         {
             DisplayName = string.IsNullOrWhiteSpace(displayName)
                 ? "Selected block"
@@ -32,6 +51,11 @@ namespace DecoLimitLifter.SmartBuildMode
             Definition = definition;
             ShapeKind = shapeKind;
             Geometry = geometry;
+            Descriptor = descriptor ??
+                         SmartBuildShapeDescriptors.ByKey(SmartBuildShapeDescriptors.CuboidKey);
+            GeometryName = string.IsNullOrWhiteSpace(geometryName)
+                ? geometry?.ToString() ?? string.Empty
+                : geometryName;
         }
 
         internal string DisplayName { get; }
@@ -44,8 +68,62 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal object Geometry { get; }
 
+        internal SmartBuildShapeDescriptor Descriptor { get; }
+
+        internal string GeometryName { get; }
+
         internal static SmartBlockCandidate ForTests(int length) =>
             new SmartBlockCandidate(length + "m test block", length, null);
+
+        private static SmartBuildShapeDescriptor DescriptorFor(
+            SmartBuildShapeKind shapeKind,
+            object geometry)
+        {
+            if (SmartBuildShapeDescriptors.TryParseGeometry(geometry, out SmartBuildGeometryInfo info))
+                return info.Descriptor;
+
+            return SmartBuildShapeDescriptors.ByKey(
+                shapeKind == SmartBuildShapeKind.DownSlope
+                    ? SmartBuildShapeDescriptors.DownSlopeKey
+                    : shapeKind == SmartBuildShapeKind.Cuboid
+                        ? SmartBuildShapeDescriptors.CuboidKey
+                        : null);
+        }
+
+        internal IEnumerable<Vector3i> CoveredCellsFrom(
+            Vector3i position,
+            Quaternion rotation)
+        {
+            var cells = new List<Vector3i>();
+            try
+            {
+                if (Definition?.SizeInfo != null &&
+                    Definition.SizeInfo.ArrayPositionsUsed > 0)
+                {
+                    var seen = new HashSet<string>();
+                    for (int index = 0; index < Definition.SizeInfo.ArrayPositionsUsed; index++)
+                    {
+                        Vector3i cell = Definition.SizeInfo.GetPosition(index, position, rotation);
+                        if (seen.Add(DecoLimitLifter.EsuSymmetry.CellKey(cell)))
+                            cells.Add(cell);
+                    }
+
+                    if (cells.Count > 0)
+                        return cells;
+                }
+            }
+            catch
+            {
+                // Test candidates and unusual modded definitions fall back to line coverage.
+            }
+
+            SmartBuildAxis axis = SmartBuildAxisHelper.FromLargestComponent(rotation * Vector3.forward, out int sign);
+            int direction = sign >= 0 ? 1 : -1;
+            for (int index = 0; index < Math.Max(1, Length); index++)
+                cells.Add(position + SmartBuildAxisHelper.ToVector3i(axis, index * direction));
+
+            return cells;
+        }
     }
 
     internal sealed class SmartBlockFamily

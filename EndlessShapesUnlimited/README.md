@@ -51,6 +51,22 @@ When enabled:
 
 This does not create a new blueprint format. It only helps very large blueprints save without building one huge JSON string in memory.
 
+[b]OPTIONAL HUGE-CRAFT BLUEPRINT LOADING[/b]
+
+ESU Options -> Blueprint loading
+
+These are off by default. Enable them only when you are deliberately loading very large craft or helping test/debug huge-craft loading.
+
+- V1 streams blueprint JSON loading and is mainly a memory/OOM safety path.
+- V2 only helps craft with large amounts of saved block data.
+- V3 is the recommended opt-in mode for extremely large block-count craft.
+- "Apply V3 to block-count-heavy blueprints" lets V3 handle huge block-count craft even when the `.blueprint` file is below 64 MiB.
+- Unsafe probe modes are timing-only, correctness-invalid, and should never be used for normal play or saved from.
+
+Tester result: a 3.8 million block craft that took about 2.5 hours in vanilla loaded in about 21 minutes with V3 enabled.
+
+The `.blueprint` schema is unchanged. These settings do not create sidecar files.
+
 [b]WHAT ESU ADDS[/b]
 
 - Raises the decoration limit from 5,000 to 100,000 per decoration manager.
@@ -61,6 +77,7 @@ This does not create a new blueprint format. It only helps very large blueprints
 - Adds OBJ import/export tools.
 - Adds an optional serialization HUD.
 - Adds optional streamed saving for very large blueprints.
+- Adds optional V3 loading for huge block-count blueprints.
 
 [b]MAIN CONTROLS[/b]
 

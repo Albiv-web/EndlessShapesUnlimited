@@ -27,14 +27,27 @@ GitHub history, but short enough that it can be copied into release notes.
 - Added verifier coverage for compatibility defaults, options UI, save/load
   guard behavior, creation guards, load/cleanup suppression, and unchanged
   legacy/sentinel serializer selection.
-- Added an experimental Blueprint loading options section with opt-in `Off`,
-  `V1`, `V2`, and `V3` fast-load tiers.
+- Added an opt-in Blueprint loading options section with `Off`, `V1`, `V2`,
+  and `V3` fast-load tiers.
 - Added V1 streamed blueprint JSON loading for large `.blueprint` files to avoid
   loading the whole JSON document into one string.
 - Added V2 parallel `BlockData` container predecode with serial main-thread
   block-data application in original block order.
 - Added passive fast-load diagnostics and a small-blueprint testing override,
   both default OFF.
+- Added diagnostics-only V3 collider timing rows that report per-method
+  `call_count`, total elapsed time, maximum single-call time, and parent/child
+  unaccounted collider time for huge-craft load analysis.
+- Added a fast blueprint loading developer guide documenting V1/V2/V3 routing,
+  diagnostics, unsafe probes, and vanilla-schema compatibility.
+- Added a global ESU notification overlay so Vanilla Compatibility Mode
+  blocked-save errors are visible in game instead of only appearing in logs.
+- Added Smart Block Builder structural shape descriptors and a categorized
+  shape palette for blocks, poles, slopes, wedges, corners, and transitions.
+- Added fixed-geometry Smart Builder planning that uses FtD `SizeInfo`
+  footprints for preview, collision, symmetry, and commit coverage.
+- Added a coarse ESU change test checklist for future build, verifier,
+  packaging, HUD, save/load, Surface Builder, and Smart Builder smoke tests.
 - Added a Steam Workshop update notifier that can show a non-error main-menu
   mod status row when the Workshop description advertises a newer version.
 - Added this changelog.
@@ -52,6 +65,18 @@ GitHub history, but short enough that it can be copied into release notes.
 - Blueprint loading remains fully vanilla by default. Fast-load routing only
   activates for large blueprints, or for small blueprints when the explicit
   testing override is enabled.
+- V3 wording now presents it as the recommended opt-in mode for huge
+  block-count craft while keeping the default load path vanilla.
+- Fast-load route diagnostics now avoid the ambiguous conversion-local
+  `file_bytes=-1` field; conversion-only traces log
+  `conversion_file_bytes_known` and `conversion_path_file_bytes` instead.
+- Surface Builder mirrored triangle placement now preserves intended committed
+  normals for right, isosceles, and scalene faces across symmetry variants.
+- Surface Builder right-click context menus now cover point, edge, and face
+  targets for conservative preview, bridge, select, and delete actions.
+- Smart Builder fixed structural shapes now repeat whole items on voxel
+  strides instead of distorting block geometry, and handed shape mirrors swap
+  to their left/right counterpart when odd-axis symmetry requires it.
 
 ### Notes
 
@@ -65,8 +90,11 @@ GitHub history, but short enough that it can be copied into release notes.
 - Steam Workshop descriptions now need a `Mod latest version 1.0.4` line so
   installed copies can check whether a newer Workshop version exists.
 - Fast blueprint loading does not change the `.blueprint` schema, does not write
-  sidecar files, and keeps V3 conservative by falling back to V2 unless bulk
-  loading can be proven safe.
+  sidecar files, and keeps V3 conservative by falling back unless bulk loading
+  can be proven safe.
+- Tester data from a 3.8 million block craft showed vanilla loading at about
+  `2.5 hours` and V3 loading at about `21 minutes`; active fast-load
+  optimization is paused in favor of documentation and polish.
 
 ## 1.0.3 - 2026-07-01
 

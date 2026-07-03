@@ -45,6 +45,7 @@ namespace DecoLimitLifter
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
                 Patches.FastBlueprintLoadRouter.InstallOptionalV3BlockStatePatch(harmony);
                 Patches.FastBlueprintLoadRouter.InstallOptionalStage2ModuleExternalLinkupPatch(harmony);
+                Patches.FastBlueprintLoadRouter.InstallOptionalV3DColliderInternalTimingPatch(harmony);
                 DecorationTooltipSuppressor.Install(harmony);
 
                 Patches.ByteStorePatch.EnsureMegaBytes();
@@ -61,6 +62,8 @@ namespace DecoLimitLifter
                 DecorationEditModeRegistration.Register();
                 startup.TrackRollback(SmartBuildModeRegistration.Unregister);
                 SmartBuildModeRegistration.Register();
+                startup.TrackRollback(EsuHudNotificationOverlayRegistration.Unregister);
+                EsuHudNotificationOverlayRegistration.Register();
                 startup.Commit();
             }
             catch (Exception exception)

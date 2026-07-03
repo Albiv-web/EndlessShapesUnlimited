@@ -523,7 +523,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _bridgeEdgeSelection.Clear();
         }
 
-        internal void SelectEdge(int a, int b)
+        internal void SelectEdge(int a, int b, bool preserveBridgeSelection = false)
         {
             if (a < 0 || b < 0 || a >= _points.Count || b >= _points.Count || a == b)
                 return;
@@ -532,7 +532,8 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(a, b);
             _manualFaceSelection.Clear();
-            _bridgeEdgeSelection.Clear();
+            if (!preserveBridgeSelection)
+                _bridgeEdgeSelection.Clear();
         }
 
         internal void SelectFace(int index)
@@ -1455,12 +1456,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 draft.Points[face.C]
             };
             ValidateSurfaceFace(vertices, faceIndex);
+            Vector3 parentNormal = IntendedFaceNormal(vertices, draft.Settings.NormalReversal);
+            if (parentNormal == Vector3.zero)
+                throw SurfaceGeometryError(faceIndex, "has no valid normal");
 
-            List<PolygonData> polygons = BuildSurfacePolygons(vertices, faceIndex);
+            List<PolygonData> polygons = BuildSurfacePolygons(vertices, faceIndex, parentNormal);
 
             foreach (PolygonData polygon in polygons)
             {
-                Vector3 thicknessAxis = DecorationThicknessAxis(polygon, draft.Settings.NormalReversal);
+                Vector3 thicknessAxis = DecorationThicknessAxis(polygon, parentNormal);
                 var data = new MimicAndDecorationCommonData();
                 MADCD_PolygonInput.Start(
                     data,
@@ -1479,6 +1483,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 int color;
                 if (!data.TryGetStandaloneData(out meshGuid, out center, out scaling, out orientation, out color))
                     throw new InvalidOperationException("Surface polygon conversion did not produce standalone decoration data.");
+
+                orientation = CorrectOrientationForIntendedNormal(
+                    polygon,
+                    orientation,
+                    parentNormal,
+                    faceIndex);
 
                 Vector3i anchor;
                 string anchorMessage = "Surface anchor resolver is unavailable.";
@@ -1501,6 +1511,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
 
                 Vector3 transformThicknessAxis = DecorationTransformThicknessAxis(polygon, orientation);
+                transformThicknessAxis = AlignAxisWithIntendedNormal(
+                    transformThicknessAxis,
+                    parentNormal,
+                    faceIndex,
+                    "final decoration transform");
                 float transformPlaneDistance = Vector3.Dot(
                     transformThicknessAxis,
                     ToVector3(anchor) + positioning);
@@ -1551,7 +1566,45 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
-        private static List<PolygonData> BuildSurfacePolygons(List<Vector3> vertices, int faceIndex)
+        private static Vector3 IntendedFaceNormal(
+            IReadOnlyList<Vector3> vertices,
+            bool normalReversal)
+        {
+            Vector3 axis = Vector3.Cross(
+                vertices[1] - vertices[0],
+                vertices[2] - vertices[0]);
+            if (!DecorationEditMath.IsFinite(axis) ||
+                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            {
+                return Vector3.zero;
+            }
+
+            axis.Normalize();
+            return normalReversal ? -axis : axis;
+        }
+
+        private static List<Vector3> AlignChildVerticesToParentNormal(
+            IReadOnlyList<Vector3> vertices,
+            Vector3 parentNormal)
+        {
+            var child = new List<Vector3>(vertices);
+            Vector3 childNormal = IntendedFaceNormal(child, normalReversal: false);
+            if (childNormal != Vector3.zero &&
+                parentNormal != Vector3.zero &&
+                Vector3.Dot(childNormal, parentNormal) < 0f)
+            {
+                Vector3 swap = child[1];
+                child[1] = child[2];
+                child[2] = swap;
+            }
+
+            return child;
+        }
+
+        private static List<PolygonData> BuildSurfacePolygons(
+            List<Vector3> vertices,
+            int faceIndex,
+            Vector3 parentNormal)
         {
             var polygons = new List<PolygonData>();
             int sourceLine = faceIndex + 1;
@@ -1569,7 +1622,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 polygons.All(polygon =>
                     polygon.PolyType == PolygonType.OtherTriangle_F ||
                     polygon.PolyType == PolygonType.OtherTriangle_B) &&
-                TryBuildCoPlanarScalenePolygons(vertices, sourceLine, out List<PolygonData> scalenePolygons))
+                TryBuildCoPlanarScalenePolygons(vertices, sourceLine, parentNormal, out List<PolygonData> scalenePolygons))
             {
                 return scalenePolygons;
             }
@@ -1580,6 +1633,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private static bool TryBuildCoPlanarScalenePolygons(
             IReadOnlyList<Vector3> vertices,
             int sourceLine,
+            Vector3 parentNormal,
             out List<PolygonData> polygons)
         {
             polygons = null;
@@ -1615,10 +1669,14 @@ namespace DecoLimitLifter.DecorationEditMode
             polygons = new List<PolygonData>
             {
                 CreateRightTrianglePolygon(
-                    new List<Vector3> { apex, start, foot },
+                    AlignChildVerticesToParentNormal(
+                        new[] { apex, start, foot },
+                        parentNormal),
                     sourceLine),
                 CreateRightTrianglePolygon(
-                    new List<Vector3> { end, apex, foot },
+                    AlignChildVerticesToParentNormal(
+                        new[] { end, apex, foot },
+                        parentNormal),
                     sourceLine)
             };
             return true;
@@ -1668,7 +1726,7 @@ namespace DecoLimitLifter.DecorationEditMode
             return Mathf.Round(value * 10000f) / 10000f;
         }
 
-        private static Vector3 DecorationThicknessAxis(PolygonData polygon, bool normalReversal)
+        private static Vector3 DecorationThicknessAxis(PolygonData polygon, Vector3 intendedNormal)
         {
             SideData[] sides = polygon.Sides;
             Vector3 axis;
@@ -1684,7 +1742,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     axis = Vector3.Cross(-sides[2].SideVector, -sides[0].SideVector);
                     break;
                 case PolygonType.IsoscelesTriangle:
-                    axis = polygon.NormalVector * (normalReversal ? -1f : 1f);
+                    axis = polygon.NormalVector;
                     break;
                 case PolygonType.Rectangle:
                     axis = Vector3.Cross(sides[1].SideVector, sides[0].SideVector);
@@ -1701,31 +1759,41 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             axis.Normalize();
+            if (intendedNormal != Vector3.zero && Vector3.Dot(axis, intendedNormal) < 0f)
+                axis = -axis;
+            return axis;
+        }
+
+        private static Vector3 AlignAxisWithIntendedNormal(
+            Vector3 axis,
+            Vector3 intendedNormal,
+            int faceIndex,
+            string context)
+        {
+            if (!DecorationEditMath.IsFinite(axis) ||
+                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            {
+                throw SurfaceGeometryError(faceIndex, context + " has no valid thickness axis");
+            }
+
+            axis.Normalize();
+            if (intendedNormal != Vector3.zero &&
+                Vector3.Dot(axis, intendedNormal) < 0.999f)
+            {
+                throw SurfaceGeometryError(
+                    faceIndex,
+                    context +
+                    " normal did not match the source face normal (dot " +
+                    Vector3.Dot(axis, intendedNormal).ToString("0.####", CultureInfo.InvariantCulture) +
+                    ")");
+            }
+
             return axis;
         }
 
         private static Vector3 DecorationTransformThicknessAxis(PolygonData polygon, Vector3 orientation)
         {
-            Vector3 localAxis;
-            switch (polygon.PolyType)
-            {
-                case PolygonType.RightTriangle:
-                case PolygonType.OtherTriangle_F:
-                case PolygonType.OtherTriangle_B:
-                case PolygonType.Rectangle:
-                    localAxis = Vector3.right;
-                    break;
-                case PolygonType.IsoscelesTriangle:
-                    localAxis = Vector3.up;
-                    break;
-                case PolygonType.Ellipse:
-                    localAxis = Vector3.forward;
-                    break;
-                default:
-                    localAxis = Vector3.forward;
-                    break;
-            }
-
+            Vector3 localAxis = DecorationTransformLocalThicknessAxis(polygon);
             Vector3 axis = RotateEuler(orientation, localAxis);
             if (!DecorationEditMath.IsFinite(axis) ||
                 axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
@@ -1735,6 +1803,49 @@ namespace DecoLimitLifter.DecorationEditMode
 
             axis.Normalize();
             return axis;
+        }
+
+        private static Vector3 CorrectOrientationForIntendedNormal(
+            PolygonData polygon,
+            Vector3 orientation,
+            Vector3 intendedNormal,
+            int faceIndex)
+        {
+            Vector3 axis = DecorationTransformThicknessAxis(polygon, orientation);
+            float dot = axis == Vector3.zero ? 0f : Vector3.Dot(axis, intendedNormal);
+            if (axis != Vector3.zero && dot >= 0.999f)
+                return orientation;
+
+            if (axis == Vector3.zero || dot >= 0f)
+                return orientation;
+
+            Vector3 localAxis = DecorationTransformLocalThicknessAxis(polygon);
+            Vector3 forward = RotateEuler(orientation, Vector3.forward);
+            Vector3 up = RotateEuler(orientation, Vector3.up);
+            if (localAxis == Vector3.forward)
+                forward = -forward;
+            else
+                up = -up;
+
+            return ManagedLookRotationEuler(forward, up, faceIndex + 1);
+        }
+
+        private static Vector3 DecorationTransformLocalThicknessAxis(PolygonData polygon)
+        {
+            switch (polygon.PolyType)
+            {
+                case PolygonType.RightTriangle:
+                case PolygonType.OtherTriangle_F:
+                case PolygonType.OtherTriangle_B:
+                case PolygonType.Rectangle:
+                    return Vector3.right;
+                case PolygonType.IsoscelesTriangle:
+                    return Vector3.up;
+                case PolygonType.Ellipse:
+                    return Vector3.forward;
+                default:
+                    return Vector3.forward;
+            }
         }
 
         private static Vector3 RotateEuler(Vector3 degrees, Vector3 vector)
@@ -1762,6 +1873,103 @@ namespace DecoLimitLifter.DecorationEditMode
                 (float)(vector.x + qw * tx + qy * tz - qz * ty),
                 (float)(vector.y + qw * ty + qz * tx - qx * tz),
                 (float)(vector.z + qw * tz + qx * ty - qy * tx));
+        }
+
+        private static Vector3 ManagedLookRotationEuler(Vector3 forward, Vector3 upwards, int sourceLine)
+        {
+            Vector3 z = NormalizeVector(forward, sourceLine, "forward vector");
+            Vector3 x = Cross(upwards, z);
+            if (x.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+                throw SurfaceGeometryError(sourceLine - 1, "generated decoration up vector is parallel to forward");
+            x = NormalizeVector(x, sourceLine, "right vector");
+            Vector3 y = Cross(z, x);
+
+            double m00 = x.x;
+            double m01 = y.x;
+            double m02 = z.x;
+            double m10 = x.y;
+            double m11 = y.y;
+            double m12 = z.y;
+            double m20 = x.z;
+            double m21 = y.z;
+            double m22 = z.z;
+
+            double qw;
+            double qx;
+            double qy;
+            double qz;
+            double trace = m00 + m11 + m22;
+            if (trace > 0d)
+            {
+                double s = Math.Sqrt(trace + 1d) * 2d;
+                qw = 0.25d * s;
+                qx = (m21 - m12) / s;
+                qy = (m02 - m20) / s;
+                qz = (m10 - m01) / s;
+            }
+            else if (m00 > m11 && m00 > m22)
+            {
+                double s = Math.Sqrt(1d + m00 - m11 - m22) * 2d;
+                qw = (m21 - m12) / s;
+                qx = 0.25d * s;
+                qy = (m01 + m10) / s;
+                qz = (m02 + m20) / s;
+            }
+            else if (m11 > m22)
+            {
+                double s = Math.Sqrt(1d + m11 - m00 - m22) * 2d;
+                qw = (m02 - m20) / s;
+                qx = (m01 + m10) / s;
+                qy = 0.25d * s;
+                qz = (m12 + m21) / s;
+            }
+            else
+            {
+                double s = Math.Sqrt(1d + m22 - m00 - m11) * 2d;
+                qw = (m10 - m01) / s;
+                qx = (m02 + m20) / s;
+                qy = (m12 + m21) / s;
+                qz = 0.25d * s;
+            }
+
+            double sinX = 2d * (qw * qx + qy * qz);
+            double cosX = 1d - 2d * (qx * qx + qy * qy);
+            double xDegrees = Math.Atan2(sinX, cosX) * Mathf.Rad2Deg;
+            double sinY = 2d * (qw * qy - qz * qx);
+            sinY = Math.Max(-1d, Math.Min(1d, sinY));
+            double yDegrees = Math.Asin(sinY) * Mathf.Rad2Deg;
+            double sinZ = 2d * (qw * qz + qx * qy);
+            double cosZ = 1d - 2d * (qy * qy + qz * qz);
+            double zDegrees = Math.Atan2(sinZ, cosZ) * Mathf.Rad2Deg;
+
+            return new Vector3(
+                NormalizeDegrees((float)xDegrees),
+                NormalizeDegrees((float)yDegrees),
+                NormalizeDegrees((float)zDegrees));
+        }
+
+        private static Vector3 NormalizeVector(Vector3 vector, int sourceLine, string name)
+        {
+            float magnitude = vector.magnitude;
+            if (!IsFinite(magnitude) || magnitude <= SurfaceGeometryEpsilon)
+                throw SurfaceGeometryError(sourceLine - 1, "generated decoration " + name + " has zero length");
+            return vector / magnitude;
+        }
+
+        private static Vector3 Cross(Vector3 left, Vector3 right) =>
+            new Vector3(
+                left.y * right.z - left.z * right.y,
+                left.z * right.x - left.x * right.z,
+                left.x * right.y - left.y * right.x);
+
+        private static float NormalizeDegrees(float value)
+        {
+            if (!IsFinite(value))
+                return value;
+            value %= 360f;
+            if (value < 0f)
+                value += 360f;
+            return value;
         }
 
         private static InvalidOperationException SurfaceGeometryError(int faceIndex, string message) =>

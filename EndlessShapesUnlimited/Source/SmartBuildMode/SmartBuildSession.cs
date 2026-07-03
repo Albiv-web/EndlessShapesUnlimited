@@ -67,6 +67,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private SmartBuildMaterial _selectedMaterial = s_selectedMaterial;
         private SmartBuildMaterial _sourceMaterial = s_selectedMaterial;
         private SmartBuildShapeKind _selectedShape = SmartBuildShapeKind.Cuboid;
+        private string _selectedShapeDescriptorKey = SmartBuildShapeDescriptors.CuboidKey;
         private int _selectedSlopeLength = 1;
         private SmartBuildEditHandleMode _editHandleMode = SmartBuildEditHandleMode.Gizmo;
         private Vector2 _shapePanelScroll;
@@ -138,6 +139,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal void ClearSwitchToDecorationEditRequest() =>
             SwitchToDecorationEditRequested = false;
+
+        private SmartBuildShapeDescriptor SelectedShapeDescriptor =>
+            SmartBuildShapeDescriptors.ByKey(_selectedShapeDescriptorKey) ??
+            SmartBuildShapeDescriptors.Cuboid;
 
         internal bool CanSwitchToDecorationEdit(out string reason)
         {
@@ -580,16 +585,43 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildInputScope.ClaimBuildInputForFrames();
             if (_tool == SmartBuildTool.Draw)
             {
-                _selectedShape = _selectedShape == SmartBuildShapeKind.Cuboid
-                    ? SmartBuildShapeKind.DownSlope
-                    : SmartBuildShapeKind.Cuboid;
+                IReadOnlyList<SmartBuildShapeDescriptor> descriptors = AvailableShapeDescriptors();
+                int index = descriptors
+                    .Select((descriptor, descriptorIndex) => new { descriptor, descriptorIndex })
+                    .FirstOrDefault(entry => entry.descriptor.Key == _selectedShapeDescriptorKey)
+                    ?.descriptorIndex ?? -1;
+                SelectShapeDescriptor(descriptors[(index + 1) % descriptors.Count]);
             }
-
-            ArmAddMode();
             _viewModeMenuOpen = false;
             _contextMenuOpen = false;
             InfoStore.Add("Smart Builder shape: " + PendingShapeLabel() + ".");
             return true;
+        }
+
+        private IReadOnlyList<SmartBuildShapeDescriptor> AvailableShapeDescriptors()
+        {
+            IReadOnlyList<SmartBuildShapeDescriptor> descriptors = _source?.AvailableShapeDescriptors;
+            if (descriptors != null && descriptors.Count > 0)
+                return descriptors;
+
+            return new[]
+            {
+                SmartBuildShapeDescriptors.Cuboid,
+                SmartBuildShapeDescriptors.DownSlope
+            };
+        }
+
+        private void SelectShapeDescriptor(SmartBuildShapeDescriptor descriptor, bool armAddMode = true)
+        {
+            descriptor ??= SmartBuildShapeDescriptors.Cuboid;
+            _selectedShapeDescriptorKey = descriptor.Key;
+            _selectedShape = descriptor.Kind;
+            if (descriptor.UsesLengthSelector)
+                _selectedSlopeLength = Mathf.Clamp(_selectedSlopeLength, 1, 4);
+            else if (descriptor.TransitionTo > 0)
+                _selectedSlopeLength = Mathf.Clamp(descriptor.TransitionTo, 1, 4);
+            if (armAddMode)
+                ArmAddMode();
         }
 
         private bool CycleTransformToolShortcut()
@@ -814,7 +846,8 @@ namespace DecoLimitLifter.SmartBuildMode
             int? rightStart,
             Vector3i cuboidSize)
         {
-            if (_selectedShape == SmartBuildShapeKind.DownSlope &&
+            SmartBuildShapeDescriptor selectedDescriptor = SelectedShapeDescriptor;
+            if ((_selectedShape == SmartBuildShapeKind.DownSlope || selectedDescriptor.IsFixedGeometry) &&
                 rightStart.HasValue)
             {
                 DeriveRightAxis(forwardAxis, forwardSign, out SmartBuildAxis rightAxis, out _);
@@ -900,15 +933,17 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_scene == null)
                 _scene = new SmartBuildPieceScene(construct);
 
-            if (_selectedShape == SmartBuildShapeKind.DownSlope &&
+            SmartBuildShapeDescriptor selectedDescriptor = SelectedShapeDescriptor;
+            if ((_selectedShape == SmartBuildShapeKind.DownSlope || selectedDescriptor.IsFixedGeometry) &&
                 rightStart.HasValue)
             {
                 DeriveRightAxis(forwardAxis, forwardSign, out SmartBuildAxis rightAxis, out _);
                 cell = SmartBuildAxisHelper.Set(cell, rightAxis, rightStart.Value);
             }
 
-            _draft = _selectedShape == SmartBuildShapeKind.DownSlope
-                ? SmartBuildPiece.CreateDownSlope(
+            if (selectedDescriptor.ProceduralDownSlope)
+            {
+                _draft = SmartBuildPiece.CreateDownSlope(
                     construct,
                     cell,
                     _selectedSlopeLength,
@@ -916,8 +951,24 @@ namespace DecoLimitLifter.SmartBuildMode
                     forwardSign,
                     Math.Max(1, width),
                     _drawPlane,
-                    _defaultSlopeSupportMode)
-                : SmartBuildPiece.CreateCuboid(construct, cell, cuboidSize ?? new Vector3i(1, 1, 1), _drawPlane);
+                    _defaultSlopeSupportMode);
+            }
+            else if (selectedDescriptor.IsFixedGeometry)
+            {
+                _draft = SmartBuildPiece.CreateFixedShape(
+                    construct,
+                    cell,
+                    selectedDescriptor,
+                    _selectedSlopeLength,
+                    forwardAxis,
+                    forwardSign,
+                    Math.Max(1, width),
+                    _drawPlane);
+            }
+            else
+            {
+                _draft = SmartBuildPiece.CreateCuboid(construct, cell, cuboidSize ?? new Vector3i(1, 1, 1), _drawPlane);
+            }
             _scene.Add(_draft);
             _tool = SmartBuildTool.Scale;
             RebuildPlan();
@@ -1031,7 +1082,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int bestSign = 1;
             foreach (SmartBuildPiece piece in _scene.Pieces)
             {
-                SmartBuildVolume volume = piece.ToVolume();
+                SmartBuildVolume volume = piece.ToVolume(_source);
                 if (volume == null)
                     continue;
 
@@ -1049,11 +1100,12 @@ namespace DecoLimitLifter.SmartBuildMode
             if (bestPiece == null || bestAxis == DecorationEditAxis.None)
                 return false;
 
-            SmartBuildVolume bestVolume = bestPiece.ToVolume();
+            SmartBuildVolume bestVolume = bestPiece.ToVolume(_source);
             axis = SmartBuildDraft.ToSmartAxis(bestAxis);
             sign = bestSign >= 0 ? 1 : -1;
             cell = AdjacentCellFromPreviewFace(bestVolume, bestHit, axis, sign);
-            if (_selectedShape != SmartBuildShapeKind.DownSlope &&
+            SmartBuildShapeDescriptor selectedDescriptor = SelectedShapeDescriptor;
+            if (selectedDescriptor.IsCuboid &&
                 inheritPreviewScale)
             {
                 cell = SlabFromPreviewFace(bestVolume, axis, sign, out cuboidSize);
@@ -1069,7 +1121,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     : 1;
             }
 
-            if (_selectedShape == SmartBuildShapeKind.DownSlope &&
+            if ((_selectedShape == SmartBuildShapeKind.DownSlope || selectedDescriptor.IsFixedGeometry) &&
                 inheritPreviewScale)
             {
                 width = bestPiece.FaceHorizontalWidth(axis);
@@ -1177,7 +1229,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int bestSign = 1;
             foreach (SmartBuildPiece piece in _scene.Pieces)
             {
-                SmartBuildVolume volume = piece.ToVolume();
+                SmartBuildVolume volume = piece.ToVolume(_source);
                 if (volume == null)
                     continue;
 
@@ -1575,7 +1627,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryPickDownSlopeFace(localOrigin, localDirection, out axis, out sign);
 
-            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             float bestDistance = float.PositiveInfinity;
@@ -1604,7 +1656,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryPickDownSlopeCorner(camera, out axes, out signs);
 
-            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             Vector2 mouse = MouseGuiPosition();
@@ -1654,7 +1706,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryPickDownSlopeEdge(camera, out axes, out signs);
 
-            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             int[,] edges =
@@ -1818,7 +1870,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (_source == null)
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview();
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
@@ -1837,7 +1889,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_scene.Construct, out string reason))
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview();
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
@@ -1883,7 +1935,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (_scene != null)
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview();
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
@@ -1942,13 +1994,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_scene.Construct, out _))
             {
                 _previewVolumes = _scene.Pieces
-                    .Select(piece => piece.ToVolume())
+                    .Select(piece => piece.ToVolume(_source))
                     .Where(volume => volume != null)
                     .ToArray();
                 return;
             }
 
-            SmartBuildPreviewSnapshot preview = _scene.BuildPreview();
+            SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
             _previewCells = preview.Cells;
             _previewCellSets = preview.CellSets;
             _previewVolumes = preview.Volumes;
@@ -2169,6 +2221,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _draft?.Id ?? _scene?.SelectedPiece?.Id ?? -1,
                 _tool,
                 _selectedShape,
+                _selectedShapeDescriptorKey,
                 _selectedSlopeLength,
                 _editHandleMode,
                 _defaultSlopeSupportMode,
@@ -2227,6 +2280,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             _tool = snapshot.Tool;
             _selectedShape = snapshot.SelectedShape;
+            _selectedShapeDescriptorKey = snapshot.SelectedShapeDescriptorKey;
             _selectedSlopeLength = snapshot.SelectedSlopeLength;
             _editHandleMode = snapshot.EditHandleMode;
             _defaultSlopeSupportMode = snapshot.DefaultSlopeSupportMode;
@@ -2293,6 +2347,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _source = source;
                 _sourceMaterial = _selectedMaterial;
                 _sourceReason = null;
+                EnsureSelectedShapeAvailable();
                 if (_draft != null)
                     RebuildPlan();
                 return;
@@ -2311,7 +2366,7 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             else
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview();
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
@@ -2592,10 +2647,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 _contextMenuOpen = false;
             }
 
-            bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope;
+            bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
+                           _draft?.IsFixedGeometry == true;
             bool previous = GUI.enabled;
             GUI.enabled = previous && canFlip;
-            if (GUILayout.Button(new GUIContent("Flip", "Reverse this down-slope direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (GUILayout.Button(new GUIContent("Flip", "Reverse this shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 FlipSelectedPiece();
                 _contextMenuOpen = false;
@@ -2662,8 +2718,9 @@ namespace DecoLimitLifter.SmartBuildMode
                     "mirror",
                     "Flip",
                     DecorationEditorTheme.Button,
-                    "Reverse the selected down-slope direction.",
-                    _draft?.ShapeKind == SmartBuildShapeKind.DownSlope))
+                    "Reverse the selected shape's forward direction.",
+                    (_draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
+                     _draft?.IsFixedGeometry == true)))
             {
                 FlipSelectedPiece();
             }
@@ -2688,7 +2745,8 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void FlipSelectedPiece()
         {
-            if (_draft?.ShapeKind != SmartBuildShapeKind.DownSlope)
+            if (_draft?.ShapeKind != SmartBuildShapeKind.DownSlope &&
+                _draft?.IsFixedGeometry != true)
                 return;
 
             RecordSceneHistory();
@@ -2795,7 +2853,8 @@ namespace DecoLimitLifter.SmartBuildMode
                     YawSelectedPiece();
                 }
 
-                bool canFlip = _draft.ShapeKind == SmartBuildShapeKind.DownSlope;
+                bool canFlip = _draft.ShapeKind == SmartBuildShapeKind.DownSlope ||
+                               _draft.IsFixedGeometry;
                 bool previous = GUI.enabled;
                 GUI.enabled = previous && canFlip;
                 if (GUILayout.Button(
@@ -2854,14 +2913,7 @@ namespace DecoLimitLifter.SmartBuildMode
             DecorationEditorTheme.Separator();
             if (DrawSmartSectionHeader("Palette", ref _showShapePaletteSection, "Show or hide the shape palette."))
             {
-                DrawShapeButton(SmartBuildShapeKind.Cuboid, "Block", "Place normal cuboids and beams.");
-                DrawShapeButton(SmartBuildShapeKind.DownSlope, "Down slope", "Place 1m to 4m down-slope ramp segments.");
-                GUILayout.Space(EsuHudLayout.Scale(4f));
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Slope length", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(86f)));
-                for (int length = 1; length <= 4; length++)
-                    DrawSlopeSizeButton(length);
-                GUILayout.EndHorizontal();
+                DrawShapePalette();
             }
             DecorationEditorTheme.Separator();
             if (DrawSmartSectionHeader("Selected", ref _showSelectedSection, "Show or hide selected-piece actions."))
@@ -2886,32 +2938,94 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.EndArea();
         }
 
-        private void DrawShapeButton(
-            SmartBuildShapeKind shape,
-            string label,
-            string tooltip)
+        private void DrawShapePalette()
         {
-            bool active = _selectedShape == shape;
-            if (GUILayout.Button(
-                    new GUIContent(label, DecorationEditorIconCatalog.Get(shape == SmartBuildShapeKind.Cuboid ? "cube" : "scale"), tooltip),
-                    DecorationEditorTheme.ToolButton(active),
-                    GUILayout.Height(EsuHudLayout.Scale(34f))))
+            IReadOnlyList<SmartBuildShapeDescriptor> descriptors = AvailableShapeDescriptors();
+            foreach (SmartBuildShapeCategory category in new[]
+                     {
+                         SmartBuildShapeCategory.Basic,
+                         SmartBuildShapeCategory.Slopes,
+                         SmartBuildShapeCategory.Corners,
+                         SmartBuildShapeCategory.Wedges,
+                         SmartBuildShapeCategory.Transitions
+                     })
             {
-                _selectedShape = shape;
-                ArmAddMode();
+                SmartBuildShapeDescriptor[] categoryDescriptors = descriptors
+                    .Where(descriptor => descriptor.Category == category)
+                    .ToArray();
+                if (categoryDescriptors.Length == 0)
+                    continue;
+
+                GUILayout.Label(CategoryLabel(category), DecorationEditorTheme.Mini);
+                foreach (SmartBuildShapeDescriptor descriptor in categoryDescriptors)
+                    DrawShapeButton(descriptor);
+                GUILayout.Space(EsuHudLayout.Scale(3f));
+            }
+
+            SmartBuildShapeDescriptor selected = SelectedShapeDescriptor;
+            if (selected.UsesLengthSelector)
+            {
+                GUILayout.Space(EsuHudLayout.Scale(4f));
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Size", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(48f)));
+                for (int length = 1; length <= 4; length++)
+                    DrawShapeSizeButton(length);
+                GUILayout.EndHorizontal();
             }
         }
 
-        private void DrawSlopeSizeButton(int length)
+        private void EnsureSelectedShapeAvailable()
+        {
+            IReadOnlyList<SmartBuildShapeDescriptor> descriptors = AvailableShapeDescriptors();
+            if (descriptors.Any(descriptor => descriptor.Key == _selectedShapeDescriptorKey))
+                return;
+
+            SelectShapeDescriptor(
+                descriptors.FirstOrDefault() ?? SmartBuildShapeDescriptors.Cuboid,
+                armAddMode: false);
+        }
+
+        private static string CategoryLabel(SmartBuildShapeCategory category)
+        {
+            switch (category)
+            {
+                case SmartBuildShapeCategory.Slopes:
+                    return "Slopes";
+                case SmartBuildShapeCategory.Corners:
+                    return "Corners";
+                case SmartBuildShapeCategory.Wedges:
+                    return "Wedges";
+                case SmartBuildShapeCategory.Transitions:
+                    return "Transitions";
+                default:
+                    return "Basic";
+            }
+        }
+
+        private void DrawShapeButton(SmartBuildShapeDescriptor descriptor)
+        {
+            bool active = descriptor?.Key == _selectedShapeDescriptorKey;
+            if (GUILayout.Button(
+                    new GUIContent(
+                        descriptor?.Label ?? "Shape",
+                        DecorationEditorIconCatalog.Get(descriptor?.IsCuboid == true ? "cube" : "scale"),
+                        descriptor?.Tooltip ?? "Place this structural shape."),
+                    DecorationEditorTheme.ToolButton(active),
+                    GUILayout.Height(EsuHudLayout.Scale(30f))))
+            {
+                SelectShapeDescriptor(descriptor);
+            }
+        }
+
+        private void DrawShapeSizeButton(int length)
         {
             bool active = _selectedSlopeLength == length;
             if (GUILayout.Button(
-                    new GUIContent(length.ToString(CultureInfo.InvariantCulture) + "m", length + "m down-slope length."),
+                    new GUIContent(length.ToString(CultureInfo.InvariantCulture), length + "m shape size."),
                     DecorationEditorTheme.ToolButton(active),
-                    GUILayout.Width(EsuHudLayout.Scale(42f)),
+                    GUILayout.Width(EsuHudLayout.Scale(36f)),
                     GUILayout.Height(EsuHudLayout.Scale(28f))))
             {
-                _selectedShape = SmartBuildShapeKind.DownSlope;
                 _selectedSlopeLength = length;
                 ArmAddMode();
             }
@@ -2967,10 +3081,11 @@ namespace DecoLimitLifter.SmartBuildMode
             if (GUI.Button(yaw, new GUIContent("Yaw", "Rotate the selected piece around construct Y."), DecorationEditorTheme.Button))
                 YawSelectedPiece();
 
-            bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope;
+            bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
+                           _draft?.IsFixedGeometry == true;
             bool previous = GUI.enabled;
             GUI.enabled = previous && canFlip;
-            if (GUI.Button(flip, new GUIContent("Flip", "Reverse the selected down-slope direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton))
+            if (GUI.Button(flip, new GUIContent("Flip", "Reverse the selected shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton))
                 FlipSelectedPiece();
             GUI.enabled = previous;
         }
@@ -3303,8 +3418,15 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private string PendingShapeLabel()
         {
-            if (_selectedShape == SmartBuildShapeKind.DownSlope)
-                return _selectedSlopeLength.ToString(CultureInfo.InvariantCulture) + "m down slope";
+            SmartBuildShapeDescriptor descriptor = SelectedShapeDescriptor;
+            if (descriptor.UsesLengthSelector)
+            {
+                return _selectedSlopeLength.ToString(CultureInfo.InvariantCulture) + "m " +
+                       descriptor.Label.ToLowerInvariant();
+            }
+
+            if (descriptor != null && !descriptor.IsCuboid)
+                return descriptor.Label;
 
             return "Block";
         }
@@ -3609,7 +3731,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_scene == null || _scene.Count == 0)
                 return 0;
             if (_planDirty || _previewCells.Count == 0)
-                return _scene.Pieces.Sum(piece => piece.EnumeratePreviewCells().Count());
+                return _scene.Pieces.Sum(piece => piece.EnumeratePreviewCells(_source).Count());
             return _previewCells.Count;
         }
 
@@ -3645,7 +3767,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (piece?.Construct == null)
                 return;
 
-            Vector3i[] occupiedCells = piece.EnumeratePreviewCells()
+            Vector3i[] occupiedCells = piece.EnumeratePreviewCells(_source)
                 .Select(variant.Mirror)
                 .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
                 .Select(group => group.First())
@@ -4712,7 +4834,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryGetDownSlopeEdgeWorldCorners(axes, signs, out start, out end);
 
-            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             var matches = new List<Vector3>(2);
@@ -4747,7 +4869,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryGetDownSlopeCornerWorld(axes, signs, out world);
 
-            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             foreach (Vector3 corner in corners)
@@ -4792,11 +4914,38 @@ namespace DecoLimitLifter.SmartBuildMode
             Color color = candidate.Valid
                 ? new Color(0.1f, 0.95f, 1f, 0.92f)
                 : new Color(1f, 0.2f, 0.15f, 0.92f);
-            if (_selectedShape != SmartBuildShapeKind.DownSlope)
+            SmartBuildShapeDescriptor selectedDescriptor = SelectedShapeDescriptor;
+            if (selectedDescriptor.IsCuboid)
             {
                 Vector3i size = SmartBuildDraft.ClampSize(candidate.CuboidSize);
                 Vector3i max = candidate.Cell + new Vector3i(size.x - 1, size.y - 1, size.z - 1);
                 SmartBuildVolume volume = SmartBuildVolume.FromBounds(candidate.Construct, candidate.Cell, max);
+                if (volume != null && _previewMode == SmartBuildPreviewMode.Material)
+                    DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
+                if (volume != null)
+                    DrawWireEdges(volume.GetWorldCorners(), color, 2.4f);
+                return;
+            }
+
+            if (selectedDescriptor.IsFixedGeometry)
+            {
+                Vector3i fixedOrigin = candidate.Cell;
+                DeriveRightAxis(candidate.ForwardAxis, candidate.ForwardSign, out SmartBuildAxis fixedRightAxis, out int fixedRightSign);
+                if (candidate.RightStart.HasValue)
+                    fixedOrigin = SmartBuildAxisHelper.Set(fixedOrigin, fixedRightAxis, candidate.RightStart.Value);
+
+                SmartBuildPiece ghost = SmartBuildPiece.CreateFixedShapePreview(
+                    candidate.Construct,
+                    fixedOrigin,
+                    selectedDescriptor,
+                    _selectedSlopeLength,
+                    candidate.ForwardAxis,
+                    candidate.ForwardSign,
+                    candidate.Width,
+                    _drawPlane);
+                SmartBuildVolume volume = VolumeFromCells(
+                    candidate.Construct,
+                    ghost.EnumeratePreviewCells(_source).ToArray());
                 if (volume != null && _previewMode == SmartBuildPreviewMode.Material)
                     DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
                 if (volume != null)
@@ -4949,7 +5098,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryGetDownSlopeFaceWorldCorners(axis, sign, out face);
 
-            Vector3[] corners = _draft.ToVolume().GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             int[] indices;
             switch (axis)
             {
@@ -5351,6 +5500,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 int selectedPieceId,
                 SmartBuildTool tool,
                 SmartBuildShapeKind selectedShape,
+                string selectedShapeDescriptorKey,
                 int selectedSlopeLength,
                 SmartBuildEditHandleMode editHandleMode,
                 SmartBuildSlopeSupportMode defaultSlopeSupportMode,
@@ -5364,6 +5514,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 SelectedPieceId = selectedPieceId;
                 Tool = tool;
                 SelectedShape = selectedShape;
+                SelectedShapeDescriptorKey = string.IsNullOrWhiteSpace(selectedShapeDescriptorKey)
+                    ? SmartBuildShapeDescriptors.CuboidKey
+                    : selectedShapeDescriptorKey;
                 SelectedSlopeLength = selectedSlopeLength;
                 EditHandleMode = editHandleMode;
                 DefaultSlopeSupportMode = defaultSlopeSupportMode;
@@ -5379,6 +5532,8 @@ namespace DecoLimitLifter.SmartBuildMode
             internal SmartBuildTool Tool { get; }
 
             internal SmartBuildShapeKind SelectedShape { get; }
+
+            internal string SelectedShapeDescriptorKey { get; }
 
             internal int SelectedSlopeLength { get; }
 

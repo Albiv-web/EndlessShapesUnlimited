@@ -85,14 +85,14 @@ namespace DecoLimitLifter.SerializationHud
             CreateHeader(
                 "Blueprint loading",
                 new ToolTip(
-                    "Experimental opt-in load acceleration for very large blueprint files. The saved blueprint schema is not changed."));
+                    "Optional load acceleration for very large or block-count-heavy blueprints. The saved blueprint schema is not changed."));
             var blueprintLoading = CreateTableSegment(2, 4);
             blueprintLoading.AddInterpretter(
                 SubjectiveButton<SerializationHudProfile.ProfileData>.Quick(
                     data,
                     "Fast load tier",
                     new ToolTip(
-                        "Cycles Off, V1, V2, and V3. Off keeps the vanilla load path. V3 bulk-defers verified base block registrations and falls back to V2 if ESU cannot prove the hooks are safe."),
+                        "Cycles Off, V1, V2, and V3. Off keeps the vanilla load path. V3 is recommended for huge block-count craft and falls back if ESU cannot prove the hooks are safe."),
                     profile =>
                     {
                         CycleFastBlueprintLoadTier(profile);
@@ -236,7 +236,7 @@ namespace DecoLimitLifter.SerializationHud
                 case FastBlueprintLoadTier.V2:
                     return "V2 - parallel predecode";
                 case FastBlueprintLoadTier.V3:
-                    return "V3 - experimental bulk";
+                    return "V3 - huge-craft bulk";
                 default:
                     return "Off - vanilla";
             }

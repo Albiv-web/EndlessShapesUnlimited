@@ -66,6 +66,26 @@ namespace DecoLimitLifter.DecorationEditMode
             _expandedScroll = Vector2.zero;
         }
 
+        internal static void ShowSystem(
+            string source,
+            string message,
+            EsuHudNotificationKind kind,
+            string detail = null,
+            bool addRuntimeLog = true)
+        {
+            message = (message ?? string.Empty).Trim();
+            if (message.Length == 0)
+                return;
+
+            string sourceName = string.IsNullOrWhiteSpace(source)
+                ? "ESU"
+                : source.Trim();
+            SetActiveSource(sourceName);
+            Show(message, kind);
+            if (addRuntimeLog)
+                EsuRuntimeLog.FromNotification(sourceName, kind, message, detail);
+        }
+
         internal static bool TryCaptureInfoStore(object[] arguments)
         {
             if (!DecorationEditorInputScope.Active &&

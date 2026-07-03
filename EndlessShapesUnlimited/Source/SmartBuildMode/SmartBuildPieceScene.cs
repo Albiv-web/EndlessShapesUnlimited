@@ -82,6 +82,9 @@ namespace DecoLimitLifter.SmartBuildMode
         internal bool HasDownSlope =>
             _pieces.Any(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope);
 
+        internal bool HasFixedGeometry =>
+            _pieces.Any(piece => piece.IsFixedGeometry);
+
         internal void Add(SmartBuildPiece piece)
         {
             if (piece == null)
@@ -152,7 +155,7 @@ namespace DecoLimitLifter.SmartBuildMode
                             _pieces.LastOrDefault();
         }
 
-        internal SmartBuildPreviewSnapshot BuildPreview()
+        internal SmartBuildPreviewSnapshot BuildPreview(SmartBuildSource source = null)
         {
             if (Construct == null || _pieces.Count == 0)
                 return SmartBuildPreviewSnapshot.Empty;
@@ -165,7 +168,7 @@ namespace DecoLimitLifter.SmartBuildMode
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
                 Vector3i[] cells = _pieces
-                    .SelectMany(piece => piece.EnumeratePreviewCells())
+                    .SelectMany(piece => piece.EnumeratePreviewCells(source))
                     .Select(variant.Mirror)
                     .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
                     .Select(group => group.First())
@@ -207,7 +210,7 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPlannerOptions options,
             out SmartBuildPreviewSnapshot preview)
         {
-            preview = BuildPreview();
+            preview = BuildPreview(source);
             options ??= new SmartBuildPlannerOptions();
             if (Construct == null && !options.AllowNullConstructForVerification)
                 return Failed("No valid construct is available.", preview);
@@ -233,7 +236,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return Failed("Down slope previews cannot be mirrored across Y in this first slope pass.", preview);
             }
 
-            string collision = FirstBaseCollision();
+            string collision = FirstBaseCollision(source);
             if (!string.IsNullOrWhiteSpace(collision))
                 return Failed(collision, preview);
 
@@ -261,7 +264,15 @@ namespace DecoLimitLifter.SmartBuildMode
 
                     foreach (SmartBuildPlacement placement in result.FixedPlacements)
                     {
-                        SmartBuildPlacement mirrored = MirrorPlacement(placement, variant);
+                        SmartBuildPlacement mirrored = MirrorPlacement(placement, variant, source);
+                        if (mirrored == null)
+                        {
+                            return Failed(
+                                "A mirrored Smart Builder shape is unavailable for this material.",
+                                preview,
+                                skipped);
+                        }
+
                         string signature = PlacementSignature(mirrored);
                         if (!fixedSignatures.Add(signature))
                             continue;
@@ -370,12 +381,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 failureReason: null);
         }
 
-        private string FirstBaseCollision()
+        private string FirstBaseCollision(SmartBuildSource source)
         {
             var seen = new Dictionary<string, int>();
             foreach (SmartBuildPiece piece in _pieces)
             {
-                foreach (Vector3i cell in piece.EnumeratePreviewCells())
+                foreach (Vector3i cell in piece.EnumeratePreviewCells(source))
                 {
                     string key = DecoLimitLifter.EsuSymmetry.CellKey(cell);
                     if (seen.TryGetValue(key, out int otherId) && otherId != piece.Id)
@@ -407,6 +418,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 case SmartBuildShapeKind.DownSlope:
                     return DownSlopePattern.Instance;
                 default:
+                    if (piece.IsFixedGeometry)
+                        return FixedGeometryPattern.Instance;
                     return CuboidPattern.Instance;
             }
         }
@@ -415,6 +428,14 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPlacement placement,
             DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
         {
+            return MirrorPlacement(placement, variant, null);
+        }
+
+        private static SmartBuildPlacement MirrorPlacement(
+            SmartBuildPlacement placement,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
+            SmartBuildSource source)
+        {
             if (variant.Axes.Count == 0)
                 return placement;
 
@@ -422,14 +443,40 @@ namespace DecoLimitLifter.SmartBuildMode
             if (variant.Axes.Any(axis => ToSmartAxis(axis) == placement.Axis))
                 sign *= -1;
 
+            SmartBlockCandidate candidate = MirrorCandidate(placement.Candidate, variant, source);
+            if (candidate == null)
+                return null;
+
             return new SmartBuildPlacement(
                 variant.Mirror(placement.Position),
-                placement.Candidate,
+                candidate,
                 placement.Axis,
                 sign,
                 MirrorRotation(placement.Rotation, variant),
                 placement.CoveredCells().Select(variant.Mirror),
-                placement.DisplayName);
+                candidate.DisplayName);
+        }
+
+        private static SmartBlockCandidate MirrorCandidate(
+            SmartBlockCandidate candidate,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
+            SmartBuildSource source)
+        {
+            if (candidate == null)
+                return null;
+
+            SmartBuildShapeDescriptor descriptor = candidate.Descriptor;
+            if (!SmartBuildShapeDescriptors.IsOddMirror(descriptor, variant.Axes))
+                return candidate;
+
+            SmartBuildShapeDescriptor mirror = descriptor.MirrorDescriptor();
+            if (mirror == null || mirror.Key == descriptor.Key)
+                return candidate;
+
+            SmartBlockCandidate mirrored = source?
+                .FamilyForShape(mirror)?
+                .CandidateForLength(candidate.Length);
+            return mirrored;
         }
 
         private static Quaternion MirrorRotation(
@@ -619,6 +666,27 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 return new SmartBuildPatternResult(
                     piece.EnumerateSupportCells(),
+                    placements);
+            }
+        }
+
+        private sealed class FixedGeometryPattern : ISmartBuildPattern
+        {
+            internal static readonly FixedGeometryPattern Instance = new FixedGeometryPattern();
+
+            public SmartBuildPatternResult Build(SmartBuildPiece piece, SmartBuildSource source)
+            {
+                IReadOnlyList<SmartBuildPlacement> placements = piece.BuildFixedPlacements(
+                    source,
+                    out string reason);
+                if (!string.IsNullOrWhiteSpace(reason))
+                    return new SmartBuildPatternResult(
+                        Array.Empty<Vector3i>(),
+                        Array.Empty<SmartBuildPlacement>(),
+                        reason);
+
+                return new SmartBuildPatternResult(
+                    Array.Empty<Vector3i>(),
                     placements);
             }
         }

@@ -1438,10 +1438,26 @@ namespace DecoLimitLifter.Patches
         private const int BlockBlockStateChangedMetadataToken = 0x06000D86;
         private const string ConstructableCollidersTypeName =
             "BrilliantSkies.Ftd.Constructs.Modules.All.Colliders.ConstructableColliders";
+        private const string ConstructableColliderCommonTypeName =
+            "BrilliantSkies.Common.Colliders.ConstructableColliderCommon`3";
         private const string AllConstructShellTypeName =
             "BrilliantSkies.Ftd.Constructs.Modules.All.Shell.AllConstructShell";
         private const string MainConstructSkinCalcTypeName =
             "BrilliantSkies.Ftd.Constructs.Modules.Main.SkinCalcs.MainConstructSkinCalc";
+
+        // Explicit initial-load suspects only. These are not "all discovered" collider methods;
+        // zero call counts in the trace tell us which candidates are not on the load path.
+        private static readonly string[] V3DColliderInternalTimingMethodNames =
+        {
+            "EnableCollidersForPositions",
+            "MarkCollidersForDisabling",
+            "DisableMarkedColliders",
+            "EnableIntersectingColliders",
+            "UpdateCollidersForTerrain",
+            "ProcessOutOfDateColliders",
+            "SwapEnabledColliderLists",
+            "OnColliderChange"
+        };
 
         private static Type ConstructExtraInfoType =>
             ResolveConstructExtraInfoType();
@@ -1474,6 +1490,12 @@ namespace DecoLimitLifter.Patches
         private static MethodBase _stage2ModuleExternalLinkupTarget;
         private static bool _stage2ModuleExternalLinkupPatchInstalled;
         private static int _stage2ModuleExternalLinkupPatchCount;
+        private static bool _v3dColliderInternalTimingPatchInstalled;
+        private static int _v3dColliderInternalTimingPatchCount;
+        private static string _v3dColliderInternalTimingUnsupported = string.Empty;
+        private static readonly object V3DColliderInternalTimingTargetSync = new object();
+        private static readonly Dictionary<string, string> V3DColliderInternalTimingDeclaringTypes =
+            new Dictionary<string, string>();
         private static readonly object Stage2ModuleLinkupMethodSync = new object();
         private static readonly Dictionary<Type, MethodInfo> Stage2ModuleLinkupMethods =
             new Dictionary<Type, MethodInfo>();
@@ -1484,6 +1506,37 @@ namespace DecoLimitLifter.Patches
         private static FastBlueprintV3BulkLoadContext _activeV3BulkContext;
         [ThreadStatic]
         private static bool _insideStage2ModuleCallsiteWrapper;
+        [ThreadStatic]
+        private static bool _v3dColliderInternalTimingActive;
+        [ThreadStatic]
+        private static Dictionary<string, V3DColliderInternalTimingStats> _v3dColliderInternalTimingStats;
+
+        private sealed class V3DColliderInternalTimingStats
+        {
+            internal string MethodName;
+            internal string RuntimeType;
+            internal string DeclaringType;
+            internal int CallCount;
+            internal long TotalTicks;
+            internal long MaxTicks;
+            internal bool Threw;
+
+            internal void Add(
+                string methodName,
+                string runtimeType,
+                string declaringType,
+                long ticks,
+                bool threw)
+            {
+                MethodName = methodName ?? MethodName ?? string.Empty;
+                RuntimeType = runtimeType ?? RuntimeType ?? string.Empty;
+                DeclaringType = declaringType ?? DeclaringType ?? string.Empty;
+                CallCount++;
+                TotalTicks += Math.Max(0L, ticks);
+                MaxTicks = Math.Max(MaxTicks, Math.Max(0L, ticks));
+                Threw |= threw;
+            }
+        }
 
         internal static MethodBase ResolveBlueprintFileModelLoadDataTarget()
             => AccessTools.Method(
@@ -1648,6 +1701,200 @@ namespace DecoLimitLifter.Patches
                     exception.GetType().Name + ": " + exception.Message);
             }
         }
+
+        internal static void InstallOptionalV3DColliderInternalTimingPatch(Harmony harmony)
+        {
+            if (harmony == null || _v3dColliderInternalTimingPatchInstalled)
+                return;
+
+            try
+            {
+                string unsupported;
+                List<MethodInfo> targets = ResolveV3DColliderInternalTimingTargets(
+                    out unsupported);
+                _v3dColliderInternalTimingUnsupported = unsupported ?? string.Empty;
+                lock (V3DColliderInternalTimingTargetSync)
+                {
+                    V3DColliderInternalTimingDeclaringTypes.Clear();
+                    foreach (MethodInfo target in targets)
+                    {
+                        if (target == null || string.IsNullOrEmpty(target.Name))
+                            continue;
+                        if (!V3DColliderInternalTimingDeclaringTypes.ContainsKey(target.Name))
+                        {
+                            V3DColliderInternalTimingDeclaringTypes[target.Name] =
+                                target.DeclaringType?.FullName ?? string.Empty;
+                        }
+                    }
+                }
+                if (targets.Count == 0)
+                {
+                    LogInfo(
+                        "V3D collider internal timing unavailable: " +
+                        (string.IsNullOrEmpty(_v3dColliderInternalTimingUnsupported)
+                            ? "no closed ConstructableColliderCommon methods could be resolved."
+                            : _v3dColliderInternalTimingUnsupported));
+                    return;
+                }
+
+                Type patchType = typeof(ConstructableColliderCommon_InternalTiming_Patch);
+                var prefix = new HarmonyMethod(AccessTools.Method(patchType, "Prefix"));
+                var postfix = new HarmonyMethod(AccessTools.Method(patchType, "Postfix"));
+                var finalizer = new HarmonyMethod(AccessTools.Method(patchType, "Finalizer"));
+                int installed = 0;
+                int failed = 0;
+                foreach (MethodInfo target in targets)
+                {
+                    try
+                    {
+                        harmony.Patch(
+                            target,
+                            prefix: prefix,
+                            postfix: postfix,
+                            finalizer: finalizer);
+                        installed++;
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+                }
+
+                if (installed == 0)
+                {
+                    LogInfo(
+                        "V3D collider internal timing unavailable: resolved methods could not be patched.");
+                    return;
+                }
+
+                _v3dColliderInternalTimingPatchInstalled = true;
+                _v3dColliderInternalTimingPatchCount = installed;
+                LogInfo(
+                    "V3D collider internal timing installed on " +
+                    installed.ToString(CultureInfo.InvariantCulture) +
+                    " ConstructableColliderCommon methods" +
+                    (failed > 0
+                        ? " (" + failed.ToString(CultureInfo.InvariantCulture) + " unavailable)."
+                        : "."));
+            }
+            catch (Exception exception)
+            {
+                _v3dColliderInternalTimingPatchInstalled = false;
+                _v3dColliderInternalTimingPatchCount = 0;
+                _v3dColliderInternalTimingUnsupported =
+                    exception.GetType().Name + ": " + exception.Message;
+                LogInfo(
+                    "V3D collider internal timing unavailable: " +
+                    _v3dColliderInternalTimingUnsupported);
+            }
+        }
+
+        private static List<MethodInfo> ResolveV3DColliderInternalTimingTargets(
+            out string unsupported)
+        {
+            unsupported = string.Empty;
+            var reasons = new List<string>();
+            var targets = new List<MethodInfo>();
+            var seen = new HashSet<MethodInfo>();
+            Type colliderType = FindLoadedTypeByFullName(ConstructableCollidersTypeName);
+            Type baseType = colliderType?.BaseType;
+            if (colliderType == null)
+            {
+                unsupported = "ConstructableColliders runtime type not loaded.";
+                return targets;
+            }
+            if (!IsClosedConstructableColliderCommon(baseType))
+            {
+                unsupported =
+                    "ConstructableColliders base type is not closed " +
+                    ConstructableColliderCommonTypeName + ".";
+                return targets;
+            }
+
+            foreach (string methodName in V3DColliderInternalTimingMethodNames)
+            {
+                MethodInfo[] matches = FindMethodsInHierarchy(baseType, methodName);
+                if (matches.Length == 0)
+                {
+                    reasons.Add(methodName + ":missing");
+                    continue;
+                }
+
+                bool added = false;
+                foreach (MethodInfo method in matches)
+                {
+                    if (!IsPatchableV3DColliderInternalTimingTarget(method))
+                    {
+                        reasons.Add(methodName + ":unpatchable");
+                        continue;
+                    }
+                    if (seen.Add(method))
+                    {
+                        targets.Add(method);
+                        added = true;
+                    }
+                }
+                if (!added)
+                    reasons.Add(methodName + ":no-patchable-overload");
+            }
+
+            targets.Sort(
+                (left, right) => string.Compare(
+                    left.Name,
+                    right.Name,
+                    StringComparison.Ordinal));
+            unsupported = string.Join(", ", reasons.ToArray());
+            return targets;
+        }
+
+        private static MethodInfo[] FindMethodsInHierarchy(Type type, string name)
+        {
+            if (type == null || string.IsNullOrEmpty(name))
+                return Array.Empty<MethodInfo>();
+
+            var methods = new List<MethodInfo>();
+            for (Type current = type; current != null; current = current.BaseType)
+            {
+                MethodInfo[] declared;
+                try
+                {
+                    declared = current.GetMethods(
+                        BindingFlags.Instance |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic |
+                        BindingFlags.DeclaredOnly);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (MethodInfo method in declared)
+                {
+                    if (method?.Name == name)
+                        methods.Add(method);
+                }
+            }
+            return methods.ToArray();
+        }
+
+        private static bool IsClosedConstructableColliderCommon(Type type)
+        {
+            string name = type?.FullName ?? type?.Name ?? string.Empty;
+            return !string.IsNullOrEmpty(name) &&
+                   name.StartsWith(
+                       ConstructableColliderCommonTypeName,
+                       StringComparison.Ordinal) &&
+                   !type.ContainsGenericParameters;
+        }
+
+        private static bool IsPatchableV3DColliderInternalTimingTarget(MethodInfo method) =>
+            method != null &&
+            !method.IsAbstract &&
+            !method.IsStatic &&
+            !method.ContainsGenericParameters &&
+            method.DeclaringType != null &&
+            method.DeclaringType.ContainsGenericParameters == false;
 
         internal static MethodBase ResolveAllConstructInitialiseStage2Target() =>
             AccessTools.Method(typeof(AllConstruct), nameof(AllConstruct.InitialiseStage2));
@@ -2238,6 +2485,7 @@ namespace DecoLimitLifter.Patches
             Blueprint blueprint)
         {
             FastBlueprintLoadTrace trace = TraceForBlueprint(blueprint);
+            bool traceMappedFromFileRoute = trace != null;
             bool startV3 = ShouldStartV3BulkLoad(blueprint);
             bool standaloneTrace = false;
             if (trace == null && DiagnosticsEnabled)
@@ -2272,6 +2520,13 @@ namespace DecoLimitLifter.Patches
             FastBlueprintV3BulkLoadContext v3Context = startV3
                 ? BeginV3BulkLoadContext(trace)
                 : null;
+            LogStandaloneRouteDecision(
+                trace,
+                blueprint,
+                traceMappedFromFileRoute,
+                standaloneTrace,
+                startV3,
+                v3Context != null);
             return new FastBlueprintLoadConversionScope(
                 traceScope,
                 v3Context,
@@ -2383,6 +2638,8 @@ namespace DecoLimitLifter.Patches
                 return true;
 
             timer = Stopwatch.StartNew();
+            if (!_insideStage2ModuleCallsiteWrapper)
+                BeginV3DColliderInternalTimingParent(target);
             return true;
         }
 
@@ -2430,6 +2687,17 @@ namespace DecoLimitLifter.Patches
                         target,
                         moduleType?.FullName ?? moduleType?.Name ?? string.Empty,
                         originalMethod);
+                    if (!_insideStage2ModuleCallsiteWrapper)
+                    {
+                        FlushV3DColliderInternalTimingParent(
+                            trace,
+                            target,
+                            moduleType?.FullName ?? moduleType?.Name ?? string.Empty,
+                            originalMethod,
+                            timer.Elapsed.TotalMilliseconds,
+                            skipped: false,
+                            threw: threw);
+                    }
                 }
             }
         }
@@ -2481,6 +2749,8 @@ namespace DecoLimitLifter.Patches
                 elapsedMs: 0d,
                 skipped: true,
                 threw: false);
+            if (target == V3DModuleTarget.Collider)
+                LogV3DColliderTargetDiscovery(CurrentTrace, moduleType, method, fields);
             LogUnsafeProbeEvent(
                 CurrentTrace,
                 phase,
@@ -2553,6 +2823,12 @@ namespace DecoLimitLifter.Patches
                 FastBlueprintLoadTrace.Pair("reason", "subphase target discovery pending"),
                 FastBlueprintLoadTrace.Pair("fallback", "whole-module timing")
             };
+            if (target == V3DModuleTarget.Collider)
+            {
+                LogV3DColliderTargetDiscovery(trace, moduleType, method, fields);
+                if (_v3dColliderInternalTimingPatchInstalled)
+                    return;
+            }
             trace.Event(
                 V3DTargetSubphaseEventName(target),
                 V3DTargetSubphasePhaseName(target),
@@ -2582,16 +2858,410 @@ namespace DecoLimitLifter.Patches
                 FastBlueprintLoadTrace.Pair("module_type", moduleType ?? string.Empty),
                 FastBlueprintLoadTrace.Pair("method_name", method?.Name ?? "LinkUpExternallyAfterBlocksInitialising"),
                 FastBlueprintLoadTrace.Pair("method_declaring_type", method?.DeclaringType?.FullName ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("runtime_type", moduleType ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("method", method?.Name ?? "LinkUpExternallyAfterBlocksInitialising"),
+                FastBlueprintLoadTrace.Pair("declaring_type", method?.DeclaringType?.FullName ?? string.Empty),
                 FastBlueprintLoadTrace.Pair("module_index", moduleIndex),
                 FastBlueprintLoadTrace.Pair("module_count", moduleCount),
                 FastBlueprintLoadTrace.Pair("elapsed_ms", elapsedMs),
                 FastBlueprintLoadTrace.Pair("skipped", skipped),
+                FastBlueprintLoadTrace.Pair("diagnostics_enabled", DiagnosticsEnabled),
                 FastBlueprintLoadTrace.Pair("unsafe_probe", ActiveUnsafeProbeName),
                 FastBlueprintLoadTrace.Pair("correctness_valid", !unsafeActive),
                 FastBlueprintLoadTrace.Pair("correctness_invalid", unsafeActive),
                 FastBlueprintLoadTrace.Pair("do_not_save", unsafeActive),
                 FastBlueprintLoadTrace.Pair("threw", threw)
             };
+        }
+
+        private static void LogV3DColliderTargetDiscovery(
+            FastBlueprintLoadTrace trace,
+            string moduleType,
+            MethodBase method,
+            IEnumerable<KeyValuePair<string, object>> baseFields)
+        {
+            if (trace == null)
+                return;
+
+            Type runtimeType = FindLoadedTypeByFullName(moduleType);
+            Type baseType = runtimeType?.BaseType;
+            MethodInfo inheritedLinkup = ResolveStage2ModuleExternalLinkupMethod(runtimeType);
+            MethodInfo[] candidates = FindColliderCandidateMethods(baseType);
+            string unsupportedReason = ColliderUnsupportedReason(
+                runtimeType,
+                baseType,
+                inheritedLinkup,
+                candidates);
+
+            var discovery = new List<KeyValuePair<string, object>>(baseFields)
+            {
+                FastBlueprintLoadTrace.Pair("phase", "target-discovery"),
+                FastBlueprintLoadTrace.Pair("runtime_type", runtimeType?.FullName ?? moduleType ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("declaring_type", inheritedLinkup?.DeclaringType?.FullName ?? method?.DeclaringType?.FullName ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("method", inheritedLinkup?.Name ?? method?.Name ?? "LinkUpExternallyAfterBlocksInitialising"),
+                FastBlueprintLoadTrace.Pair("base_type", baseType?.FullName ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("expected_type", ConstructableColliderCommonTypeName),
+                FastBlueprintLoadTrace.Pair("expected_method", V3DTargetExpectedMethod(V3DModuleTarget.Collider)),
+                FastBlueprintLoadTrace.Pair("candidate_count", candidates.Length),
+                FastBlueprintLoadTrace.Pair("candidate_methods", DescribeMethods(candidates, 16)),
+                FastBlueprintLoadTrace.Pair("internal_timing_installed", _v3dColliderInternalTimingPatchInstalled),
+                FastBlueprintLoadTrace.Pair("internal_timing_target_count", _v3dColliderInternalTimingPatchCount),
+                FastBlueprintLoadTrace.Pair("internal_timing_unsupported", _v3dColliderInternalTimingUnsupported),
+                FastBlueprintLoadTrace.Pair("unsupported_reason", unsupportedReason),
+                FastBlueprintLoadTrace.Pair(
+                    "fallback",
+                    _v3dColliderInternalTimingPatchInstalled
+                        ? string.Empty
+                        : "whole-module timing")
+            };
+            trace.Event(
+                "v3d-collider-target-discovery",
+                "v3d.collider.discovery",
+                advLogger: false,
+                discovery.ToArray());
+
+            if (_v3dColliderInternalTimingPatchInstalled)
+                return;
+
+            var unsupported = new List<KeyValuePair<string, object>>(discovery)
+            {
+                FastBlueprintLoadTrace.Pair("phase", "internal-subphase-discovery"),
+                FastBlueprintLoadTrace.Pair("supported", false),
+                FastBlueprintLoadTrace.Pair("block_count", -1),
+                FastBlueprintLoadTrace.Pair("collection_count_before", -1),
+                FastBlueprintLoadTrace.Pair("collection_count_after", -1)
+            };
+            trace.Event(
+                "v3d-collider-subphase-unsupported",
+                "v3d.collider.subphase",
+                advLogger: false,
+                unsupported.ToArray());
+
+            var fallback = new List<KeyValuePair<string, object>>(discovery)
+            {
+                FastBlueprintLoadTrace.Pair("phase", "whole-module-callsite"),
+                FastBlueprintLoadTrace.Pair("skipped", false),
+                FastBlueprintLoadTrace.Pair("fallback", "v3d-collider-linkup whole-module timing")
+            };
+            trace.Event(
+                "v3d-collider-callsite-fallback",
+                "v3d.collider.callsite",
+                advLogger: false,
+                fallback.ToArray());
+        }
+
+        private static MethodInfo[] FindColliderCandidateMethods(Type baseType)
+        {
+            if (baseType == null)
+                return Array.Empty<MethodInfo>();
+
+            var methods = new List<MethodInfo>();
+            for (Type current = baseType; current != null; current = current.BaseType)
+            {
+                MethodInfo[] declared;
+                try
+                {
+                    declared = current.GetMethods(
+                        BindingFlags.Instance |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic |
+                        BindingFlags.DeclaredOnly);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (MethodInfo method in declared)
+                {
+                    if (method == null ||
+                        method.IsAbstract ||
+                        method.ContainsGenericParameters ||
+                        !IsColliderCandidateMethod(method))
+                    {
+                        continue;
+                    }
+                    methods.Add(method);
+                    if (methods.Count >= 64)
+                        return methods.ToArray();
+                }
+            }
+            return methods.ToArray();
+        }
+
+        private static bool IsColliderCandidateMethod(MethodInfo method)
+        {
+            string name = method?.Name ?? string.Empty;
+            return ContainsOrdinalIgnoreCase(name, "Collider") ||
+                   ContainsOrdinalIgnoreCase(name, "Element") ||
+                   ContainsOrdinalIgnoreCase(name, "Chunk") ||
+                   ContainsOrdinalIgnoreCase(name, "Bounds") ||
+                   ContainsOrdinalIgnoreCase(name, "Neighbour") ||
+                   ContainsOrdinalIgnoreCase(name, "Neighbor") ||
+                   ContainsOrdinalIgnoreCase(name, "Bake") ||
+                   ContainsOrdinalIgnoreCase(name, "Mesh") ||
+                   ContainsOrdinalIgnoreCase(name, "Register") ||
+                   ContainsOrdinalIgnoreCase(name, "Cleanup") ||
+                   ContainsOrdinalIgnoreCase(name, "CleanUp") ||
+                   ContainsOrdinalIgnoreCase(name, "Rebuild") ||
+                   name == "LinkUpExternallyAfterBlocksInitialising";
+        }
+
+        private static bool ContainsOrdinalIgnoreCase(string value, string fragment) =>
+            value != null &&
+            fragment != null &&
+            value.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private static string ColliderUnsupportedReason(
+            Type runtimeType,
+            Type baseType,
+            MethodInfo inheritedLinkup,
+            MethodInfo[] candidates)
+        {
+            if (runtimeType == null)
+                return "runtime-type-not-loaded";
+            if (baseType == null)
+                return "missing-base-type";
+            string baseName = baseType.FullName ?? baseType.Name ?? string.Empty;
+            if (!baseName.StartsWith(
+                    ConstructableColliderCommonTypeName,
+                    StringComparison.Ordinal))
+            {
+                return "unexpected-base-type";
+            }
+            if (inheritedLinkup == null)
+                return "missing-linkup-method";
+            if (_v3dColliderInternalTimingPatchInstalled)
+                return string.IsNullOrEmpty(_v3dColliderInternalTimingUnsupported)
+                    ? string.Empty
+                    : _v3dColliderInternalTimingUnsupported;
+            if (candidates == null || candidates.Length == 0)
+                return "no-stable-internal-candidates";
+            return "internal-method-patching-deferred";
+        }
+
+        private static string DescribeMethods(
+            IEnumerable<MethodInfo> methods,
+            int max)
+        {
+            if (methods == null)
+                return string.Empty;
+            try
+            {
+                return string.Join(
+                    ";",
+                    methods
+                        .Take(Math.Max(0, max))
+                        .Select(method =>
+                            (method.DeclaringType?.Name ?? string.Empty) +
+                            "." +
+                            method.Name)
+                        .ToArray());
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        internal static void BeginV3DColliderInternalTiming(
+            object instance,
+            MethodBase originalMethod,
+            out Stopwatch state)
+        {
+            state = null;
+            if (!_v3dColliderInternalTimingActive ||
+                _v3dColliderInternalTimingStats == null ||
+                !DiagnosticsEnabled)
+                return;
+            if (!IsV3DColliderInternalTimingTarget(originalMethod))
+                return;
+            state = Stopwatch.StartNew();
+        }
+
+        internal static void EndV3DColliderInternalTiming(
+            object instance,
+            MethodBase originalMethod,
+            Stopwatch timer,
+            bool threw)
+        {
+            if (timer == null)
+                return;
+            timer.Stop();
+            if (!_v3dColliderInternalTimingActive ||
+                _v3dColliderInternalTimingStats == null)
+                return;
+
+            string methodName = originalMethod?.Name ?? string.Empty;
+            if (string.IsNullOrEmpty(methodName))
+                return;
+
+            Type runtimeType = instance?.GetType();
+            string runtimeTypeName = runtimeType?.FullName ?? runtimeType?.Name ?? string.Empty;
+            string declaringTypeName = originalMethod?.DeclaringType?.FullName ?? string.Empty;
+            if (!_v3dColliderInternalTimingStats.TryGetValue(
+                    methodName,
+                    out V3DColliderInternalTimingStats stats))
+            {
+                stats = new V3DColliderInternalTimingStats();
+                _v3dColliderInternalTimingStats[methodName] = stats;
+            }
+
+            stats.Add(
+                methodName,
+                runtimeTypeName,
+                declaringTypeName,
+                timer.ElapsedTicks,
+                threw);
+        }
+
+        private static void BeginV3DColliderInternalTimingParent(V3DModuleTarget target)
+        {
+            if (target != V3DModuleTarget.Collider ||
+                !_v3dColliderInternalTimingPatchInstalled ||
+                !DiagnosticsEnabled ||
+                CurrentTrace == null)
+            {
+                return;
+            }
+
+            if (_v3dColliderInternalTimingStats == null)
+                _v3dColliderInternalTimingStats =
+                    new Dictionary<string, V3DColliderInternalTimingStats>(
+                        StringComparer.Ordinal);
+            else
+                _v3dColliderInternalTimingStats.Clear();
+            _v3dColliderInternalTimingActive = true;
+        }
+
+        private static void FlushV3DColliderInternalTimingParent(
+            FastBlueprintLoadTrace trace,
+            V3DModuleTarget target,
+            string moduleType,
+            MethodBase originalMethod,
+            double parentElapsedMs,
+            bool skipped,
+            bool threw)
+        {
+            if (target != V3DModuleTarget.Collider ||
+                trace == null ||
+                !_v3dColliderInternalTimingPatchInstalled)
+            {
+                return;
+            }
+
+            Dictionary<string, V3DColliderInternalTimingStats> stats =
+                _v3dColliderInternalTimingStats;
+            _v3dColliderInternalTimingActive = false;
+
+            bool unsafeActive = AnyUnsafeProbeActiveForDiagnostics;
+            long knownTicks = 0L;
+            int totalCalls = 0;
+            int methodsWithCalls = 0;
+            foreach (string methodName in V3DColliderInternalTimingMethodNames)
+            {
+                V3DColliderInternalTimingStats methodStats = null;
+                stats?.TryGetValue(methodName, out methodStats);
+                int callCount = methodStats?.CallCount ?? 0;
+                long totalTicks = methodStats?.TotalTicks ?? 0L;
+                long maxTicks = methodStats?.MaxTicks ?? 0L;
+                knownTicks += totalTicks;
+                totalCalls += callCount;
+                if (callCount > 0)
+                    methodsWithCalls++;
+
+                string declaringType = !string.IsNullOrEmpty(methodStats?.DeclaringType)
+                    ? methodStats.DeclaringType
+                    : V3DColliderInternalDeclaringType(methodName);
+                string unsupportedReason = string.IsNullOrEmpty(declaringType)
+                    ? "target-not-resolved"
+                    : string.Empty;
+                trace.Event(
+                    "v3d-collider-subphase",
+                    "v3d.collider.subphase",
+                    advLogger: false,
+                    FastBlueprintLoadTrace.Pair("target", "collider"),
+                    FastBlueprintLoadTrace.Pair("phase", "collider." + methodName),
+                    FastBlueprintLoadTrace.Pair("runtime_type", methodStats?.RuntimeType ?? moduleType ?? string.Empty),
+                    FastBlueprintLoadTrace.Pair("declaring_type", declaringType),
+                    FastBlueprintLoadTrace.Pair("method", methodName),
+                    FastBlueprintLoadTrace.Pair("method_name", methodName),
+                    FastBlueprintLoadTrace.Pair("method_declaring_type", declaringType),
+                    FastBlueprintLoadTrace.Pair("elapsed_ms", TicksToMilliseconds(totalTicks)),
+                    FastBlueprintLoadTrace.Pair("call_count", callCount),
+                    FastBlueprintLoadTrace.Pair("max_single_call_ms", TicksToMilliseconds(maxTicks)),
+                    FastBlueprintLoadTrace.Pair("diagnostics_enabled", DiagnosticsEnabled),
+                    FastBlueprintLoadTrace.Pair("unsafe_probe", ActiveUnsafeProbeName),
+                    FastBlueprintLoadTrace.Pair("correctness_valid", !unsafeActive),
+                    FastBlueprintLoadTrace.Pair("correctness_invalid", unsafeActive),
+                    FastBlueprintLoadTrace.Pair("do_not_save", unsafeActive),
+                    FastBlueprintLoadTrace.Pair(
+                        "fallback",
+                        string.IsNullOrEmpty(unsupportedReason)
+                            ? string.Empty
+                            : "whole-module timing"),
+                    FastBlueprintLoadTrace.Pair("unsupported_reason", unsupportedReason),
+                    FastBlueprintLoadTrace.Pair("skipped", skipped),
+                    FastBlueprintLoadTrace.Pair("threw", methodStats?.Threw ?? threw));
+            }
+
+            double knownMs = TicksToMilliseconds(knownTicks);
+            trace.Event(
+                "v3d-collider-subphase-accounting",
+                "v3d.collider.subphase.accounting",
+                advLogger: false,
+                FastBlueprintLoadTrace.Pair("target", "collider"),
+                FastBlueprintLoadTrace.Pair("runtime_type", moduleType ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("declaring_type", originalMethod?.DeclaringType?.FullName ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("method", originalMethod?.Name ?? string.Empty),
+                FastBlueprintLoadTrace.Pair("parent_elapsed_ms", Math.Max(0d, parentElapsedMs)),
+                FastBlueprintLoadTrace.Pair("known_subphase_elapsed_ms", knownMs),
+                FastBlueprintLoadTrace.Pair("unaccounted_elapsed_ms", parentElapsedMs - knownMs),
+                FastBlueprintLoadTrace.Pair("call_count", totalCalls),
+                FastBlueprintLoadTrace.Pair("methods_with_calls", methodsWithCalls),
+                FastBlueprintLoadTrace.Pair("candidate_method_count", V3DColliderInternalTimingMethodNames.Length),
+                FastBlueprintLoadTrace.Pair("diagnostics_enabled", DiagnosticsEnabled),
+                FastBlueprintLoadTrace.Pair("unsafe_probe", ActiveUnsafeProbeName),
+                FastBlueprintLoadTrace.Pair("correctness_valid", !unsafeActive),
+                FastBlueprintLoadTrace.Pair("correctness_invalid", unsafeActive),
+                FastBlueprintLoadTrace.Pair("do_not_save", unsafeActive),
+                FastBlueprintLoadTrace.Pair("fallback", string.Empty),
+                FastBlueprintLoadTrace.Pair("unsupported_reason", string.Empty),
+                FastBlueprintLoadTrace.Pair("skipped", skipped),
+                FastBlueprintLoadTrace.Pair("threw", threw));
+        }
+
+        private static bool IsV3DColliderInternalTimingTarget(MethodBase method)
+        {
+            if (method == null)
+                return false;
+            string name = method.Name ?? string.Empty;
+            if (!V3DColliderInternalTimingMethodNames.Contains(name))
+                return false;
+            Type declaring = method.DeclaringType;
+            if (!IsClosedConstructableColliderCommon(declaring))
+                return false;
+            return true;
+        }
+
+        private static string ColliderSubphaseName(MethodBase method) =>
+            "collider." + (method?.Name ?? "unknown");
+
+        private static double TicksToMilliseconds(long ticks) =>
+            ticks <= 0L ? 0d : ticks * 1000.0 / Stopwatch.Frequency;
+
+        private static string V3DColliderInternalDeclaringType(string methodName)
+        {
+            if (string.IsNullOrEmpty(methodName))
+                return string.Empty;
+            lock (V3DColliderInternalTimingTargetSync)
+            {
+                return V3DColliderInternalTimingDeclaringTypes.TryGetValue(
+                    methodName,
+                    out string declaringType)
+                    ? declaringType
+                    : string.Empty;
+            }
         }
 
         private static string V3DTargetName(V3DModuleTarget target)
@@ -2981,10 +3651,13 @@ namespace DecoLimitLifter.Patches
             }
 
             bool previousCallsite = _insideStage2ModuleCallsiteWrapper;
+            bool completed = false;
             try
             {
                 _insideStage2ModuleCallsiteWrapper = true;
+                BeginV3DColliderInternalTimingParent(target);
                 InvokeStage2ModuleExternalLinkup(module, method);
+                completed = true;
             }
             finally
             {
@@ -3010,12 +3683,20 @@ namespace DecoLimitLifter.Patches
                         moduleCount,
                         timer.Elapsed.TotalMilliseconds,
                         skipped: false,
-                        threw: false);
+                        threw: !completed);
                     LogV3DSubphaseUnsupported(
                         CurrentTrace,
                         target,
                         moduleType,
                         method);
+                    FlushV3DColliderInternalTimingParent(
+                        CurrentTrace,
+                        target,
+                        moduleType,
+                        method,
+                        timer.Elapsed.TotalMilliseconds,
+                        skipped: false,
+                        threw: !completed);
                 }
             }
         }
@@ -3998,6 +4679,147 @@ namespace DecoLimitLifter.Patches
             return blockData + vehicleData;
         }
 
+        private static void LogStandaloneRouteDecision(
+            FastBlueprintLoadTrace trace,
+            Blueprint blueprint,
+            bool traceMappedFromFileRoute,
+            bool standaloneTrace,
+            bool v3BulkContextExpected,
+            bool v3BulkContextActive)
+        {
+            if (trace == null)
+                return;
+
+            SerializationHudProfile.ProfileData data = ProfileData;
+            long blockDataBytes = blueprint?.BlockData?.LongLength ?? 0L;
+            int blockDataRecordCount = TryCountBlockDataRecordsForRoute(
+                blueprint,
+                out string blockDataRecordCountSource);
+            bool v2Active = ShouldRouteV2BlockData(
+                blockDataBytes,
+                blockDataRecordCount < 0 ? 0 : blockDataRecordCount,
+                out string v2Reason);
+            int savedTotalBlocks = BlueprintTotalBlockIdsCount(blueprint);
+            int rootBlockIdsCount = blueprint?.BlockIds?.Length ?? 0;
+            bool captureFlushRowsExpected = v3BulkContextActive;
+
+            trace.Event(
+                "standalone-route-decision",
+                "route",
+                advLogger: true,
+                FastBlueprintLoadTrace.Pair("tier", CurrentTier.ToString()),
+                FastBlueprintLoadTrace.Pair("diagnostics", DiagnosticsEnabled),
+                FastBlueprintLoadTrace.Pair("unsafe_probe", ActiveUnsafeProbeName),
+                FastBlueprintLoadTrace.Pair("conversion_file_bytes_known", false),
+                FastBlueprintLoadTrace.Pair("conversion_path_file_bytes", -1L),
+                FastBlueprintLoadTrace.Pair("payload_bytes", BlueprintPayloadBytes(blueprint)),
+                FastBlueprintLoadTrace.Pair("saved_total_blocks", savedTotalBlocks),
+                FastBlueprintLoadTrace.Pair("saved_total_blocks_source", "in-memory-blueprint-block-ids"),
+                FastBlueprintLoadTrace.Pair("block_ids_count", rootBlockIdsCount),
+                FastBlueprintLoadTrace.Pair("total_block_ids_count", savedTotalBlocks),
+                FastBlueprintLoadTrace.Pair("block_data_bytes", blockDataBytes),
+                FastBlueprintLoadTrace.Pair("block_data_record_count", blockDataRecordCount),
+                FastBlueprintLoadTrace.Pair("block_data_record_count_source", blockDataRecordCountSource),
+                FastBlueprintLoadTrace.Pair("small_testing", data?.FastBlueprintLoadSmallBlueprintTesting == true),
+                FastBlueprintLoadTrace.Pair("force_v2", data?.FastBlueprintLoadForceV2BlockData == true),
+                FastBlueprintLoadTrace.Pair("v3_block_count_routing", data?.FastBlueprintLoadBlockCountRouting == true),
+                FastBlueprintLoadTrace.Pair("v2_active", v2Active),
+                FastBlueprintLoadTrace.Pair("v2_skipped", !v2Active),
+                FastBlueprintLoadTrace.Pair("v2_reason", v2Reason),
+                FastBlueprintLoadTrace.Pair("v3_bulk_context_expected", v3BulkContextExpected),
+                FastBlueprintLoadTrace.Pair("v3_bulk_context_active", v3BulkContextActive),
+                FastBlueprintLoadTrace.Pair("capture_flush_rows_expected", captureFlushRowsExpected),
+                FastBlueprintLoadTrace.Pair(
+                    "reason",
+                    StandaloneRouteDecisionReason(
+                        traceMappedFromFileRoute,
+                        standaloneTrace,
+                        v3BulkContextExpected,
+                        v3BulkContextActive)),
+                FastBlueprintLoadTrace.Pair("trace_mapped_from_file_route", traceMappedFromFileRoute),
+                FastBlueprintLoadTrace.Pair("standalone_trace", standaloneTrace));
+        }
+
+        private static int TryCountBlockDataRecordsForRoute(
+            Blueprint blueprint,
+            out string source)
+        {
+            byte[] data = blueprint?.BlockData;
+            if (data == null || data.Length == 0)
+            {
+                source = "no-block-data";
+                return 0;
+            }
+            if (data.LongLength > V2BlockDataPayloadThresholdBytes)
+            {
+                source = "skipped-large-payload";
+                return -1;
+            }
+
+            try
+            {
+                source = "scanned-small-payload";
+                return ScanBlockData(data).Length;
+            }
+            catch (Exception exception)
+            {
+                source = "scan-failed-" + exception.GetType().Name;
+                return -1;
+            }
+        }
+
+        private static int BlueprintTotalBlockIdsCount(Blueprint blueprint)
+        {
+            try
+            {
+                return BlueprintTotalBlockIdsCount(
+                    blueprint,
+                    new HashSet<Blueprint>());
+            }
+            catch
+            {
+                return blueprint?.BlockIds?.Length ?? 0;
+            }
+        }
+
+        private static int BlueprintTotalBlockIdsCount(
+            Blueprint blueprint,
+            ISet<Blueprint> seen)
+        {
+            if (blueprint == null || seen == null || seen.Contains(blueprint))
+                return 0;
+            seen.Add(blueprint);
+
+            long total = blueprint.BlockIds?.LongLength ?? 0L;
+            List<Blueprint> subconstructs = blueprint.SCs;
+            if (subconstructs != null)
+            {
+                foreach (Blueprint child in subconstructs)
+                    total += BlueprintTotalBlockIdsCount(child, seen);
+            }
+
+            return total > int.MaxValue ? int.MaxValue : (int)total;
+        }
+
+        private static string StandaloneRouteDecisionReason(
+            bool traceMappedFromFileRoute,
+            bool standaloneTrace,
+            bool v3BulkContextExpected,
+            bool v3BulkContextActive)
+        {
+            if (traceMappedFromFileRoute && v3BulkContextActive)
+                return "file-route-v3-bulk-active";
+            if (traceMappedFromFileRoute && v3BulkContextExpected)
+                return "file-route-v3-bulk-unavailable";
+            if (traceMappedFromFileRoute)
+                return "file-route-no-v3-bulk-context";
+            if (standaloneTrace && CurrentTier == FastBlueprintLoadTier.V3)
+                return "standalone-blueprint-not-v3-routed";
+            if (standaloneTrace)
+                return "standalone-conversion-trace";
+            return "conversion-trace-context";
+        }
+
         private static KeyValuePair<string, object>[] BlueprintConversionFields(
             Blueprint blueprint,
             bool standaloneTrace) =>
@@ -4500,6 +5322,45 @@ namespace DecoLimitLifter.Patches
             if (__exception != null)
             {
                 FastBlueprintLoadRouter.EndStage2ConcreteModuleExternalLinkup(
+                    __instance,
+                    __originalMethod,
+                    __state,
+                    threw: true);
+            }
+            return __exception;
+        }
+    }
+
+    internal static class ConstructableColliderCommon_InternalTiming_Patch
+    {
+        private static void Prefix(
+            object __instance,
+            MethodBase __originalMethod,
+            out Stopwatch __state) =>
+            FastBlueprintLoadRouter.BeginV3DColliderInternalTiming(
+                __instance,
+                __originalMethod,
+                out __state);
+
+        private static void Postfix(
+            object __instance,
+            MethodBase __originalMethod,
+            Stopwatch __state) =>
+            FastBlueprintLoadRouter.EndV3DColliderInternalTiming(
+                __instance,
+                __originalMethod,
+                __state,
+                threw: false);
+
+        private static Exception Finalizer(
+            Exception __exception,
+            object __instance,
+            MethodBase __originalMethod,
+            Stopwatch __state)
+        {
+            if (__exception != null)
+            {
+                FastBlueprintLoadRouter.EndV3DColliderInternalTiming(
                     __instance,
                     __originalMethod,
                     __state,

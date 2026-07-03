@@ -1863,7 +1863,7 @@ f 0 2 3
                optionsSource.Contains("do_not_save=true") &&
                optionsSource.Contains("UnsafeProbeCycle") &&
                optionsSource.Contains("var blueprintLoading = CreateTableSegment(2, 4);"),
-            "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and experimental loading controls without clipping Blueprint loading rows.");
+            "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and opt-in huge-craft loading controls without clipping Blueprint loading rows.");
         Assert(optionsSource.Contains("SubjectiveDisplay<SerializationHudProfile.ProfileData>.Quick") &&
                optionsSource.Contains("FastBlueprintLoadTierStatus(profile)") &&
                optionsSource.Contains("TriggerScreenRebuild()") &&
@@ -2055,6 +2055,12 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "Plugin.cs"));
+        string overlaySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotificationOverlayRegistration.cs"));
         string layoutSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -2076,8 +2082,10 @@ f 0 2 3
                guardSource.Contains("BeginSuppression") &&
                guardSource.Contains("AllConstructDecorations_NewDecoration_VanillaCompatibility_Patch") &&
                guardSource.Contains("TryAllowDecorationCreation") &&
-               guardSource.Contains("EnsureBlueprintSaveAllowed"),
-            "Vanilla compatibility guard centralizes the 5,000 editor cap, vanilla-load classification, mode-off warnings, load/cleanup suppression, and vanilla NewDecoration patch.");
+               guardSource.Contains("EnsureBlueprintSaveAllowed") &&
+               guardSource.Contains("EsuHudNotifications.ShowSystem") &&
+               guardSource.Contains("EsuHudNotificationKind.Error"),
+            "Vanilla compatibility guard centralizes the 5,000 editor cap, vanilla-load classification, mode-off warnings, blocked-save popups, load/cleanup suppression, and vanilla NewDecoration patch.");
         Assert(telemetrySource.Contains("EnsureBlueprintSaveAllowed(constructable, __result)") &&
                telemetrySource.Contains("BeginSuppression(\"blueprint load\")") &&
                telemetrySource.Contains("BlueprintLoadTelemetryState") &&
@@ -2097,6 +2105,18 @@ f 0 2 3
                pluginSource.Contains("AllConstructDecorations_NewDecoration_VanillaCompatibility_Patch") &&
                verifiesVanillaPatch,
             "Plugin startup verifies the vanilla decoration creation guard patch.");
+        Assert(pluginSource.Contains("EsuHudNotificationOverlayRegistration.Register") &&
+               pluginSource.Contains("EsuHudNotificationOverlayRegistration.Unregister") &&
+               pluginSource.Contains("TrackRollback(EsuHudNotificationOverlayRegistration.Unregister)") &&
+               overlaySource.Contains("DontDestroyOnLoad") &&
+               overlaySource.Contains("OnGUI") &&
+               overlaySource.Contains("EsuHudNotifications.DrawToolbarSlot") &&
+               overlaySource.Contains("EsuHudNotifications.DrawExpandedPopup") &&
+               overlaySource.Contains("EsuConsoleWindow.Draw") &&
+               overlaySource.Contains("DecorationEditorInputScope.Active") &&
+               overlaySource.Contains("SmartBuildInputScope.Active") &&
+               overlaySource.Contains("EsuRuntimeLog.Exception"),
+            "Plugin startup registers a rollback-safe global ESU notification overlay that draws outside ESU editor modes.");
         Assert(layoutSource.Contains("headerLength <= ushort.MaxValue && dataBytes <= MaximumLegacyDataBytes") &&
                layoutSource.Contains("legacy ? SuperContainerFormat.Legacy : SuperContainerFormat.Sentinel"),
             "Serializer legacy/sentinel selection remains the original byte-size calculation.");
@@ -2241,7 +2261,7 @@ f 0 2 3
         Assert(SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.Off).Contains("vanilla") &&
                SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V1).Contains("streamed JSON") &&
                SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V2).Contains("parallel predecode") &&
-               SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V3).Contains("experimental bulk"),
+               SerializationHudOptionsScreen.FastBlueprintLoadTierLabel(FastBlueprintLoadTier.V3).Contains("huge-craft bulk"),
             "Fast blueprint load tier labels describe Off, V1, V2, and V3.");
 
         Assert(!FastBlueprintLoadRouter.ShouldRouteV2BlockDataForVerification(
@@ -2517,6 +2537,21 @@ f 0 2 3
             "Source",
             "SerializationHud",
             "SerializationTelemetryPatches.cs"));
+        string fastLoadDeveloperGuide = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "docs",
+            "FAST_BLUEPRINT_LOADING_DEVELOPER_GUIDE.md"));
+        string fastLoadReview = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "docs",
+            "FAST_BLUEPRINT_LOADING_TECHNICAL_REVIEW.md"));
+        string steamReadmeSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "README.md"));
+        string changelogSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "CHANGELOG.md"));
         Assert(pluginSource.Contains("ResolveFastBlueprintFileModelLoadTarget") &&
                pluginSource.Contains("ResolveConstructExtraInfoDataArrayTarget") &&
                pluginSource.Contains("ResolveConstructExtraInfoProvideInfoToBlocksTarget") &&
@@ -2529,6 +2564,7 @@ f 0 2 3
                pluginSource.Contains("ResolveStage2ModuleExternalLinkupTarget") &&
                pluginSource.Contains("ResolvePartStatusRegisterCheckableBlockTarget") &&
                pluginSource.Contains("ResolvePartStatusUnregisterCheckableBlockTarget") &&
+               pluginSource.Contains("InstallOptionalV3DColliderInternalTimingPatch") &&
                routerSource.Contains("BlueprintFile_Load_FastLoad_Patch") &&
                routerSource.Contains("ConstructExtraInfo_DataArray_FastLoad_Patch") &&
                routerSource.Contains("ConstructExtraInfo_ProvideInfoToBlocks_V3BulkLoad_Patch") &&
@@ -2558,11 +2594,45 @@ f 0 2 3
                routerSource.Contains("v3d-collider-linkup") &&
                routerSource.Contains("v3d-shell-linkup") &&
                routerSource.Contains("v3d-skin-calc-linkup") &&
+               routerSource.Contains("v3d-collider-target-discovery") &&
                routerSource.Contains("v3d-collider-subphase") &&
+               routerSource.Contains("v3d-collider-subphase-unsupported") &&
+               routerSource.Contains("v3d-collider-callsite-fallback") &&
+               routerSource.Contains("InstallOptionalV3DColliderInternalTimingPatch") &&
+               routerSource.Contains("ConstructableColliderCommon_InternalTiming_Patch") &&
+               routerSource.Contains("BeginV3DColliderInternalTiming") &&
+               routerSource.Contains("EndV3DColliderInternalTiming") &&
+               routerSource.Contains("FlushV3DColliderInternalTimingParent") &&
+               routerSource.Contains("v3d-collider-subphase-accounting") &&
+               routerSource.Contains("V3DColliderInternalTimingMethodNames") &&
+               routerSource.Contains("call_count") &&
+               routerSource.Contains("max_single_call_ms") &&
+               routerSource.Contains("parent_elapsed_ms") &&
+               routerSource.Contains("known_subphase_elapsed_ms") &&
+               routerSource.Contains("unaccounted_elapsed_ms") &&
+               routerSource.Contains("target-not-resolved") &&
+               routerSource.Contains("EnableCollidersForPositions") &&
+               routerSource.Contains("MarkCollidersForDisabling") &&
+               routerSource.Contains("DisableMarkedColliders") &&
+               routerSource.Contains("EnableIntersectingColliders") &&
+               routerSource.Contains("UpdateCollidersForTerrain") &&
+               routerSource.Contains("ProcessOutOfDateColliders") &&
+               routerSource.Contains("SwapEnabledColliderLists") &&
+               routerSource.Contains("OnColliderChange") &&
+               routerSource.Contains("internal_timing_installed") &&
+               routerSource.Contains("internal_timing_target_count") &&
                routerSource.Contains("v3d-shell-subphase") &&
                routerSource.Contains("v3d-skin-calc-subphase") &&
                routerSource.Contains("v3d-unsafe-skip") &&
                routerSource.Contains("v3d-target-unsupported") &&
+               routerSource.Contains("ConstructableColliderCommonTypeName") &&
+               routerSource.Contains("FindColliderCandidateMethods") &&
+               routerSource.Contains("collection_count_before") &&
+               routerSource.Contains("collection_count_after") &&
+               routerSource.Contains("unsupported_reason") &&
+               routerSource.Contains("diagnostics_enabled") &&
+               routerSource.Contains("runtime_type") &&
+               routerSource.Contains("declaring_type") &&
                routerSource.Contains("ConstructableColliders") &&
                routerSource.Contains("AllConstructShell") &&
                routerSource.Contains("MainConstructSkinCalc") &&
@@ -2617,6 +2687,16 @@ f 0 2 3
                routerSource.Contains("CompleteBlueprintConversionTrace") &&
                routerSource.Contains("FailBlueprintConversionTrace") &&
                routerSource.Contains("BlueprintTraceName") &&
+               routerSource.Contains("standalone-route-decision") &&
+               routerSource.Contains("conversion_file_bytes_known") &&
+               routerSource.Contains("conversion_path_file_bytes") &&
+               !routerSource.Contains("Pair(\"file_bytes\", -1L)") &&
+               routerSource.Contains("v3_bulk_context_expected") &&
+               routerSource.Contains("v3_bulk_context_active") &&
+               routerSource.Contains("capture_flush_rows_expected") &&
+               routerSource.Contains("standalone-blueprint-not-v3-routed") &&
+               routerSource.Contains("block_data_record_count") &&
+               routerSource.Contains("v2_skipped") &&
                routerSource.Contains("standalone_trace") &&
                traceSource.Contains("FileHeartbeatInterval = TimeSpan.FromSeconds(30)") &&
                traceSource.Contains("AdvLoggerHeartbeatInterval = TimeSpan.FromMinutes(5)") &&
@@ -2632,6 +2712,13 @@ f 0 2 3
                traceSource.Contains("ProfileRootDir") &&
                traceSource.Contains("EndlessShapesUnlimited") &&
                traceSource.Contains("Logs") &&
+               fastLoadDeveloperGuide.Contains("recommended opt-in mode") &&
+               fastLoadDeveloperGuide.Contains("3.8 million block") &&
+               fastLoadDeveloperGuide.Contains("2.5 hours") &&
+               fastLoadDeveloperGuide.Contains("21 minutes") &&
+               fastLoadReview.Contains("optimization push is paused") &&
+               steamReadmeSource.Contains("recommended opt-in mode") &&
+               changelogSource.Contains("3.8 million block craft") &&
                telemetrySource.Contains("BeginBlueprintConversionTrace(blueprint)") &&
                telemetrySource.Contains("CompleteFastLoadTrace") &&
                telemetrySource.Contains("FailFastLoadTrace(__exception)"),
@@ -3555,7 +3642,8 @@ f 0 2 3
                smartBuildSessionSource.Contains("CycleShapeShortcut()") &&
                smartBuildSessionSource.Contains("CycleTransformToolShortcut()") &&
                smartBuildSessionSource.Contains("CyclePreviewShortcut()") &&
-               smartBuildSessionSource.Contains("_selectedShape = _selectedShape == SmartBuildShapeKind.Cuboid") &&
+               smartBuildSessionSource.Contains("AvailableShapeDescriptors()") &&
+               smartBuildSessionSource.Contains("SelectShapeDescriptor(descriptors[(index + 1) % descriptors.Count])") &&
                smartBuildSessionSource.Contains("ArmAddMode();") &&
                smartBuildSessionSource.Contains("SetActiveToolFromShortcut(next)") &&
                smartBuildSessionSource.Contains("SmartBuildPreviewMode.Wireframe") &&
@@ -3927,6 +4015,12 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuHudNotifications.cs"));
+        string overlaySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotificationOverlayRegistration.cs"));
         string sessionSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3980,12 +4074,18 @@ f 0 2 3
                consoleSource.Contains("Close") &&
                consoleSource.Contains("ContainsMouse") &&
                notificationSource.Contains("EsuRuntimeLog.FromNotification") &&
+               notificationSource.Contains("ShowSystem") &&
                notificationSource.Contains("DrawLogButton") &&
                notificationSource.Contains("\"Log\"") &&
                notificationSource.Contains("EsuConsoleWindow.Toggle") &&
                notificationSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
                notificationSource.Contains("Vector2 screenOrigin") &&
                notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
+               overlaySource.Contains("EsuHudNotifications.DrawToolbarSlot") &&
+               overlaySource.Contains("EsuHudNotifications.DrawExpandedPopup") &&
+               overlaySource.Contains("EsuConsoleWindow.Draw") &&
+               overlaySource.Contains("!EsuHudNotifications.HasMessage") &&
+               overlaySource.Contains("!EsuConsoleWindow.IsOpen") &&
                sessionSource.Contains("EsuHudNotifications.SetActiveSource(CurrentModeLogSource())") &&
                sessionSourceNormalized.Contains("DrawTopToolbar(\n                new Rect(0f, 0f, toolbarInner.width, toolbarInner.height),\n                toolbarInner.position)") &&
                sessionSource.Contains("toolbarScreenOrigin") &&
@@ -4103,6 +4203,24 @@ f 0 2 3
                SurfacePlacementThicknessAxesAreCoherent(plan.Placements) &&
                SurfacePlacementTransformPlanesAreCoherent(plan.Placements),
             "Surface planner splits a scalene face into co-planar right-triangle decorations with matching final transform planes.");
+        Assert(SurfacePlacementsMatchDraftNormal(scalene, plan.Placements),
+            "Surface planner keeps scalene split child normals aligned with the parent face normal.");
+
+        AssertMirroredSurfaceNormals(
+            "right triangle",
+            new Vector3(1.1f, 1.2f, 1.3f),
+            new Vector3(2.1f, 1.2f, 1.3f),
+            new Vector3(1.1f, 2.2f, 1.3f));
+        AssertMirroredSurfaceNormals(
+            "isosceles triangle",
+            new Vector3(0.5f, 1.2f, 1.3f),
+            new Vector3(1.7f, 1.2f, 1.3f),
+            new Vector3(1.1f, 2.2f, 1.3f));
+        AssertMirroredSurfaceNormals(
+            "scalene triangle",
+            new Vector3(1.1f, 1.2f, 1.3f),
+            new Vector3(2.6f, 1.2f, 1.3f),
+            new Vector3(1.45f, 2.25f, 1.3f));
 
         var connected = new SurfaceDraft();
         connected.SetConstructForTests(null);
@@ -4493,6 +4611,10 @@ f 0 2 3
                plannerSource.Contains("TryOrientFace") &&
                plannerSource.Contains("TryBuildCoPlanarScalenePolygons") &&
                plannerSource.Contains("CreateRightTrianglePolygon") &&
+               plannerSource.Contains("IntendedFaceNormal") &&
+               plannerSource.Contains("AlignChildVerticesToParentNormal") &&
+               plannerSource.Contains("AlignAxisWithIntendedNormal") &&
+               plannerSource.Contains("normal did not match the source face normal") &&
                plannerSource.Contains("RoundPlacementPosition") &&
                !plannerSource.Contains("DecorationEditMath.Snap(center - ToVector3(anchor))") &&
                plannerSource.Contains("ThicknessAxis") &&
@@ -4556,9 +4678,17 @@ f 0 2 3
                sessionSource.Contains("PlaceSurfaceActionTarget") &&
                sessionSource.Contains("ClearSurfaceActionTarget") &&
                sessionSource.Contains("DeleteSurfaceActionTarget") &&
+               sessionSource.Contains("SurfaceContextTargetKind") &&
+               sessionSource.Contains("SurfacePoint") &&
+               sessionSource.Contains("SurfaceEdge") &&
+               sessionSource.Contains("SurfaceFace") &&
+               sessionSource.Contains("GeneratorPoint") &&
+               sessionSource.Contains("TryOpenSurfaceContextMenu") &&
                sessionSource.Contains("TryOpenSurfacePointContextMenu") &&
+               sessionSource.Contains("TryOpenSurfaceEdgeContextMenu") &&
+               sessionSource.Contains("TryOpenSurfaceFaceContextMenu") &&
                sessionSource.Contains("TryOpenGeneratorPointContextMenu") &&
-               sessionSource.Contains("DrawSurfacePointContextMenu") &&
+               sessionSource.Contains("DrawSurfaceContextMenu") &&
                sessionSource.Contains("LocalNormalFromHit(hit)") &&
                sessionSource.Contains("TrySetCircleCenter(hit.Construct, hit.LocalHit, normal") &&
                !sessionSource.Contains("GetCameraCircleBasis") &&
@@ -4681,7 +4811,7 @@ f 0 2 3
         string generatorRightClickBlock = generatorRightClick >= 0 && generatorLeftClick > generatorRightClick
             ? sessionSourceNormalized.Substring(generatorRightClick, generatorLeftClick - generatorRightClick)
             : string.Empty;
-        Assert(surfaceRightClickBlock.Contains("TryOpenSurfacePointContextMenu()") &&
+        Assert(surfaceRightClickBlock.Contains("TryOpenSurfaceContextMenu()") &&
                surfaceRightClickBlock.Contains("HasActiveSelection") &&
                surfaceRightClickBlock.Contains("ClearSelection") &&
                surfaceRightClickBlock.Contains("Use Clear to remove the surface draft.") &&
@@ -4690,7 +4820,23 @@ f 0 2 3
                generatorRightClickBlock.Contains("ClearSelection") &&
                generatorRightClickBlock.Contains("Use Clear to remove the draft.") &&
                !surfaceRightClickBlock.Contains("ClearSurfaceDraft"),
-            "Surface Builder right-click opens point context menus first, then clears only selection state and leaves full draft removal to the Clear button.");
+            "Surface Builder right-click opens surface point/edge/face context menus first, then clears only selection state and leaves full draft removal to the Clear button.");
+        int surfaceContextOpen = sessionSourceNormalized.IndexOf("private bool TryOpenSurfaceContextMenu()", StringComparison.Ordinal);
+        int surfaceContextOpenEnd = sessionSourceNormalized.IndexOf("private bool TryOpenSurfacePointContextMenu()", surfaceContextOpen, StringComparison.Ordinal);
+        string surfaceContextOpenBlock = surfaceContextOpen >= 0 && surfaceContextOpenEnd > surfaceContextOpen
+            ? sessionSourceNormalized.Substring(surfaceContextOpen, surfaceContextOpenEnd - surfaceContextOpen)
+            : string.Empty;
+        int pointPick = surfaceContextOpenBlock.IndexOf("TryOpenSurfacePointContextMenu()", StringComparison.Ordinal);
+        int edgePick = surfaceContextOpenBlock.IndexOf("TryOpenSurfaceEdgeContextMenu()", StringComparison.Ordinal);
+        int facePick = surfaceContextOpenBlock.IndexOf("TryOpenSurfaceFaceContextMenu()", StringComparison.Ordinal);
+        Assert(pointPick >= 0 &&
+               edgePick > pointPick &&
+               facePick > edgePick &&
+               sessionSource.Contains("RebuildSurfacePreview(showMessage: true)") &&
+               sessionSource.Contains("BridgeSurfaceEdges();") &&
+               sessionSource.Contains("DeleteSurfaceActionTarget(generator ? SurfaceDraftActionTarget.Generator : SurfaceDraftActionTarget.Surface)") &&
+               sessionSource.Contains("SelectSurfaceContextTarget"),
+            "Surface Builder context menus try point, edge, then face targets and route preview, bridge, and delete through existing helpers.");
 
         int handleScene = sessionSourceNormalized.IndexOf("private void HandleSceneInput()", StringComparison.Ordinal);
         int pendingInScene = sessionSourceNormalized.IndexOf(
@@ -4717,6 +4863,167 @@ f 0 2 3
             throw new InvalidOperationException(message);
         return draft;
     }
+
+    private static void AssertMirroredSurfaceNormals(
+        string shapeName,
+        Vector3 a,
+        Vector3 b,
+        Vector3 c)
+    {
+        var axisSets = new[]
+        {
+            new[] { DecorationEditAxis.X },
+            new[] { DecorationEditAxis.Y },
+            new[] { DecorationEditAxis.Z },
+            new[] { DecorationEditAxis.X, DecorationEditAxis.Y },
+            new[] { DecorationEditAxis.X, DecorationEditAxis.Y, DecorationEditAxis.Z }
+        };
+
+        for (int reversalIndex = 0; reversalIndex < 2; reversalIndex++)
+        {
+            bool normalReversal = reversalIndex == 1;
+            foreach (DecorationEditAxis[] axes in axisSets)
+            {
+                SurfaceDraft draft = SurfaceDraftForTests(a, b, c);
+                draft.Settings.NearestAnchor = false;
+                draft.Settings.NormalReversal = normalReversal;
+                try
+                {
+                    EsuSymmetry.Clear();
+                    for (int axisIndex = 0; axisIndex < axes.Length; axisIndex++)
+                        EsuSymmetry.SetPlaneForTests(axes[axisIndex], 0);
+
+                    IReadOnlyList<EsuSymmetry.SymmetryVariant> variants = EsuSymmetry.Variants();
+                    Assert(SurfaceDecorationPlanner.TryPlanMirroredVariants(
+                               draft,
+                               new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                               variants,
+                               out SurfaceDecorationPlan plan,
+                               out string message) &&
+                           SurfacePlacementsMatchVariantNormals(draft, variants, plan),
+                        "Surface symmetry keeps " +
+                        shapeName +
+                        " committed normals aligned with preview normals across " +
+                        string.Join("+", axes.Select(axis => axis.ToString()).ToArray()) +
+                        (normalReversal ? " with normal reversal." : ".") +
+                        " Planner said: " +
+                        message);
+                }
+                finally
+                {
+                    EsuSymmetry.Clear();
+                }
+            }
+        }
+    }
+
+    private static bool SurfacePlacementsMatchVariantNormals(
+        SurfaceDraft draft,
+        IReadOnlyList<EsuSymmetry.SymmetryVariant> variants,
+        SurfaceDecorationPlan plan)
+    {
+        if (draft == null || variants == null || plan == null || plan.Placements.Count == 0)
+            return false;
+
+        var normals = new List<Vector3>();
+        foreach (EsuSymmetry.SymmetryVariant variant in variants)
+        {
+            SurfaceDraft variantDraft = variant.IsIdentity
+                ? draft
+                : draft.CreateMirroredForSymmetry(variant);
+            if (normals.Any(existing => SurfaceSameNormal(existing, SurfaceDraftFirstNormal(variantDraft))))
+                continue;
+
+            Vector3 normal = SurfaceDraftFirstNormal(variantDraft);
+            if (normal == Vector3.zero)
+                return false;
+            normals.Add(normal);
+        }
+
+        if (normals.Count == 0)
+            return false;
+
+        foreach (SurfaceDecorationPlacement placement in plan.Placements)
+        {
+            if (!SurfaceAxisMatchesAnyNormal(placement.TransformThicknessAxis, normals) ||
+                !SurfaceAxisMatchesAnyNormal(placement.ThicknessAxis, normals))
+            {
+                return false;
+            }
+        }
+
+        for (int normalIndex = 0; normalIndex < normals.Count; normalIndex++)
+        {
+            Vector3 normal = normals[normalIndex];
+            if (!plan.Placements.Any(placement =>
+                    Vector3.Dot(placement.TransformThicknessAxis, normal) >= 0.999f))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SurfacePlacementsMatchDraftNormal(
+        SurfaceDraft draft,
+        IReadOnlyList<SurfaceDecorationPlacement> placements)
+    {
+        if (draft == null || placements == null || placements.Count == 0)
+            return false;
+
+        Vector3 normal = SurfaceDraftFirstNormal(draft);
+        if (normal == Vector3.zero)
+            return false;
+
+        for (int index = 0; index < placements.Count; index++)
+        {
+            if (Vector3.Dot(placements[index].TransformThicknessAxis, normal) < 0.999f ||
+                Vector3.Dot(placements[index].ThicknessAxis, normal) < 0.999f)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static Vector3 SurfaceDraftFirstNormal(SurfaceDraft draft)
+    {
+        if (draft == null || draft.Faces.Count == 0)
+            return Vector3.zero;
+
+        SurfaceFace face = draft.Faces[0];
+        Vector3 axis = Vector3.Cross(
+            draft.Points[face.B] - draft.Points[face.A],
+            draft.Points[face.C] - draft.Points[face.A]);
+        if (!DecorationEditMath.IsFinite(axis) || axis.sqrMagnitude <= 0.000000000001f)
+            return Vector3.zero;
+
+        axis.Normalize();
+        return draft.Settings.NormalReversal ? -axis : axis;
+    }
+
+    private static bool SurfaceAxisMatchesAnyNormal(
+        Vector3 axis,
+        IReadOnlyList<Vector3> normals)
+    {
+        if (axis.sqrMagnitude < 0.999f)
+            return false;
+
+        for (int index = 0; index < normals.Count; index++)
+        {
+            if (Vector3.Dot(axis, normals[index]) >= 0.999f)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool SurfaceSameNormal(Vector3 left, Vector3 right) =>
+        left != Vector3.zero &&
+        right != Vector3.zero &&
+        Vector3.Dot(left, right) >= 0.999f;
 
     private static void AssertSurfacePlanCount(
         SurfaceDraft draft,
@@ -4985,6 +5292,57 @@ f 0 2 3
         Assert(downSlopeGeometryNamesParse,
             "Smart Builder catalog parses DownSlope1m..4m geometry metadata for runtime slope discovery.");
 
+        var structuralGeometryChecks = new List<Tuple<string, string, int>>();
+        for (int length = 1; length <= 4; length++)
+        {
+            string len = length.ToString(CultureInfo.InvariantCulture);
+            structuralGeometryChecks.Add(Tuple.Create("Pole" + len + "m", "pole", length));
+            structuralGeometryChecks.Add(Tuple.Create("Wedge" + len + "m", "wedge", length));
+            structuralGeometryChecks.Add(Tuple.Create("Wedge" + len + "mFront", "wedge-front", length));
+            structuralGeometryChecks.Add(Tuple.Create("Wedge" + len + "mBack", "wedge-back", length));
+            structuralGeometryChecks.Add(Tuple.Create("LeftSquareCorner" + len + "m", "square-corner-left", length));
+            structuralGeometryChecks.Add(Tuple.Create("RightSquareCorner" + len + "m", "square-corner-right", length));
+            structuralGeometryChecks.Add(Tuple.Create("LeftTriangleCorner" + len + "m", "triangle-corner-left", length));
+            structuralGeometryChecks.Add(Tuple.Create("RightTriangleCorner" + len + "m", "triangle-corner-right", length));
+            structuralGeometryChecks.Add(Tuple.Create("LeftInvertedTriangleCorner" + len + "m", "inverted-triangle-corner-left", length));
+            structuralGeometryChecks.Add(Tuple.Create("RightInvertedTriangleCorner" + len + "m", "inverted-triangle-corner-right", length));
+            structuralGeometryChecks.Add(Tuple.Create("Offset" + len + "mSlopeLeft", "offset-slope-left", length));
+            structuralGeometryChecks.Add(Tuple.Create("Offset" + len + "mSlopeRight", "offset-slope-right", length));
+        }
+
+        for (int length = 2; length <= 4; length++)
+        {
+            string len = length.ToString(CultureInfo.InvariantCulture);
+            structuralGeometryChecks.Add(Tuple.Create("SquareBacked" + len + "mCornerLeft", "square-backed-corner-left", length));
+            structuralGeometryChecks.Add(Tuple.Create("SquareBacked" + len + "mCornerRight", "square-backed-corner-right", length));
+            structuralGeometryChecks.Add(Tuple.Create("LeftFacingDownSlope1m_" + len + "mLong", "facing-down-slope-left", length));
+            structuralGeometryChecks.Add(Tuple.Create("RightFacingDownSlope1m_" + len + "mLong", "facing-down-slope-right", length));
+        }
+
+        int[] transitionStarts = { 1, 2, 3 };
+        foreach (int from in transitionStarts)
+        {
+            for (int to = from + 1; to <= 4; to++)
+            {
+                string suffix = from.ToString(CultureInfo.InvariantCulture) +
+                                "mTo" +
+                                to.ToString(CultureInfo.InvariantCulture) +
+                                "m";
+                structuralGeometryChecks.Add(Tuple.Create("Slope" + suffix + "TransitionLeft", "slope-transition-" + from + "-" + to + "-left", to));
+                structuralGeometryChecks.Add(Tuple.Create("Slope" + suffix + "TransitionRight", "slope-transition-" + from + "-" + to + "-right", to));
+                structuralGeometryChecks.Add(Tuple.Create("Slope" + suffix + "InverseTransitionLeft", "slope-inverse-transition-" + from + "-" + to + "-left", to));
+                structuralGeometryChecks.Add(Tuple.Create("Slope" + suffix + "InverseTransitionRight", "slope-inverse-transition-" + from + "-" + to + "-right", to));
+            }
+        }
+
+        bool structuralGeometryNamesParse = structuralGeometryChecks.All(check =>
+            SmartBuildShapeDescriptors.TryParseGeometryName(check.Item1, out SmartBuildGeometryInfo info) &&
+            info.Descriptor.Key == check.Item2 &&
+            info.Length == check.Item3);
+        Assert(structuralGeometryNamesParse &&
+               structuralGeometryChecks.Count >= 80,
+            "Smart Builder structural shape descriptors parse vanilla pole, wedge, corner, transition, facing-slope, and offset-slope geometry metadata.");
+
         var downSlopeFamily = new SmartBlockFamily(
             "test down slopes",
             Enumerable.Range(1, 4)
@@ -4994,13 +5352,98 @@ f 0 2 3
                     null,
                     SmartBuildShapeKind.DownSlope,
                     "DownSlope" + length.ToString(CultureInfo.InvariantCulture) + "m")));
+        SmartBuildShapeDescriptor triangleLeftDescriptor =
+            SmartBuildShapeDescriptors.ByKey("triangle-corner-left");
+        SmartBuildShapeDescriptor triangleRightDescriptor =
+            SmartBuildShapeDescriptors.ByKey("triangle-corner-right");
+        var fixedShapeFamilies = new Dictionary<string, SmartBlockFamily>(StringComparer.OrdinalIgnoreCase)
+        {
+            [triangleLeftDescriptor.Key] = new SmartBlockFamily(
+                "test left triangles",
+                new[]
+                {
+                    new SmartBlockCandidate(
+                        "2m left triangle",
+                        2,
+                        null,
+                        triangleLeftDescriptor.Kind,
+                        "LeftTriangleCorner2m",
+                        triangleLeftDescriptor,
+                        "LeftTriangleCorner2m")
+                }),
+            [triangleRightDescriptor.Key] = new SmartBlockFamily(
+                "test right triangles",
+                new[]
+                {
+                    new SmartBlockCandidate(
+                        "2m right triangle",
+                        2,
+                        null,
+                        triangleRightDescriptor.Kind,
+                        "RightTriangleCorner2m",
+                        triangleRightDescriptor,
+                        "RightTriangleCorner2m")
+                })
+        };
         var smartSource = new SmartBuildSource(
             null,
             Guid.Empty,
             "test material",
             new Vector3i(1, 1, 1),
             SmartBlockFamily.ForTests(1, 2, 3, 4),
-            downSlopeFamily);
+            downSlopeFamily,
+            fixedShapeFamilies);
+        SmartBuildPiece fixedTriangle = SmartBuildPiece.CreateFixedShape(
+            null,
+            new Vector3i(0, 0, 0),
+            triangleLeftDescriptor,
+            selectedLength: 2,
+            forwardAxis: SmartBuildAxis.X,
+            forwardSign: 1,
+            width: 2,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        fixedTriangle.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 3);
+        IReadOnlyList<SmartBuildPlacement> fixedPlacements = fixedTriangle.BuildFixedPlacements(
+            smartSource,
+            out string fixedReason);
+        Vector3i[] fixedCoveredCells = fixedPlacements
+            .SelectMany(placement => placement.CoveredCells())
+            .ToArray();
+        Assert(string.IsNullOrWhiteSpace(fixedReason) &&
+               fixedTriangle.FixedForwardTiles >= 2 &&
+               fixedTriangle.FixedRightTiles == 2 &&
+               fixedPlacements.Count == fixedTriangle.FixedForwardTiles * fixedTriangle.FixedRightTiles &&
+               fixedPlacements.All(placement => placement.Candidate.Descriptor == triangleLeftDescriptor) &&
+               fixedPlacements.All(placement => placement.CoveredCells().Count == 2) &&
+               fixedCoveredCells.Select(EsuSymmetry.CellKey).Distinct().Count() == fixedCoveredCells.Length,
+            "Smart Builder fixed structural shapes repeat whole items on voxel strides and use the candidate footprint for placement coverage.");
+
+        var mirrorShapeScene = new SmartBuildPieceScene(null);
+        mirrorShapeScene.Add(SmartBuildPiece.CreateFixedShape(
+            null,
+            new Vector3i(1, 0, 0),
+            triangleLeftDescriptor,
+            selectedLength: 2,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 1,
+            drawPlane: SmartBuildDrawPlane.Camera));
+        EsuSymmetry.Clear();
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
+        SmartBuildPlan mirroredShapePlan = mirrorShapeScene.BuildPlan(
+            smartSource,
+            _ => false,
+            new SmartBuildPlannerOptions
+            {
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        EsuSymmetry.Clear();
+        Assert(mirroredShapePlan.CanCommit &&
+               mirroredShapePlan.Placements.Any(placement => placement.Candidate.Descriptor == triangleLeftDescriptor) &&
+               mirroredShapePlan.Placements.Any(placement => placement.Candidate.Descriptor == triangleRightDescriptor),
+            "Smart Builder mirrors handed fixed structural shapes by swapping to the descriptor mirror replacement on odd-axis symmetry.");
+
         SmartBuildPiece ramp = SmartBuildPiece.CreateDownSlope(
             null,
             new Vector3i(0, 2, 0),
@@ -5095,7 +5538,12 @@ f 0 2 3
             out _).Single();
         MethodInfo mirrorPlacementMethod = AccessTools.Method(
             typeof(SmartBuildPieceScene),
-            "MirrorPlacement");
+            "MirrorPlacement",
+            new[]
+            {
+                typeof(SmartBuildPlacement),
+                typeof(EsuSymmetry.SymmetryVariant)
+            });
         EsuSymmetry.Clear();
         EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
         var xMirrorVariant = new EsuSymmetry.SymmetryVariant(new[] { DecorationEditAxis.X });
@@ -5314,6 +5762,12 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBlockFamilyCatalog.cs"));
+        string descriptorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildShapeDescriptors.cs"));
         string pieceSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -5403,15 +5857,24 @@ f 0 2 3
                catalogSource.Contains("2d519ca8-1f12-4a8e-9340-aa6648b5e799") &&
                catalogSource.Contains("6c0bab88-aa88-4825-9cf5-55df36aa12b8") &&
                catalogSource.Contains("3cc75979-18ac-46c4-9a5b-25b327d99410") &&
+               catalogSource.Contains("ShapeFamilies") &&
+               catalogSource.Contains("AvailableShapeDescriptors") &&
+               catalogSource.Contains("FamilyForShape") &&
+               catalogSource.Contains("DiscoverStructuralFamilies") &&
                catalogSource.Contains("DownSlopeFromMaterial") &&
                catalogSource.Contains("DragSettings?.Geometry") &&
+               catalogSource.Contains("SmartBuildShapeDescriptors.TryParseGeometry") &&
                catalogSource.Contains("TryLengthFromDownSlopeGeometry") &&
                catalogSource.Contains("bdafa446-f615-49cb-94f3-d7652dde6cec") &&
                catalogSource.Contains("ModificationComponentContainerItem") &&
+               descriptorSource.Contains("FacingDownSlope1m_") &&
+               descriptorSource.Contains("SquareBacked") &&
+               descriptorSource.Contains("InverseTransition") &&
+               descriptorSource.Contains("Offset") &&
                committerSource.Contains("PlaceBlockCommand") &&
                committerSource.Contains("MirrorInfo.none") &&
                committerSource.Contains("plan.Construct"),
-            "Smart Block Builder has an internal 8-material picker, keeps selected-item compatibility available, resolves FtD item definitions and down-slope geometry metadata, and commits vanilla block commands.");
+            "Smart Block Builder has an internal 8-material picker, keeps selected-item compatibility available, resolves FtD item definitions and structural geometry metadata, and commits vanilla block commands.");
         Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
                tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
@@ -5484,16 +5947,28 @@ f 0 2 3
                 sessionSource.Contains("TryOpenPreviewContextMenu") &&
                 sessionSource.Contains("DrawPreviewContextMenu") &&
                 sessionSource.Contains("DrawShapePanel") &&
-                sessionSource.Contains("DrawSlopeSizeButton") &&
-                sessionSource.Contains("Slope length") &&
-                sessionSource.Contains("+ \"m\"") &&
+                sessionSource.Contains("DrawShapePalette") &&
+                sessionSource.Contains("DrawShapeButton(SmartBuildShapeDescriptor") &&
+                sessionSource.Contains("DrawShapeSizeButton") &&
+                sessionSource.Contains("CategoryLabel") &&
+                sessionSource.Contains("SmartBuildShapeCategory.Basic") &&
+                sessionSource.Contains("SmartBuildShapeCategory.Transitions") &&
+                sessionSource.Contains("length.ToString(CultureInfo.InvariantCulture)") &&
+                sessionSource.Contains("length + \"m shape size.\"") &&
                 sessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", ref _showLeftPanel") &&
                 sessionSource.Contains("ToolbarPanelToggle(\"build\", \"Shapes\", ref _showRightPanel") &&
                 !sessionSource.Contains("DrawPieceActionToolbar(budget.RightControlsWidth)") &&
                 sessionSource.Contains("ToolButton(SmartBuildTool.Draw, \"create\", \"Add\"") &&
+                sessionSource.Contains("_selectedShapeDescriptorKey") &&
+                sessionSource.Contains("SelectedShapeDescriptor") &&
+                sessionSource.Contains("SelectShapeDescriptor") &&
+                sessionSource.Contains("AvailableShapeDescriptors") &&
                 !sessionSource.Contains("\"S\" + length.ToString(CultureInfo.InvariantCulture)") &&
-                sessionSource.Contains("Place normal cuboids and beams.") &&
-                sessionSource.Contains("Place 1m to 4m down-slope ramp segments.") &&
+                descriptorSource.Contains("Place normal cuboids and beams.") &&
+                descriptorSource.Contains("Place 1m to 4m down-slope ramp segments.") &&
+                descriptorSource.Contains("Triangle corner L") &&
+                descriptorSource.Contains("slope-transition-1-2-left") &&
+                descriptorSource.Contains("Place slope transition blocks.") &&
                 sessionSource.Contains("ArmAddMode") &&
                 sessionSource.Contains("Scale mode active") &&
                 sessionSource.Contains("DuplicateSelectedPiece") &&
@@ -5501,6 +5976,9 @@ f 0 2 3
                 pieceSource.Contains("Duplicate(Vector3i offset)") &&
                 pieceSource.Contains("CompactSceneLabel") &&
                 pieceSource.Contains("EnumeratePlacementCells") &&
+                pieceSource.Contains("CreateFixedShape") &&
+                pieceSource.Contains("BuildFixedGeometryPlacements") &&
+                pieceSource.Contains("EnumerateFixedGeometryCells") &&
                 pieceSource.Contains("EnumerateSlopeLines") &&
                 pieceSource.Contains("SmartBuildSlopeSupportMode") &&
                 pieceSource.Contains("EnumerateDownSlopeStepSupportCells") &&
@@ -5512,7 +5990,10 @@ f 0 2 3
                 sessionSource.Contains("DrawVolumeFaces") &&
                 sessionSource.Contains("SolidMaterialPreviewColor") &&
                 !sessionSource.Contains("private Color MaterialPreviewColor(") &&
+                sceneSource.Contains("FixedGeometryPattern") &&
+                sceneSource.Contains("MirrorCandidate") &&
                 sceneSource.Contains("MirrorRotation(placement.Rotation, variant)") &&
+                sceneSource.Contains("SmartBuildShapeDescriptors.IsOddMirror") &&
                 sceneSource.Contains("QuaternionFromBasis(right, up, forward)") &&
                 pieceSource.Contains("SupportMode") &&
                 pieceSource.Contains("SetSupportMode") &&

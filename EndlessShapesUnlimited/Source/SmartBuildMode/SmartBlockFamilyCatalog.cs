@@ -29,7 +29,8 @@ namespace DecoLimitLifter.SmartBuildMode
             string displayName,
             Vector3i dimensions,
             SmartBlockFamily family,
-            SmartBlockFamily downSlopeFamily = null)
+            SmartBlockFamily downSlopeFamily = null,
+            IDictionary<string, SmartBlockFamily> shapeFamilies = null)
         {
             Item = item;
             ItemGuid = itemGuid;
@@ -40,6 +41,19 @@ namespace DecoLimitLifter.SmartBuildMode
                               SmartBlockFamily.Unsupported(
                                   displayName + " down slopes",
                                   displayName + " down slopes are unavailable in this FtD install.");
+            ShapeFamilies = new Dictionary<string, SmartBlockFamily>(StringComparer.OrdinalIgnoreCase)
+            {
+                [SmartBuildShapeDescriptors.CuboidKey] = Family,
+                [SmartBuildShapeDescriptors.DownSlopeKey] = DownSlopeFamily
+            };
+            if (shapeFamilies != null)
+            {
+                foreach (KeyValuePair<string, SmartBlockFamily> pair in shapeFamilies)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Key) && pair.Value != null)
+                        ShapeFamilies[pair.Key] = pair.Value;
+                }
+            }
         }
 
         internal ItemDefinition Item { get; }
@@ -53,6 +67,29 @@ namespace DecoLimitLifter.SmartBuildMode
         internal SmartBlockFamily Family { get; }
 
         internal SmartBlockFamily DownSlopeFamily { get; }
+
+        internal Dictionary<string, SmartBlockFamily> ShapeFamilies { get; }
+
+        internal IReadOnlyList<SmartBuildShapeDescriptor> AvailableShapeDescriptors =>
+            SmartBuildShapeDescriptors.All
+                .Where(descriptor => FamilyForShape(descriptor)?.IsSupported == true)
+                .ToArray();
+
+        internal SmartBlockFamily FamilyForShape(SmartBuildShapeDescriptor descriptor)
+        {
+            if (descriptor == null)
+                return Family;
+
+            if (ShapeFamilies != null &&
+                ShapeFamilies.TryGetValue(descriptor.Key, out SmartBlockFamily family))
+            {
+                return family;
+            }
+
+            return SmartBlockFamily.Unsupported(
+                descriptor.Label,
+                descriptor.Label + " blocks are unavailable for this material.");
+        }
 
         internal bool HasDownSlopeLength(IEnumerable<int> lengths)
         {
@@ -236,7 +273,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 displayName,
                 new Vector3i(1, 1, 1),
                 family,
-                DownSlopeFromMaterial(material));
+                DownSlopeFromMaterial(material),
+                DiscoverStructuralFamilies(material));
             reason = null;
             return true;
         }
@@ -273,6 +311,57 @@ namespace DecoLimitLifter.SmartBuildMode
             return SmartBlockFamily.Unsupported(
                 displayName,
                 displayName + " are unavailable in this FtD install.");
+        }
+
+        internal static IDictionary<string, SmartBlockFamily> DiscoverStructuralFamilies(
+            SmartBuildMaterial material)
+        {
+            var grouped = new Dictionary<string, List<SmartBlockCandidate>>(StringComparer.OrdinalIgnoreCase);
+            foreach (ItemDefinition item in LoadedItemDefinitions())
+            {
+                object geometry = GeometryFor(item);
+                if (!SmartBuildShapeDescriptors.TryParseGeometry(geometry, out SmartBuildGeometryInfo info))
+                    continue;
+                if (info.Descriptor.IsCuboid ||
+                    info.Descriptor.ProceduralDownSlope)
+                    continue;
+                if (!LooksLikeMaterial(item, material))
+                    continue;
+
+                if (!grouped.TryGetValue(info.Descriptor.Key, out List<SmartBlockCandidate> candidates))
+                {
+                    candidates = new List<SmartBlockCandidate>();
+                    grouped[info.Descriptor.Key] = candidates;
+                }
+
+                candidates.Add(new SmartBlockCandidate(
+                    ItemName(item),
+                    info.Length,
+                    item,
+                    info.Descriptor.Kind,
+                    geometry,
+                    info.Descriptor,
+                    info.GeometryName));
+            }
+
+            var families = new Dictionary<string, SmartBlockFamily>(StringComparer.OrdinalIgnoreCase);
+            foreach (SmartBuildShapeDescriptor descriptor in SmartBuildShapeDescriptors.All)
+            {
+                if (!grouped.TryGetValue(descriptor.Key, out List<SmartBlockCandidate> candidates) ||
+                    candidates.Count == 0)
+                {
+                    continue;
+                }
+
+                families[descriptor.Key] = new SmartBlockFamily(
+                    MaterialDisplayName(material) + " " + descriptor.Label,
+                    candidates
+                        .GroupBy(candidate => candidate.Length)
+                        .Select(group => group.First())
+                        .ToArray());
+            }
+
+            return families;
         }
 
         internal static string MaterialDisplayName(SmartBuildMaterial material)
@@ -428,18 +517,23 @@ namespace DecoLimitLifter.SmartBuildMode
             foreach (ItemDefinition item in LoadedItemDefinitions())
             {
                 object geometry = GeometryFor(item);
-                string geometryName = geometry?.ToString();
-                if (!TryLengthFromDownSlopeGeometry(geometryName, out int length))
+                if (!SmartBuildShapeDescriptors.TryParseGeometry(geometry, out SmartBuildGeometryInfo info) ||
+                    info.Descriptor.Key != SmartBuildShapeDescriptors.DownSlopeKey)
+                {
                     continue;
+                }
+
                 if (!LooksLikeMaterial(item, material))
                     continue;
 
                 candidates.Add(new SmartBlockCandidate(
                     ItemName(item),
-                    length,
+                    info.Length,
                     item,
                     SmartBuildShapeKind.DownSlope,
-                    geometry));
+                    geometry,
+                    info.Descriptor,
+                    info.GeometryName));
             }
 
             return candidates
