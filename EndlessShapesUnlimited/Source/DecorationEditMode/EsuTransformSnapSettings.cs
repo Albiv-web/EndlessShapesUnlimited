@@ -15,12 +15,12 @@ namespace DecoLimitLifter.DecorationEditMode
         internal const float DefaultSmartRotateSnapDegrees = 90f;
         internal const int DefaultSmartScaleStepCells = 1;
 
-        private const float DecorationMoveMinimum = 0.01f;
+        private const float DecorationMoveMinimum = 0.001f;
         private const float DecorationMoveMaximum = 10f;
-        private const float DecorationRotateMinimum = 1f;
+        private const float DecorationRotateMinimum = 0.1f;
         private const float DecorationRotateMaximum = 180f;
-        private const float DecorationScaleMinimum = 0.01f;
-        private const float DecorationScaleMaximum = 10f;
+        private const float DecorationScaleMinimum = 0.001f;
+        private static readonly float DecorationScaleMaximum = float.PositiveInfinity;
         private const int SmartStepMinimum = 1;
         private const int SmartStepMaximum = 20;
         private const float SmartRotateMinimum = 90f;
@@ -91,7 +91,7 @@ namespace DecoLimitLifter.DecorationEditMode
         }
 
         internal static string Format(float value) =>
-            value.ToString("0.###", CultureInfo.InvariantCulture);
+            value.ToString("0.#####", CultureInfo.InvariantCulture);
 
         internal static string Format(int value) =>
             value.ToString(CultureInfo.InvariantCulture);
@@ -133,8 +133,12 @@ namespace DecoLimitLifter.DecorationEditMode
             ref string scaleText,
             string moveTip,
             string rotateTip,
-            string scaleTip)
+            string scaleTip,
+            out bool commitRequested)
         {
+            string previousMove = moveText;
+            string previousRotate = rotateText;
+            string previousScale = scaleText;
             float buttonHeight = Mathf.Min(rect.height, EsuHudLayout.Scale(24f));
             float y = rect.y + Mathf.Max(0f, (rect.height - buttonHeight) * 0.5f);
             float gap = EsuHudLayout.Scale(4f);
@@ -155,9 +159,12 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawField("Scale", ref scaleText, scaleTip, ref x, y, labelWidth, fieldWidth, buttonHeight, gap);
 
             Rect set = new Rect(Mathf.Min(x, rect.xMax - setWidth), y, setWidth, buttonHeight);
-            bool pressed = GUI.Button(set, new GUIContent("Set", "Apply transform snap settings."), DecorationEditorTheme.Button);
+            commitRequested = GUI.Button(set, new GUIContent("Set", "Apply transform snap settings."), DecorationEditorTheme.Button);
             EsuCursorTooltip.Register(set, "Apply transform snap settings.");
-            return pressed;
+            return commitRequested ||
+                   !string.Equals(previousMove, moveText, StringComparison.Ordinal) ||
+                   !string.Equals(previousRotate, rotateText, StringComparison.Ordinal) ||
+                   !string.Equals(previousScale, scaleText, StringComparison.Ordinal);
         }
 
         private static void DrawField(

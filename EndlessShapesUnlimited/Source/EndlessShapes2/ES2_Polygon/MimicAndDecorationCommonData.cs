@@ -1,5 +1,6 @@
 ﻿using BrilliantSkies.Blocks.Decorative;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
+using DecoLimitLifter.DecorationEditMode;
 using System;
 using UnityEngine;
 
@@ -182,7 +183,9 @@ namespace EndlessShapes2.Polygon
                         ((Mimic)_obj).Data.Scaling.Us = value;
                         break;
                     case MAD_DataType.Decoration:
-                        ((Decoration)_obj).Scaling.Us = value;
+                        Decoration decoration = (Decoration)_obj;
+                        DecorationScaleBounds.AllowExtendedScale(decoration);
+                        decoration.Scaling.Us = value;
                         break;
                 }
             }

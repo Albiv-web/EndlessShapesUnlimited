@@ -25,6 +25,15 @@ namespace DecoLimitLifter.SmartBuildMode
         private const float RotateSnapDegrees = 90f;
         private const int ViewModeMenuButtonCount = 9;
         private const int SceneHistoryLimit = 64;
+        private const float ShapePaletteRowHeight = 28f;
+        private const float ShapePreviewGridRowHeight = 96f;
+        private const int ShapePreviewGridColumns = 2;
+        private const float ShapePreviewGridCardWidth = 126f;
+        private const float ShapePreviewGridCardHeight = 92f;
+        private const int ShapePreviewGridTexturePixels = 96;
+        private const int MaxExactMeshPreviewPlacements = 768;
+        private const float ShapeStackDefaultLowerRatio = 0.4f;
+        private const float SelectedSceneDefaultLowerRatio = 0.5f;
 
         private static Rect s_leftPanelRect = new Rect(18f, 110f, LeftPanelWidth, LeftPanelDefaultHeight);
         private static Rect s_rightPanelRect = new Rect(980f, 110f, RightPanelWidth, 680f);
@@ -36,6 +45,10 @@ namespace DecoLimitLifter.SmartBuildMode
         private static bool s_showShapePaletteSection = true;
         private static bool s_showSelectedSection = true;
         private static bool s_showSceneSection = true;
+        private static bool s_shapePreviewGrid;
+        private static string s_shapeCategoryFilter = "all";
+        private static float s_shapeStackBottomRatio = ShapeStackDefaultLowerRatio;
+        private static float s_selectedSceneStackBottomRatio = SelectedSceneDefaultLowerRatio;
 
         private readonly cBuild _build;
         private readonly DecorationPointerProbe _pointerProbe;
@@ -64,13 +77,20 @@ namespace DecoLimitLifter.SmartBuildMode
         private SmartBuildTool _tool = SmartBuildTool.Draw;
         private SmartBuildDrawPlane _drawPlane = SmartBuildDrawPlane.Camera;
         private SmartBuildOccupancyMode _occupancyMode = SmartBuildOccupancyMode.SkipOccupied;
+        private SmartBlockItemPreviewRenderer _itemPreviewRenderer;
         private SmartBuildMaterial _selectedMaterial = s_selectedMaterial;
         private SmartBuildMaterial _sourceMaterial = s_selectedMaterial;
         private SmartBuildShapeKind _selectedShape = SmartBuildShapeKind.Cuboid;
         private string _selectedShapeDescriptorKey = SmartBuildShapeDescriptors.CuboidKey;
         private int _selectedSlopeLength = 1;
         private SmartBuildEditHandleMode _editHandleMode = SmartBuildEditHandleMode.Gizmo;
-        private Vector2 _shapePanelScroll;
+        private Vector2 _shapePaletteScroll;
+        private Vector2 _sceneListScroll;
+        private bool _shapePreviewGrid = s_shapePreviewGrid;
+        private string _shapeCategoryFilter = s_shapeCategoryFilter;
+        private string _shapeFilter = string.Empty;
+        private SmartBuildShapePaletteEntry _hoveredShapeEntry;
+        private float _shapePreviewSpin;
         private DecorationEditAxis _dragAxis = DecorationEditAxis.None;
         private DecorationEditAxis[] _dragAxes = Array.Empty<DecorationEditAxis>();
         private int[] _dragSigns = Array.Empty<int>();
@@ -102,6 +122,11 @@ namespace DecoLimitLifter.SmartBuildMode
         private bool _showShapePaletteSection = s_showShapePaletteSection;
         private bool _showSelectedSection = s_showSelectedSection;
         private bool _showSceneSection = s_showSceneSection;
+        private float _shapeStackBottomRatio = s_shapeStackBottomRatio;
+        private float _selectedSceneStackBottomRatio = s_selectedSceneStackBottomRatio;
+        private SmartShapeStackDividerKind _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
+        private float _shapeStackDividerDragStartMouseY;
+        private float _shapeStackDividerDragStartBottomRatio;
         private string _snapMoveText = EsuTransformSnapSettings.Format(EsuTransformSnapSettings.SmartMoveStepCells);
         private string _snapRotateText = EsuTransformSnapSettings.Format(EsuTransformSnapSettings.SmartRotateSnapDegrees);
         private string _snapScaleText = EsuTransformSnapSettings.Format(EsuTransformSnapSettings.SmartScaleStepCells);
@@ -124,6 +149,13 @@ namespace DecoLimitLifter.SmartBuildMode
         private DecorationEditAxis[] _hoverCornerAxes = Array.Empty<DecorationEditAxis>();
         private int[] _hoverCornerSigns = Array.Empty<int>();
 
+        private enum SmartShapeStackDividerKind
+        {
+            None,
+            Palette,
+            SelectedScene
+        }
+
         internal SmartBuildSession(cBuild build)
         {
             _build = build ?? throw new ArgumentNullException(nameof(build));
@@ -143,6 +175,9 @@ namespace DecoLimitLifter.SmartBuildMode
         private SmartBuildShapeDescriptor SelectedShapeDescriptor =>
             SmartBuildShapeDescriptors.ByKey(_selectedShapeDescriptorKey) ??
             SmartBuildShapeDescriptors.Cuboid;
+
+        private bool HasActivePreviewScene =>
+            _scene != null && _scene.Count > 0;
 
         internal bool CanSwitchToDecorationEdit(out string reason)
         {
@@ -164,7 +199,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return false;
             }
 
-            if (_draft != null)
+            if (HasActivePreviewScene)
             {
                 RefreshApplyCancelAttention();
                 reason = "Apply or cancel the Smart Builder preview before switching modes.";
@@ -179,6 +214,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             Active = true;
             SmartBuildInputScope.Begin();
+            _itemPreviewRenderer = new SmartBlockItemPreviewRenderer();
             ApplyFocusView();
             RefreshSelection();
             SyncSnapTextFromSettings();
@@ -209,6 +245,9 @@ namespace DecoLimitLifter.SmartBuildMode
             _hoverFaceAxis = DecorationEditAxis.None;
             _contextMenuOpen = false;
             _viewModeMenuOpen = false;
+            _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
+            _itemPreviewRenderer?.Dispose();
+            _itemPreviewRenderer = null;
             SwitchToDecorationEditRequested = false;
         }
 
@@ -221,6 +260,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _rotating = false;
             _resizingLeftPanel = false;
             _resizingRightPanel = false;
+            _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
             _viewModeMenuOpen = false;
             SwitchToDecorationEditRequested = false;
         }
@@ -254,11 +294,15 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void DrawGui(bool interactive)
         {
+            _hoveredShapeEntry = default;
             DecorationEditorTheme.Ensure();
             if (interactive)
                 EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed());
             if (Event.current.type == EventType.Repaint)
+            {
+                _shapePreviewSpin += Time.unscaledDeltaTime * 70f;
                 DecorationEditorOverlay.Render();
+            }
 
             ApplyLayoutResetIfNeeded();
             float margin = EsuHudLayout.Scale(8f);
@@ -320,6 +364,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 }
 
                 DrawPreviewContextMenu();
+                DrawShapePreviewCard();
                 EsuConsoleWindow.Draw();
                 EsuCursorTooltip.Draw();
             }
@@ -333,6 +378,10 @@ namespace DecoLimitLifter.SmartBuildMode
             s_showShapePaletteSection = _showShapePaletteSection;
             s_showSelectedSection = _showSelectedSection;
             s_showSceneSection = _showSceneSection;
+            s_shapePreviewGrid = _shapePreviewGrid;
+            s_shapeCategoryFilter = _shapeCategoryFilter;
+            s_shapeStackBottomRatio = _shapeStackBottomRatio;
+            s_selectedSceneStackBottomRatio = _selectedSceneStackBottomRatio;
             if (!interactive)
                 return;
 
@@ -358,7 +407,8 @@ namespace DecoLimitLifter.SmartBuildMode
             _dragging ||
             _rotating ||
             _resizingLeftPanel ||
-            _resizingRightPanel;
+            _resizingRightPanel ||
+            _draggingShapeStackDivider != SmartShapeStackDividerKind.None;
 
         private float ToolbarHeightScaled() =>
             EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight, Screen.width - EsuHudLayout.Scale(16f));
@@ -416,6 +466,11 @@ namespace DecoLimitLifter.SmartBuildMode
 
             _leftPanelRect = DefaultLeftPanelRect();
             _rightPanelRect = DefaultRightPanelRect();
+            _shapeStackBottomRatio = ShapeStackDefaultLowerRatio;
+            _selectedSceneStackBottomRatio = SelectedSceneDefaultLowerRatio;
+            s_shapeStackBottomRatio = _shapeStackBottomRatio;
+            s_selectedSceneStackBottomRatio = _selectedSceneStackBottomRatio;
+            _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
             _layoutResetGeneration = EsuHudLayout.ResetGeneration;
             s_layoutGeneration = _layoutResetGeneration;
         }
@@ -526,6 +581,8 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 if (_draft == null)
                 {
+                    if (HasActivePreviewScene)
+                        DrawDraftOutline();
                     DrawPlacementGhost();
                 }
                 else
@@ -583,19 +640,40 @@ namespace DecoLimitLifter.SmartBuildMode
         private bool CycleShapeShortcut()
         {
             SmartBuildInputScope.ClaimBuildInputForFrames();
-            if (_tool == SmartBuildTool.Draw)
+            IReadOnlyList<SmartBuildShapeDescriptor> descriptors = OneMetreShapeDescriptors();
+            if (descriptors.Count == 0)
             {
-                IReadOnlyList<SmartBuildShapeDescriptor> descriptors = AvailableShapeDescriptors();
-                int index = descriptors
-                    .Select((descriptor, descriptorIndex) => new { descriptor, descriptorIndex })
-                    .FirstOrDefault(entry => entry.descriptor.Key == _selectedShapeDescriptorKey)
-                    ?.descriptorIndex ?? -1;
-                SelectShapeDescriptor(descriptors[(index + 1) % descriptors.Count]);
+                InfoStore.Add(_sourceReason ?? "No 1m Smart Builder shapes are available for this material.");
+                return true;
             }
+
+            int index = descriptors
+                .Select((descriptor, descriptorIndex) => new { descriptor, descriptorIndex })
+                .FirstOrDefault(entry => entry.descriptor.Key == _selectedShapeDescriptorKey)
+                ?.descriptorIndex ?? -1;
+            _selectedSlopeLength = 1;
+            SelectShapeDescriptor(descriptors[(index + 1) % descriptors.Count]);
+            _selectedSlopeLength = 1;
             _viewModeMenuOpen = false;
             _contextMenuOpen = false;
             InfoStore.Add("Smart Builder shape: " + PendingShapeLabel() + ".");
             return true;
+        }
+
+        private IReadOnlyList<SmartBuildShapeDescriptor> OneMetreShapeDescriptors() =>
+            AvailableShapeDescriptors()
+                .Where(HasOneMetreShapeCandidate)
+                .ToArray();
+
+        private bool HasOneMetreShapeCandidate(SmartBuildShapeDescriptor descriptor)
+        {
+            if (descriptor == null)
+                return false;
+
+            if (!descriptor.UsesLengthSelector && Math.Max(1, descriptor.TransitionTo) != 1)
+                return false;
+
+            return PaletteCandidateForLength(descriptor, 1) != null;
         }
 
         private IReadOnlyList<SmartBuildShapeDescriptor> AvailableShapeDescriptors()
@@ -712,10 +790,10 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 if (_dragging)
                     EndDrag(resetDraft: true);
-                else if (TryOpenPreviewContextMenu())
-                    _contextMenuOpen = true;
                 else if (_tool == SmartBuildTool.Draw)
                     CancelAddMode();
+                else if (!DeselectSmartBuilderPiece() && TryOpenPreviewContextMenu())
+                    _contextMenuOpen = true;
                 SmartBuildInputScope.ClaimBuildInputForFrames();
                 return;
             }
@@ -869,10 +947,28 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void CancelAddMode()
         {
-            _tool = _draft != null ? SmartBuildTool.Scale : SmartBuildTool.Draw;
+            _tool = _draft != null
+                ? SmartBuildTool.Scale
+                : HasActivePreviewScene
+                    ? SmartBuildTool.Move
+                    : SmartBuildTool.Draw;
             InfoStore.Add(_draft != null
                 ? "Add cancelled. Editing selected Smart Builder piece."
                 : "Add cancelled.");
+        }
+
+        private bool DeselectSmartBuilderPiece()
+        {
+            if (_scene == null || _draft == null)
+                return false;
+
+            _scene.ClearSelection();
+            _draft = null;
+            _tool = SmartBuildTool.Move;
+            _contextMenuOpen = false;
+            ClearRotateDragState();
+            InfoStore.Add("Smart Builder selection cleared.");
+            return true;
         }
 
         private void PlacePendingSymmetryPlane()
@@ -2339,6 +2435,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
+            bool materialChanged = _sourceMaterial != _selectedMaterial;
             if (SmartBlockFamilyCatalog.TryCreateMaterialSource(
                     _selectedMaterial,
                     out SmartBuildSource source,
@@ -2347,8 +2444,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 _source = source;
                 _sourceMaterial = _selectedMaterial;
                 _sourceReason = null;
+                if (materialChanged)
+                    ClearSmartPreviewRendererCache();
                 EnsureSelectedShapeAvailable();
-                if (_draft != null)
+                if (HasActivePreviewScene)
                     RebuildPlan();
                 return;
             }
@@ -2356,6 +2455,8 @@ namespace DecoLimitLifter.SmartBuildMode
             _source = null;
             _sourceMaterial = _selectedMaterial;
             _sourceReason = reason;
+            if (materialChanged)
+                ClearSmartPreviewRendererCache();
             if (_scene == null || _scene.Count == 0)
             {
                 _plan = null;
@@ -2424,7 +2525,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 RedoSceneEdit();
             if (AttentionIconButton("save", "Apply", DecorationEditorTheme.Button, "Place the planned blocks.", !_planDirty && _plan != null && _plan.CanCommit))
                 ApplyPreview();
-            if (AttentionIconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Clear the runtime preview.", _draft != null))
+            if (AttentionIconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Clear the runtime preview.", HasActivePreviewScene))
                 CancelPreview();
             if (IconButton("delete", "Close", DecorationEditorTheme.Button, "Close Smart Block Builder."))
                 _closeRequested = true;
@@ -2891,10 +2992,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 ApplyPreview();
             }
 
-            GUI.enabled = previous && _draft != null;
+            bool canCancel = HasActivePreviewScene;
+            GUI.enabled = previous && canCancel;
             if (GUILayout.Button(
                     new GUIContent("Cancel", "Clear the full Smart Builder preview scene."),
-                    _draft != null ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    canCancel ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Height(EsuHudLayout.Scale(30f))))
             {
                 CancelPreview();
@@ -2908,20 +3010,139 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             GUI.Box(new Rect(0f, 0f, _rightPanelRect.width, _rightPanelRect.height), GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
-            GUILayout.BeginArea(new Rect(inset, inset, _rightPanelRect.width - inset * 2f, _rightPanelRect.height - inset * 2f));
+            Rect inner = new Rect(inset, inset, _rightPanelRect.width - inset * 2f, _rightPanelRect.height - inset * 2f);
+            float headerHeight = EsuHudLayout.Scale(24f);
+            GUILayout.BeginArea(new Rect(inner.x, inner.y, inner.width, headerHeight));
             DrawSmartPanelHeader("Shapes", "build", ref _showRightPanel);
-            DecorationEditorTheme.Separator();
-            if (DrawSmartSectionHeader("Palette", ref _showShapePaletteSection, "Show or hide the shape palette."))
+            GUILayout.EndArea();
+            float y = inner.y + headerHeight + EsuHudLayout.Scale(4f);
+            Rect stackRect = new Rect(inner.x, y, inner.width, Mathf.Max(0f, inner.yMax - y));
+            DrawShapePanelStack(stackRect);
+            GUI.DragWindow(new Rect(0f, 0f, _rightPanelRect.width, headerHeight + inset));
+        }
+
+        private void DrawShapePanelStack(Rect stackRect)
+        {
+            bool showPalette = true;
+            bool showLower = true;
+            Rect paletteRect;
+            Rect paletteDivider;
+            Rect lowerRect;
+            SplitSmartVerticalStack(
+                stackRect,
+                showPalette,
+                showLower,
+                _shapeStackBottomRatio,
+                SmartStackDividerGap(),
+                SmartStackMinimumPanelHeight(),
+                out paletteRect,
+                out paletteDivider,
+                out lowerRect,
+                out _shapeStackBottomRatio);
+            if (paletteDivider.height > 0f)
             {
-                DrawShapePalette();
+                HandleSmartStackDividerDrag(
+                    SmartShapeStackDividerKind.Palette,
+                    stackRect,
+                    paletteDivider,
+                    SmartStackDividerGap(),
+                    ref _shapeStackBottomRatio);
+                SplitSmartVerticalStack(
+                    stackRect,
+                    showPalette,
+                    showLower,
+                    _shapeStackBottomRatio,
+                    SmartStackDividerGap(),
+                    SmartStackMinimumPanelHeight(),
+                    out paletteRect,
+                    out paletteDivider,
+                    out lowerRect,
+                    out _shapeStackBottomRatio);
             }
-            DecorationEditorTheme.Separator();
+            else
+            {
+                ClearSmartStackDividerDrag(SmartShapeStackDividerKind.Palette);
+            }
+
+            DrawShapePaletteSection(paletteRect);
+            DrawShapeLowerStack(lowerRect);
+            if (paletteDivider.height > 0f)
+                DrawSmartStackDividerGrip(paletteDivider, SmartShapeStackDividerKind.Palette);
+        }
+
+        private void DrawShapeLowerStack(Rect lowerRect)
+        {
+            Rect selectedRect;
+            Rect dividerRect;
+            Rect sceneRect;
+            SplitSmartVerticalStack(
+                lowerRect,
+                true,
+                true,
+                _selectedSceneStackBottomRatio,
+                SmartStackDividerGap(),
+                SmartStackMinimumPanelHeight(),
+                out selectedRect,
+                out dividerRect,
+                out sceneRect,
+                out _selectedSceneStackBottomRatio);
+            if (dividerRect.height > 0f)
+            {
+                HandleSmartStackDividerDrag(
+                    SmartShapeStackDividerKind.SelectedScene,
+                    lowerRect,
+                    dividerRect,
+                    SmartStackDividerGap(),
+                    ref _selectedSceneStackBottomRatio);
+                SplitSmartVerticalStack(
+                    lowerRect,
+                    true,
+                    true,
+                    _selectedSceneStackBottomRatio,
+                    SmartStackDividerGap(),
+                    SmartStackMinimumPanelHeight(),
+                    out selectedRect,
+                    out dividerRect,
+                    out sceneRect,
+                    out _selectedSceneStackBottomRatio);
+            }
+            else
+            {
+                ClearSmartStackDividerDrag(SmartShapeStackDividerKind.SelectedScene);
+            }
+
+            DrawSelectedPieceSection(selectedRect);
+            DrawSceneSection(sceneRect);
+            if (dividerRect.height > 0f)
+                DrawSmartStackDividerGrip(dividerRect, SmartShapeStackDividerKind.SelectedScene);
+        }
+
+        private void DrawShapePaletteSection(Rect rect)
+        {
+            GUILayout.BeginArea(rect);
+            if (DrawSmartSectionHeader("Palette", ref _showShapePaletteSection, "Show or hide the shape palette."))
+                DrawShapePalette(Mathf.Max(0f, rect.height - EsuHudLayout.Scale(28f)));
+            GUILayout.EndArea();
+        }
+
+        private void DrawSelectedPieceSection(Rect rect)
+        {
+            GUILayout.BeginArea(rect);
             if (DrawSmartSectionHeader("Selected", ref _showSelectedSection, "Show or hide selected-piece actions."))
                 DrawSelectedPieceActions();
-            DecorationEditorTheme.Separator();
+            GUILayout.EndArea();
+        }
+
+        private void DrawSceneSection(Rect rect)
+        {
+            GUILayout.BeginArea(rect);
             if (DrawSmartSectionHeader("Scene", ref _showSceneSection, "Show or hide the Smart Builder scene list."))
             {
-                _shapePanelScroll = GUILayout.BeginScrollView(_shapePanelScroll, false, true);
+                _sceneListScroll = GUILayout.BeginScrollView(
+                    _sceneListScroll,
+                    alwaysShowHorizontal: false,
+                    alwaysShowVertical: true,
+                    GUILayout.Height(Mathf.Max(0f, rect.height - EsuHudLayout.Scale(32f))));
                 if (_scene == null || _scene.Count == 0)
                 {
                     GUILayout.Label("No pieces yet", DecorationEditorTheme.MiniWrap);
@@ -2934,44 +3155,508 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 GUILayout.EndScrollView();
             }
-            GUI.DragWindow();
             GUILayout.EndArea();
         }
 
-        private void DrawShapePalette()
+        private static void SplitSmartVerticalStack(
+            Rect stackRect,
+            bool showTop,
+            bool showBottom,
+            float bottomRatio,
+            float gap,
+            float minimumPanelHeight,
+            out Rect topRect,
+            out Rect dividerRect,
+            out Rect bottomRect,
+            out float resolvedBottomRatio)
         {
-            IReadOnlyList<SmartBuildShapeDescriptor> descriptors = AvailableShapeDescriptors();
-            foreach (SmartBuildShapeCategory category in new[]
-                     {
-                         SmartBuildShapeCategory.Basic,
-                         SmartBuildShapeCategory.Slopes,
-                         SmartBuildShapeCategory.Corners,
-                         SmartBuildShapeCategory.Wedges,
-                         SmartBuildShapeCategory.Transitions
-                     })
+            topRect = Rect.zero;
+            dividerRect = Rect.zero;
+            bottomRect = Rect.zero;
+            resolvedBottomRatio = ValidSmartStackRatio(bottomRatio);
+            if (showTop && showBottom)
             {
-                SmartBuildShapeDescriptor[] categoryDescriptors = descriptors
-                    .Where(descriptor => descriptor.Category == category)
-                    .ToArray();
-                if (categoryDescriptors.Length == 0)
-                    continue;
-
-                GUILayout.Label(CategoryLabel(category), DecorationEditorTheme.Mini);
-                foreach (SmartBuildShapeDescriptor descriptor in categoryDescriptors)
-                    DrawShapeButton(descriptor);
-                GUILayout.Space(EsuHudLayout.Scale(3f));
+                float availableHeight = SmartStackAvailableHeight(stackRect, gap);
+                float bottomHeight = ClampSmartStackBottomHeight(
+                    availableHeight * resolvedBottomRatio,
+                    availableHeight,
+                    minimumPanelHeight);
+                resolvedBottomRatio = availableHeight > 0f
+                    ? bottomHeight / availableHeight
+                    : resolvedBottomRatio;
+                float topHeight = Mathf.Max(0f, availableHeight - bottomHeight);
+                topRect = new Rect(stackRect.x, stackRect.y, stackRect.width, topHeight);
+                dividerRect = new Rect(stackRect.x, topRect.yMax, stackRect.width, Mathf.Max(0f, gap));
+                bottomRect = new Rect(stackRect.x, dividerRect.yMax, stackRect.width, bottomHeight);
+                return;
             }
 
-            SmartBuildShapeDescriptor selected = SelectedShapeDescriptor;
-            if (selected.UsesLengthSelector)
+            if (showTop)
+                topRect = stackRect;
+            if (showBottom)
+                bottomRect = stackRect;
+        }
+
+        private static float SmartStackDividerGap() => EsuHudLayout.Scale(8f);
+
+        private static float SmartStackMinimumPanelHeight() => EsuHudLayout.Scale(96f);
+
+        private static float SmartStackAvailableHeight(Rect stackRect, float gap) =>
+            Mathf.Max(0f, stackRect.height - Mathf.Max(0f, gap));
+
+        private static float ValidSmartStackRatio(float ratio)
+        {
+            if (float.IsNaN(ratio) || float.IsInfinity(ratio))
+                return 0.5f;
+            return Mathf.Clamp01(ratio);
+        }
+
+        private static float ClampSmartStackBottomHeight(
+            float bottomHeight,
+            float availableHeight,
+            float minimumPanelHeight)
+        {
+            if (availableHeight <= 0f)
+                return 0f;
+
+            float minimum = Mathf.Min(Mathf.Max(0f, minimumPanelHeight), availableHeight * 0.5f);
+            float maximum = Mathf.Max(minimum, availableHeight - minimum);
+            return Mathf.Clamp(bottomHeight, minimum, maximum);
+        }
+
+        private static float ClampSmartStackBottomRatioFromHeight(
+            float bottomHeight,
+            Rect stackRect,
+            float gap,
+            float minimumPanelHeight)
+        {
+            float availableHeight = SmartStackAvailableHeight(stackRect, gap);
+            if (availableHeight <= 0f)
+                return 0.5f;
+
+            return ClampSmartStackBottomHeight(
+                bottomHeight,
+                availableHeight,
+                minimumPanelHeight) / availableHeight;
+        }
+
+        private void HandleSmartStackDividerDrag(
+            SmartShapeStackDividerKind divider,
+            Rect stackRect,
+            Rect dividerRect,
+            float gap,
+            ref float bottomRatio)
+        {
+            Event current = Event.current;
+            if (current == null || divider == SmartShapeStackDividerKind.None || dividerRect.height <= 0f)
+                return;
+
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                dividerRect.Contains(current.mousePosition))
             {
-                GUILayout.Space(EsuHudLayout.Scale(4f));
+                _draggingShapeStackDivider = divider;
+                _shapeStackDividerDragStartMouseY = current.mousePosition.y;
+                _shapeStackDividerDragStartBottomRatio = bottomRatio;
+                current.Use();
+                return;
+            }
+
+            if (_draggingShapeStackDivider != divider)
+                return;
+
+            if (current.type == EventType.MouseDrag)
+            {
+                float availableHeight = SmartStackAvailableHeight(stackRect, gap);
+                float startBottomHeight = availableHeight * _shapeStackDividerDragStartBottomRatio;
+                float deltaY = current.mousePosition.y - _shapeStackDividerDragStartMouseY;
+                bottomRatio = ClampSmartStackBottomRatioFromHeight(
+                    startBottomHeight - deltaY,
+                    stackRect,
+                    gap,
+                    SmartStackMinimumPanelHeight());
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp)
+            {
+                _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
+                current.Use();
+            }
+        }
+
+        private void ClearSmartStackDividerDrag(SmartShapeStackDividerKind divider)
+        {
+            if (_draggingShapeStackDivider == divider)
+                _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
+        }
+
+        private void DrawSmartStackDividerGrip(Rect dividerRect, SmartShapeStackDividerKind divider)
+        {
+            Event current = Event.current;
+            bool active = _draggingShapeStackDivider == divider;
+            bool hovered = current != null && dividerRect.Contains(current.mousePosition);
+            EsuHudLayout.DrawStackDividerGrip(dividerRect, active || hovered);
+            EsuCursorTooltip.Register(dividerRect, "Drag to resize the Smart Builder panels.");
+        }
+
+        private void DrawShapePalette(float availableHeight)
+        {
+            List<SmartBuildShapePaletteEntry> rows = FilterShapePaletteEntries().ToList();
+            DrawShapePaletteToolbar(rows.Count);
+            DrawShapeSizeSelector();
+
+            float paletteHeight = ShapePaletteViewportHeight(rows, availableHeight);
+            float viewportWidth = Mathf.Max(1f, _rightPanelRect.width - EsuHudLayout.Scale(32f));
+            ClampShapePaletteScroll(rows, viewportWidth, paletteHeight);
+            _shapePaletteScroll = GUILayout.BeginScrollView(
+                _shapePaletteScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(paletteHeight));
+            Rect viewport = GUILayoutUtility.GetLastRect();
+            if (viewport.width > 1f)
+                viewportWidth = viewport.width;
+            if (rows.Count == 0)
+                DrawShapePaletteEmptyRow();
+            else if (_shapePreviewGrid)
+                DrawShapePreviewGrid(rows, viewportWidth, paletteHeight);
+            else
+                DrawShapeListRows(rows, paletteHeight);
+            GUILayout.EndScrollView();
+        }
+
+        private void DrawShapePaletteEmptyRow()
+        {
+            string message = AvailableShapeDescriptors().Count == 0
+                ? (_sourceReason ?? "No Smart Builder shapes are available for this material.")
+                : "No shapes match the current palette filter.";
+            GUILayout.Label(
+                message,
+                DecorationEditorTheme.MiniWrap,
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(54f)));
+        }
+
+        private void DrawShapePaletteToolbar(int visibleCount)
+        {
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                    new GUIContent("List", "Show Smart Builder shapes as a compact list."),
+                    DecorationEditorTheme.ToolButton(!_shapePreviewGrid),
+                    GUILayout.Width(EsuHudLayout.Scale(58f)),
+                    GUILayout.Height(EsuHudLayout.Scale(25f))))
+            {
+                _shapePreviewGrid = false;
+                _shapePaletteScroll = Vector2.zero;
+            }
+            if (GUILayout.Button(
+                    new GUIContent("3D grid", "Show Smart Builder shapes as rotating item thumbnails."),
+                    DecorationEditorTheme.ToolButton(_shapePreviewGrid),
+                    GUILayout.Width(EsuHudLayout.Scale(76f)),
+                    GUILayout.Height(EsuHudLayout.Scale(25f))))
+            {
+                _shapePreviewGrid = true;
+                _shapePaletteScroll = Vector2.zero;
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.Label(
+                visibleCount.ToString(CultureInfo.InvariantCulture) + " shown",
+                DecorationEditorTheme.Mini,
+                GUILayout.Height(EsuHudLayout.Scale(25f)));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawShapeCategoryFilterButton("all", "All", 38f);
+            DrawShapeCategoryFilterButton("basic", "Basic", 52f);
+            DrawShapeCategoryFilterButton("slopes", "Slopes", 56f);
+            DrawShapeCategoryFilterButton("corners", "Corners", 68f);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawShapeCategoryFilterButton("wedges", "Wedges", 66f);
+            DrawShapeCategoryFilterButton("transitions", "Transitions", 92f);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(
+                new GUIContent(string.Empty, DecorationEditorIconCatalog.Get("filter")),
+                GUILayout.Width(EsuHudLayout.Scale(22f)),
+                GUILayout.Height(EsuHudLayout.Scale(22f)));
+            string previous = _shapeFilter;
+            _shapeFilter = GUILayout.TextField(_shapeFilter ?? string.Empty, DecorationEditorTheme.TextField);
+            if (!string.Equals(previous, _shapeFilter, StringComparison.Ordinal))
+                _shapePaletteScroll = Vector2.zero;
+            EsuCursorTooltip.RegisterLast("Filter shapes by label, item name, or FtD geometry name.");
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawShapeCategoryFilterButton(string key, string label, float width)
+        {
+            bool active = string.Equals(_shapeCategoryFilter, key, StringComparison.OrdinalIgnoreCase);
+            if (GUILayout.Button(
+                    new GUIContent(label, "Filter the Smart Builder shape palette to " + label + "."),
+                    DecorationEditorTheme.ToolButton(active),
+                    GUILayout.Width(EsuHudLayout.Scale(width)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _shapeCategoryFilter = key;
+                _shapePaletteScroll = Vector2.zero;
+            }
+        }
+
+        private void DrawShapeSizeSelector()
+        {
+            SmartBuildShapeDescriptor selected = SelectedShapeDescriptor;
+            if (!selected.UsesLengthSelector)
+                return;
+
+            GUILayout.Space(EsuHudLayout.Scale(4f));
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Size", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(48f)));
+            for (int length = 1; length <= 4; length++)
+                DrawShapeSizeButton(length);
+            GUILayout.EndHorizontal();
+        }
+
+        private IEnumerable<SmartBuildShapePaletteEntry> FilterShapePaletteEntries()
+        {
+            IEnumerable<SmartBuildShapePaletteEntry> query = AvailableShapeDescriptors()
+                .Select(descriptor => SmartBuildShapePaletteEntry.Create(
+                    descriptor,
+                    _source?.FamilyForShape(descriptor),
+                    PaletteCandidateFor(descriptor)))
+                .Where(entry => entry.IsValid);
+
+            string category = (_shapeCategoryFilter ?? "all").Trim().ToLowerInvariant();
+            if (category.Length > 0 && category != "all")
+            {
+                query = query.Where(entry =>
+                    string.Equals(
+                        CategoryFilterKey(entry.Descriptor.Category),
+                        category,
+                        StringComparison.OrdinalIgnoreCase));
+            }
+
+            string filter = (_shapeFilter ?? string.Empty).Trim().ToLowerInvariant();
+            if (filter.Length > 0)
+                query = query.Where(entry => entry.SearchText.Contains(filter));
+            return query;
+        }
+
+        private float ShapePaletteViewportHeight(
+            List<SmartBuildShapePaletteEntry> rows,
+            float availableHeight)
+        {
+            float controlsHeight = EsuHudLayout.Scale(
+                SelectedShapeDescriptor.UsesLengthSelector ? 128f : 94f);
+            float remainingHeight = Mathf.Max(0f, availableHeight - controlsHeight);
+            float maxHeight = Mathf.Clamp(
+                remainingHeight,
+                EsuHudLayout.Scale(54f),
+                EsuHudLayout.Scale(430f));
+            float rowHeight = _shapePreviewGrid
+                ? EsuHudLayout.Scale(ShapePreviewGridRowHeight)
+                : EsuHudLayout.Scale(ShapePaletteRowHeight);
+            int rowCount = _shapePreviewGrid
+                ? Mathf.CeilToInt((rows?.Count ?? 0) / (float)ShapePreviewGridColumns)
+                : rows?.Count ?? 0;
+            float contentHeight = rowCount <= 0
+                ? EsuHudLayout.Scale(54f)
+                : rowCount * rowHeight + EsuHudLayout.Scale(8f);
+            return Mathf.Clamp(contentHeight, EsuHudLayout.Scale(54f), maxHeight);
+        }
+
+        private void ClampShapePaletteScroll(
+            List<SmartBuildShapePaletteEntry> rows,
+            float viewportWidth,
+            float viewportHeight)
+        {
+            float rowHeight = _shapePreviewGrid
+                ? EsuHudLayout.Scale(ShapePreviewGridRowHeight)
+                : EsuHudLayout.Scale(ShapePaletteRowHeight);
+            int contentRows;
+            if (_shapePreviewGrid)
+            {
+                float cardWidth = EsuHudLayout.Scale(ShapePreviewGridCardWidth);
+                int columns = Mathf.Max(
+                    1,
+                    Mathf.Min(
+                        ShapePreviewGridColumns,
+                        Mathf.FloorToInt((viewportWidth - EsuHudLayout.Scale(18f)) / cardWidth)));
+                contentRows = Mathf.CeilToInt((rows?.Count ?? 0) / (float)columns);
+            }
+            else
+            {
+                contentRows = rows?.Count ?? 0;
+            }
+
+            float contentHeight = Math.Max(0f, contentRows * rowHeight);
+            float maxY = Math.Max(0f, contentHeight - Math.Max(1f, viewportHeight));
+            if (_shapePaletteScroll.y > maxY || _shapePaletteScroll.y < 0f)
+                _shapePaletteScroll.y = Mathf.Clamp(_shapePaletteScroll.y, 0f, maxY);
+        }
+
+        private SmartBlockCandidate PaletteCandidateFor(SmartBuildShapeDescriptor descriptor)
+        {
+            int length = descriptor.UsesLengthSelector
+                ? _selectedSlopeLength
+                : Math.Max(1, descriptor.TransitionTo);
+            return PaletteCandidateForLength(descriptor, length);
+        }
+
+        private SmartBlockCandidate PaletteCandidateForLength(
+            SmartBuildShapeDescriptor descriptor,
+            int length)
+        {
+            SmartBlockFamily family = _source?.FamilyForShape(descriptor);
+            if (family == null || !family.IsSupported)
+                return null;
+
+            return family.CandidateForLength(length);
+        }
+
+        private void DrawShapeListRows(
+            List<SmartBuildShapePaletteEntry> rows,
+            float viewportHeight)
+        {
+            float rowHeight = EsuHudLayout.Scale(ShapePaletteRowHeight);
+            int total = rows.Count;
+            int first = Mathf.Max(0, Mathf.FloorToInt(_shapePaletteScroll.y / rowHeight) - 4);
+            int visible = Mathf.CeilToInt(viewportHeight / rowHeight) + 8;
+            int last = Mathf.Min(total, first + visible);
+            if (first > 0)
+                GUILayout.Space(first * rowHeight);
+            for (int index = first; index < last; index++)
+            {
+                SmartBuildShapePaletteEntry entry = rows[index];
+                bool active = entry.Descriptor?.Key == _selectedShapeDescriptorKey;
+                GUIStyle style = active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row;
+                string label = entry.Descriptor.Label;
+                string detail = entry.Candidate == null
+                    ? string.Empty
+                    : " | " + entry.Candidate.Length.ToString(CultureInfo.InvariantCulture) + "m";
+                Rect row = GUILayoutUtility.GetRect(
+                    1f,
+                    rowHeight,
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(rowHeight));
+                if (GUI.Button(row, GUIContent.none, style))
+                    SelectShapeDescriptor(entry.Descriptor);
+
+                Rect iconRect = new Rect(
+                    row.x + EsuHudLayout.Scale(5f),
+                    row.y + EsuHudLayout.Scale(4f),
+                    EsuHudLayout.Scale(20f),
+                    row.height - EsuHudLayout.Scale(8f));
+                Texture icon = DecorationEditorIconCatalog.Get(entry.Descriptor?.IsCuboid == true ? "cube" : "scale");
+                if (icon != null)
+                    GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+                GUI.Label(
+                    new Rect(
+                        iconRect.xMax + EsuHudLayout.Scale(6f),
+                        row.y,
+                        row.width - iconRect.width - EsuHudLayout.Scale(16f),
+                        row.height),
+                    label + detail,
+                    active ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini);
+                EsuCursorTooltip.Register(row, entry.Descriptor.Tooltip);
+                if (Event.current != null &&
+                    Event.current.type != EventType.Layout &&
+                    row.Contains(Event.current.mousePosition))
+                {
+                    _hoveredShapeEntry = entry;
+                }
+            }
+
+            if (last < total)
+                GUILayout.Space((total - last) * rowHeight);
+        }
+
+        private void DrawShapePreviewGrid(
+            List<SmartBuildShapePaletteEntry> rows,
+            float viewportWidth,
+            float viewportHeight)
+        {
+            float rowHeight = EsuHudLayout.Scale(ShapePreviewGridRowHeight);
+            float cardWidth = EsuHudLayout.Scale(ShapePreviewGridCardWidth);
+            float cardHeight = EsuHudLayout.Scale(ShapePreviewGridCardHeight);
+            int columns = Mathf.Max(
+                1,
+                Mathf.Min(
+                    ShapePreviewGridColumns,
+                    Mathf.FloorToInt((viewportWidth - EsuHudLayout.Scale(18f)) / cardWidth)));
+            int totalRows = Mathf.CeilToInt(rows.Count / (float)columns);
+            int firstRow = Mathf.Max(0, Mathf.FloorToInt(_shapePaletteScroll.y / rowHeight));
+            int lastRow = Mathf.Min(
+                totalRows,
+                Mathf.CeilToInt((_shapePaletteScroll.y + viewportHeight) / rowHeight));
+            bool canRenderPreview = Event.current != null && Event.current.type == EventType.Repaint;
+            if (firstRow > 0)
+                GUILayout.Space(firstRow * rowHeight);
+            for (int gridRow = firstRow; gridRow < lastRow; gridRow++)
+            {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("Size", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(48f)));
-                for (int length = 1; length <= 4; length++)
-                    DrawShapeSizeButton(length);
+                for (int column = 0; column < columns; column++)
+                {
+                    int rowIndex = gridRow * columns + column;
+                    if (rowIndex >= rows.Count)
+                    {
+                        GUILayout.Space(cardWidth);
+                        continue;
+                    }
+
+                    SmartBuildShapePaletteEntry entry = rows[rowIndex];
+                    bool active = entry.Descriptor?.Key == _selectedShapeDescriptorKey;
+                    Rect card = GUILayoutUtility.GetRect(
+                        cardWidth,
+                        cardHeight,
+                        GUILayout.Width(cardWidth),
+                        GUILayout.Height(cardHeight));
+                    if (GUI.Button(card, GUIContent.none, active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row))
+                        SelectShapeDescriptor(entry.Descriptor);
+                    EsuCursorTooltip.Register(card, entry.Descriptor.Tooltip);
+                    if (Event.current != null &&
+                        Event.current.type != EventType.Layout &&
+                        card.Contains(Event.current.mousePosition))
+                    {
+                        _hoveredShapeEntry = entry;
+                    }
+
+                    int previewPixels = Mathf.Clamp(
+                        Mathf.RoundToInt(ShapePreviewGridTexturePixels * EsuHudLayout.CurrentScale),
+                        64,
+                        128);
+                    Texture preview = canRenderPreview
+                        ? _itemPreviewRenderer?.GetPreview(entry.Candidate, previewPixels, _shapePreviewSpin)
+                        : _itemPreviewRenderer?.GetCachedPreview(entry.Candidate, previewPixels);
+                    Rect previewRect = new Rect(
+                        card.x + EsuHudLayout.Scale(6f),
+                        card.y + EsuHudLayout.Scale(4f),
+                        card.width - EsuHudLayout.Scale(12f),
+                        EsuHudLayout.Scale(55f));
+                    if (preview != null)
+                        GUI.DrawTexture(previewRect, preview, ScaleMode.ScaleToFit, true);
+                    else
+                        GUI.Label(previewRect, "no mesh", DecorationEditorTheme.Mini);
+                    GUI.Label(
+                        new Rect(
+                            card.x + EsuHudLayout.Scale(4f),
+                            card.yMax - EsuHudLayout.Scale(26f),
+                            card.width - EsuHudLayout.Scale(8f),
+                            EsuHudLayout.Scale(22f)),
+                        CompactText(entry.Descriptor.Label, 22),
+                        active ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini);
+                }
+
                 GUILayout.EndHorizontal();
             }
+
+            if (lastRow < totalRows)
+                GUILayout.Space((totalRows - lastRow) * rowHeight);
         }
 
         private void EnsureSelectedShapeAvailable()
@@ -3000,6 +3685,87 @@ namespace DecoLimitLifter.SmartBuildMode
                 default:
                     return "Basic";
             }
+        }
+
+        private static string CategoryFilterKey(SmartBuildShapeCategory category)
+        {
+            switch (category)
+            {
+                case SmartBuildShapeCategory.Slopes:
+                    return "slopes";
+                case SmartBuildShapeCategory.Corners:
+                    return "corners";
+                case SmartBuildShapeCategory.Wedges:
+                    return "wedges";
+                case SmartBuildShapeCategory.Transitions:
+                    return "transitions";
+                default:
+                    return "basic";
+            }
+        }
+
+        private void DrawShapePreviewCard()
+        {
+            if (!_hoveredShapeEntry.IsValid)
+                return;
+
+            float cardWidth = EsuHudLayout.Scale(322f);
+            float cardHeight = EsuHudLayout.Scale(148f);
+            Rect rect = new Rect(
+                Mathf.Clamp(
+                    Event.current.mousePosition.x + EsuHudLayout.Scale(22f),
+                    EsuHudLayout.Scale(8f),
+                    Screen.width - cardWidth - EsuHudLayout.Scale(8f)),
+                Mathf.Clamp(
+                    Event.current.mousePosition.y + EsuHudLayout.Scale(22f),
+                    EsuHudLayout.Scale(8f),
+                    Screen.height - cardHeight - EsuHudLayout.Scale(8f)),
+                cardWidth,
+                cardHeight);
+            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+
+            Rect previewRect = new Rect(
+                rect.x + EsuHudLayout.Scale(10f),
+                rect.y + EsuHudLayout.Scale(32f),
+                EsuHudLayout.Scale(104f),
+                EsuHudLayout.Scale(104f));
+            Texture preview = _itemPreviewRenderer?.GetPreview(
+                _hoveredShapeEntry.Candidate,
+                128,
+                _shapePreviewSpin);
+            if (preview != null)
+                GUI.DrawTexture(previewRect, preview, ScaleMode.ScaleToFit, alphaBlend: true);
+            else
+                GUI.Label(previewRect, "no preview", DecorationEditorTheme.Mini);
+
+            GUI.BeginGroup(rect);
+            GUI.Label(
+                new Rect(
+                    EsuHudLayout.Scale(8f),
+                    EsuHudLayout.Scale(6f),
+                    rect.width - EsuHudLayout.Scale(16f),
+                    EsuHudLayout.Scale(24f)),
+                new GUIContent(" Shape preview", DecorationEditorIconCatalog.Get("build")),
+                DecorationEditorTheme.SubHeader);
+            float textX = EsuHudLayout.Scale(124f);
+            float textWidth = rect.width - textX - EsuHudLayout.Scale(10f);
+            GUI.Label(
+                new Rect(textX, EsuHudLayout.Scale(36f), textWidth, EsuHudLayout.Scale(24f)),
+                _hoveredShapeEntry.Descriptor.Label,
+                DecorationEditorTheme.Body);
+            GUI.Label(
+                new Rect(textX, EsuHudLayout.Scale(62f), textWidth, EsuHudLayout.Scale(36f)),
+                _hoveredShapeEntry.Candidate == null
+                    ? CategoryLabel(_hoveredShapeEntry.Descriptor.Category)
+                    : CompactText(_hoveredShapeEntry.Candidate.DisplayName, 42),
+                DecorationEditorTheme.MiniWrap);
+            GUI.Label(
+                new Rect(textX, EsuHudLayout.Scale(100f), textWidth, EsuHudLayout.Scale(40f)),
+                "Click to select. Current size: " +
+                (_hoveredShapeEntry.Candidate?.Length ?? Math.Max(1, _selectedSlopeLength)).ToString(CultureInfo.InvariantCulture) +
+                "m.",
+                DecorationEditorTheme.MiniWrap);
+            GUI.EndGroup();
         }
 
         private void DrawShapeButton(SmartBuildShapeDescriptor descriptor)
@@ -3231,9 +3997,10 @@ namespace DecoLimitLifter.SmartBuildMode
                     ref _snapScaleText,
                     "Move step in whole construct cells for Smart Builder previews.",
                     "Yaw step in 90 degree turns for valid Smart Builder block orientation.",
-                    "Scale step in whole construct cells for Smart Builder previews."))
+                    "Scale step in whole construct cells for Smart Builder previews.",
+                    out bool commitRequested))
             {
-                ApplySmartSnapText();
+                ApplySmartSnapText(commitRequested);
             }
         }
 
@@ -3244,18 +4011,24 @@ namespace DecoLimitLifter.SmartBuildMode
             _snapScaleText = EsuTransformSnapSettings.Format(SmartScaleStepCells);
         }
 
-        private void ApplySmartSnapText()
+        private void ApplySmartSnapText(bool commitRequested)
         {
             if (!EsuTransformSnapSettings.TryParseSnapText(_snapMoveText, out float move) ||
                 !EsuTransformSnapSettings.TryParseSnapText(_snapRotateText, out float rotate) ||
                 !EsuTransformSnapSettings.TryParseSnapText(_snapScaleText, out float scale))
             {
-                InfoStore.Add("Smart Builder snap settings must be finite numbers.");
-                SyncSnapTextFromSettings();
+                if (commitRequested)
+                {
+                    InfoStore.Add("Smart Builder snap settings must be finite numbers.");
+                    SyncSnapTextFromSettings();
+                }
                 return;
             }
 
             EsuTransformSnapSettings.SetSmart(move, rotate, scale);
+            if (!commitRequested)
+                return;
+
             SyncSnapTextFromSettings();
             InfoStore.Add(
                 "Smart Builder snap set: move " + _snapMoveText +
@@ -3558,7 +4331,15 @@ namespace DecoLimitLifter.SmartBuildMode
             s_selectedMaterial = material;
             _source = null;
             _sourceReason = null;
+            ClearSmartPreviewRendererCache();
             RefreshSelection();
+        }
+
+        private void ClearSmartPreviewRendererCache()
+        {
+            _itemPreviewRenderer?.ClearCache();
+            _shapePaletteScroll = Vector2.zero;
+            _hoveredShapeEntry = default;
         }
 
         private void SymmetryButton(DecorationEditAxis axis)
@@ -3749,12 +4530,23 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             bool invalid = !_planDirty && _plan != null && !_plan.CanCommit;
+            bool drewExactMaterialMeshes =
+                !_planDirty &&
+                _previewMode == SmartBuildPreviewMode.Material &&
+                _plan?.Placements.Count > 0;
+            if (!_planDirty &&
+                _previewMode == SmartBuildPreviewMode.Material &&
+                _plan?.Placements.Count > 0)
+            {
+                DrawPlanPlacementPreview(_plan, invalid, drawWire: false);
+            }
+
             var drawn = new HashSet<string>();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
                 foreach (SmartBuildPiece piece in _scene.Pieces)
-                    DrawPiecePreview(piece, variant, invalid, drawn);
+                    DrawPiecePreview(piece, variant, invalid, drawn, drawMaterialFill: !drewExactMaterialMeshes);
             }
         }
 
@@ -3762,7 +4554,8 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPiece piece,
             DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
             bool invalid,
-            HashSet<string> drawn)
+            HashSet<string> drawn,
+            bool drawMaterialFill = true)
         {
             if (piece?.Construct == null)
                 return;
@@ -3799,14 +4592,14 @@ namespace DecoLimitLifter.SmartBuildMode
                 SmartBuildVolume volume = VolumeFromCells(piece.Construct, occupiedCells);
                 if (volume != null)
                 {
-                    if (_previewMode == SmartBuildPreviewMode.Material)
+                    if (_previewMode == SmartBuildPreviewMode.Material && drawMaterialFill)
                         DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selectedOriginal));
                     DrawWireEdges(volume.GetWorldCorners(), color, width);
                 }
                 return;
             }
 
-            DrawSlopePieceHulls(piece, variant, color, width);
+            DrawSlopePieceHulls(piece, variant, color, width, drawMaterialFill);
 
             Color supportColor = invalid
                 ? new Color(1f, 0.2f, 0.15f, 0.38f)
@@ -3818,11 +4611,66 @@ namespace DecoLimitLifter.SmartBuildMode
                 selectedOriginal ? 1.6f : 1.2f);
         }
 
+        private void DrawPlanPlacementPreview(
+            SmartBuildPlan plan,
+            bool invalid,
+            bool drawWire)
+        {
+            if (plan?.Construct == null || plan.Placements.Count == 0)
+                return;
+
+            Color color = invalid
+                ? new Color(1f, 0.2f, 0.15f, 1f)
+                : new Color(0.1f, 0.95f, 1f, 1f);
+            Color materialColor = invalid
+                ? new Color(1f, 0.2f, 0.15f, 0.34f)
+                : new Color(1f, 1f, 1f, 0.38f);
+            int exact = Math.Min(plan.Placements.Count, MaxExactMeshPreviewPlacements);
+            for (int index = 0; index < exact; index++)
+                DrawPlacementPreview(plan.Construct, plan.Placements[index], color, materialColor, 2.2f, drawWire);
+
+            if (!drawWire || plan.Placements.Count <= exact || plan.Volume == null)
+                return;
+
+            Color fallback = invalid
+                ? new Color(1f, 0.2f, 0.15f, 0.65f)
+                : new Color(0.1f, 0.95f, 1f, 0.58f);
+            DrawWireEdges(plan.Volume.GetWorldCorners(), fallback, 1.4f);
+        }
+
+        private void DrawPlacementPreview(
+            AllConstruct construct,
+            SmartBuildPlacement placement,
+            Color wireColor,
+            Color materialColor,
+            float width,
+            bool drawWire = true)
+        {
+            if (construct == null || placement == null)
+                return;
+
+            Matrix4x4 matrix = PlacementMatrix(construct, placement);
+            if (_previewMode == SmartBuildPreviewMode.Material)
+                _itemPreviewRenderer?.DrawPlacementMesh(placement, matrix, materialColor);
+            if (!drawWire)
+                return;
+            if (_itemPreviewRenderer?.DrawPlacementWire(placement, matrix, wireColor, width) == true)
+                return;
+
+            SmartBuildVolume volume = VolumeFromCells(construct, placement.CoveredCells());
+            if (volume == null)
+                return;
+            if (_previewMode == SmartBuildPreviewMode.Material)
+                DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
+            DrawWireEdges(volume.GetWorldCorners(), wireColor, width);
+        }
+
         private void DrawSlopePieceHulls(
             SmartBuildPiece piece,
             DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
             Color color,
-            float width)
+            float width,
+            bool drawMaterialFill = true)
         {
             if (piece?.Construct == null)
                 return;
@@ -3849,7 +4697,8 @@ namespace DecoLimitLifter.SmartBuildMode
                     dropSign,
                     stepLines,
                     color,
-                    width);
+                    width,
+                    drawMaterialFill);
             }
         }
 
@@ -3863,7 +4712,8 @@ namespace DecoLimitLifter.SmartBuildMode
             int dropSign,
             IReadOnlyList<IReadOnlyList<Vector3i>> stepLines,
             Color color,
-            float width)
+            float width,
+            bool drawMaterialFill = true)
         {
             if (construct == null ||
                 !TryBuildSlopeStepHullLocal(
@@ -3894,12 +4744,15 @@ namespace DecoLimitLifter.SmartBuildMode
             Color fill = _previewMode == SmartBuildPreviewMode.Material
                 ? SolidMaterialPreviewColor(selected: false)
                 : new Color(color.r, color.g, color.b, 0.12f);
-            DrawDoubleSidedSlopeQuad(world[0], world[1], world[2], world[3], fill);
-            DecorationEditorOverlay.Quad(world[0], world[4], world[5], world[1], fill);
-            DecorationEditorOverlay.Quad(world[3], world[2], world[6], world[7], fill);
-            DecorationEditorOverlay.Quad(world[0], world[3], world[7], world[4], fill);
-            DecorationEditorOverlay.Quad(world[1], world[5], world[6], world[2], fill);
-            DecorationEditorOverlay.Quad(world[4], world[7], world[6], world[5], new Color(fill.r, fill.g, fill.b, fill.a * 0.55f));
+            if (_previewMode != SmartBuildPreviewMode.Material || drawMaterialFill)
+            {
+                DrawDoubleSidedSlopeQuad(world[0], world[1], world[2], world[3], fill);
+                DecorationEditorOverlay.Quad(world[0], world[4], world[5], world[1], fill);
+                DecorationEditorOverlay.Quad(world[3], world[2], world[6], world[7], fill);
+                DecorationEditorOverlay.Quad(world[0], world[3], world[7], world[4], fill);
+                DecorationEditorOverlay.Quad(world[1], world[5], world[6], world[2], fill);
+                DecorationEditorOverlay.Quad(world[4], world[7], world[6], world[5], new Color(fill.r, fill.g, fill.b, fill.a * 0.55f));
+            }
             DrawWireEdge(world, 0, 1, color, width);
             DrawWireEdge(world, 1, 2, color, width);
             DrawWireEdge(world, 2, 3, color, width);
@@ -4943,13 +5796,38 @@ namespace DecoLimitLifter.SmartBuildMode
                     candidate.ForwardSign,
                     candidate.Width,
                     _drawPlane);
-                SmartBuildVolume volume = VolumeFromCells(
-                    candidate.Construct,
-                    ghost.EnumeratePreviewCells(_source).ToArray());
-                if (volume != null && _previewMode == SmartBuildPreviewMode.Material)
-                    DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
-                if (volume != null)
-                    DrawWireEdges(volume.GetWorldCorners(), color, 2.4f);
+                IReadOnlyList<SmartBuildPlacement> placements = ghost.BuildFixedPlacements(
+                    _source,
+                    out _);
+                if (placements.Count > 0)
+                {
+                    Color materialColor = candidate.Valid
+                        ? new Color(1f, 1f, 1f, 0.38f)
+                        : new Color(1f, 0.2f, 0.15f, 0.34f);
+                    bool drewExactMaterialMeshes = _previewMode == SmartBuildPreviewMode.Material;
+                    if (drewExactMaterialMeshes)
+                    {
+                        foreach (SmartBuildPlacement placement in placements.Take(MaxExactMeshPreviewPlacements))
+                            DrawPlacementPreview(candidate.Construct, placement, color, materialColor, 2.4f, drawWire: false);
+                    }
+
+                    DrawPiecePreview(
+                        ghost,
+                        new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()),
+                        !candidate.Valid,
+                        new HashSet<string>(),
+                        !drewExactMaterialMeshes);
+                }
+                else
+                {
+                    SmartBuildVolume volume = VolumeFromCells(
+                        candidate.Construct,
+                        ghost.EnumeratePreviewCells(_source).ToArray());
+                    if (volume != null && _previewMode == SmartBuildPreviewMode.Material)
+                        DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
+                    if (volume != null)
+                        DrawWireEdges(volume.GetWorldCorners(), color, 2.4f);
+                }
                 return;
             }
 
@@ -4957,6 +5835,39 @@ namespace DecoLimitLifter.SmartBuildMode
             DeriveRightAxis(candidate.ForwardAxis, candidate.ForwardSign, out SmartBuildAxis rightAxis, out int rightSign);
             if (candidate.RightStart.HasValue)
                 origin = SmartBuildAxisHelper.Set(origin, rightAxis, candidate.RightStart.Value);
+
+            SmartBuildPiece slopeGhost = SmartBuildPiece.CreateDownSlope(
+                candidate.Construct,
+                origin,
+                _selectedSlopeLength,
+                candidate.ForwardAxis,
+                candidate.ForwardSign,
+                candidate.Width,
+                _drawPlane,
+                _defaultSlopeSupportMode);
+            IReadOnlyList<SmartBuildPlacement> slopePlacements = slopeGhost.BuildFixedPlacements(
+                _source,
+                out _);
+            if (slopePlacements.Count > 0)
+            {
+                Color materialColor = candidate.Valid
+                    ? new Color(1f, 1f, 1f, 0.38f)
+                    : new Color(1f, 0.2f, 0.15f, 0.34f);
+                bool drewExactMaterialMeshes = _previewMode == SmartBuildPreviewMode.Material;
+                if (drewExactMaterialMeshes)
+                {
+                    foreach (SmartBuildPlacement placement in slopePlacements.Take(MaxExactMeshPreviewPlacements))
+                        DrawPlacementPreview(candidate.Construct, placement, color, materialColor, 2.4f, drawWire: false);
+                }
+
+                DrawPiecePreview(
+                    slopeGhost,
+                    new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()),
+                    !candidate.Valid,
+                    new HashSet<string>(),
+                    !drewExactMaterialMeshes);
+                return;
+            }
 
             Vector3i forward = SmartBuildAxisHelper.ToVector3i(candidate.ForwardAxis, candidate.ForwardSign);
             Vector3i right = SmartBuildAxisHelper.ToVector3i(rightAxis, rightSign);
@@ -5174,6 +6085,37 @@ namespace DecoLimitLifter.SmartBuildMode
         private static Vector3i Multiply(Vector3i value, int amount) =>
             new Vector3i(value.x * amount, value.y * amount, value.z * amount);
 
+        private static Vector3 ToVector3(Vector3i value) =>
+            new Vector3(value.x, value.y, value.z);
+
+        private static Matrix4x4 PlacementMatrix(
+            AllConstruct construct,
+            SmartBuildPlacement placement)
+        {
+            Vector3 local = ToVector3(placement.Position);
+            Matrix4x4 localPlacement = Matrix4x4.TRS(local, placement.Rotation, Vector3.one);
+            try
+            {
+                if (construct?.myTransform != null)
+                    return construct.myTransform.localToWorldMatrix * localPlacement;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                return Matrix4x4.TRS(
+                    construct.SafeLocalToGlobal(local),
+                    placement.Rotation,
+                    Vector3.one);
+            }
+            catch
+            {
+                return localPlacement;
+            }
+        }
+
         private static Vector3 FocusedConstructLocalCenter(AllConstruct construct)
         {
             if (construct == null)
@@ -5222,6 +6164,13 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static string FormatCell(Vector3i cell) =>
             $"{cell.x}, {cell.y}, {cell.z}";
+
+        private static string CompactText(string value, int maxCharacters)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maxCharacters)
+                return value ?? string.Empty;
+            return value.Substring(0, Mathf.Max(1, maxCharacters - 3)) + "...";
+        }
 
         private string PlaneShortName()
         {
@@ -5542,6 +6491,52 @@ namespace DecoLimitLifter.SmartBuildMode
             internal SmartBuildSlopeSupportMode DefaultSlopeSupportMode { get; }
 
             internal SmartBuildPreviewMode PreviewMode { get; }
+        }
+
+        private readonly struct SmartBuildShapePaletteEntry
+        {
+            internal static SmartBuildShapePaletteEntry Create(
+                SmartBuildShapeDescriptor descriptor,
+                SmartBlockFamily family,
+                SmartBlockCandidate candidate)
+            {
+                string search = string.Join(
+                    " ",
+                    new[]
+                    {
+                        descriptor?.Label,
+                        descriptor?.Tooltip,
+                        CategoryLabel(descriptor?.Category ?? SmartBuildShapeCategory.Basic),
+                        family?.DisplayName,
+                        candidate?.DisplayName,
+                        candidate?.GeometryName
+                    }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)))
+                    .ToLowerInvariant();
+                return new SmartBuildShapePaletteEntry(descriptor, family, candidate, search);
+            }
+
+            private SmartBuildShapePaletteEntry(
+                SmartBuildShapeDescriptor descriptor,
+                SmartBlockFamily family,
+                SmartBlockCandidate candidate,
+                string searchText)
+            {
+                Descriptor = descriptor;
+                Family = family;
+                Candidate = candidate;
+                SearchText = searchText ?? string.Empty;
+            }
+
+            internal SmartBuildShapeDescriptor Descriptor { get; }
+
+            internal SmartBlockFamily Family { get; }
+
+            internal SmartBlockCandidate Candidate { get; }
+
+            internal string SearchText { get; }
+
+            internal bool IsValid => Descriptor != null && Family?.IsSupported == true;
         }
 
         private readonly struct SmartBuildPlacementCandidate

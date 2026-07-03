@@ -79,6 +79,8 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal int Count => _pieces.Count;
 
+        internal bool HasSelection => SelectedPiece != null;
+
         internal bool HasDownSlope =>
             _pieces.Any(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope);
 
@@ -103,6 +105,9 @@ namespace DecoLimitLifter.SmartBuildMode
             SelectedPiece = piece;
             return true;
         }
+
+        internal void ClearSelection() =>
+            SelectedPiece = null;
 
         internal SmartBuildPiece DuplicateSelected(Vector3i offset)
         {
@@ -151,8 +156,10 @@ namespace DecoLimitLifter.SmartBuildMode
                     _pieces.Add(piece);
             }
 
-            SelectedPiece = _pieces.FirstOrDefault(piece => piece.Id == selectedId) ??
-                            _pieces.LastOrDefault();
+            SelectedPiece = selectedId >= 0
+                ? _pieces.FirstOrDefault(piece => piece.Id == selectedId) ??
+                  _pieces.LastOrDefault()
+                : null;
         }
 
         internal SmartBuildPreviewSnapshot BuildPreview(SmartBuildSource source = null)

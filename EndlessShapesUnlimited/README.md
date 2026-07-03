@@ -2,7 +2,7 @@ EndlessShapes Unlimited is a From The Depths mod for builders who want higher de
 
 It combines DecoLimitLifter-style extended decoration saving with the OBJ import/export and building tools from EndlessShapes2.
 
-Mod latest version 1.0.4
+Mod latest version 1.0.5
 
 DISCORD SERVER FOR BUG REPORTS, IDEAS, FEEDBACK OR HELP:
 https://discord.gg/6Us9UamUPx
@@ -79,6 +79,16 @@ The `.blueprint` schema is unchanged. These settings do not create sidecar files
 - Adds optional streamed saving for very large blueprints.
 - Adds optional V3 loading for huge block-count blueprints.
 
+[b]NEW IN 1.0.5[/b]
+
+- Surface Builder now handles slanted manually-created and bridged faces more reliably.
+- Same-anchor mode in Surface Builder and Extra Tools can now use a picked shared anchor that you can select and move before applying.
+- Extra Tools now include partial circles, 2D cone sectors, cones, frustums, spheres and partial spheres.
+- Smart Builder has a fixed shape palette with list/grid previews, visible-only 3D thumbnails, material-safe preview refreshes and resizable Palette / Selected / Scene panels.
+- Smart Builder wire previews now show outer/hard outlines instead of internal triangle diagonals and repeated placement seams.
+- The Smart Builder `1` shortcut now cycles 1m-capable shapes only; use the size buttons for 2m/3m/4m variants.
+- Decoration transform snap values can be smaller and more precise, update live while typing, and decoration scaling is no longer capped at 10x.
+
 [b]MAIN CONTROLS[/b]
 
 Ctrl+D - Open Decoration Edit Mode.
@@ -90,8 +100,8 @@ F8 - Toggle the ESU serialization HUD.
 
 1 - Cycle create/select/tool mode:
 - Decoration Edit: Select Single / Box.
-- Surface Builder: Draw / Path / Circle.
-- Smart Builder: Block / Down slope.
+- Surface Builder: Draw / Path / Shape.
+- Smart Builder: cycle 1m-capable shapes.
 
 2 - Cycle transform mode:
 - Move -> Rotate -> Scale.
@@ -128,7 +138,7 @@ Press Tab from Decoration Edit Mode while clean.
 Tools:
 - Draw: click points on the craft to make triangle surfaces.
 - Path: click points to make a decoration path.
-- Circle: click a surface to place a circle.
+- Shape: click a surface to place circles, arcs, cones, frustums and spheres.
 - Move / Rotate / Scale: edit selected draft points.
 
 Left panel:
@@ -142,6 +152,9 @@ Left panel:
 Anchor modes:
 - Nearest: each decoration uses its nearest valid anchor.
 - Same: generated decorations share one anchor when possible.
+- Same anchor can also use a picked shared anchor. Select that anchor with Move
+  and drag it before applying if you want every generated decoration anchored to
+  a specific craft block.
 
 [b]SMART BLOCK BUILDER[/b]
 
@@ -149,7 +162,8 @@ Open with Ctrl+Shift+B, or press Tab from Surface Builder while clean.
 
 Use it to preview block placement before committing:
 - Pick material.
-- Pick Block or Down slope.
+- Pick a shape from the List or 3D grid palette.
+- Use the size buttons for larger variants when available.
 - Add a preview piece.
 - Move, rotate or scale it.
 - Switch preview between Wireframe and Material.

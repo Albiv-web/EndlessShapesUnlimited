@@ -118,7 +118,7 @@ Exclude:
    For the current release:
 
    ```text
-   Mod latest version 1.0.4
+   Mod latest version 1.0.5
    ```
 
 6. Confirm `EndlessShapesUnlimited/header.jpg` exists and is below 1 MB.

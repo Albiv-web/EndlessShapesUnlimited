@@ -246,58 +246,51 @@ namespace EndlessShapes2.Polygon
             double m21 = y.z;
             double m22 = z.z;
 
-            double qw;
-            double qx;
-            double qy;
-            double qz;
-            double trace = m00 + m11 + m22;
-            if (trace > 0d)
+            return UnityEulerFromRotationMatrix(
+                m00,
+                m01,
+                m02,
+                m10,
+                m11,
+                m12,
+                m20,
+                m21,
+                m22);
+        }
+
+        private static Vector3 UnityEulerFromRotationMatrix(
+            double m00,
+            double m01,
+            double m02,
+            double m10,
+            double m11,
+            double m12,
+            double m20,
+            double m21,
+            double m22)
+        {
+            const double epsilon = 0.000001d;
+            double xRadians = Math.Asin(Math.Max(-1d, Math.Min(1d, -m12)));
+            double cosX = Math.Cos(xRadians);
+            double yRadians;
+            double zRadians;
+            if (Math.Abs(cosX) > epsilon)
             {
-                double s = Math.Sqrt(trace + 1d) * 2d;
-                qw = 0.25d * s;
-                qx = (m21 - m12) / s;
-                qy = (m02 - m20) / s;
-                qz = (m10 - m01) / s;
-            }
-            else if (m00 > m11 && m00 > m22)
-            {
-                double s = Math.Sqrt(1d + m00 - m11 - m22) * 2d;
-                qw = (m21 - m12) / s;
-                qx = 0.25d * s;
-                qy = (m01 + m10) / s;
-                qz = (m02 + m20) / s;
-            }
-            else if (m11 > m22)
-            {
-                double s = Math.Sqrt(1d + m11 - m00 - m22) * 2d;
-                qw = (m02 - m20) / s;
-                qx = (m01 + m10) / s;
-                qy = 0.25d * s;
-                qz = (m12 + m21) / s;
+                zRadians = Math.Atan2(m10, m11);
+                yRadians = Math.Atan2(m02, m22);
             }
             else
             {
-                double s = Math.Sqrt(1d + m22 - m00 - m11) * 2d;
-                qw = (m10 - m01) / s;
-                qx = (m02 + m20) / s;
-                qy = (m12 + m21) / s;
-                qz = 0.25d * s;
+                zRadians = 0d;
+                yRadians = m12 < 0d
+                    ? Math.Atan2(m01, m00)
+                    : Math.Atan2(-m01, m00);
             }
 
-            double sinX = 2d * (qw * qx + qy * qz);
-            double cosX = 1d - 2d * (qx * qx + qy * qy);
-            double xDegrees = Math.Atan2(sinX, cosX) * Mathf.Rad2Deg;
-            double sinY = 2d * (qw * qy - qz * qx);
-            sinY = Math.Max(-1d, Math.Min(1d, sinY));
-            double yDegrees = Math.Asin(sinY) * Mathf.Rad2Deg;
-            double sinZ = 2d * (qw * qz + qx * qy);
-            double cosZ = 1d - 2d * (qy * qy + qz * qz);
-            double zDegrees = Math.Atan2(sinZ, cosZ) * Mathf.Rad2Deg;
-
             return new Vector3(
-                NormalizeDegrees((float)xDegrees),
-                NormalizeDegrees((float)yDegrees),
-                NormalizeDegrees((float)zDegrees));
+                NormalizeDegrees((float)(xRadians * Mathf.Rad2Deg)),
+                NormalizeDegrees((float)(yRadians * Mathf.Rad2Deg)),
+                NormalizeDegrees((float)(zRadians * Mathf.Rad2Deg)));
         }
 
         private static Vector3 Normalize(Vector3 vector, int sourceLine, string name)

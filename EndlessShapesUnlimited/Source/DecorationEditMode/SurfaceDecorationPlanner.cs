@@ -187,6 +187,9 @@ namespace DecoLimitLifter.DecorationEditMode
             int selectedPoint,
             int selectedFace,
             SurfaceEdge selectedEdge,
+            bool hasSharedAnchor,
+            Vector3i sharedAnchor,
+            bool sharedAnchorSelected,
             SurfaceDecorationSettingsSnapshot settings)
         {
             Construct = construct;
@@ -199,6 +202,9 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = selectedPoint;
             SelectedFace = selectedFace;
             SelectedEdge = selectedEdge;
+            HasSharedAnchor = hasSharedAnchor;
+            SharedAnchor = sharedAnchor;
+            SharedAnchorSelected = sharedAnchorSelected;
             Settings = settings;
         }
 
@@ -222,6 +228,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal SurfaceEdge SelectedEdge { get; }
 
+        internal bool HasSharedAnchor { get; }
+
+        internal Vector3i SharedAnchor { get; }
+
+        internal bool SharedAnchorSelected { get; }
+
         internal SurfaceDecorationSettingsSnapshot Settings { get; }
 
         internal bool SameAs(SurfaceDraftSnapshot other)
@@ -232,6 +244,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 SelectedPoint != other.SelectedPoint ||
                 SelectedFace != other.SelectedFace ||
                 !SelectedEdge.Matches(other.SelectedEdge.A, other.SelectedEdge.B) ||
+                HasSharedAnchor != other.HasSharedAnchor ||
+                !SameCell(SharedAnchor, other.SharedAnchor) ||
+                SharedAnchorSelected != other.SharedAnchorSelected ||
                 !(Settings == null ? other.Settings == null : Settings.SameAs(other.Settings)) ||
                 Points.Length != other.Points.Length ||
                 Faces.Length != other.Faces.Length ||
@@ -283,6 +298,11 @@ namespace DecoLimitLifter.DecorationEditMode
             Math.Abs(left.x - right.x) <= 0.0001f &&
             Math.Abs(left.y - right.y) <= 0.0001f &&
             Math.Abs(left.z - right.z) <= 0.0001f;
+
+        private static bool SameCell(Vector3i left, Vector3i right) =>
+            left.x == right.x &&
+            left.y == right.y &&
+            left.z == right.z;
     }
 
     internal sealed class SurfaceDraft
@@ -309,20 +329,29 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal SurfaceEdge SelectedEdge { get; private set; } = new SurfaceEdge(-1, -1);
 
+        internal bool HasSharedAnchor { get; private set; }
+
+        internal Vector3i SharedAnchor { get; private set; }
+
+        internal bool SharedAnchorSelected { get; private set; }
+
         internal IReadOnlyList<int> ManualFaceSelection => _manualFaceSelection;
 
         internal IReadOnlyList<SurfaceEdge> BridgeEdgeSelection => _bridgeEdgeSelection;
 
+        internal int ManualFaceSelectionCount => _manualFaceSelection.Count;
+
         internal int FreeTriangleSelectionCount => _freeTriangleSelection.Count;
 
-        internal bool HasDraft => _points.Count > 0 || _faces.Count > 0;
+        internal bool HasDraft => _points.Count > 0 || _faces.Count > 0 || HasSharedAnchor;
 
         internal bool HasPlaceableFaces => _faces.Count > 0;
 
         internal bool HasActiveSelection =>
             SelectionKind != SurfaceSelectionKind.None ||
             _manualFaceSelection.Count > 0 ||
-            _bridgeEdgeSelection.Count > 0;
+            _bridgeEdgeSelection.Count > 0 ||
+            SharedAnchorSelected;
 
         internal void SetConstructForTests(AllConstruct construct) =>
             Construct = construct;
@@ -346,6 +375,13 @@ namespace DecoLimitLifter.DecorationEditMode
                 mirrored._faces.Add(flipWinding ? face.Flipped() : face);
             }
 
+            if (HasSharedAnchor)
+            {
+                mirrored.SharedAnchor = variant.Mirror(SharedAnchor);
+                mirrored.HasSharedAnchor = true;
+                mirrored.SharedAnchorSelected = SharedAnchorSelected;
+            }
+
             return mirrored;
         }
 
@@ -355,6 +391,8 @@ namespace DecoLimitLifter.DecorationEditMode
             _points.Clear();
             _faces.Clear();
             _freeTriangleSelection.Clear();
+            HasSharedAnchor = false;
+            SharedAnchor = default;
             ClearSelection();
         }
 
@@ -364,8 +402,59 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = -1;
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(-1, -1);
+            SharedAnchorSelected = false;
             _manualFaceSelection.Clear();
             _bridgeEdgeSelection.Clear();
+        }
+
+        internal bool TrySetSharedAnchor(
+            AllConstruct construct,
+            Vector3i anchor,
+            out string message)
+        {
+            message = null;
+            if ((construct != null || Construct != null) &&
+                !TryAcceptConstruct(construct, out message))
+            {
+                return false;
+            }
+
+            HasSharedAnchor = true;
+            SharedAnchor = anchor;
+            ClearSelection();
+            SharedAnchorSelected = true;
+            message = "Surface same anchor set to " + FormatCell(anchor) + ".";
+            return true;
+        }
+
+        internal void ClearSharedAnchor()
+        {
+            HasSharedAnchor = false;
+            SharedAnchor = default;
+            SharedAnchorSelected = false;
+        }
+
+        internal bool TryMoveSharedAnchor(Vector3i anchor, out string message)
+        {
+            message = null;
+            if (!HasSharedAnchor)
+            {
+                message = "Pick a shared surface anchor before moving it.";
+                return false;
+            }
+
+            SharedAnchor = anchor;
+            SharedAnchorSelected = true;
+            return true;
+        }
+
+        internal void SelectSharedAnchor()
+        {
+            if (!HasSharedAnchor)
+                return;
+
+            ClearSelection();
+            SharedAnchorSelected = true;
         }
 
         internal SurfaceDraftSnapshot CreateSnapshot() =>
@@ -380,6 +469,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 SelectedPoint,
                 SelectedFace,
                 SelectedEdge,
+                HasSharedAnchor,
+                SharedAnchor,
+                SharedAnchorSelected,
                 new SurfaceDecorationSettingsSnapshot(Settings));
 
         internal void Restore(SurfaceDraftSnapshot snapshot)
@@ -398,6 +490,9 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = snapshot.SelectedPoint;
             SelectedFace = snapshot.SelectedFace;
             SelectedEdge = snapshot.SelectedEdge;
+            HasSharedAnchor = snapshot.HasSharedAnchor;
+            SharedAnchor = snapshot.SharedAnchor;
+            SharedAnchorSelected = snapshot.SharedAnchorSelected;
             snapshot.Settings?.Restore(Settings);
         }
 
@@ -446,6 +541,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectionKind = SurfaceSelectionKind.Point;
             SelectedPoint = index;
             SelectedFace = -1;
+            SharedAnchorSelected = false;
             if (extendSelectedEdge && SelectedEdge.IsValid && index >= 3)
             {
                 SurfaceEdge edge = SelectedEdge;
@@ -520,6 +616,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = index;
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(-1, -1);
+            SharedAnchorSelected = false;
             _bridgeEdgeSelection.Clear();
         }
 
@@ -531,6 +628,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = -1;
             SelectedFace = -1;
             SelectedEdge = new SurfaceEdge(a, b);
+            SharedAnchorSelected = false;
             _manualFaceSelection.Clear();
             if (!preserveBridgeSelection)
                 _bridgeEdgeSelection.Clear();
@@ -544,6 +642,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = -1;
             SelectedFace = index;
             SelectedEdge = new SurfaceEdge(-1, -1);
+            SharedAnchorSelected = false;
             _manualFaceSelection.Clear();
             _bridgeEdgeSelection.Clear();
         }
@@ -558,16 +657,54 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             if (_manualFaceSelection.Contains(index))
+            {
                 _manualFaceSelection.Remove(index);
+            }
             else
+            {
+                if (_manualFaceSelection.Count >= 3)
+                {
+                    message = "Point selection already has 3/3 points. Right-click to create a face or clear the selection.";
+                    return false;
+                }
+
                 _manualFaceSelection.Add(index);
+            }
 
             SelectPoint(index);
-            if (_manualFaceSelection.Count < 3)
+            message = ManualFaceSelectionMessage();
+            return true;
+        }
+
+        internal bool TrySelectManualPointEdge(out string message)
+        {
+            message = null;
+            if (_manualFaceSelection.Count != 2)
             {
-                message = "Selected " + _manualFaceSelection.Count.ToString(CultureInfo.InvariantCulture) +
-                          "/3 points for a face.";
-                return true;
+                message = "Select exactly two surface points before connecting them.";
+                return false;
+            }
+
+            int a = _manualFaceSelection[0];
+            int b = _manualFaceSelection[1];
+            if (a < 0 || b < 0 || a >= _points.Count || b >= _points.Count || a == b)
+            {
+                message = "Selected surface points are no longer valid.";
+                return false;
+            }
+
+            SelectEdge(a, b);
+            message = "Surface point edge selected. Click a new point to create a face.";
+            return true;
+        }
+
+        internal bool TryCreateFaceFromManualSelection(out string message)
+        {
+            message = null;
+            if (_manualFaceSelection.Count != 3)
+            {
+                message = "Select exactly three surface points before creating a face.";
+                return false;
             }
 
             int a = _manualFaceSelection[0];
@@ -578,6 +715,21 @@ namespace DecoLimitLifter.DecorationEditMode
             if (created)
                 message = "Surface face created from selected points.";
             return created;
+        }
+
+        private string ManualFaceSelectionMessage()
+        {
+            switch (_manualFaceSelection.Count)
+            {
+                case 0:
+                    return "Surface point selection cleared.";
+                case 1:
+                    return "Selected 1/3 points. Shift-click more points, then right-click for point actions.";
+                case 2:
+                    return "Selected 2/3 points. Right-click to connect them or Shift-click a third point.";
+                default:
+                    return "Selected 3/3 points. Right-click to create a face.";
+            }
         }
 
         internal bool ToggleBridgeEdge(SurfaceEdge edge, out string message)
@@ -614,6 +766,7 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedPoint = -1;
             SelectedFace = -1;
             SelectedEdge = edge;
+            SharedAnchorSelected = false;
             message = "Bridge edge " +
                       _bridgeEdgeSelection.Count.ToString(CultureInfo.InvariantCulture) +
                       "/2 selected.";
@@ -664,6 +817,13 @@ namespace DecoLimitLifter.DecorationEditMode
         internal bool TryDeleteSelection(out string message)
         {
             message = null;
+            if (SharedAnchorSelected && HasSharedAnchor)
+            {
+                ClearSharedAnchor();
+                message = "Surface shared anchor cleared.";
+                return true;
+            }
+
             if (SelectionKind == SurfaceSelectionKind.Face && SelectedFace >= 0 && SelectedFace < _faces.Count)
             {
                 _faces.RemoveAt(SelectedFace);
@@ -721,12 +881,22 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
-        private bool TryOrientFace(SurfaceFace candidate, out SurfaceFace oriented, out string message)
+        private bool TryOrientFace(SurfaceFace candidate, out SurfaceFace oriented, out string message) =>
+            TryOrientFace(candidate, Array.Empty<SurfaceFace>(), out oriented, out message);
+
+        private bool TryOrientFace(
+            SurfaceFace candidate,
+            IReadOnlyList<SurfaceFace> pendingFaces,
+            out SurfaceFace oriented,
+            out string message)
         {
             oriented = candidate;
             message = null;
             if (_faces.Count == 0)
-                return true;
+            {
+                if (pendingFaces == null || pendingFaces.Count == 0)
+                    return true;
+            }
 
             int sameDirectionEdges = 0;
             int oppositeDirectionEdges = 0;
@@ -734,13 +904,15 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 foreach (SurfaceFace existing in _faces)
                 {
-                    if (!existing.ContainsEdge(edge.A, edge.B))
-                        continue;
+                    CountSharedEdgeDirection(existing, edge, ref sameDirectionEdges, ref oppositeDirectionEdges);
+                }
 
-                    if (existing.HasDirectedEdge(edge.A, edge.B))
-                        sameDirectionEdges++;
-                    else
-                        oppositeDirectionEdges++;
+                if (pendingFaces == null)
+                    continue;
+
+                foreach (SurfaceFace pending in pendingFaces)
+                {
+                    CountSharedEdgeDirection(pending, edge, ref sameDirectionEdges, ref oppositeDirectionEdges);
                 }
             }
 
@@ -767,6 +939,21 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             return true;
+        }
+
+        private static void CountSharedEdgeDirection(
+            SurfaceFace existing,
+            SurfaceEdge edge,
+            ref int sameDirectionEdges,
+            ref int oppositeDirectionEdges)
+        {
+            if (!existing.ContainsEdge(edge.A, edge.B))
+                return;
+
+            if (existing.HasDirectedEdge(edge.A, edge.B))
+                sameDirectionEdges++;
+            else
+                oppositeDirectionEdges++;
         }
 
         private bool FacesContainEdge(SurfaceEdge edge) =>
@@ -801,7 +988,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     return false;
                 }
 
-                if (!TryOrientBridgeFace(candidate, out SurfaceFace oriented, out message))
+                if (!TryOrientBridgeFace(candidate, orientedFaces, out SurfaceFace oriented, out message))
                     return false;
 
                 orientedFaces.Add(oriented);
@@ -812,23 +999,21 @@ namespace DecoLimitLifter.DecorationEditMode
             return true;
         }
 
-        private bool TryOrientBridgeFace(SurfaceFace candidate, out SurfaceFace oriented, out string message)
+        private bool TryOrientBridgeFace(
+            SurfaceFace candidate,
+            IReadOnlyList<SurfaceFace> pendingFaces,
+            out SurfaceFace oriented,
+            out string message)
         {
             oriented = candidate;
             message = null;
-            if (!TryGetFaceNormal(candidate, out Vector3 candidateNormal))
+            if (!TryGetFaceNormal(candidate, out Vector3 _))
             {
                 message = "Surface bridge face has zero area.";
                 return false;
             }
 
-            if (TryGetReferenceNormal(out Vector3 referenceNormal) &&
-                Vector3.Dot(referenceNormal, candidateNormal) < 0f)
-            {
-                oriented = candidate.Flipped();
-            }
-
-            return true;
+            return TryOrientFace(candidate, pendingFaces, out oriented, out message);
         }
 
         private List<List<SurfaceFace>> BuildBridgeCandidateSets(
@@ -869,9 +1054,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 Vector3.Distance(_points[first.A], _points[second.B]) +
                 Vector3.Distance(_points[first.B], _points[second.A]);
 
-            return firstPairing <= secondPairing
+            List<List<SurfaceFace>> preferred = firstPairing <= secondPairing
                 ? PermuteFacePair(firstA, firstB)
                 : PermuteFacePair(secondA, secondB);
+            List<List<SurfaceFace>> alternate = firstPairing <= secondPairing
+                ? PermuteFacePair(secondA, secondB)
+                : PermuteFacePair(firstA, firstB);
+            preferred.AddRange(alternate);
+            return preferred;
         }
 
         private static List<List<SurfaceFace>> PermuteFacePair(SurfaceFace first, SurfaceFace second)
@@ -991,6 +1181,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static int RemapAfterPointDelete(int index, int removed) =>
             index > removed ? index - 1 : index;
+
+        private static string FormatCell(Vector3i value) =>
+            value.x.ToString(CultureInfo.InvariantCulture) + "," +
+            value.y.ToString(CultureInfo.InvariantCulture) + "," +
+            value.z.ToString(CultureInfo.InvariantCulture);
 
         private static void CopySettings(
             SurfaceDecorationSettings source,
@@ -1255,7 +1450,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
             var placements = new List<SurfaceDecorationPlacement>();
             var warnings = new List<string>();
-            var anchorContext = new SurfaceAnchorContext(draft.Settings.NearestAnchor, anchorResolver);
+            var anchorContext = new SurfaceAnchorContext(
+                draft.Settings.NearestAnchor,
+                anchorResolver,
+                draft.HasSharedAnchor,
+                draft.SharedAnchor);
             try
             {
                 for (int faceIndex = 0; faceIndex < draft.Faces.Count; faceIndex++)
@@ -1402,6 +1601,13 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             builder.Append('|');
+            if (draft.HasSharedAnchor)
+            {
+                builder.Append("anchor:")
+                    .Append(CellKey(draft.SharedAnchor))
+                    .Append('|');
+            }
+
             foreach (SurfaceFace face in draft.Faces)
             {
                 int[] indexes = { face.A, face.B, face.C };
@@ -1850,29 +2056,43 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static Vector3 RotateEuler(Vector3 degrees, Vector3 vector)
         {
-            double halfX = degrees.x * Math.PI / 360d;
-            double halfY = degrees.y * Math.PI / 360d;
-            double halfZ = degrees.z * Math.PI / 360d;
-            double cx = Math.Cos(halfX);
-            double sx = Math.Sin(halfX);
-            double cy = Math.Cos(halfY);
-            double sy = Math.Sin(halfY);
-            double cz = Math.Cos(halfZ);
-            double sz = Math.Sin(halfZ);
+            try
+            {
+                return Quaternion.Euler(degrees) * vector;
+            }
+            catch (Exception exception) when (IsUnityECallUnavailable(exception))
+            {
+                return ManagedRotateUnityEuler(degrees, vector);
+            }
+        }
 
-            double qw = cx * cy * cz + sx * sy * sz;
-            double qx = sx * cy * cz - cx * sy * sz;
-            double qy = cx * sy * cz + sx * cy * sz;
-            double qz = cx * cy * sz - sx * sy * cz;
+        private static Vector3 ManagedRotateUnityEuler(Vector3 degrees, Vector3 vector)
+        {
+            double x = degrees.x * Mathf.Deg2Rad;
+            double y = degrees.y * Mathf.Deg2Rad;
+            double z = degrees.z * Mathf.Deg2Rad;
+            double sx = Math.Sin(x);
+            double cx = Math.Cos(x);
+            double sy = Math.Sin(y);
+            double cy = Math.Cos(y);
+            double sz = Math.Sin(z);
+            double cz = Math.Cos(z);
 
-            double tx = 2d * (qy * vector.z - qz * vector.y);
-            double ty = 2d * (qz * vector.x - qx * vector.z);
-            double tz = 2d * (qx * vector.y - qy * vector.x);
+            // Unity's Quaternion.Euler applies rotations in Z, then X, then Y order.
+            double m00 = cy * cz + sy * sx * sz;
+            double m01 = -cy * sz + sy * sx * cz;
+            double m02 = sy * cx;
+            double m10 = cx * sz;
+            double m11 = cx * cz;
+            double m12 = -sx;
+            double m20 = -sy * cz + cy * sx * sz;
+            double m21 = sy * sz + cy * sx * cz;
+            double m22 = cy * cx;
 
             return new Vector3(
-                (float)(vector.x + qw * tx + qy * tz - qz * ty),
-                (float)(vector.y + qw * ty + qz * tx - qx * tz),
-                (float)(vector.z + qw * tz + qx * ty - qy * tx));
+                (float)(m00 * vector.x + m01 * vector.y + m02 * vector.z),
+                (float)(m10 * vector.x + m11 * vector.y + m12 * vector.z),
+                (float)(m20 * vector.x + m21 * vector.y + m22 * vector.z));
         }
 
         private static Vector3 ManagedLookRotationEuler(Vector3 forward, Vector3 upwards, int sourceLine)
@@ -1894,58 +2114,51 @@ namespace DecoLimitLifter.DecorationEditMode
             double m21 = y.z;
             double m22 = z.z;
 
-            double qw;
-            double qx;
-            double qy;
-            double qz;
-            double trace = m00 + m11 + m22;
-            if (trace > 0d)
+            return UnityEulerFromRotationMatrix(
+                m00,
+                m01,
+                m02,
+                m10,
+                m11,
+                m12,
+                m20,
+                m21,
+                m22);
+        }
+
+        private static Vector3 UnityEulerFromRotationMatrix(
+            double m00,
+            double m01,
+            double m02,
+            double m10,
+            double m11,
+            double m12,
+            double m20,
+            double m21,
+            double m22)
+        {
+            const double epsilon = 0.000001d;
+            double xRadians = Math.Asin(Math.Max(-1d, Math.Min(1d, -m12)));
+            double cosX = Math.Cos(xRadians);
+            double yRadians;
+            double zRadians;
+            if (Math.Abs(cosX) > epsilon)
             {
-                double s = Math.Sqrt(trace + 1d) * 2d;
-                qw = 0.25d * s;
-                qx = (m21 - m12) / s;
-                qy = (m02 - m20) / s;
-                qz = (m10 - m01) / s;
-            }
-            else if (m00 > m11 && m00 > m22)
-            {
-                double s = Math.Sqrt(1d + m00 - m11 - m22) * 2d;
-                qw = (m21 - m12) / s;
-                qx = 0.25d * s;
-                qy = (m01 + m10) / s;
-                qz = (m02 + m20) / s;
-            }
-            else if (m11 > m22)
-            {
-                double s = Math.Sqrt(1d + m11 - m00 - m22) * 2d;
-                qw = (m02 - m20) / s;
-                qx = (m01 + m10) / s;
-                qy = 0.25d * s;
-                qz = (m12 + m21) / s;
+                zRadians = Math.Atan2(m10, m11);
+                yRadians = Math.Atan2(m02, m22);
             }
             else
             {
-                double s = Math.Sqrt(1d + m22 - m00 - m11) * 2d;
-                qw = (m10 - m01) / s;
-                qx = (m02 + m20) / s;
-                qy = (m12 + m21) / s;
-                qz = 0.25d * s;
+                zRadians = 0d;
+                yRadians = m12 < 0d
+                    ? Math.Atan2(m01, m00)
+                    : Math.Atan2(-m01, m00);
             }
 
-            double sinX = 2d * (qw * qx + qy * qz);
-            double cosX = 1d - 2d * (qx * qx + qy * qy);
-            double xDegrees = Math.Atan2(sinX, cosX) * Mathf.Rad2Deg;
-            double sinY = 2d * (qw * qy - qz * qx);
-            sinY = Math.Max(-1d, Math.Min(1d, sinY));
-            double yDegrees = Math.Asin(sinY) * Mathf.Rad2Deg;
-            double sinZ = 2d * (qw * qz + qx * qy);
-            double cosZ = 1d - 2d * (qy * qy + qz * qz);
-            double zDegrees = Math.Atan2(sinZ, cosZ) * Mathf.Rad2Deg;
-
             return new Vector3(
-                NormalizeDegrees((float)xDegrees),
-                NormalizeDegrees((float)yDegrees),
-                NormalizeDegrees((float)zDegrees));
+                NormalizeDegrees((float)(xRadians * Mathf.Rad2Deg)),
+                NormalizeDegrees((float)(yRadians * Mathf.Rad2Deg)),
+                NormalizeDegrees((float)(zRadians * Mathf.Rad2Deg)));
         }
 
         private static Vector3 NormalizeVector(Vector3 vector, int sourceLine, string name)
@@ -1972,6 +2185,9 @@ namespace DecoLimitLifter.DecorationEditMode
             return value;
         }
 
+        private static bool IsUnityECallUnavailable(Exception exception) =>
+            exception?.Message?.IndexOf("ECall", StringComparison.OrdinalIgnoreCase) >= 0;
+
         private static InvalidOperationException SurfaceGeometryError(int faceIndex, string message) =>
             new InvalidOperationException(
                 "Surface face " +
@@ -1983,13 +2199,21 @@ namespace DecoLimitLifter.DecorationEditMode
         private sealed class SurfaceAnchorContext
         {
             private readonly ISurfaceAnchorResolver _resolver;
+            private readonly bool _hasExplicitSharedAnchor;
+            private readonly Vector3i _explicitSharedAnchor;
             private bool _hasSharedAnchor;
             private Vector3i _sharedAnchor;
 
-            internal SurfaceAnchorContext(bool nearestAnchor, ISurfaceAnchorResolver resolver)
+            internal SurfaceAnchorContext(
+                bool nearestAnchor,
+                ISurfaceAnchorResolver resolver,
+                bool hasExplicitSharedAnchor,
+                Vector3i explicitSharedAnchor)
             {
                 NearestAnchor = nearestAnchor;
                 _resolver = resolver;
+                _hasExplicitSharedAnchor = hasExplicitSharedAnchor;
+                _explicitSharedAnchor = explicitSharedAnchor;
             }
 
             internal bool NearestAnchor { get; }
@@ -2021,7 +2245,14 @@ namespace DecoLimitLifter.DecorationEditMode
 
                 if (!_hasSharedAnchor)
                 {
-                    if (!_resolver.TryResolveAnchor(center, out _sharedAnchor))
+                    if (_hasExplicitSharedAnchor)
+                    {
+                        if (!TryValidateExplicitSharedAnchor(out message))
+                            return false;
+
+                        _sharedAnchor = _explicitSharedAnchor;
+                    }
+                    else if (!_resolver.TryResolveAnchor(center, out _sharedAnchor))
                     {
                         message = "Surface same-anchor mode found no valid anchor within +/-10m.";
                         return false;
@@ -2033,6 +2264,29 @@ namespace DecoLimitLifter.DecorationEditMode
                 anchor = _sharedAnchor;
                 return true;
             }
+
+            private bool TryValidateExplicitSharedAnchor(out string message)
+            {
+                message = null;
+                if (_resolver.TryResolveAnchor(ToVector3(_explicitSharedAnchor), out Vector3i resolved) &&
+                    SameCell(resolved, _explicitSharedAnchor))
+                {
+                    return true;
+                }
+
+                message = "Surface shared anchor " + CellLabel(_explicitSharedAnchor) + " is not a valid craft block.";
+                return false;
+            }
+
+            private static bool SameCell(Vector3i left, Vector3i right) =>
+                left.x == right.x &&
+                left.y == right.y &&
+                left.z == right.z;
+
+            private static string CellLabel(Vector3i value) =>
+                value.x.ToString(CultureInfo.InvariantCulture) + "," +
+                value.y.ToString(CultureInfo.InvariantCulture) + "," +
+                value.z.ToString(CultureInfo.InvariantCulture);
         }
 
         private static Vector3 ToVector3(Vector3i value) =>

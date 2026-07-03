@@ -60,6 +60,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             decoration.Positioning.Us = Positioning;
+            DecorationScaleBounds.AllowExtendedScale(decoration);
             decoration.Scaling.Us = Scaling;
             decoration.Orientation.Us = Orientation;
             decoration.MeshGuid.Us = MeshGuid;

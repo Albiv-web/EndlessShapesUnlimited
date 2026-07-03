@@ -50,6 +50,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private enum SurfaceContextTargetKind
         {
             None,
+            SurfacePointSelection,
             SurfacePoint,
             SurfaceEdge,
             SurfaceFace,
@@ -183,6 +184,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool _dirty;
         private float _applyCancelAttentionUntil = -1f;
         private DecorationEditorViewMode _viewMode = DecorationEditorViewMode.Mixed;
+        private DecorationEditorViewMode _viewModeBeforeHideOriginalMesh = DecorationEditorViewMode.Mixed;
         private DecorationEditorTool _tool = DecorationEditorTool.Select;
         private DecorationEditorTool _toolBeforePaint = DecorationEditorTool.Select;
         private bool _showMeshPaletteBeforePaint = s_showMeshPalette;
@@ -258,12 +260,16 @@ namespace DecoLimitLifter.DecorationEditMode
         private readonly DecorationGeneratorDraft _generatorDraft = new DecorationGeneratorDraft();
         private readonly DecorationGeneratorSettings _generatorSettings = s_generatorSettings;
         private DecorationGeneratorPlan _generatorPlan;
-        private string _generatorMessage = "Extra Tools: draw a path or place a circle center.";
+        private string _generatorMessage = "Extra Tools: draw a path or place a shape center.";
         private SurfaceExtraTool _surfaceExtraTool = s_surfaceExtraTool;
         private Vector2 _generatorScroll;
         private string _generatorDiameterText = "0.05";
         private string _generatorRadiusText = "2.00";
         private string _generatorSegmentsText = "24";
+        private string _generatorArcText = "360";
+        private string _generatorHeightText = "2.00";
+        private string _generatorTopRadiusText = "1.00";
+        private string _generatorRingsText = "6";
         private string _generatorColorText = "0";
         private string _generatorMaterialText = string.Empty;
         private DecorationEditAxis _generatorDragAxis;
@@ -280,6 +286,15 @@ namespace DecoLimitLifter.DecorationEditMode
         private Vector3 _generatorFreeDragCameraRight;
         private Vector3 _generatorFreeDragCameraUp;
         private float _generatorFreeDragMetresPerPixel = 0.01f;
+        private DecorationEditAxis _sharedAnchorDragAxis;
+        private int _sharedAnchorDragSign;
+        private Vector2 _sharedAnchorDragMouseStart;
+        private Vector3i _sharedAnchorDragStart;
+        private SurfaceDraftSnapshot _sharedSurfaceAnchorDragSnapshotStart;
+        private DecorationGeneratorEditSnapshot _sharedGeneratorAnchorDragSnapshotStart;
+        private bool _sharedAnchorDragGenerator;
+        private bool _pendingSurfaceSharedAnchorPick;
+        private bool _pendingGeneratorSharedAnchorPick;
         private readonly string[] _positionText = new string[3];
         private readonly string[] _scaleText = new string[3];
         private readonly string[] _orientationText = new string[3];
@@ -506,6 +521,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 _anchorDragSnapshotStart = null;
                 _anchorDragSymmetryFollow = null;
                 _anchorPreviewValid = false;
+                ClearSharedAnchorDragState();
+                _pendingSurfaceSharedAnchorPick = false;
+                _pendingGeneratorSharedAnchorPick = false;
                 if (!preserveSharedHud)
                     DecorationEditorOverlay.Clear();
                 _viewModeMenuOpen = false;
@@ -1059,10 +1077,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     SurfaceToolButton(SurfaceBuilderTool.Draw, "draw", "Draw", "Place and edit triangle surface points.");
                     SurfaceToolButton(SurfaceBuilderTool.Path, "axis", "Path", "Draw pipe, cable, or rail paths.");
-                    SurfaceToolButton(SurfaceBuilderTool.Circle, "axis", "Circle", "Place and edit a generator circle.");
+                    SurfaceToolButton(SurfaceBuilderTool.Circle, "axis", "Shape", "Place and edit a center-based generator shape.");
                     SurfaceToolButton(SurfaceBuilderTool.Move, "move", "Move", "Move selected surface or generator points.");
-                    SurfaceToolButton(SurfaceBuilderTool.Rotate, "rotate", "Rotate", "Rotate the selected generator circle.");
-                    SurfaceToolButton(SurfaceBuilderTool.Scale, "scale", "Scale", "Scale the selected generator circle radius.");
+                    SurfaceToolButton(SurfaceBuilderTool.Rotate, "rotate", "Rotate", "Rotate the selected generator shape.");
+                    SurfaceToolButton(SurfaceBuilderTool.Scale, "scale", "Scale", "Scale the selected generator shape radius.");
                     OrientationToggleButton();
                     SymmetryButton(DecorationEditAxis.X);
                     SymmetryButton(DecorationEditAxis.Y);
@@ -1254,8 +1272,11 @@ namespace DecoLimitLifter.DecorationEditMode
             CloseSurfacePointContextMenu();
             if (tool == SurfaceBuilderTool.Path)
                 SetSurfaceExtraTool(SurfaceExtraTool.Path);
-            else if (tool == SurfaceBuilderTool.Circle)
+            else if (tool == SurfaceBuilderTool.Circle &&
+                     !DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool))
+            {
                 SetSurfaceExtraTool(SurfaceExtraTool.Circle);
+            }
         }
 
         private void ToolButton(
@@ -1667,9 +1688,27 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void SelectViewMode(DecorationEditorViewMode mode)
         {
+            if (mode != DecorationEditorViewMode.DecorationOnly)
+                _viewModeBeforeHideOriginalMesh = mode;
             _viewMode = mode;
             ApplyEditorViewMode();
             InfoStore.Add("Decoration Edit view: " + ViewModeDisplayName(_viewMode));
+        }
+
+        private void ToggleOriginalMeshVisibility()
+        {
+            if (_viewMode == DecorationEditorViewMode.DecorationOnly)
+            {
+                DecorationEditorViewMode restore =
+                    _viewModeBeforeHideOriginalMesh == DecorationEditorViewMode.DecorationOnly
+                        ? DecorationEditorViewMode.Mixed
+                        : _viewModeBeforeHideOriginalMesh;
+                SelectViewMode(restore);
+                return;
+            }
+
+            _viewModeBeforeHideOriginalMesh = _viewMode;
+            SelectViewMode(DecorationEditorViewMode.DecorationOnly);
         }
 
         private string ViewModeShortName()
@@ -3173,7 +3212,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         _generatorDraft.PointCount),
                     DecorationEditorTheme.MiniWrap);
             }
-            GUILayout.Label("Ctrl-click existing points to create a face from any three points.", DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("Shift-click points, then right-click to connect two points or create a face from three.", DecorationEditorTheme.MiniWrap);
             GUILayout.Label("Shift-click two edges, then Bridge, to connect them.", DecorationEditorTheme.MiniWrap);
             GUILayout.EndArea();
 
@@ -3262,7 +3301,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (_generatorDraft.HasDraft)
             {
-                GUILayout.Label(_generatorDraft.Tool == SurfaceExtraTool.Circle ? "Circle" : "Path", DecorationEditorTheme.Mini);
+                GUILayout.Label(GeneratorToolDisplayName(_generatorDraft.Tool), DecorationEditorTheme.Mini);
                 for (int index = 0; index < _generatorDraft.PointCount; index++)
                 {
                     GUIStyle style = _generatorDraft.SelectedPoint == index
@@ -3297,20 +3336,20 @@ namespace DecoLimitLifter.DecorationEditMode
         private void SelectGeneratorDraftPointRow(int index)
         {
             _surfaceDraft.ClearSelection();
-            SetSurfaceBuilderTool(_generatorDraft.Tool == SurfaceExtraTool.Circle
+            SetSurfaceBuilderTool(_generatorDraft.UsesCenterTool
                 ? SurfaceBuilderTool.Circle
                 : SurfaceBuilderTool.Path);
             _generatorDraft.SelectPoint(index);
-            _generatorMessage = _generatorDraft.Tool == SurfaceExtraTool.Circle
-                ? "Circle center selected."
+            _generatorMessage = _generatorDraft.UsesCenterTool
+                ? "Generator shape center selected."
                 : "Path point selected.";
         }
 
         private string GeneratorPointLabel(int index)
         {
             Vector3 point = _generatorDraft.PointAt(index);
-            string prefix = _generatorDraft.Tool == SurfaceExtraTool.Circle
-                ? "Circle center"
+            string prefix = _generatorDraft.UsesCenterTool
+                ? GeneratorToolDisplayName(_generatorDraft.Tool) + " center"
                 : "Path P" + (index + 1).ToString(CultureInfo.InvariantCulture);
             return prefix + ": " + FormatPoint(point);
         }
@@ -3326,7 +3365,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (GUILayout.Button(
                     new GUIContent("Preview", target == SurfaceDraftActionTarget.Surface
                         ? "Rebuild the surface decoration preview."
-                        : "Rebuild the generated path or circle preview."),
+                        : "Rebuild the generated shape preview."),
                     DecorationEditorTheme.Button,
                     GUILayout.ExpandWidth(true),
                     GUILayout.Height(rect.height)))
@@ -3338,7 +3377,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (GUILayout.Button(
                     new GUIContent("Place", target == SurfaceDraftActionTarget.Surface
                         ? "Create the planned surface decorations."
-                        : "Create the generated path or circle decorations."),
+                        : "Create the generated shape decorations."),
                     DecorationEditorTheme.ToolButton(false, canPlace),
                     GUILayout.ExpandWidth(true),
                     GUILayout.Height(rect.height)))
@@ -3359,7 +3398,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (GUILayout.Button(
                     new GUIContent("Clear", target == SurfaceDraftActionTarget.Surface
                         ? "Clear the current surface draft."
-                        : "Clear the current path or circle draft."),
+                        : "Clear the current generator draft."),
                     DecorationEditorTheme.Button,
                     GUILayout.ExpandWidth(true),
                     GUILayout.Height(rect.height)))
@@ -3367,7 +3406,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (GUILayout.Button(
                     new GUIContent("Delete", target == SurfaceDraftActionTarget.Surface
                         ? "Delete the selected surface point or face."
-                        : "Delete the selected path point or circle center."),
+                        : "Delete the selected path point or shape center."),
                     DecorationEditorTheme.Button,
                     GUILayout.ExpandWidth(true),
                     GUILayout.Height(rect.height)))
@@ -3507,6 +3546,9 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawSurfaceAnchorModeButton(true);
             DrawSurfaceAnchorModeButton(false);
             GUILayout.EndHorizontal();
+
+            if (!_surfaceDraft.Settings.NearestAnchor)
+                DrawSurfaceSharedAnchorControls();
         }
 
         private void DrawSurfaceAnchorModeButton(bool nearest)
@@ -3526,9 +3568,45 @@ namespace DecoLimitLifter.DecorationEditMode
 
                 SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
                 _surfaceDraft.Settings.NearestAnchor = nearest;
+                if (nearest)
+                    _pendingSurfaceSharedAnchorPick = false;
                 InvalidateSurfacePlan("Surface anchor mode changed.");
                 RecordSurfaceEdit("Set surface anchor mode", before);
             }
+        }
+
+        private void DrawSurfaceSharedAnchorControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Anchor", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(58f)));
+            string label = _surfaceDraft.HasSharedAnchor
+                ? FormatTether(_surfaceDraft.SharedAnchor)
+                : "auto";
+            GUILayout.Label(label, DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(82f)));
+            if (GUILayout.Button(
+                    new GUIContent(_pendingSurfaceSharedAnchorPick ? "Picking" : "Pick", "Pick the shared surface anchor from the pointed craft block."),
+                    DecorationEditorTheme.ToolButton(_pendingSurfaceSharedAnchorPick),
+                    GUILayout.Width(EsuHudLayout.Scale(62f))))
+            {
+                _pendingSurfaceSharedAnchorPick = !_pendingSurfaceSharedAnchorPick;
+                if (_pendingSurfaceSharedAnchorPick)
+                    _surfaceMessage = "Click a craft block to set the shared surface anchor.";
+            }
+
+            if (GUILayout.Button(
+                    new GUIContent("Clear", "Return same-anchor mode to automatic anchor selection."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
+            {
+                SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+                _surfaceDraft.ClearSharedAnchor();
+                _pendingSurfaceSharedAnchorPick = false;
+                InvalidateSurfacePlan("Surface shared anchor cleared.");
+                RecordSurfaceEdit("Clear surface shared anchor", before);
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
         }
 
         private GUIStyle SurfaceMessageStyle()
@@ -3626,7 +3704,14 @@ namespace DecoLimitLifter.DecorationEditMode
                       "-" + (_surfaceDraft.SelectedEdge.B + 1).ToString(CultureInfo.InvariantCulture)
                     : _surfaceDraft.SelectionKind == SurfaceSelectionKind.Face
                         ? "face " + (_surfaceDraft.SelectedFace + 1).ToString(CultureInfo.InvariantCulture)
-                        : "none";
+                        : _surfaceDraft.SharedAnchorSelected
+                            ? "anchor"
+                            : "none";
+            string anchor = _surfaceDraft.Settings.NearestAnchor
+                ? "nearest"
+                : _surfaceDraft.HasSharedAnchor
+                    ? "same " + FormatTether(_surfaceDraft.SharedAnchor)
+                    : "same auto";
             return string.Format(
                 CultureInfo.InvariantCulture,
                 "{0:N0} points | {1:N0} faces | {2} | {3} | {4} | anchor {5} | selected {6}",
@@ -3635,7 +3720,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 count,
                 free,
                 bridge,
-                _surfaceDraft.Settings.NearestAnchor ? "nearest" : "same",
+                anchor,
                 selection);
         }
 
@@ -3959,9 +4044,10 @@ namespace DecoLimitLifter.DecorationEditMode
                     ref _snapScaleText,
                     "Move snap in metres for Decoration Edit and Surface Builder transform drags.",
                     "Rotation snap in degrees for decoration and generator rotation drags.",
-                    "Scale snap for decoration and generator scale drags."))
+                    "Scale snap for decoration and generator scale drags.",
+                    out bool commitRequested))
             {
-                ApplyDecorationSnapText();
+                ApplyDecorationSnapText(commitRequested);
             }
         }
 
@@ -3978,18 +4064,24 @@ namespace DecoLimitLifter.DecorationEditMode
             _snapScaleText = EsuTransformSnapSettings.Format(DecorationScaleSnap);
         }
 
-        private void ApplyDecorationSnapText()
+        private void ApplyDecorationSnapText(bool commitRequested)
         {
             if (!EsuTransformSnapSettings.TryParseSnapText(_snapMoveText, out float move) ||
                 !EsuTransformSnapSettings.TryParseSnapText(_snapRotateText, out float rotate) ||
                 !EsuTransformSnapSettings.TryParseSnapText(_snapScaleText, out float scale))
             {
-                InfoStore.Add("Snap settings must be finite numbers.");
-                SyncSnapTextFromSettings();
+                if (commitRequested)
+                {
+                    InfoStore.Add("Snap settings must be finite numbers.");
+                    SyncSnapTextFromSettings();
+                }
                 return;
             }
 
             EsuTransformSnapSettings.SetDecoration(move, rotate, scale);
+            if (!commitRequested)
+                return;
+
             SyncSnapTextFromSettings();
             InfoStore.Add(
                 "Decoration snap set: move " + _snapMoveText +
@@ -4009,6 +4101,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 DecorationEditorTheme.Body);
             if (surface)
             {
+                DrawHideOriginalMeshButton(slots.SelectControls);
                 GUI.Label(slots.AnchorSettings, _showSurfaceToolsPanel ? "Tools: on" : "Tools: off", DecorationEditorTheme.Mini);
             }
             else
@@ -4040,19 +4133,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.Width(contentRect.width),
                 GUILayout.Height(Mathf.Max(1f, contentRect.height - EsuHudLayout.Scale(30f))));
 
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button(
-                    new GUIContent("Path", "Draw a path from clicked craft-surface points."),
-                    DecorationEditorTheme.ToolButton(_surfaceBuilderTool == SurfaceBuilderTool.Path),
-                    GUILayout.Width(EsuHudLayout.Scale(64f))))
-                SetSurfaceBuilderTool(SurfaceBuilderTool.Path);
-            if (GUILayout.Button(
-                    new GUIContent("Circle", "Place a center point and generate a segmented circle."),
-                    DecorationEditorTheme.ToolButton(_surfaceBuilderTool == SurfaceBuilderTool.Circle),
-                    GUILayout.Width(EsuHudLayout.Scale(72f))))
-                SetSurfaceBuilderTool(SurfaceBuilderTool.Circle);
-            GUILayout.FlexibleSpace();
-            GUILayout.EndHorizontal();
+            DrawGeneratorToolButtons();
 
             GUILayout.Label(GeneratorSummary(), DecorationEditorTheme.BodyWrap);
             GUILayout.Label(_generatorMessage, GeneratorMessageStyle());
@@ -4065,10 +4146,21 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.Label("Shape", DecorationEditorTheme.SubHeader);
             DrawGeneratorNumberField("Diameter", ref _generatorDiameterText, ApplyGeneratorDiameterText, EsuHudLayout.Scale(58f));
             DrawGeneratorDiameterPresets();
-            if (_surfaceExtraTool == SurfaceExtraTool.Circle)
+            if (DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool))
             {
                 DrawGeneratorNumberField("Radius", ref _generatorRadiusText, ApplyGeneratorRadiusText, EsuHudLayout.Scale(58f));
                 DrawGeneratorNumberField("Segments", ref _generatorSegmentsText, ApplyGeneratorSegmentsText, EsuHudLayout.Scale(42f));
+                DrawGeneratorNumberField("Arc", ref _generatorArcText, ApplyGeneratorArcText, EsuHudLayout.Scale(54f));
+            }
+
+            if (GeneratorToolUsesHeight(_surfaceExtraTool))
+                DrawGeneratorNumberField("Height", ref _generatorHeightText, ApplyGeneratorHeightText, EsuHudLayout.Scale(58f));
+            if (_surfaceExtraTool == SurfaceExtraTool.Frustum)
+                DrawGeneratorNumberField("Top radius", ref _generatorTopRadiusText, ApplyGeneratorTopRadiusText, EsuHudLayout.Scale(58f));
+            if (_surfaceExtraTool == SurfaceExtraTool.Sphere ||
+                _surfaceExtraTool == SurfaceExtraTool.PartialSphere)
+            {
+                DrawGeneratorNumberField("Rings", ref _generatorRingsText, ApplyGeneratorRingsText, EsuHudLayout.Scale(42f));
             }
 
             DrawGeneratorAnchorModeControl();
@@ -4124,6 +4216,40 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.Height(height));
             DrawGeneratorMeshRows(rows, height, rowHeight);
             GUILayout.EndScrollView();
+        }
+
+        private void DrawGeneratorToolButtons()
+        {
+            GUILayout.BeginHorizontal();
+            DrawGeneratorToolButton(SurfaceExtraTool.Path, "Path", "Draw a path from clicked craft-surface points.", 58f);
+            DrawGeneratorToolButton(SurfaceExtraTool.Circle, "Circle", "Generate a full segmented circle.", 66f);
+            DrawGeneratorToolButton(SurfaceExtraTool.PartialCircle, "Arc", "Generate a partial circle using the Arc setting.", 50f);
+            DrawGeneratorToolButton(SurfaceExtraTool.Cone2D, "2D cone", "Generate a flat cone or sector fan.", 72f);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawGeneratorToolButton(SurfaceExtraTool.Sphere, "Sphere", "Generate a wire sphere from rings and meridians.", 66f);
+            DrawGeneratorToolButton(SurfaceExtraTool.PartialSphere, "Part sph", "Generate a partial wire sphere using the Arc setting.", 74f);
+            DrawGeneratorToolButton(SurfaceExtraTool.Cone, "Cone", "Generate a wire cone from a base ring and apex.", 58f);
+            DrawGeneratorToolButton(SurfaceExtraTool.Frustum, "Frustum", "Generate a wire frustum with bottom and top radii.", 76f);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawGeneratorToolButton(
+            SurfaceExtraTool tool,
+            string label,
+            string tooltip,
+            float width)
+        {
+            if (GUILayout.Button(
+                    new GUIContent(label, tooltip),
+                    DecorationEditorTheme.ToolButton(_surfaceExtraTool == tool),
+                    GUILayout.Width(EsuHudLayout.Scale(width))))
+            {
+                SetSurfaceExtraTool(tool);
+            }
         }
 
         private void DrawGeneratorMeshRows(
@@ -4207,6 +4333,8 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawGeneratorAnchorModeButton(false);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
+            if (!_generatorSettings.NearestAnchor)
+                DrawGeneratorSharedAnchorControls();
         }
 
         private void DrawGeneratorAnchorModeButton(bool nearest)
@@ -4226,9 +4354,45 @@ namespace DecoLimitLifter.DecorationEditMode
 
                 DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
                 _generatorSettings.NearestAnchor = nearest;
+                if (nearest)
+                    _pendingGeneratorSharedAnchorPick = false;
                 InvalidateGeneratorPlan("Generator anchor mode changed.");
                 RecordGeneratorEdit("Set generator anchor mode", before);
             }
+        }
+
+        private void DrawGeneratorSharedAnchorControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Anchor", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(58f)));
+            string label = _generatorDraft.HasSharedAnchor
+                ? FormatTether(_generatorDraft.SharedAnchor)
+                : "auto";
+            GUILayout.Label(label, DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(82f)));
+            if (GUILayout.Button(
+                    new GUIContent(_pendingGeneratorSharedAnchorPick ? "Picking" : "Pick", "Pick the shared generator anchor from the pointed craft block."),
+                    DecorationEditorTheme.ToolButton(_pendingGeneratorSharedAnchorPick),
+                    GUILayout.Width(EsuHudLayout.Scale(62f))))
+            {
+                _pendingGeneratorSharedAnchorPick = !_pendingGeneratorSharedAnchorPick;
+                if (_pendingGeneratorSharedAnchorPick)
+                    _generatorMessage = "Click a craft block to set the shared generator anchor.";
+            }
+
+            if (GUILayout.Button(
+                    new GUIContent("Clear", "Return same-anchor mode to automatic anchor selection."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
+            {
+                DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+                _generatorDraft.ClearSharedAnchor();
+                _pendingGeneratorSharedAnchorPick = false;
+                InvalidateGeneratorPlan("Generator shared anchor cleared.");
+                RecordGeneratorEdit("Clear generator shared anchor", before);
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
         }
 
         private void DrawGeneratorNumberField(
@@ -4428,6 +4592,18 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceExtraTool = tool == SurfaceExtraTool.None ? SurfaceExtraTool.Path : tool;
             s_surfaceExtraTool = _surfaceExtraTool;
             _generatorDraft.SetTool(_surfaceExtraTool);
+            _surfaceBuilderTool = DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool)
+                ? SurfaceBuilderTool.Circle
+                : SurfaceBuilderTool.Path;
+            s_surfaceBuilderTool = _surfaceBuilderTool;
+            if ((_surfaceExtraTool == SurfaceExtraTool.PartialCircle ||
+                 _surfaceExtraTool == SurfaceExtraTool.PartialSphere ||
+                 _surfaceExtraTool == SurfaceExtraTool.Cone2D) &&
+                _generatorSettings.ArcDegrees >= 359.999f)
+            {
+                _generatorSettings.ArcDegrees = 180f;
+                _generatorArcText = "180";
+            }
             InvalidateGeneratorPlan("Generator tool changed.");
         }
 
@@ -4436,6 +4612,10 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorDiameterText = _generatorSettings.Diameter.ToString("0.###", CultureInfo.InvariantCulture);
             _generatorRadiusText = _generatorSettings.CircleRadius.ToString("0.###", CultureInfo.InvariantCulture);
             _generatorSegmentsText = _generatorSettings.CircleSegments.ToString(CultureInfo.InvariantCulture);
+            _generatorArcText = _generatorSettings.ArcDegrees.ToString("0.###", CultureInfo.InvariantCulture);
+            _generatorHeightText = _generatorSettings.ShapeHeight.ToString("0.###", CultureInfo.InvariantCulture);
+            _generatorTopRadiusText = _generatorSettings.TopRadius.ToString("0.###", CultureInfo.InvariantCulture);
+            _generatorRingsText = _generatorSettings.RingCount.ToString(CultureInfo.InvariantCulture);
             _generatorColorText = _generatorSettings.ColorIndex.ToString(CultureInfo.InvariantCulture);
             _generatorMaterialText = _generatorSettings.MaterialReplacement == Guid.Empty
                 ? string.Empty
@@ -4472,19 +4652,52 @@ namespace DecoLimitLifter.DecorationEditMode
             string mesh = TryResolveGeneratorMesh(out DecorationMeshCatalogEntry entry, out string _)
                 ? CompactText(entry.Name, 30)
                 : "mesh unavailable";
-            string draft = _surfaceExtraTool == SurfaceExtraTool.Circle
-                ? (_generatorDraft.HasCircleCenter ? "circle center set" : "no circle center")
+            string draft = DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool)
+                ? (_generatorDraft.HasCircleCenter ? "shape center set" : "no shape center")
                 : _generatorDraft.PathPoints.Count.ToString(CultureInfo.InvariantCulture) + " path points";
+            string anchor = _generatorSettings.NearestAnchor
+                ? "nearest"
+                : _generatorDraft.HasSharedAnchor
+                    ? "same " + FormatTether(_generatorDraft.SharedAnchor)
+                    : "same auto";
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "Extra: {0} | {1} | diameter {2:0.###} | color {3} | anchor {4} | {5} | {6}",
-                _surfaceExtraTool,
+                "Extra: {0} | {1} | diameter {2:0.###} | arc {3:0.###} | color {4} | anchor {5} | {6} | {7}",
+                GeneratorToolDisplayName(_surfaceExtraTool),
                 mesh,
                 _generatorSettings.Diameter,
+                _generatorSettings.ArcDegrees,
                 _generatorSettings.ColorIndex,
-                _generatorSettings.NearestAnchor ? "nearest" : "same",
+                anchor,
                 draft,
                 preview);
+        }
+
+        private static bool GeneratorToolUsesHeight(SurfaceExtraTool tool) =>
+            tool == SurfaceExtraTool.Cone ||
+            tool == SurfaceExtraTool.Frustum;
+
+        private static string GeneratorToolDisplayName(SurfaceExtraTool tool)
+        {
+            switch (tool)
+            {
+                case SurfaceExtraTool.PartialCircle:
+                    return "Partial circle";
+                case SurfaceExtraTool.Sphere:
+                    return "Sphere";
+                case SurfaceExtraTool.PartialSphere:
+                    return "Partial sphere";
+                case SurfaceExtraTool.Cone:
+                    return "Cone";
+                case SurfaceExtraTool.Frustum:
+                    return "Frustum";
+                case SurfaceExtraTool.Cone2D:
+                    return "2D cone";
+                case SurfaceExtraTool.Circle:
+                    return "Circle";
+                default:
+                    return "Path";
+            }
         }
 
         private string GeneratorMeshSourceLabel()
@@ -4631,6 +4844,86 @@ namespace DecoLimitLifter.DecorationEditMode
             RecordGeneratorEdit("Set generator circle segments", before);
         }
 
+        private void ApplyGeneratorArcText()
+        {
+            if (!FlexibleFloatParser.TryParse(_generatorArcText, out float value))
+            {
+                InfoStore.Add("Generator arc must be a finite number.");
+                return;
+            }
+
+            if (!DecorationEditMath.IsFinite(value) || value <= 0f)
+            {
+                InfoStore.Add("Generator arc must be greater than zero.");
+                return;
+            }
+
+            value = Mathf.Clamp(value, 0.001f, 360f);
+            DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+            _generatorSettings.ArcDegrees = value;
+            _generatorArcText = value.ToString("0.###", CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Generator arc changed.");
+            RecordGeneratorEdit("Set generator arc", before);
+        }
+
+        private void ApplyGeneratorHeightText()
+        {
+            if (!FlexibleFloatParser.TryParse(_generatorHeightText, out float value))
+            {
+                InfoStore.Add("Generator height must be a finite number.");
+                return;
+            }
+
+            if (!DecorationEditMath.IsFinite(value) || value <= 0f)
+            {
+                InfoStore.Add("Generator height must be greater than zero.");
+                return;
+            }
+
+            DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+            _generatorSettings.ShapeHeight = value;
+            _generatorHeightText = value.ToString("0.###", CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Generator height changed.");
+            RecordGeneratorEdit("Set generator height", before);
+        }
+
+        private void ApplyGeneratorTopRadiusText()
+        {
+            if (!FlexibleFloatParser.TryParse(_generatorTopRadiusText, out float value))
+            {
+                InfoStore.Add("Generator top radius must be a finite number.");
+                return;
+            }
+
+            if (!DecorationEditMath.IsFinite(value) || value < 0f)
+            {
+                InfoStore.Add("Generator top radius must be non-negative.");
+                return;
+            }
+
+            DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+            _generatorSettings.TopRadius = value;
+            _generatorTopRadiusText = value.ToString("0.###", CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Generator top radius changed.");
+            RecordGeneratorEdit("Set generator top radius", before);
+        }
+
+        private void ApplyGeneratorRingsText()
+        {
+            if (!int.TryParse(_generatorRingsText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+            {
+                InfoStore.Add("Generator rings must be a whole number.");
+                return;
+            }
+
+            value = Mathf.Clamp(value, 1, 64);
+            DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+            _generatorSettings.RingCount = value;
+            _generatorRingsText = value.ToString(CultureInfo.InvariantCulture);
+            InvalidateGeneratorPlan("Generator ring count changed.");
+            RecordGeneratorEdit("Set generator rings", before);
+        }
+
         private void ApplyGeneratorColorText()
         {
             if (!int.TryParse(_generatorColorText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
@@ -4699,7 +4992,7 @@ namespace DecoLimitLifter.DecorationEditMode
             float cleanWidth = EsuHudLayout.Scale(92f);
             float settingsWidth = EsuHudLayout.Scale(132f);
             float anchorWidth = EsuHudLayout.Scale(132f);
-            float selectWidth = EsuHudLayout.Scale(188f);
+            float selectWidth = EsuHudLayout.Scale(272f);
             Rect cleanRect = new Rect(rect.xMax - cleanWidth, rect.y, cleanWidth, rect.height);
             Rect settingsRect = new Rect(cleanRect.x - gap - settingsWidth, rect.y, settingsWidth, rect.height);
             Rect anchorRect = new Rect(settingsRect.x - gap - anchorWidth, rect.y, anchorWidth, rect.height);
@@ -4727,7 +5020,8 @@ namespace DecoLimitLifter.DecorationEditMode
             float singleWidth = EsuHudLayout.Scale(58f);
             float boxWidth = EsuHudLayout.Scale(46f);
             float xrayWidth = EsuHudLayout.Scale(58f);
-            float total = singleWidth + boxWidth + xrayWidth + gap * 2f;
+            float hideMeshWidth = EsuHudLayout.Scale(78f);
+            float total = singleWidth + boxWidth + xrayWidth + hideMeshWidth + gap * 3f;
             float x = rect.x + Mathf.Max(0f, (rect.width - total) * 0.5f);
 
             if (GUI.Button(
@@ -4759,6 +5053,24 @@ namespace DecoLimitLifter.DecorationEditMode
                 _selectionXray = !_selectionXray;
                 if (_boxSelecting)
                     _boxSelectCandidateCount = CountBoxSelectionCandidates(BoxSelectionRect(), _selectionXray);
+            }
+
+            x += xrayWidth + gap;
+            DrawHideOriginalMeshButton(new Rect(x, y, hideMeshWidth, height));
+        }
+
+        private void DrawHideOriginalMeshButton(Rect rect)
+        {
+            float height = Mathf.Min(rect.height, EsuHudLayout.Scale(24f));
+            float width = Mathf.Min(rect.width, EsuHudLayout.Scale(78f));
+            float x = rect.x + Mathf.Max(0f, (rect.width - width) * 0.5f);
+            float y = rect.y + Mathf.Max(0f, (rect.height - height) * 0.5f);
+            if (GUI.Button(
+                    new Rect(x, y, width, height),
+                    new GUIContent("Hide mesh", "Hide the original construct mesh and show decorations only."),
+                    DecorationEditorTheme.ToolButton(_viewMode == DecorationEditorViewMode.DecorationOnly)))
+            {
+                ToggleOriginalMeshVisibility();
             }
         }
 
@@ -4864,9 +5176,12 @@ namespace DecoLimitLifter.DecorationEditMode
             Rect rect,
             string label,
             string[] values,
-            Action<Vector3> apply)
+            Action<Vector3, bool> apply)
         {
             bool hasSelection = _selected != null && !_selected.IsDeleted;
+            string previousX = values != null && values.Length > 0 ? values[0] : string.Empty;
+            string previousY = values != null && values.Length > 1 ? values[1] : string.Empty;
+            string previousZ = values != null && values.Length > 2 ? values[2] : string.Empty;
             float fieldHeight = Mathf.Min(EsuHudLayout.Scale(24f), rect.height);
             float verticalOffset = Mathf.Max(0f, (rect.height - fieldHeight) * 0.5f);
             float setWidth = EsuHudLayout.Scale(40f);
@@ -4890,6 +5205,13 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawBottomVectorComponent(DecorationEditAxis.X, values, 0, rect.y, ref x, axisWidth, fieldWidth, fieldHeight, gap, hasSelection);
             DrawBottomVectorComponent(DecorationEditAxis.Y, values, 1, rect.y, ref x, axisWidth, fieldWidth, fieldHeight, gap, hasSelection);
             DrawBottomVectorComponent(DecorationEditAxis.Z, values, 2, rect.y, ref x, axisWidth, fieldWidth, fieldHeight, gap, hasSelection);
+            if (hasSelection &&
+                VectorTextChanged(values, previousX, previousY, previousZ) &&
+                TryParseVector(values, out Vector3 liveParsed))
+            {
+                apply(liveParsed, false);
+            }
+
             float setX = Mathf.Min(x + gap, rect.xMax - setWidth);
             if (GUI.Button(
                     new Rect(
@@ -4902,10 +5224,19 @@ namespace DecoLimitLifter.DecorationEditMode
                 hasSelection)
             {
                 if (TryParseVector(values, out Vector3 parsed))
-                    apply(parsed);
+                    apply(parsed, true);
                 else
                     InfoStore.Add($"{label} contains incomplete, invalid, NaN, or infinity input.");
             }
+        }
+
+        private static bool VectorTextChanged(string[] values, string previousX, string previousY, string previousZ)
+        {
+            return values != null &&
+                   values.Length >= 3 &&
+                   (!string.Equals(previousX, values[0], StringComparison.Ordinal) ||
+                    !string.Equals(previousY, values[1], StringComparison.Ordinal) ||
+                    !string.Equals(previousZ, values[2], StringComparison.Ordinal));
         }
 
         private static void DrawBottomVectorComponent(
@@ -5138,6 +5469,20 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (_sharedAnchorDragAxis != DecorationEditAxis.None)
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                if (!Input.GetMouseButton(0))
+                {
+                    CommitSharedAnchorDrag();
+                    return;
+                }
+
+                TryUpdateSharedAnchorDrag(_lastMouseGui - _sharedAnchorDragMouseStart);
+                return;
+            }
+
             if (_generatorDragAxis != DecorationEditAxis.None)
             {
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
@@ -5161,7 +5506,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
                 if (!Input.GetMouseButton(0))
                 {
-                    RecordGeneratorEdit("Transform generator circle", _generatorRotateSnapshotStart ?? _generatorScaleSnapshotStart);
+                    RecordGeneratorEdit("Transform generator shape", _generatorRotateSnapshotStart ?? _generatorScaleSnapshotStart);
                     _generatorRotateSnapshotStart = null;
                     _generatorScaleSnapshotStart = null;
                     _generatorRotateDragAxis = DecorationEditAxis.None;
@@ -5598,6 +5943,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!IsValidScale(next))
                 return;
 
+            DecorationScaleBounds.AllowExtendedScale(_selected);
             _selected.Scaling.Us = next;
             _selected.Changed();
             _dirty = true;
@@ -6046,6 +6392,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
                     decoration.Positioning.Us = placement.Positioning;
                     decoration.Orientation.Us = placement.Orientation;
+                    DecorationScaleBounds.AllowExtendedScale(decoration);
                     decoration.Scaling.Us = placement.Scaling;
                     decoration.Changed();
                 }
@@ -7072,6 +7419,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     if (decoration == null)
                         throw new InvalidOperationException("FTD rejected a new decoration.");
 
+                    DecorationScaleBounds.AllowExtendedScale(decoration);
                     decoration.MeshGuid.Us = mesh.Guid;
                     decoration.Positioning.Us = plan.Positioning;
                     decoration.Scaling.Us = Vector3.one;
@@ -7848,6 +8196,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
+                _pendingSurfaceSharedAnchorPick = false;
                 if (TryOpenSurfaceContextMenu())
                     return;
 
@@ -7869,6 +8218,9 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditorInputScope.ClaimBuildInputForFrames();
             DecorationEditorInputScope.ClaimCameraInputForFrames();
 
+            if (TryHandleSurfaceSharedAnchorClick())
+                return;
+
             if (TryPickSurfaceHandle(_lastMouseGui, out DecorationEditAxis axis))
             {
                 BeginSurfacePointDrag(axis);
@@ -7877,7 +8229,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (TryPickSurfacePoint(_lastMouseGui, out int pointIndex))
             {
-                if (IsControlHeld())
+                if (IsShiftHeld())
                 {
                     SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
                     if (!_surfaceDraft.ToggleManualFacePoint(pointIndex, out _surfaceMessage))
@@ -7885,7 +8237,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     else
                     {
                         InvalidateSurfacePlan(_surfaceMessage);
-                        RecordSurfaceEdit("Create surface face from points", before);
+                        RecordSurfaceEdit("Select surface points", before);
                     }
                 }
                 else
@@ -7952,7 +8304,9 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             return _surfaceBuilderTool == SurfaceBuilderTool.Move &&
-                   _generatorDraft.HasActiveSelection;
+                   (_generatorDraft.HasActiveSelection ||
+                    _generatorDraft.HasSharedAnchor ||
+                    _pendingGeneratorSharedAnchorPick);
         }
 
         private void HandleGeneratorSceneInput()
@@ -7961,6 +8315,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
+                _pendingGeneratorSharedAnchorPick = false;
                 if (TryOpenGeneratorPointContextMenu())
                     return;
 
@@ -7981,6 +8336,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
             DecorationEditorInputScope.ClaimBuildInputForFrames();
             DecorationEditorInputScope.ClaimCameraInputForFrames();
+
+            if (TryHandleGeneratorSharedAnchorClick())
+                return;
 
             if (_surfaceBuilderTool == SurfaceBuilderTool.Move &&
                 TryPickGeneratorHandle(_lastMouseGui, out DecorationEditAxis axis))
@@ -8013,7 +8371,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_surfaceBuilderTool != SurfaceBuilderTool.Path &&
                 _surfaceBuilderTool != SurfaceBuilderTool.Circle)
             {
-                _generatorMessage = "Use Path or Circle to place generator points.";
+                _generatorMessage = "Use Path or Shape to place generator points.";
                 return;
             }
 
@@ -8024,7 +8382,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
-            if (_surfaceExtraTool == SurfaceExtraTool.Circle)
+            if (DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool))
             {
                 Vector3 normal = LocalNormalFromHit(hit);
                 if (!_generatorDraft.TrySetCircleCenter(hit.Construct, hit.LocalHit, normal, out _generatorMessage))
@@ -8044,17 +8402,162 @@ namespace DecoLimitLifter.DecorationEditMode
 
             InvalidateGeneratorPlan(_generatorMessage);
             RecordGeneratorEdit(
-                _surfaceExtraTool == SurfaceExtraTool.Circle ? "Place generator circle" : "Add generator path point",
+                DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool) ? "Place generator shape" : "Add generator path point",
                 before);
+        }
+
+        private bool TryHandleSurfaceSharedAnchorClick()
+        {
+            if (_surfaceDraft.Settings.NearestAnchor)
+                return false;
+
+            if (_pendingSurfaceSharedAnchorPick)
+            {
+                _pendingSurfaceSharedAnchorPick = false;
+                return TrySetSurfaceSharedAnchorFromPointer();
+            }
+
+            if (_surfaceBuilderTool != SurfaceBuilderTool.Move)
+                return false;
+
+            if (_surfaceDraft.HasSharedAnchor &&
+                _surfaceDraft.SharedAnchorSelected &&
+                TryPickSharedAnchorHandle(
+                    _surfaceDraft.Construct,
+                    _surfaceDraft.SharedAnchor,
+                    _lastMouseGui,
+                    out DecorationEditAxis axis,
+                    out int sign))
+            {
+                BeginSharedAnchorDrag(generator: false, axis, sign);
+                return true;
+            }
+
+            if (TryPickSurfaceSharedAnchor(_lastMouseGui))
+            {
+                _surfaceDraft.SelectSharedAnchor();
+                _surfaceMessage = "Surface shared anchor selected.";
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryHandleGeneratorSharedAnchorClick()
+        {
+            if (_generatorSettings.NearestAnchor)
+                return false;
+
+            if (_pendingGeneratorSharedAnchorPick)
+            {
+                _pendingGeneratorSharedAnchorPick = false;
+                return TrySetGeneratorSharedAnchorFromPointer();
+            }
+
+            if (_surfaceBuilderTool != SurfaceBuilderTool.Move)
+                return false;
+
+            if (_generatorDraft.HasSharedAnchor &&
+                _generatorDraft.SharedAnchorSelected &&
+                TryPickSharedAnchorHandle(
+                    _generatorDraft.Construct,
+                    _generatorDraft.SharedAnchor,
+                    _lastMouseGui,
+                    out DecorationEditAxis axis,
+                    out int sign))
+            {
+                BeginSharedAnchorDrag(generator: true, axis, sign);
+                return true;
+            }
+
+            if (TryPickGeneratorSharedAnchor(_lastMouseGui))
+            {
+                _generatorDraft.SelectSharedAnchor();
+                _generatorMessage = "Generator shared anchor selected.";
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TrySetSurfaceSharedAnchorFromPointer()
+        {
+            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit))
+            {
+                _surfaceMessage = "Point at a real craft block to pick the shared surface anchor.";
+                InfoStore.Add(_surfaceMessage);
+                return true;
+            }
+
+            SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+            if (!_surfaceDraft.TrySetSharedAnchor(hit.Construct, hit.Anchor, out _surfaceMessage))
+            {
+                InfoStore.Add(_surfaceMessage);
+                return true;
+            }
+
+            InvalidateSurfacePlan(_surfaceMessage);
+            RecordSurfaceEdit("Set surface shared anchor", before);
+            return true;
+        }
+
+        private bool TrySetGeneratorSharedAnchorFromPointer()
+        {
+            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit))
+            {
+                _generatorMessage = "Point at a real craft block to pick the shared generator anchor.";
+                InfoStore.Add(_generatorMessage);
+                return true;
+            }
+
+            DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+            if (!_generatorDraft.TrySetSharedAnchor(hit.Construct, hit.Anchor, out _generatorMessage))
+            {
+                InfoStore.Add(_generatorMessage);
+                return true;
+            }
+
+            InvalidateGeneratorPlan(_generatorMessage);
+            RecordGeneratorEdit("Set generator shared anchor", before);
+            return true;
         }
 
         private bool TryOpenSurfaceContextMenu()
         {
+            if (TryOpenSurfacePointSelectionContextMenu(requirePointUnderMouse: true))
+                return true;
             if (TryOpenSurfacePointContextMenu())
                 return true;
             if (TryOpenSurfaceEdgeContextMenu())
                 return true;
-            return TryOpenSurfaceFaceContextMenu();
+            if (TryOpenSurfaceFaceContextMenu())
+                return true;
+            return TryOpenSurfacePointSelectionContextMenu(requirePointUnderMouse: false);
+        }
+
+        private bool TryOpenSurfacePointSelectionContextMenu(bool requirePointUnderMouse)
+        {
+            if (_surfaceDraft.ManualFaceSelectionCount < 2)
+                return false;
+
+            if (requirePointUnderMouse)
+            {
+                if (!TryPickSurfacePoint(_lastMouseGui, out int pointIndex) ||
+                    !_surfaceDraft.ManualFaceSelection.Contains(pointIndex))
+                {
+                    return false;
+                }
+            }
+
+            _generatorDraft.ClearSelection();
+            _surfaceContextTargetKind = SurfaceContextTargetKind.SurfacePointSelection;
+            _surfaceContextIndex = -1;
+            _surfaceContextEdge = new SurfaceEdge(-1, -1);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: _surfaceDraft.ManualFaceSelectionCount == 3 ? 2 : 2);
+            _surfaceMessage = _surfaceDraft.ManualFaceSelectionCount == 3
+                ? "Selected points ready for a face."
+                : "Selected points ready to connect.";
+            return true;
         }
 
         private bool TryOpenSurfacePointContextMenu()
@@ -8113,9 +8616,9 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceContextIndex = pointIndex;
             _surfaceContextEdge = new SurfaceEdge(-1, -1);
             _surfaceContextRect = SurfaceContextRect(
-                _generatorDraft.Tool == SurfaceExtraTool.Circle ? 5 : 3);
-            _generatorMessage = _generatorDraft.Tool == SurfaceExtraTool.Circle
-                ? "Circle center selected."
+                _generatorDraft.UsesCenterTool ? 5 : 3);
+            _generatorMessage = _generatorDraft.UsesCenterTool
+                ? "Generator shape center selected."
                 : "Path point selected.";
             return true;
         }
@@ -8154,26 +8657,30 @@ namespace DecoLimitLifter.DecorationEditMode
             GUI.Box(_surfaceContextRect, GUIContent.none, DecorationEditorTheme.Panel);
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(_surfaceContextRect, 5f));
             bool generator = _surfaceContextTargetKind == SurfaceContextTargetKind.GeneratorPoint;
-            bool circle = generator && _generatorDraft.Tool == SurfaceExtraTool.Circle;
+            bool radial = generator && _generatorDraft.UsesCenterTool;
+            bool pointSelection = _surfaceContextTargetKind == SurfaceContextTargetKind.SurfacePointSelection;
             bool surfaceEdge = _surfaceContextTargetKind == SurfaceContextTargetKind.SurfaceEdge;
             bool surfaceFace = _surfaceContextTargetKind == SurfaceContextTargetKind.SurfaceFace;
             GUILayout.Label(
                 generator
-                    ? (circle ? "Circle center" : "Path point")
-                    : surfaceEdge
+                    ? (radial ? "Shape center" : "Path point")
+                    : pointSelection
+                        ? "Selected points"
+                        : surfaceEdge
                         ? "Surface edge"
                         : surfaceFace
                             ? "Surface face"
                             : "Surface point",
                 DecorationEditorTheme.SubHeader);
 
-            if (GUILayout.Button(new GUIContent("Select", "Select this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (!pointSelection &&
+                GUILayout.Button(new GUIContent("Select", "Select this draft target."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 SelectSurfaceContextTarget();
                 CloseSurfacePointContextMenu();
             }
 
-            if (!surfaceEdge && !surfaceFace &&
+            if (!pointSelection && !surfaceEdge && !surfaceFace &&
                 GUILayout.Button(new GUIContent("Move", "Move this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 SelectSurfaceContextTarget();
@@ -8181,7 +8688,34 @@ namespace DecoLimitLifter.DecorationEditMode
                 CloseSurfacePointContextMenu();
             }
 
-            if ((surfaceEdge || surfaceFace) &&
+            if (pointSelection)
+            {
+                if (_surfaceDraft.ManualFaceSelectionCount == 2)
+                {
+                    if (GUILayout.Button(new GUIContent("Connect points", "Use the two selected points as an edge; click a third point to create a face."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                    {
+                        ConnectSelectedSurfacePoints();
+                        CloseSurfacePointContextMenu();
+                    }
+                }
+                else if (_surfaceDraft.ManualFaceSelectionCount == 3)
+                {
+                    if (GUILayout.Button(new GUIContent("Create face", "Create a triangle face from the three selected points."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                    {
+                        CreateFaceFromSelectedSurfacePoints();
+                        CloseSurfacePointContextMenu();
+                    }
+                }
+
+                if (GUILayout.Button(new GUIContent("Clear", "Clear the selected point set."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    _surfaceDraft.ClearSelection();
+                    _surfaceMessage = "Surface point selection cleared.";
+                    CloseSurfacePointContextMenu();
+                }
+            }
+
+            if (!pointSelection && (surfaceEdge || surfaceFace) &&
                 GUILayout.Button(new GUIContent("Preview", "Rebuild the surface decoration preview without placing it."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 SelectSurfaceContextTarget();
@@ -8189,7 +8723,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 CloseSurfacePointContextMenu();
             }
 
-            if (surfaceEdge)
+            if (!pointSelection && surfaceEdge)
             {
                 bool previous = GUI.enabled;
                 bool canBridge = _surfaceDraft.BridgeEdgeSelection.Count == 2;
@@ -8202,16 +8736,16 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUI.enabled = previous;
             }
 
-            if (circle)
+            if (!pointSelection && radial)
             {
-                if (GUILayout.Button(new GUIContent("Rotate", "Rotate this generator circle."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                if (GUILayout.Button(new GUIContent("Rotate", "Rotate this generator shape."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
                 {
                     SelectSurfaceContextTarget();
                     SetSurfaceBuilderTool(SurfaceBuilderTool.Rotate);
                     CloseSurfacePointContextMenu();
                 }
 
-                if (GUILayout.Button(new GUIContent("Scale", "Scale this generator circle."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                if (GUILayout.Button(new GUIContent("Scale", "Scale this generator shape."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
                 {
                     SelectSurfaceContextTarget();
                     SetSurfaceBuilderTool(SurfaceBuilderTool.Scale);
@@ -8219,7 +8753,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
             }
 
-            if (!surfaceEdge &&
+            if (!pointSelection && !surfaceEdge &&
                 GUILayout.Button(new GUIContent("Delete", generator ? "Delete this generator point." : surfaceFace ? "Delete this surface face." : "Delete this draft point."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 SelectSurfaceContextTarget();
@@ -8230,10 +8764,39 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.EndArea();
         }
 
+        private void ConnectSelectedSurfacePoints()
+        {
+            if (!_surfaceDraft.TrySelectManualPointEdge(out _surfaceMessage))
+            {
+                InfoStore.Add(_surfaceMessage);
+                return;
+            }
+
+            _generatorDraft.ClearSelection();
+            SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+        }
+
+        private void CreateFaceFromSelectedSurfacePoints()
+        {
+            SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+            if (!_surfaceDraft.TryCreateFaceFromManualSelection(out _surfaceMessage))
+            {
+                InfoStore.Add(_surfaceMessage);
+                return;
+            }
+
+            InvalidateSurfacePlan(_surfaceMessage);
+            RebuildSurfacePreview(showMessage: true);
+            RecordSurfaceEdit("Create surface face from selected points", before);
+        }
+
         private bool SurfaceContextTargetValid()
         {
             switch (_surfaceContextTargetKind)
             {
+                case SurfaceContextTargetKind.SurfacePointSelection:
+                    return _surfaceDraft.ManualFaceSelectionCount == 2 ||
+                           _surfaceDraft.ManualFaceSelectionCount == 3;
                 case SurfaceContextTargetKind.SurfacePoint:
                     return _surfaceContextIndex >= 0 &&
                            _surfaceContextIndex < _surfaceDraft.Points.Count;
@@ -8325,7 +8888,7 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             axis = DecorationEditAxis.None;
             if (_generatorDraft.Construct == null ||
-                _generatorDraft.Tool != SurfaceExtraTool.Circle ||
+                !_generatorDraft.UsesCenterTool ||
                 !_generatorDraft.HasCircleCenter)
             {
                 return false;
@@ -8381,7 +8944,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool TryPickGeneratorScaleHandle(Vector2 mouse)
         {
             if (_generatorDraft.Construct == null ||
-                _generatorDraft.Tool != SurfaceExtraTool.Circle ||
+                !_generatorDraft.UsesCenterTool ||
                 !_generatorDraft.HasCircleCenter)
             {
                 return false;
@@ -8462,7 +9025,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_generatorDraft.TryRotateCircle(_generatorRotateDragAxis, degrees, out string message))
             {
                 _generatorPlan = null;
-                _generatorMessage = "Generator circle rotated.";
+                _generatorMessage = "Generator shape rotated.";
             }
             else if (!string.IsNullOrEmpty(message))
             {
@@ -8486,7 +9049,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorSettings.CircleRadius = radius;
             _generatorRadiusText = radius.ToString("0.###", CultureInfo.InvariantCulture);
             _generatorPlan = null;
-            _generatorMessage = "Generator circle scaled.";
+            _generatorMessage = "Generator shape scaled.";
         }
 
         private void TryUpdateGeneratorDrag(Vector2 mouseDelta)
@@ -8579,6 +9142,206 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             return pointIndex >= 0;
+        }
+
+        private bool TryPickSurfaceSharedAnchor(Vector2 mouse) =>
+            !_surfaceDraft.Settings.NearestAnchor &&
+            _surfaceDraft.HasSharedAnchor &&
+            TryPickSharedAnchorCenter(_surfaceDraft.Construct, _surfaceDraft.SharedAnchor, mouse);
+
+        private bool TryPickGeneratorSharedAnchor(Vector2 mouse) =>
+            !_generatorSettings.NearestAnchor &&
+            _generatorDraft.HasSharedAnchor &&
+            TryPickSharedAnchorCenter(_generatorDraft.Construct, _generatorDraft.SharedAnchor, mouse);
+
+        private bool TryPickSharedAnchorCenter(
+            AllConstruct construct,
+            Vector3i anchor,
+            Vector2 mouse)
+        {
+            if (construct == null)
+                return false;
+
+            if (!TryProject(construct, ToVector3(anchor), out Vector2 screen))
+                return false;
+
+            return Vector2.Distance(mouse, screen) <= SelectionRadiusPixels * 1.35f;
+        }
+
+        private bool TryPickSharedAnchorHandle(
+            AllConstruct construct,
+            Vector3i anchorCell,
+            Vector2 mouse,
+            out DecorationEditAxis axis,
+            out int sign)
+        {
+            axis = DecorationEditAxis.None;
+            sign = 0;
+            if (construct == null)
+                return false;
+
+            Vector3 anchor = ToVector3(anchorCell);
+            if (!TryProject(construct, anchor, out Vector2 origin))
+                return false;
+
+            float best = HandleRadiusPixels;
+            DecorationEditAxis pickedAxis = DecorationEditAxis.None;
+            int pickedSign = 0;
+            TryAnchorAxis(DecorationEditAxis.X, 1);
+            TryAnchorAxis(DecorationEditAxis.X, -1);
+            TryAnchorAxis(DecorationEditAxis.Y, 1);
+            TryAnchorAxis(DecorationEditAxis.Y, -1);
+            TryAnchorAxis(DecorationEditAxis.Z, 1);
+            TryAnchorAxis(DecorationEditAxis.Z, -1);
+            axis = pickedAxis;
+            sign = pickedSign;
+            return axis != DecorationEditAxis.None;
+
+            void TryAnchorAxis(DecorationEditAxis candidate, int candidateSign)
+            {
+                Vector3 end = anchor + DecorationEditMath.AxisVector(candidate) * candidateSign * HandleLength;
+                if (!TryProject(construct, end, out Vector2 projectedEnd))
+                    return;
+
+                float distance = DistanceToSegment(mouse, origin, projectedEnd);
+                if (distance >= best)
+                    return;
+
+                best = distance;
+                pickedAxis = candidate;
+                pickedSign = candidateSign;
+            }
+        }
+
+        private void BeginSharedAnchorDrag(
+            bool generator,
+            DecorationEditAxis axis,
+            int sign)
+        {
+            if (axis == DecorationEditAxis.None || sign == 0)
+                return;
+
+            if (generator)
+            {
+                if (!_generatorDraft.HasSharedAnchor)
+                    return;
+            }
+            else if (!_surfaceDraft.HasSharedAnchor)
+            {
+                return;
+            }
+
+            _sharedAnchorDragGenerator = generator;
+            _sharedAnchorDragAxis = axis;
+            _sharedAnchorDragSign = sign;
+            _sharedAnchorDragMouseStart = _lastMouseGui;
+            _sharedSurfaceAnchorDragSnapshotStart = null;
+            _sharedGeneratorAnchorDragSnapshotStart = null;
+            if (generator)
+            {
+                _sharedAnchorDragStart = _generatorDraft.SharedAnchor;
+                _sharedGeneratorAnchorDragSnapshotStart = CaptureGeneratorEditSnapshot();
+            }
+            else
+            {
+                _sharedAnchorDragStart = _surfaceDraft.SharedAnchor;
+                _sharedSurfaceAnchorDragSnapshotStart = CaptureSurfaceSnapshot();
+            }
+        }
+
+        private void TryUpdateSharedAnchorDrag(Vector2 mouseDelta)
+        {
+            AllConstruct construct = _sharedAnchorDragGenerator
+                ? _generatorDraft.Construct
+                : _surfaceDraft.Construct;
+            if (construct == null)
+                return;
+
+            if (!TryProject(construct, ToVector3(_sharedAnchorDragStart), out Vector2 origin))
+                return;
+
+            Vector3 axisVector = DecorationEditMath.AxisVector(_sharedAnchorDragAxis) * _sharedAnchorDragSign;
+            Vector3 endLocal = ToVector3(_sharedAnchorDragStart) + axisVector * HandleLength;
+            if (!TryProject(construct, endLocal, out Vector2 axisEnd))
+                return;
+
+            float projected = DecorationEditMath.ProjectMouseDeltaToAxis(
+                mouseDelta,
+                origin,
+                axisEnd,
+                HandleLength);
+            int magnitude = Mathf.RoundToInt(Mathf.Abs(projected));
+            if (magnitude <= 0)
+                return;
+
+            Vector3i next = _sharedAnchorDragStart + AxisShift(_sharedAnchorDragAxis, _sharedAnchorDragSign * magnitude);
+            if (!HasBlock(construct, next))
+            {
+                SetSharedAnchorDragMessage("Shared anchor must be an existing craft block.");
+                return;
+            }
+
+            if (_sharedAnchorDragGenerator)
+            {
+                if (_generatorDraft.TryMoveSharedAnchor(next, out string message))
+                {
+                    _generatorPlan = null;
+                    _generatorMessage = "Generator shared anchor moved.";
+                }
+                else if (!string.IsNullOrEmpty(message))
+                {
+                    _generatorMessage = message;
+                }
+            }
+            else
+            {
+                if (_surfaceDraft.TryMoveSharedAnchor(next, out string message))
+                {
+                    _surfacePlan = null;
+                    _surfaceMessage = "Surface shared anchor moved.";
+                }
+                else if (!string.IsNullOrEmpty(message))
+                {
+                    _surfaceMessage = message;
+                }
+            }
+        }
+
+        private void CommitSharedAnchorDrag()
+        {
+            bool generator = _sharedAnchorDragGenerator;
+            SurfaceDraftSnapshot surfaceBefore = _sharedSurfaceAnchorDragSnapshotStart;
+            DecorationGeneratorEditSnapshot generatorBefore = _sharedGeneratorAnchorDragSnapshotStart;
+            ClearSharedAnchorDragState();
+            if (generator)
+            {
+                RecordGeneratorEdit("Move generator shared anchor", generatorBefore);
+                RebuildGeneratorPreview(showMessage: false);
+            }
+            else
+            {
+                RecordSurfaceEdit("Move surface shared anchor", surfaceBefore);
+                RebuildSurfacePreview(showMessage: false);
+            }
+        }
+
+        private void ClearSharedAnchorDragState()
+        {
+            _sharedAnchorDragAxis = DecorationEditAxis.None;
+            _sharedAnchorDragSign = 0;
+            _sharedAnchorDragMouseStart = Vector2.zero;
+            _sharedAnchorDragStart = default;
+            _sharedSurfaceAnchorDragSnapshotStart = null;
+            _sharedGeneratorAnchorDragSnapshotStart = null;
+            _sharedAnchorDragGenerator = false;
+        }
+
+        private void SetSharedAnchorDragMessage(string message)
+        {
+            if (_sharedAnchorDragGenerator)
+                _generatorMessage = message;
+            else
+                _surfaceMessage = message;
         }
 
         private static Vector3 LocalNormalFromHit(DecorationPointerHit hit)
@@ -8904,6 +9667,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     if (decoration == null)
                         throw new InvalidOperationException("FTD rejected a generated surface decoration.");
 
+                    DecorationScaleBounds.AllowExtendedScale(decoration);
                     decoration.MeshGuid.Us = placement.MeshGuid;
                     decoration.Positioning.Us = placement.Positioning;
                     decoration.Scaling.Us = placement.Scaling;
@@ -8988,6 +9752,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     if (decoration == null)
                         throw new InvalidOperationException("FTD rejected a generated decoration.");
 
+                    DecorationScaleBounds.AllowExtendedScale(decoration);
                     decoration.MeshGuid.Us = placement.MeshGuid;
                     decoration.Positioning.Us = placement.Positioning;
                     decoration.Scaling.Us = placement.Scaling;
@@ -9031,6 +9796,9 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceDraft.Clear();
             _surfacePlan = null;
             _surfaceDragAxis = DecorationEditAxis.None;
+            if (!_sharedAnchorDragGenerator)
+                ClearSharedAnchorDragState();
+            _pendingSurfaceSharedAnchorPick = false;
             CloseSurfacePointContextMenu();
             _surfaceMessage = "Click three block-surface points to seed a freeform surface.";
             if (notify)
@@ -9050,8 +9818,11 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorRotateDragAxis = DecorationEditAxis.None;
             _generatorRotateSnapshotStart = null;
             _generatorScaleSnapshotStart = null;
+            if (_sharedAnchorDragGenerator)
+                ClearSharedAnchorDragState();
+            _pendingGeneratorSharedAnchorPick = false;
             CloseSurfacePointContextMenu();
-            _generatorMessage = "Generator draft cleared. Draw a path or place a circle center.";
+            _generatorMessage = "Generator draft cleared. Draw a path or place a shape center.";
             if (notify)
             {
                 RecordGeneratorEdit("Clear generator draft", before);
@@ -9085,7 +9856,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             _generatorPlan = null;
             CloseSurfacePointContextMenu();
-            RecordGeneratorEdit("Delete generator point", before);
+            RecordGeneratorEdit("Delete generator selection", before);
             InfoStore.Add(_generatorMessage);
         }
 
@@ -9141,6 +9912,9 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceDraft.Restore(snapshot);
             _surfacePlan = null;
             _surfaceDragAxis = DecorationEditAxis.None;
+            if (!_sharedAnchorDragGenerator)
+                ClearSharedAnchorDragState();
+            _pendingSurfaceSharedAnchorPick = false;
             CloseSurfacePointContextMenu();
             SyncSurfaceTextFromSettings();
             _surfaceMessage = string.IsNullOrEmpty(context)
@@ -9158,10 +9932,10 @@ namespace DecoLimitLifter.DecorationEditMode
 
             snapshot.Settings?.Restore(_generatorSettings);
             _generatorDraft.Restore(snapshot.Draft);
-            _surfaceExtraTool = _generatorDraft.Tool == SurfaceExtraTool.Circle
-                ? SurfaceExtraTool.Circle
-                : SurfaceExtraTool.Path;
-            _surfaceBuilderTool = _surfaceExtraTool == SurfaceExtraTool.Circle
+            _surfaceExtraTool = _generatorDraft.Tool == SurfaceExtraTool.None
+                ? SurfaceExtraTool.Path
+                : _generatorDraft.Tool;
+            _surfaceBuilderTool = DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool)
                 ? SurfaceBuilderTool.Circle
                 : SurfaceBuilderTool.Path;
             s_surfaceExtraTool = _surfaceExtraTool;
@@ -9169,6 +9943,9 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorPlan = null;
             _generatorDragAxis = DecorationEditAxis.None;
             _generatorRotateDragAxis = DecorationEditAxis.None;
+            if (_sharedAnchorDragGenerator)
+                ClearSharedAnchorDragState();
+            _pendingGeneratorSharedAnchorPick = false;
             _generatorDragSnapshotStart = null;
             _generatorRotateSnapshotStart = null;
             _generatorScaleSnapshotStart = null;
@@ -9588,6 +10365,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 List<Decoration> list = decorations.DecorationList
                     .Where(decoration => decoration != null && !decoration.IsDeleted)
                     .ToList();
+                foreach (Decoration decoration in list)
+                    DecorationScaleBounds.AllowExtendedScale(decoration);
                 string constructLabel = ConstructLabel(construct, constructIndex);
                 string constructKey = ConstructKey(construct, constructIndex);
                 bool collapsed = _collapsedConstructs.Contains(constructKey);
@@ -9933,6 +10712,8 @@ namespace DecoLimitLifter.DecorationEditMode
                     ? new Color(1f, 0.35f, 0.25f, 0.78f)
                     : new Color(0.1f, 0.95f, 1f, 0.58f));
 
+            DrawSelectedSurfacePointSetPreview(construct, manual);
+
             for (int index = 0; index < _surfaceDraft.Points.Count; index++)
             {
                 Vector3 world = construct.SafeLocalToGlobal(_surfaceDraft.Points[index]);
@@ -9966,6 +10747,60 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             DrawSurfaceSameAnchorPreview();
+        }
+
+        private void DrawSelectedSurfacePointSetPreview(
+            AllConstruct construct,
+            Color color)
+        {
+            if (construct == null)
+                return;
+
+            IReadOnlyList<int> selectedPoints = _surfaceDraft.ManualFaceSelection;
+            if (selectedPoints.Count < 2)
+                return;
+
+            if (!TrySurfacePointWorld(construct, selectedPoints[0], out Vector3 first) ||
+                !TrySurfacePointWorld(construct, selectedPoints[1], out Vector3 second))
+            {
+                return;
+            }
+
+            if (selectedPoints.Count == 2)
+            {
+                DecorationEditorOverlay.Line(first, second, color, 3.5f);
+                return;
+            }
+
+            if (!TrySurfacePointWorld(construct, selectedPoints[2], out Vector3 third))
+                return;
+
+            DecorationEditorOverlay.Quad(
+                first,
+                second,
+                third,
+                third,
+                new Color(color.r, color.g, color.b, 0.18f));
+            DecorationEditorOverlay.Line(first, second, color, 3.5f);
+            DecorationEditorOverlay.Line(second, third, color, 3.5f);
+            DecorationEditorOverlay.Line(third, first, color, 3.5f);
+        }
+
+        private bool TrySurfacePointWorld(
+            AllConstruct construct,
+            int pointIndex,
+            out Vector3 world)
+        {
+            world = Vector3.zero;
+            if (construct == null ||
+                pointIndex < 0 ||
+                pointIndex >= _surfaceDraft.Points.Count)
+            {
+                return false;
+            }
+
+            world = construct.SafeLocalToGlobal(_surfaceDraft.Points[pointIndex]);
+            return true;
         }
 
         private void DrawMirroredSurfaceOverlay(
@@ -10013,11 +10848,20 @@ namespace DecoLimitLifter.DecorationEditMode
         private void DrawSurfaceSameAnchorPreview()
         {
             if (_surfaceDraft.Settings.NearestAnchor ||
-                !_surfaceDraft.HasPlaceableFaces ||
                 _surfaceDraft.Construct == null)
             {
                 return;
             }
+
+            if (_surfaceDraft.HasSharedAnchor)
+                DrawSharedAnchorTarget(
+                    _surfaceDraft.Construct,
+                    _surfaceDraft.SharedAnchor,
+                    _surfaceDraft.SharedAnchorSelected,
+                    _sharedAnchorDragAxis != DecorationEditAxis.None && !_sharedAnchorDragGenerator);
+
+            if (!_surfaceDraft.HasPlaceableFaces)
+                return;
 
             if (_surfacePlan == null)
                 RebuildSurfacePreview(showMessage: false);
@@ -10034,11 +10878,20 @@ namespace DecoLimitLifter.DecorationEditMode
         private void DrawGeneratorSameAnchorPreview()
         {
             if (_generatorSettings.NearestAnchor ||
-                !_generatorDraft.HasDraft ||
                 _generatorDraft.Construct == null)
             {
                 return;
             }
+
+            if (_generatorDraft.HasSharedAnchor)
+                DrawSharedAnchorTarget(
+                    _generatorDraft.Construct,
+                    _generatorDraft.SharedAnchor,
+                    _generatorDraft.SharedAnchorSelected,
+                    _sharedAnchorDragAxis != DecorationEditAxis.None && _sharedAnchorDragGenerator);
+
+            if (!_generatorDraft.HasPlaceableGeometry)
+                return;
 
             if (_generatorPlan == null)
                 RebuildGeneratorPreview(showMessage: false);
@@ -10080,6 +10933,54 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        private void DrawSharedAnchorTarget(
+            AllConstruct construct,
+            Vector3i anchor,
+            bool selected,
+            bool dragging)
+        {
+            if (construct == null)
+                return;
+
+            Color color = selected
+                ? new Color(1f, 0.9f, 0.2f, 1f)
+                : new Color(0.1f, 0.95f, 1f, 0.95f);
+            float width = selected ? 3.4f : 2.4f;
+            DrawBlockWireframe(construct, anchor, color, width);
+            Vector3 anchorLocal = ToVector3(anchor);
+            Vector3 anchorWorld = construct.SafeLocalToGlobal(anchorLocal);
+            DecorationEditorOverlay.Circle(anchorWorld, selected ? 0.32f : 0.24f, color, Vector3.up, width, 24);
+            DecorationEditorOverlay.Cross(anchorWorld, selected ? 0.38f : 0.3f, color, width);
+
+            if (!selected || _surfaceBuilderTool != SurfaceBuilderTool.Move)
+                return;
+
+            DrawSharedAnchorAxis(construct, anchorLocal, DecorationEditAxis.X, 1, dragging);
+            DrawSharedAnchorAxis(construct, anchorLocal, DecorationEditAxis.X, -1, dragging);
+            DrawSharedAnchorAxis(construct, anchorLocal, DecorationEditAxis.Y, 1, dragging);
+            DrawSharedAnchorAxis(construct, anchorLocal, DecorationEditAxis.Y, -1, dragging);
+            DrawSharedAnchorAxis(construct, anchorLocal, DecorationEditAxis.Z, 1, dragging);
+            DrawSharedAnchorAxis(construct, anchorLocal, DecorationEditAxis.Z, -1, dragging);
+        }
+
+        private void DrawSharedAnchorAxis(
+            AllConstruct construct,
+            Vector3 anchorLocal,
+            DecorationEditAxis axis,
+            int sign,
+            bool dragging)
+        {
+            if (construct == null)
+                return;
+
+            Vector3 axisVector = DecorationEditMath.AxisVector(axis) * sign;
+            Color color = DecorationEditMath.AxisColor(axis);
+            float width = dragging && _sharedAnchorDragAxis == axis && _sharedAnchorDragSign == sign ? 4f : 2.5f;
+            Vector3 start = construct.SafeLocalToGlobal(anchorLocal);
+            Vector3 end = construct.SafeLocalToGlobal(anchorLocal + axisVector * HandleLength);
+            DecorationEditorOverlay.Arrow(start, end, color, width, 0.16f);
+        }
+
         private void DrawGeneratorOverlay()
         {
             if (!_generatorDraft.HasDraft || _generatorDraft.Construct == null)
@@ -10111,20 +11012,27 @@ namespace DecoLimitLifter.DecorationEditMode
             if (draft == null || draft.Construct == null)
                 return;
 
-            if (draft.Tool == SurfaceExtraTool.Circle)
+            if (DecorationGeneratorPlanner.TryBuildPreviewSegments(
+                    draft,
+                    _generatorSettings,
+                    out IReadOnlyList<DecorationGeneratorSegment> segments,
+                    out string _))
+            {
+                for (int index = 0; index < segments.Count; index++)
+                {
+                    DecorationEditorOverlay.Line(
+                        draft.Construct.SafeLocalToGlobal(segments[index].Start),
+                        draft.Construct.SafeLocalToGlobal(segments[index].End),
+                        lineColor,
+                        _generatorPlan == null ? 2.2f : 3f);
+                }
+            }
+
+            if (draft.UsesCenterTool)
             {
                 if (!draft.HasCircleCenter)
                     return;
 
-                Vector3 centerWorld = draft.Construct.SafeLocalToGlobal(draft.CircleCenter);
-                Vector3 normalWorld = GeneratorNormalWorld(draft.Construct, draft.CircleNormal);
-                DecorationEditorOverlay.Circle(
-                    centerWorld,
-                    _generatorSettings.CircleRadius,
-                    lineColor,
-                    normalWorld,
-                    _generatorPlan == null ? 2.2f : 3f,
-                    Mathf.Clamp(_generatorSettings.CircleSegments, 12, 96));
                 DrawGeneratorPoint(draft, 0, pointColor, selected);
                 if (drawHandles && ReferenceEquals(draft, _generatorDraft))
                 {
@@ -10136,15 +11044,6 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             else
             {
-                for (int index = 0; index < draft.PathPoints.Count - 1; index++)
-                {
-                    DecorationEditorOverlay.Line(
-                        draft.Construct.SafeLocalToGlobal(draft.PathPoints[index]),
-                        draft.Construct.SafeLocalToGlobal(draft.PathPoints[index + 1]),
-                        lineColor,
-                        _generatorPlan == null ? 2.2f : 3f);
-                }
-
                 for (int index = 0; index < draft.PathPoints.Count; index++)
                     DrawGeneratorPoint(draft, index, pointColor, selected);
             }
@@ -10893,11 +11792,10 @@ namespace DecoLimitLifter.DecorationEditMode
             return DecorationEditMath.IsFinite(result);
         }
 
-        private void ApplyPositionFromInspector(Vector3 value)
+        private void ApplyPositionFromInspector(Vector3 value, bool syncText)
         {
             if (_selected == null || _selected.IsDeleted)
                 return;
-            value = DecorationEditMath.Snap(value);
             if (!DecorationEditMath.IsWithinPositionLimit(value))
             {
                 InfoStore.Add("Position must be finite and within +/-10m on every axis.");
@@ -10913,18 +11811,20 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!TryApplySymmetryFollow(symmetryFollow, reportInvalid: true))
             {
                 RestoreSymmetryEditState(selectedRollback, symmetryFollow, targetRollback);
-                SetVectorText(_positionText, _selected.Positioning.Us);
+                if (syncText)
+                    SetVectorText(_positionText, _selected.Positioning.Us);
                 RefreshDecorationCache(force: true);
                 return;
             }
 
-            SetVectorText(_positionText, _selected.Positioning.Us);
+            if (syncText)
+                SetVectorText(_positionText, _selected.Positioning.Us);
             MarkSelectedDirty();
             RecordSnapshotEdit("Set position", before, symmetryFollow);
             RefreshDecorationCache(force: true);
         }
 
-        private void ApplyScaleFromInspector(Vector3 value)
+        private void ApplyScaleFromInspector(Vector3 value, bool syncText)
         {
             if (_selected == null || _selected.IsDeleted)
                 return;
@@ -10935,8 +11835,10 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             DecorationEditSnapshot before = new DecorationEditSnapshot(_selected);
+            DecorationScaleBounds.AllowExtendedScale(_selected);
             _selected.Scaling.Us = value;
-            SetVectorText(_scaleText, value);
+            if (syncText)
+                SetVectorText(_scaleText, value);
             MarkSelectedDirty();
             RecordSnapshotEdit("Set scale", before);
         }
@@ -10947,7 +11849,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Mathf.Abs(value.y) >= MinimumScale &&
             Mathf.Abs(value.z) >= MinimumScale;
 
-        private void ApplyOrientationFromInspector(Vector3 value)
+        private void ApplyOrientationFromInspector(Vector3 value, bool syncText)
         {
             if (_selected == null || _selected.IsDeleted)
                 return;
@@ -10959,7 +11861,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
             DecorationEditSnapshot before = new DecorationEditSnapshot(_selected);
             _selected.Orientation.Us = value;
-            SetVectorText(_orientationText, value);
+            if (syncText)
+                SetVectorText(_orientationText, value);
             MarkSelectedDirty();
             RecordSnapshotEdit("Set rotation", before);
         }
@@ -11001,7 +11904,7 @@ namespace DecoLimitLifter.DecorationEditMode
             string.Format(CultureInfo.InvariantCulture, "{0},{1},{2}", value.x, value.y, value.z);
 
         private static string FormatFloat(float value) =>
-            value.ToString("0.###", CultureInfo.InvariantCulture);
+            value.ToString("0.#####", CultureInfo.InvariantCulture);
 
         private static string CompactText(string value, int maxCharacters)
         {

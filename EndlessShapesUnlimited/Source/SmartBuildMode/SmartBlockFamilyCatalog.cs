@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using BrilliantSkies.Core.Types;
+using DecoLimitLifter.DecorationEditMode;
 using BrilliantSkies.Modding;
 using BrilliantSkies.Modding.Containers;
 using BrilliantSkies.Modding.Types;
@@ -231,6 +232,8 @@ namespace DecoLimitLifter.SmartBuildMode
             RubberFamily
         };
 
+        internal static string LastStructuralDiscoveryReport { get; private set; } = string.Empty;
+
         internal static IReadOnlyList<SmartBuildMaterial> BasicMaterials => BasicMaterialOrder;
 
         internal static bool TryCreateMaterialSource(
@@ -273,8 +276,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 displayName,
                 new Vector3i(1, 1, 1),
                 family,
-                DownSlopeFromMaterial(material),
-                DiscoverStructuralFamilies(material));
+                DownSlopeFromMaterial(material, seed.Definition),
+                DiscoverStructuralFamilies(material, seed.Definition));
             reason = null;
             return true;
         }
@@ -292,10 +295,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 displayName + " is unavailable in this FtD install.");
         }
 
-        internal static SmartBlockFamily DownSlopeFromMaterial(SmartBuildMaterial material)
+        internal static SmartBlockFamily DownSlopeFromMaterial(
+            SmartBuildMaterial material,
+            ItemDefinition seed = null)
         {
             string displayName = MaterialDisplayName(material) + " down slopes";
-            var candidates = DiscoverDownSlopeCandidates(material);
+            var candidates = DiscoverDownSlopeCandidates(material, seed);
             var lengths = new HashSet<int>(candidates.Select(candidate => candidate.Length));
             foreach (SmartBlockCandidate fallback in ResolveFamilyCandidates(
                          DownSlopeFamilyForMaterial(material),
@@ -314,9 +319,13 @@ namespace DecoLimitLifter.SmartBuildMode
         }
 
         internal static IDictionary<string, SmartBlockFamily> DiscoverStructuralFamilies(
-            SmartBuildMaterial material)
+            SmartBuildMaterial material,
+            ItemDefinition seed = null)
         {
             var grouped = new Dictionary<string, List<SmartBlockCandidate>>(StringComparer.OrdinalIgnoreCase);
+            var skippedByMaterial = 0;
+            var parsedStructural = 0;
+            Guid seedMaterialGuid = MaterialReferenceGuid(seed);
             foreach (ItemDefinition item in LoadedItemDefinitions())
             {
                 object geometry = GeometryFor(item);
@@ -325,8 +334,13 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (info.Descriptor.IsCuboid ||
                     info.Descriptor.ProceduralDownSlope)
                     continue;
-                if (!LooksLikeMaterial(item, material))
+
+                parsedStructural++;
+                if (!MatchesMaterial(item, material, seedMaterialGuid))
+                {
+                    skippedByMaterial++;
                     continue;
+                }
 
                 if (!grouped.TryGetValue(info.Descriptor.Key, out List<SmartBlockCandidate> candidates))
                 {
@@ -359,6 +373,20 @@ namespace DecoLimitLifter.SmartBuildMode
                         .GroupBy(candidate => candidate.Length)
                         .Select(group => group.First())
                         .ToArray());
+            }
+
+            LastStructuralDiscoveryReport =
+                "material=" + MaterialDisplayName(material) +
+                " loaded_items=" + LoadedItemDefinitions().Count().ToString() +
+                " parsed_structural=" + parsedStructural.ToString() +
+                " material_filtered=" + skippedByMaterial.ToString() +
+                " resolved_families=" + families.Count.ToString();
+            if (families.Count == 0 && parsedStructural > 0)
+            {
+                EsuRuntimeLog.Warning(
+                    "Smart Builder",
+                    "No fixed structural shapes matched " + MaterialDisplayName(material) + ".",
+                    LastStructuralDiscoveryReport);
             }
 
             return families;
@@ -511,9 +539,12 @@ namespace DecoLimitLifter.SmartBuildMode
             return candidates;
         }
 
-        private static List<SmartBlockCandidate> DiscoverDownSlopeCandidates(SmartBuildMaterial material)
+        private static List<SmartBlockCandidate> DiscoverDownSlopeCandidates(
+            SmartBuildMaterial material,
+            ItemDefinition seed = null)
         {
             var candidates = new List<SmartBlockCandidate>();
+            Guid seedMaterialGuid = MaterialReferenceGuid(seed);
             foreach (ItemDefinition item in LoadedItemDefinitions())
             {
                 object geometry = GeometryFor(item);
@@ -523,7 +554,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     continue;
                 }
 
-                if (!LooksLikeMaterial(item, material))
+                if (!MatchesMaterial(item, material, seedMaterialGuid))
                     continue;
 
                 candidates.Add(new SmartBlockCandidate(
@@ -544,23 +575,47 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static IEnumerable<ItemDefinition> LoadedItemDefinitions()
         {
+            var results = new List<ItemDefinition>();
+            var seen = new HashSet<Guid>();
             try
             {
                 ModificationComponentContainerItem container = Configured.i
                     .Get<ModificationComponentContainerItem>();
+                AddItemDefinitions(container?.Components, results, seen);
                 FieldInfo field = typeof(ModificationComponentContainerItem)
                     .GetField(
                         "m_AllCorrespondingItems",
                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 if (field?.GetValue(container) is IEnumerable<ItemDefinition> items)
-                    return items.Where(item => item != null).ToArray();
+                    AddItemDefinitions(items, results, seen);
             }
             catch
             {
                 // GUID fallbacks below keep Smart Builder usable when reflection changes.
             }
 
-            return Array.Empty<ItemDefinition>();
+            return results.ToArray();
+        }
+
+        private static void AddItemDefinitions(
+            IEnumerable<ItemDefinition> items,
+            ICollection<ItemDefinition> results,
+            ISet<Guid> seen)
+        {
+            if (items == null)
+                return;
+
+            foreach (ItemDefinition item in items)
+            {
+                if (item == null)
+                    continue;
+
+                Guid guid = ComponentGuid(item);
+                if (guid != Guid.Empty && !seen.Add(guid))
+                    continue;
+
+                results.Add(item);
+            }
         }
 
         private static object GeometryFor(ItemDefinition item)
@@ -591,6 +646,82 @@ namespace DecoLimitLifter.SmartBuildMode
             return int.TryParse(number, out length) &&
                    length >= 1 &&
                    length <= 4;
+        }
+
+        private static bool MatchesMaterial(
+            ItemDefinition item,
+            SmartBuildMaterial material,
+            Guid seedMaterialGuid)
+        {
+            int targetMaterialCode = MaterialCodeFor(material);
+            int itemMaterialCode = ItemMaterialCode(item);
+            if (itemMaterialCode >= 0)
+                return itemMaterialCode == targetMaterialCode;
+
+            Guid itemMaterialGuid = MaterialReferenceGuid(item);
+            if (seedMaterialGuid != Guid.Empty && itemMaterialGuid != Guid.Empty)
+                return itemMaterialGuid == seedMaterialGuid;
+
+            return LooksLikeMaterial(item, material);
+        }
+
+        private static int MaterialCodeFor(SmartBuildMaterial material)
+        {
+            switch (material)
+            {
+                case SmartBuildMaterial.Metal:
+                    return 0;
+                case SmartBuildMaterial.Alloy:
+                    return 1;
+                case SmartBuildMaterial.HeavyArmour:
+                    return 3;
+                case SmartBuildMaterial.Stone:
+                    return 4;
+                case SmartBuildMaterial.Glass:
+                    return 5;
+                case SmartBuildMaterial.Lead:
+                    return 6;
+                case SmartBuildMaterial.Rubber:
+                    return 7;
+                default:
+                    return 2;
+            }
+        }
+
+        private static int ItemMaterialCode(ItemDefinition item)
+        {
+            try
+            {
+                return item?.Code?.Variables?.GetInt("Material", -1) ?? -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private static Guid MaterialReferenceGuid(ItemDefinition item)
+        {
+            try
+            {
+                return item?.MaterialReference?.Reference.Guid ?? Guid.Empty;
+            }
+            catch
+            {
+                return Guid.Empty;
+            }
+        }
+
+        private static Guid ComponentGuid(ItemDefinition item)
+        {
+            try
+            {
+                return item?.ComponentId.Guid ?? Guid.Empty;
+            }
+            catch
+            {
+                return Guid.Empty;
+            }
         }
 
         private static bool LooksLikeMaterial(ItemDefinition item, SmartBuildMaterial material)

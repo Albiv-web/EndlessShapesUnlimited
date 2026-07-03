@@ -1326,19 +1326,19 @@ f 0 2 3
                parsed == new Version(1, 2, 3),
             "Workshop update notifier parses the exact latest-version line prefix.");
         Assert(WorkshopUpdateNotifier.IsWorkshopVersionNewerForVerification(
-                   new Version(1, 0, 4),
-                   "Mod latest version 1.0.5",
+                   new Version(1, 0, 5),
+                   "Mod latest version 1.0.6",
                    out Version newer) &&
-               newer == new Version(1, 0, 5),
+               newer == new Version(1, 0, 6),
             "Workshop update notifier detects a newer remote version.");
         Assert(!WorkshopUpdateNotifier.IsWorkshopVersionNewerForVerification(
-                   new Version(1, 0, 4),
-                   "Mod latest version 1.0.4",
+                   new Version(1, 0, 5),
+                   "Mod latest version 1.0.5",
                    out _),
             "Workshop update notifier does not flag the installed version as stale when versions match.");
         Assert(!WorkshopUpdateNotifier.IsWorkshopVersionNewerForVerification(
-                   new Version(1, 0, 4),
-                   "Mod latest version 1.0.3",
+                   new Version(1, 0, 5),
+                   "Mod latest version 1.0.4",
                    out _),
             "Workshop update notifier ignores older Workshop versions.");
         Assert(!WorkshopUpdateNotifier.TryParseLatestVersionForVerification(
@@ -1396,10 +1396,10 @@ f 0 2 3
                notifierSource.Contains("RefreshActiveGuis"),
             "Workshop update notifier queries Steam UGC, writes a non-error ModProblems row, and refreshes active GUI screens.");
         Assert(changelogSource.Contains("Steam Workshop update notifier") &&
-               changelogSource.Contains("Mod latest version 1.0.4") &&
+               changelogSource.Contains("Mod latest version 1.0.5") &&
                releaseChannelsSource.Contains("Mod latest version X.Y.Z") &&
-               releaseChannelsSource.Contains("Mod latest version 1.0.4") &&
-               steamReadmeSource.Contains("Mod latest version 1.0.4"),
+               releaseChannelsSource.Contains("Mod latest version 1.0.5") &&
+               steamReadmeSource.Contains("Mod latest version 1.0.5"),
             "Changelog and release-channel workflow document the Steam Workshop update version line.");
     }
 
@@ -3039,6 +3039,25 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuTransformSnapSettings.cs"));
+        string decorationScaleBoundsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationScaleBounds.cs"));
+        string decorationEditSnapshotSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSnapshot.cs"));
+        string mimicAndDecorationCommonDataSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EndlessShapes2",
+            "ES2_Polygon",
+            "MimicAndDecorationCommonData.cs"));
         string toolbarAttentionSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3629,8 +3648,10 @@ f 0 2 3
                sessionSource.Contains("CycleTransformToolShortcut()") &&
                sessionSource.Contains("CycleCommonViewModeShortcut()") &&
                sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Draw)") &&
-               sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Path)") &&
-               sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Circle)") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
+               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
+               sessionSource.Contains("SetSurfaceExtraTool(SurfaceExtraTool.Path)") &&
+               sessionSource.Contains("SetSurfaceExtraTool(SurfaceExtraTool.Circle)") &&
                sessionSource.Contains("SetActiveTool(DecorationEditorTool.Select)") &&
                sessionSource.Contains("_selectionMode = DecorationSelectionMode.Box") &&
                sessionSource.Contains("_selectionMode = DecorationSelectionMode.Single") &&
@@ -3675,14 +3696,45 @@ f 0 2 3
                transformSnapSource.Contains("DefaultDecorationMoveSnap = 0.05f") &&
                transformSnapSource.Contains("DefaultDecorationRotateSnapDegrees = 5f") &&
                transformSnapSource.Contains("DefaultDecorationScaleSnap = 0.05f") &&
+               transformSnapSource.Contains("DecorationMoveMinimum = 0.001f") &&
+               transformSnapSource.Contains("DecorationRotateMinimum = 0.1f") &&
+               transformSnapSource.Contains("DecorationScaleMinimum = 0.001f") &&
+               transformSnapSource.Contains("DecorationScaleMaximum = float.PositiveInfinity") &&
+               transformSnapSource.Contains("value.ToString(\"0.#####\"") &&
                transformSnapSource.Contains("internal static class EsuTransformSnapHud") &&
+               transformSnapSource.Contains("out bool commitRequested") &&
+               transformSnapSource.Contains("!string.Equals(previousMove, moveText") &&
+               sessionSource.Contains("ApplyDecorationSnapText(commitRequested)") &&
+               smartBuildSessionSource.Contains("ApplySmartSnapText(commitRequested)") &&
                sessionSource.Contains("DrawBottomVectorEditor") &&
                sessionSource.Contains("DrawBottomVectorComponent") &&
+               sessionSource.Contains("Action<Vector3, bool> apply") &&
+               sessionSource.Contains("VectorTextChanged(values, previousX, previousY, previousZ)") &&
+               sessionSource.Contains("apply(liveParsed, false)") &&
+               sessionSource.Contains("apply(parsed, true)") &&
+               sessionSource.Contains("private void ApplyPositionFromInspector(Vector3 value, bool syncText)") &&
+               !ExtractMethodSource(sessionSource, "ApplyPositionFromInspector").Contains("DecorationEditMath.Snap(value)") &&
+               decorationScaleBoundsSource.Contains("internal static class DecorationScaleBounds") &&
+               decorationScaleBoundsSource.Contains("AllowExtendedScale(Decoration decoration)") &&
+               decorationScaleBoundsSource.Contains("MaxElementValue = float.PositiveInfinity") &&
+               decorationScaleBoundsSource.Contains("MinElementValue = float.NegativeInfinity") &&
+               decorationScaleBoundsSource.Contains("MaximumMagnitude = float.PositiveInfinity") &&
+               decorationEditSnapshotSource.Contains("DecorationScaleBounds.AllowExtendedScale(decoration)") &&
+               sessionSource.Contains("DecorationScaleBounds.AllowExtendedScale(_selected)") &&
+               sessionSource.Contains("DecorationScaleBounds.AllowExtendedScale(decoration)") &&
+               mimicAndDecorationCommonDataSource.Contains("DecorationScaleBounds.AllowExtendedScale(decoration)") &&
+               sessionSource.Contains("value.ToString(\"0.#####\"") &&
                sessionSource.Contains("Mode: Deco | Tab to Surface when clean") &&
                sessionSource.Contains("Mode: Surface | Tab to Build when clean") &&
                sessionSource.Contains("GUI.Label(slots.Title, surface ? \"Surface Builder\" : \"Decoration Edit Mode\"") &&
                sessionSource.Contains("Rect anchorRect") &&
                sessionSource.Contains("DrawBottomSelectionControls(slots.SelectControls)") &&
+               sessionSource.Contains("DrawHideOriginalMeshButton(slots.SelectControls)") &&
+               sessionSource.Contains("private void DrawHideOriginalMeshButton(Rect rect)") &&
+               sessionSource.Contains("_viewModeBeforeHideOriginalMesh") &&
+               sessionSource.Contains("ToggleOriginalMeshVisibility") &&
+               sessionSource.Contains("new GUIContent(\"Hide mesh\"") &&
+               sessionSource.Contains("SelectViewMode(DecorationEditorViewMode.DecorationOnly)") &&
                sessionSource.Contains("DrawBottomAnchorFollowToggle(slots.AnchorFollow)") &&
                sessionSource.Contains("DrawBottomAnchorSettingsButton(slots.AnchorSettings)") &&
                sessionSource.Contains("DrawBottomTransformEditors(new Rect") &&
@@ -3899,7 +3951,7 @@ f 0 2 3
                inputStateSource.Contains("internal static bool AnyEsuNumberShortcutDown()") &&
                inGameTestPlanSource.Contains("press Ctrl alone") &&
                inGameTestPlanSource.Contains("screen does not") &&
-               inGameTestPlanSource.Contains("Surface Builder Ctrl-click behavior still works"),
+               inGameTestPlanSource.Contains("Surface Builder Shift-click point selection still works"),
             "ESU hotkey guards inspect an existing ChatGUI instance without constructing ChatGUI/FtdKeyMap during boot and expose shared Ctrl and ESU number shortcut state.");
 
         Assert(serializationHudSource.Contains("DecorationEditorIconCatalog.GetRuntimeIcon(icon)") &&
@@ -4206,6 +4258,32 @@ f 0 2 3
         Assert(SurfacePlacementsMatchDraftNormal(scalene, plan.Placements),
             "Surface planner keeps scalene split child normals aligned with the parent face normal.");
 
+        SurfaceDraft slantedSeparateTriangles = SlantedTwoTriangleSurfaceDraftForTests();
+        Assert(SurfaceDecorationPlanner.TryPlan(slantedSeparateTriangles, resolver, out plan, out message) &&
+               slantedSeparateTriangles.Faces.Count == 2 &&
+               SurfacePlacementsMatchAnyDraftFaceNormal(slantedSeparateTriangles, plan.Placements),
+            "Surface planner previews two separate non-axis-aligned triangles from six points.");
+
+        SurfaceDraft slantedManualFace = SlantedTwoTriangleSurfaceDraftForTests();
+        Assert(slantedManualFace.ToggleManualFacePoint(1, out message) &&
+               slantedManualFace.ToggleManualFacePoint(2, out message) &&
+               slantedManualFace.ToggleManualFacePoint(3, out message) &&
+               slantedManualFace.TryCreateFaceFromManualSelection(out message) &&
+               slantedManualFace.Faces.Count == 3 &&
+               SurfaceDecorationPlanner.TryPlan(slantedManualFace, resolver, out plan, out message) &&
+               SurfacePlacementsMatchAnyDraftFaceNormal(slantedManualFace, plan.Placements),
+            "Surface planner previews a non-axis-aligned face created from Shift-selected points between two triangles.");
+
+        SurfaceDraft slantedBridge = SlantedTwoTriangleSurfaceDraftForTests();
+        Assert(slantedBridge.ToggleBridgeEdge(new SurfaceEdge(1, 2), out message) &&
+               slantedBridge.ToggleBridgeEdge(new SurfaceEdge(3, 4), out message) &&
+               slantedBridge.TryBridgeSelectedEdges(out message) &&
+               slantedBridge.Faces.Count == 4 &&
+               SurfaceSharedEdgesAreOpposed(slantedBridge.Faces) &&
+               SurfaceDecorationPlanner.TryPlan(slantedBridge, resolver, out plan, out message) &&
+               SurfacePlacementsMatchAnyDraftFaceNormal(slantedBridge, plan.Placements),
+            "Surface planner previews a non-axis-aligned bridge between two selected triangle edges.");
+
         AssertMirroredSurfaceNormals(
             "right triangle",
             new Vector3(1.1f, 1.2f, 1.3f),
@@ -4255,6 +4333,30 @@ f 0 2 3
                freeClick.FreeTriangleSelectionCount == 0,
             "Surface draft normal free-click grouping creates another standalone triangle every three points.");
 
+        var manualSelection = new SurfaceDraft();
+        manualSelection.SetConstructForTests(null);
+        manualSelection.AddPointForTests(new Vector3(0f, 0f, 0f));
+        manualSelection.AddPointForTests(new Vector3(1f, 0f, 0f));
+        manualSelection.AddPointForTests(new Vector3(0f, 1f, 0f));
+        Assert(manualSelection.ToggleManualFacePoint(0, out message) &&
+               manualSelection.ToggleManualFacePoint(1, out message) &&
+               manualSelection.ManualFaceSelectionCount == 2 &&
+               manualSelection.Faces.Count == 0 &&
+               manualSelection.TrySelectManualPointEdge(out message) &&
+               manualSelection.SelectionKind == SurfaceSelectionKind.Edge &&
+               manualSelection.SelectedEdge.Matches(0, 1) &&
+               manualSelection.ManualFaceSelectionCount == 0,
+            "Surface draft Shift-selected two-point sets connect into an edge seed without creating a face.");
+        Assert(manualSelection.ToggleManualFacePoint(0, out message) &&
+               manualSelection.ToggleManualFacePoint(1, out message) &&
+               manualSelection.ToggleManualFacePoint(2, out message) &&
+               manualSelection.ManualFaceSelectionCount == 3 &&
+               manualSelection.Faces.Count == 0 &&
+               manualSelection.TryCreateFaceFromManualSelection(out message) &&
+               manualSelection.Faces.Count == 1 &&
+               manualSelection.ManualFaceSelectionCount == 0,
+            "Surface draft Shift-selected three-point sets create faces only through the explicit context action.");
+
         var edgeExtended = new SurfaceDraft();
         edgeExtended.SetConstructForTests(null);
         Assert(edgeExtended.TryAddPointForTests(new Vector3(0f, 0f, 0f), extendSelectedEdge: false, out message) &&
@@ -4288,7 +4390,7 @@ f 0 2 3
         quadBridge.SetConstructForTests(null);
         quadBridge.AddPointForTests(new Vector3(0f, 0f, 0f));
         quadBridge.AddPointForTests(new Vector3(1f, 0f, 0f));
-        quadBridge.AddPointForTests(new Vector3(0f, 1f, 0f));
+        quadBridge.AddPointForTests(new Vector3(0f, -1f, 0f));
         quadBridge.AddPointForTests(new Vector3(0f, 2f, 0f));
         quadBridge.AddPointForTests(new Vector3(1f, 2f, 0f));
         quadBridge.AddPointForTests(new Vector3(0f, 3f, 0f));
@@ -4299,6 +4401,22 @@ f 0 2 3
                quadBridge.TryBridgeSelectedEdges(out message) &&
                quadBridge.Faces.Count == 4,
             "Surface draft bridges two selected four-point edges into two triangle faces.");
+
+        var alternateBridge = new SurfaceDraft();
+        alternateBridge.SetConstructForTests(null);
+        alternateBridge.AddPointForTests(new Vector3(0f, 0f, 0f));
+        alternateBridge.AddPointForTests(new Vector3(1f, 0f, 0f));
+        alternateBridge.AddPointForTests(new Vector3(0f, 1f, 0f));
+        alternateBridge.AddPointForTests(new Vector3(1f, 1f, 0f));
+        alternateBridge.AddPointForTests(new Vector3(0f, 2f, 0f));
+        Assert(alternateBridge.TryAddFace(0, 1, 2, out message) &&
+               alternateBridge.TryAddFace(2, 3, 4, out message) &&
+               alternateBridge.ToggleBridgeEdge(new SurfaceEdge(0, 1), out message) &&
+               alternateBridge.ToggleBridgeEdge(new SurfaceEdge(2, 3), out message) &&
+               alternateBridge.TryBridgeSelectedEdges(out message) &&
+               alternateBridge.Faces.Count == 4 &&
+               SurfaceSharedEdgesAreOpposed(alternateBridge.Faces),
+            "Surface draft tries the alternate quad bridge diagonal when the preferred pairing would duplicate an existing face.");
 
         var sharedCenterRightTriangles = new SurfaceDraft();
         sharedCenterRightTriangles.SetConstructForTests(null);
@@ -4374,6 +4492,47 @@ f 0 2 3
                message.IndexOf("no valid nearest anchor", StringComparison.OrdinalIgnoreCase) >= 0,
             "Surface nearest-anchor planning rejects generated decorations with no valid nearby block.");
 
+        SurfaceDraft explicitSharedSurface = SurfaceDraftForTests(
+            Vector3.zero,
+            Vector3.right,
+            Vector3.up);
+        explicitSharedSurface.Settings.NearestAnchor = false;
+        bool explicitSurfaceSet = explicitSharedSurface.TrySetSharedAnchor(null, new Vector3i(5, 0, 0), out message);
+        bool explicitSurfacePlanned = SurfaceDecorationPlanner.TryPlan(
+            explicitSharedSurface,
+            new SetSurfaceAnchorResolver(new[] { new Vector3i(5, 0, 0) }),
+            out plan,
+            out message);
+        bool explicitSurfaceAnchors = explicitSurfacePlanned &&
+                                      plan.Placements.All(placement => SameCell(placement.Anchor, new Vector3i(5, 0, 0)));
+        Assert(explicitSurfaceSet && explicitSurfacePlanned && explicitSurfaceAnchors,
+            "Surface same-anchor mode accepts an explicit shared anchor selected independently from generated faces. Set=" +
+            explicitSurfaceSet.ToString(CultureInfo.InvariantCulture) +
+            " planned=" + explicitSurfacePlanned.ToString(CultureInfo.InvariantCulture) +
+            " anchors=" + explicitSurfaceAnchors.ToString(CultureInfo.InvariantCulture) +
+            " message=" + (message ?? string.Empty));
+        bool movedSurfaceAnchor = explicitSharedSurface.TryMoveSharedAnchor(new Vector3i(4, 0, 0), out message);
+        bool movedSurfacePlanned = SurfaceDecorationPlanner.TryPlan(
+            explicitSharedSurface,
+            new SetSurfaceAnchorResolver(new[] { new Vector3i(4, 0, 0) }),
+            out plan,
+            out message);
+        bool movedSurfaceAnchors = movedSurfacePlanned &&
+                                   plan.Placements.All(placement => SameCell(placement.Anchor, new Vector3i(4, 0, 0)));
+        Assert(movedSurfaceAnchor && movedSurfacePlanned && movedSurfaceAnchors,
+            "Surface same-anchor draft can move the explicit shared anchor before applying. Move=" +
+            movedSurfaceAnchor.ToString(CultureInfo.InvariantCulture) +
+            " planned=" + movedSurfacePlanned.ToString(CultureInfo.InvariantCulture) +
+            " anchors=" + movedSurfaceAnchors.ToString(CultureInfo.InvariantCulture) +
+            " message=" + (message ?? string.Empty));
+        Assert(!SurfaceDecorationPlanner.TryPlan(
+                   explicitSharedSurface,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                   out plan,
+                   out message) &&
+               message.IndexOf("shared anchor", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Surface same-anchor planning rejects an explicit shared anchor that is no longer a valid block.");
+
         Guid generatorMesh = new Guid("11111111-2222-3333-4444-555555555555");
         Guid generatorMaterial = new Guid("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
         var defaultGeneratorSettings = new DecorationGeneratorSettings
@@ -4386,6 +4545,10 @@ f 0 2 3
                DecorationGeneratorSettings.MetalPole1mGuid == new Guid("ad00935b-e95c-4345-8ea7-646846bc16db") &&
                defaultGeneratorSettings.LengthAxis == DecorationEditAxis.Z &&
                Math.Abs(defaultGeneratorSettings.Diameter - 0.05f) < 0.0001f &&
+               Math.Abs(defaultGeneratorSettings.ArcDegrees - 360f) < 0.0001f &&
+               Math.Abs(defaultGeneratorSettings.ShapeHeight - 2f) < 0.0001f &&
+               Math.Abs(defaultGeneratorSettings.TopRadius - 1f) < 0.0001f &&
+               defaultGeneratorSettings.RingCount == 6 &&
                defaultGeneratorDraft.TryAddPathPoint(null, new Vector3(0f, 0f, 0f), out message) &&
                defaultGeneratorDraft.TryAddPathPoint(null, new Vector3(0f, 0f, 2f), out message) &&
                DecorationGeneratorPlanner.TryPlan(
@@ -4425,6 +4588,51 @@ f 0 2 3
                Math.Abs(generatorPlan.Placements[0].Scaling.x - 2f) < 0.0001f &&
                Math.Abs(generatorPlan.Placements[0].Scaling.y - 0.25f) < 0.0001f,
             "Decoration generator path with two points creates one scaled segment placement carrying mesh, color, and material.");
+
+        var anchorOnlyGenerator = new DecorationGeneratorDraft();
+        Assert(anchorOnlyGenerator.TrySetSharedAnchor(null, new Vector3i(6, 0, 0), out message) &&
+               anchorOnlyGenerator.HasDraft &&
+               !anchorOnlyGenerator.HasPlaceableGeometry,
+            "Decoration generator treats an explicit shared anchor as draft state without previewing geometry before a path or shape exists.");
+
+        var sharedGeneratorSettings = new DecorationGeneratorSettings
+        {
+            MeshGuid = generatorMesh,
+            LengthAxis = DecorationEditAxis.X,
+            Diameter = 0.25f,
+            NearestAnchor = false
+        };
+        var sharedGeneratorDraft = new DecorationGeneratorDraft();
+        sharedGeneratorDraft.SetTool(SurfaceExtraTool.Path);
+        Assert(sharedGeneratorDraft.TryAddPathPoint(null, new Vector3(0f, 0f, 0f), out message) &&
+               sharedGeneratorDraft.TryAddPathPoint(null, new Vector3(2f, 0f, 0f), out message) &&
+               sharedGeneratorDraft.TrySetSharedAnchor(null, new Vector3i(6, 0, 0), out message) &&
+               DecorationGeneratorPlanner.TryPlan(
+                   sharedGeneratorDraft,
+                   sharedGeneratorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(6, 0, 0) }),
+                   out DecorationGeneratorPlan sharedGeneratorPlan,
+                   out message) &&
+               sharedGeneratorPlan.Placements.All(placement => SameCell(placement.Anchor, new Vector3i(6, 0, 0))),
+            "Decoration generator same-anchor mode accepts an explicit shared anchor selected independently from path/shape points.");
+        Assert(sharedGeneratorDraft.TryMoveSharedAnchor(new Vector3i(5, 0, 0), out message) &&
+               DecorationGeneratorPlanner.TryPlan(
+                   sharedGeneratorDraft,
+                   sharedGeneratorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(5, 0, 0) }),
+                   out sharedGeneratorPlan,
+                   out message) &&
+               sharedGeneratorPlan.Placements.All(placement => SameCell(placement.Anchor, new Vector3i(5, 0, 0))),
+            "Decoration generator same-anchor draft can move the explicit shared anchor before applying.");
+        Assert(!DecorationGeneratorPlanner.TryPlan(
+                   sharedGeneratorDraft,
+                   sharedGeneratorSettings,
+                   new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                   out sharedGeneratorPlan,
+                   out message) &&
+               message.IndexOf("shared anchor", StringComparison.OrdinalIgnoreCase) >= 0,
+            "Decoration generator same-anchor planning rejects an explicit shared anchor that is no longer a valid block.");
+
         Assert(generatorDraft.TryAddPathPoint(null, new Vector3(2f, 1f, 0f), out message) &&
                DecorationGeneratorPlanner.TryPlan(
                    generatorDraft,
@@ -4448,6 +4656,59 @@ f 0 2 3
                    out message) &&
                generatorPlan.DecorationCount == 8,
             "Decoration generator circle creates the requested number of tangent segment placements.");
+
+        var generatorShapeSettings = new DecorationGeneratorSettings
+        {
+            MeshGuid = generatorMesh,
+            LengthAxis = DecorationEditAxis.Z,
+            Diameter = 0.05f,
+            CircleRadius = 2f,
+            CircleSegments = 4,
+            ArcDegrees = 180f,
+            ShapeHeight = 3f,
+            TopRadius = 1f,
+            RingCount = 1,
+            NearestAnchor = false
+        };
+        AssertGeneratorShapePlanCount(
+            SurfaceExtraTool.PartialCircle,
+            generatorShapeSettings,
+            4,
+            "Decoration generator partial circle creates one open arc segment per requested segment.");
+        AssertGeneratorShapePlanCount(
+            SurfaceExtraTool.Cone2D,
+            generatorShapeSettings,
+            9,
+            "Decoration generator 2D cone creates a flat partial sector arc plus spokes from the center.");
+
+        generatorShapeSettings.CircleSegments = 8;
+        generatorShapeSettings.ArcDegrees = 360f;
+        generatorShapeSettings.RingCount = 2;
+        AssertGeneratorShapePlanCount(
+            SurfaceExtraTool.Cone,
+            generatorShapeSettings,
+            16,
+            "Decoration generator cone creates a base ring plus apex spokes.");
+        AssertGeneratorShapePlanCount(
+            SurfaceExtraTool.Frustum,
+            generatorShapeSettings,
+            24,
+            "Decoration generator frustum creates bottom/top rings plus side lines.");
+        AssertGeneratorShapePlanCount(
+            SurfaceExtraTool.Sphere,
+            generatorShapeSettings,
+            40,
+            "Decoration generator sphere creates latitude rings plus meridians.");
+
+        generatorShapeSettings.CircleSegments = 4;
+        generatorShapeSettings.ArcDegrees = 180f;
+        generatorShapeSettings.RingCount = 1;
+        AssertGeneratorShapePlanCount(
+            SurfaceExtraTool.PartialSphere,
+            generatorShapeSettings,
+            14,
+            "Decoration generator partial sphere creates an open latitude arc plus partial meridians.");
+
         Assert(!DecorationGeneratorPlanner.TryPlan(
                    circleDraft,
                    generatorSettings,
@@ -4592,6 +4853,7 @@ f 0 2 3
             "DecorationEditMode",
             "DecorationEditHistory.cs"));
         string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
+        string sharedAnchorDragSource = ExtractMethodSource(sessionSource, "TryUpdateSharedAnchorDrag");
         string symmetrySource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -4621,7 +4883,11 @@ f 0 2 3
                plannerSource.Contains("TransformThicknessAxis") &&
                plannerSource.Contains("TransformPlaneDistance") &&
                plannerSource.Contains("DecorationTransformThicknessAxis") &&
-               plannerSource.Contains("RotateEuler(orientation, localAxis)") &&
+               plannerSource.Contains("Quaternion.Euler(degrees) * vector") &&
+               plannerSource.Contains("ManagedRotateUnityEuler") &&
+               plannerSource.Contains("UnityEulerFromRotationMatrix") &&
+               plannerSource.Contains("TryOrientBridgeFace(candidate, orientedFaces") &&
+               plannerSource.Contains("preferred.AddRange(alternate)") &&
                sessionSource.Contains("TrySwitchToSurfaceBuilder") &&
                sessionSource.Contains("IsSurfaceMode") &&
                sessionSource.Contains("surface ? \"Surf\" : \"Deco\"") &&
@@ -4662,7 +4928,56 @@ f 0 2 3
                generatorSource.Contains("MetalPole1mGuid") &&
                generatorSource.Contains("LengthAxis = DecorationEditAxis.Z") &&
                generatorSource.Contains("Diameter = 0.05f") &&
+               generatorSource.Contains("ArcDegrees = 360f") &&
+               generatorSource.Contains("ShapeHeight = 2f") &&
+               generatorSource.Contains("TopRadius = 1f") &&
+               generatorSource.Contains("RingCount = 6") &&
                generatorSource.Contains("NearestAnchor = true") &&
+               generatorSource.Contains("PartialCircle") &&
+               generatorSource.Contains("PartialSphere") &&
+               generatorSource.Contains("Cone2D") &&
+               generatorSource.Contains("BuildSphereSegments") &&
+               generatorSource.Contains("BuildConeSegments") &&
+               generatorSource.Contains("BuildFrustumSegments") &&
+               generatorSource.Contains("BuildCone2DSegments") &&
+               generatorSource.Contains("TryBuildPreviewSegments") &&
+               generatorSource.Contains("ArcPoints") &&
+               generatorSource.Contains("AddPolylineSegments") &&
+               generatorSource.Contains("UsesCenter(SurfaceExtraTool tool)") &&
+               plannerSource.Contains("HasSharedAnchor") &&
+               plannerSource.Contains("SharedAnchorSelected") &&
+               plannerSource.Contains("TrySetSharedAnchor") &&
+               plannerSource.Contains("TryMoveSharedAnchor") &&
+               plannerSource.Contains("TryValidateExplicitSharedAnchor") &&
+               generatorSource.Contains("HasSharedAnchor") &&
+               generatorSource.Contains("HasPlaceableGeometry") &&
+               generatorSource.Contains("SharedAnchorSelected") &&
+               generatorSource.Contains("TrySetSharedAnchor") &&
+               generatorSource.Contains("TryMoveSharedAnchor") &&
+               generatorSource.Contains("TryValidateExplicitSharedAnchor") &&
+               sessionSource.Contains("DrawGeneratorToolButton(SurfaceExtraTool.PartialCircle") &&
+               sessionSource.Contains("DrawGeneratorToolButton(SurfaceExtraTool.PartialSphere") &&
+               sessionSource.Contains("DrawGeneratorToolButton(SurfaceExtraTool.Cone") &&
+               sessionSource.Contains("DrawGeneratorToolButton(SurfaceExtraTool.Frustum") &&
+               sessionSource.Contains("DrawGeneratorToolButton(SurfaceExtraTool.Cone2D") &&
+               sessionSource.Contains("DrawGeneratorNumberField(\"Arc\"") &&
+               sessionSource.Contains("DrawGeneratorNumberField(\"Height\"") &&
+               sessionSource.Contains("DrawGeneratorNumberField(\"Top radius\"") &&
+               sessionSource.Contains("DrawGeneratorNumberField(\"Rings\"") &&
+               sessionSource.Contains("DecorationGeneratorDraft.UsesCenter(_surfaceExtraTool)") &&
+               sessionSource.Contains("GeneratorToolDisplayName") &&
+               sessionSource.Contains("DecorationGeneratorPlanner.TryBuildPreviewSegments") &&
+               sessionSource.Contains("DrawSurfaceSharedAnchorControls") &&
+               sessionSource.Contains("DrawGeneratorSharedAnchorControls") &&
+               sessionSource.Contains("!_generatorDraft.HasPlaceableGeometry") &&
+               sessionSource.Contains("TryHandleSurfaceSharedAnchorClick") &&
+               sessionSource.Contains("TryHandleGeneratorSharedAnchorClick") &&
+               sessionSource.Contains("BeginSharedAnchorDrag") &&
+               sharedAnchorDragSource.Contains("if (magnitude <= 0)") &&
+               !sharedAnchorDragSource.Contains("Mathf.Max(1, Mathf.RoundToInt(Mathf.Abs(projected)))") &&
+               sessionSource.Contains("DrawSharedAnchorTarget") &&
+               sessionSource.Contains("_pendingSurfaceSharedAnchorPick") &&
+               sessionSource.Contains("_pendingGeneratorSharedAnchorPick") &&
                generatorSource.Contains("CircleTangentA") &&
                generatorSource.Contains("TrySetCircleCenterWithBasis") &&
                generatorSource.Contains("DecorationGeneratorPlan") &&
@@ -4679,16 +4994,20 @@ f 0 2 3
                sessionSource.Contains("ClearSurfaceActionTarget") &&
                sessionSource.Contains("DeleteSurfaceActionTarget") &&
                sessionSource.Contains("SurfaceContextTargetKind") &&
+               sessionSource.Contains("SurfacePointSelection") &&
                sessionSource.Contains("SurfacePoint") &&
                sessionSource.Contains("SurfaceEdge") &&
                sessionSource.Contains("SurfaceFace") &&
                sessionSource.Contains("GeneratorPoint") &&
                sessionSource.Contains("TryOpenSurfaceContextMenu") &&
+               sessionSource.Contains("TryOpenSurfacePointSelectionContextMenu") &&
                sessionSource.Contains("TryOpenSurfacePointContextMenu") &&
                sessionSource.Contains("TryOpenSurfaceEdgeContextMenu") &&
                sessionSource.Contains("TryOpenSurfaceFaceContextMenu") &&
                sessionSource.Contains("TryOpenGeneratorPointContextMenu") &&
                sessionSource.Contains("DrawSurfaceContextMenu") &&
+               sessionSource.Contains("ConnectSelectedSurfacePoints") &&
+               sessionSource.Contains("CreateFaceFromSelectedSurfacePoints") &&
                sessionSource.Contains("LocalNormalFromHit(hit)") &&
                sessionSource.Contains("TrySetCircleCenter(hit.Construct, hit.LocalHit, normal") &&
                !sessionSource.Contains("GetCameraCircleBasis") &&
@@ -4709,7 +5028,10 @@ f 0 2 3
                plannerSource.Contains("TryPlanMirroredVariants") &&
                plannerSource.Contains("CreateMirroredForSymmetry") &&
                plannerSource.Contains("BridgeEdgeSelection") &&
+               plannerSource.Contains("ManualFaceSelectionCount") &&
                plannerSource.Contains("FreeTriangleSelectionCount") &&
+               plannerSource.Contains("TrySelectManualPointEdge") &&
+               plannerSource.Contains("TryCreateFaceFromManualSelection") &&
                plannerSource.Contains("ToggleBridgeEdge") &&
                plannerSource.Contains("TryBridgeSelectedEdges") &&
                plannerSource.Contains("IsBridgeEdgeSelected") &&
@@ -4735,7 +5057,7 @@ f 0 2 3
             "Decoration Edit Mode exposes Surface Builder as the second ESU mode in the Tab cycle, backed by ES2 polygon conversion.");
 
         int surfacePanelIndex = sessionSource.IndexOf("private void DrawSurfacePanel", StringComparison.Ordinal);
-        int surfaceHelperIndex = sessionSource.IndexOf("Ctrl-click existing points", surfacePanelIndex, StringComparison.Ordinal);
+        int surfaceHelperIndex = sessionSource.IndexOf("Shift-click points, then right-click", surfacePanelIndex, StringComparison.Ordinal);
         int surfaceSettingsShelfIndex = sessionSource.IndexOf("GUILayout.BeginArea(settingsRect)", surfacePanelIndex, StringComparison.Ordinal);
         int surfaceSettingsIndex = sessionSource.IndexOf("DrawSurfaceSettings();", surfaceSettingsShelfIndex, StringComparison.Ordinal);
         int surfaceActionBarIndex = sessionSource.IndexOf("DrawSurfaceActionBar(actionRect)", surfaceSettingsIndex, StringComparison.Ordinal);
@@ -4826,17 +5148,24 @@ f 0 2 3
         string surfaceContextOpenBlock = surfaceContextOpen >= 0 && surfaceContextOpenEnd > surfaceContextOpen
             ? sessionSourceNormalized.Substring(surfaceContextOpen, surfaceContextOpenEnd - surfaceContextOpen)
             : string.Empty;
+        int selectedPointSetPick = surfaceContextOpenBlock.IndexOf("TryOpenSurfacePointSelectionContextMenu(requirePointUnderMouse: true)", StringComparison.Ordinal);
         int pointPick = surfaceContextOpenBlock.IndexOf("TryOpenSurfacePointContextMenu()", StringComparison.Ordinal);
         int edgePick = surfaceContextOpenBlock.IndexOf("TryOpenSurfaceEdgeContextMenu()", StringComparison.Ordinal);
         int facePick = surfaceContextOpenBlock.IndexOf("TryOpenSurfaceFaceContextMenu()", StringComparison.Ordinal);
-        Assert(pointPick >= 0 &&
+        int selectedPointSetFallback = surfaceContextOpenBlock.IndexOf("TryOpenSurfacePointSelectionContextMenu(requirePointUnderMouse: false)", StringComparison.Ordinal);
+        Assert(selectedPointSetPick >= 0 &&
+               pointPick > selectedPointSetPick &&
                edgePick > pointPick &&
                facePick > edgePick &&
+               selectedPointSetFallback > facePick &&
                sessionSource.Contains("RebuildSurfacePreview(showMessage: true)") &&
                sessionSource.Contains("BridgeSurfaceEdges();") &&
+               sessionSource.Contains("ConnectSelectedSurfacePoints();") &&
+               sessionSource.Contains("CreateFaceFromSelectedSurfacePoints();") &&
+               sessionSource.Contains("DrawSelectedSurfacePointSetPreview") &&
                sessionSource.Contains("DeleteSurfaceActionTarget(generator ? SurfaceDraftActionTarget.Generator : SurfaceDraftActionTarget.Surface)") &&
                sessionSource.Contains("SelectSurfaceContextTarget"),
-            "Surface Builder context menus try point, edge, then face targets and route preview, bridge, and delete through existing helpers.");
+            "Surface Builder context menus try selected point sets, point, edge, then face targets and route preview, connect, face creation, bridge, and delete through existing helpers.");
 
         int handleScene = sessionSourceNormalized.IndexOf("private void HandleSceneInput()", StringComparison.Ordinal);
         int pendingInScene = sessionSourceNormalized.IndexOf(
@@ -4861,6 +5190,31 @@ f 0 2 3
             draft.AddPointForTests(point);
         if (points.Length >= 3 && !draft.TryAddFace(0, 1, 2, out string message))
             throw new InvalidOperationException(message);
+        return draft;
+    }
+
+    private static SurfaceDraft SlantedTwoTriangleSurfaceDraftForTests()
+    {
+        var draft = new SurfaceDraft();
+        draft.SetConstructForTests(null);
+        var points = new[]
+        {
+            new Vector3(-1.5f, 0f, -0.6f),
+            new Vector3(-0.4f, 1f, 0.04f),
+            new Vector3(0.2f, 0f, 0.08f),
+            new Vector3(0.8f, 0f, 0.32f),
+            new Vector3(1.4f, 1f, 0.76f),
+            new Vector3(2.5f, 0f, 1f)
+        };
+        foreach (Vector3 point in points)
+            draft.AddPointForTests(point);
+
+        if (!draft.TryAddFace(0, 1, 2, out string message) ||
+            !draft.TryAddFace(3, 4, 5, out message))
+        {
+            throw new InvalidOperationException(message);
+        }
+
         return draft;
     }
 
@@ -4988,6 +5342,53 @@ f 0 2 3
         return true;
     }
 
+    private static bool SurfacePlacementsMatchAnyDraftFaceNormal(
+        SurfaceDraft draft,
+        IReadOnlyList<SurfaceDecorationPlacement> placements)
+    {
+        if (draft == null || placements == null || placements.Count == 0)
+            return false;
+
+        IReadOnlyList<Vector3> normals = SurfaceDraftFaceNormals(draft);
+        if (normals.Count == 0)
+            return false;
+
+        for (int index = 0; index < placements.Count; index++)
+        {
+            if (!SurfaceAxisMatchesAnyNormal(placements[index].TransformThicknessAxis, normals) ||
+                !SurfaceAxisMatchesAnyNormal(placements[index].ThicknessAxis, normals))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IReadOnlyList<Vector3> SurfaceDraftFaceNormals(SurfaceDraft draft)
+    {
+        var normals = new List<Vector3>();
+        if (draft == null)
+            return normals;
+
+        foreach (SurfaceFace face in draft.Faces)
+        {
+            Vector3 axis = Vector3.Cross(
+                draft.Points[face.B] - draft.Points[face.A],
+                draft.Points[face.C] - draft.Points[face.A]);
+            if (!DecorationEditMath.IsFinite(axis) || axis.sqrMagnitude <= 0.000000000001f)
+                continue;
+
+            axis.Normalize();
+            if (draft.Settings.NormalReversal)
+                axis = -axis;
+            if (!normals.Any(existing => SurfaceSameNormal(existing, axis)))
+                normals.Add(axis);
+        }
+
+        return normals;
+    }
+
     private static Vector3 SurfaceDraftFirstNormal(SurfaceDraft draft)
     {
         if (draft == null || draft.Faces.Count == 0)
@@ -5036,6 +5437,43 @@ f 0 2 3
         Assert(plan.DecorationCount == expected,
             description + " Expected " + expected.ToString(CultureInfo.InvariantCulture) +
             ", got " + plan.DecorationCount.ToString(CultureInfo.InvariantCulture) + ".");
+    }
+
+    private static void AssertGeneratorShapePlanCount(
+        SurfaceExtraTool tool,
+        DecorationGeneratorSettings settings,
+        int expected,
+        string description)
+    {
+        var draft = new DecorationGeneratorDraft();
+        draft.SetTool(tool);
+        if (!draft.TrySetCircleCenter(null, Vector3.zero, Vector3.up, out string centerMessage))
+            throw new InvalidOperationException("Verification failed: " + description + " Center said: " + centerMessage);
+
+        if (!DecorationGeneratorPlanner.TryBuildPreviewSegments(
+                draft,
+                settings,
+                out IReadOnlyList<DecorationGeneratorSegment> segments,
+                out string previewMessage))
+        {
+            throw new InvalidOperationException("Verification failed: " + description + " Preview said: " + previewMessage);
+        }
+
+        if (!DecorationGeneratorPlanner.TryPlan(
+                draft,
+                settings,
+                new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                out DecorationGeneratorPlan plan,
+                out string planMessage))
+        {
+            throw new InvalidOperationException("Verification failed: " + description + " Planner said: " + planMessage);
+        }
+
+        Assert(segments.Count == expected &&
+               plan.DecorationCount == expected,
+            description + " Expected " + expected.ToString(CultureInfo.InvariantCulture) +
+            ", got preview " + segments.Count.ToString(CultureInfo.InvariantCulture) +
+            " and plan " + plan.DecorationCount.ToString(CultureInfo.InvariantCulture) + ".");
     }
 
     private static bool SurfaceSharedEdgesAreOpposed(IReadOnlyList<SurfaceFace> faces)
@@ -5128,6 +5566,11 @@ f 0 2 3
         Mathf.Abs(left.x - right.x) <= 0.0001f &&
         Mathf.Abs(left.y - right.y) <= 0.0001f &&
         Mathf.Abs(left.z - right.z) <= 0.0001f;
+
+    private static bool SameCell(Vector3i left, Vector3i right) =>
+        left.x == right.x &&
+        left.y == right.y &&
+        left.z == right.z;
 
     private static void VerifySmartBlockBuilder()
     {
@@ -5786,6 +6229,12 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildCommitter.cs"));
+        string itemPreviewRendererSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBlockItemPreviewRenderer.cs"));
         string notificationSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -5862,12 +6311,22 @@ f 0 2 3
                catalogSource.Contains("FamilyForShape") &&
                catalogSource.Contains("DiscoverStructuralFamilies") &&
                catalogSource.Contains("DownSlopeFromMaterial") &&
+               catalogSource.Contains("AddItemDefinitions(container?.Components") &&
+               catalogSource.Contains("m_AllCorrespondingItems") &&
+               catalogSource.Contains("MatchesMaterial") &&
+               catalogSource.Contains("ItemMaterialCode") &&
+               catalogSource.Contains("GetInt(\"Material\", -1)") &&
+               catalogSource.Contains("MaterialReferenceGuid") &&
+               catalogSource.Contains("LastStructuralDiscoveryReport") &&
                catalogSource.Contains("DragSettings?.Geometry") &&
                catalogSource.Contains("SmartBuildShapeDescriptors.TryParseGeometry") &&
                catalogSource.Contains("TryLengthFromDownSlopeGeometry") &&
                catalogSource.Contains("bdafa446-f615-49cb-94f3-d7652dde6cec") &&
                catalogSource.Contains("ModificationComponentContainerItem") &&
                descriptorSource.Contains("FacingDownSlope1m_") &&
+               descriptorSource.Contains("Beam slope L") &&
+               descriptorSource.Contains("Square-backed L") &&
+               descriptorSource.Contains("Inverted L") &&
                descriptorSource.Contains("SquareBacked") &&
                descriptorSource.Contains("InverseTransition") &&
                descriptorSource.Contains("Offset") &&
@@ -5875,6 +6334,95 @@ f 0 2 3
                committerSource.Contains("MirrorInfo.none") &&
                committerSource.Contains("plan.Construct"),
             "Smart Block Builder has an internal 8-material picker, keeps selected-item compatibility available, resolves FtD item definitions and structural geometry metadata, and commits vanilla block commands.");
+        Assert(itemPreviewRendererSource.Contains("Definition?.GetMesh()") &&
+               itemPreviewRendererSource.Contains("definition?.GetMaterial()") &&
+               itemPreviewRendererSource.Contains("Graphics.DrawMesh") &&
+               itemPreviewRendererSource.Contains("DrawPlacementWire") &&
+               itemPreviewRendererSource.Contains("ConfigureTransparent") &&
+               itemPreviewRendererSource.Contains("CandidateKey") &&
+               itemPreviewRendererSource.Contains("GetCachedPreview") &&
+               itemPreviewRendererSource.Contains("GetPreview(SmartBlockCandidate") &&
+               itemPreviewRendererSource.Contains("ClearCache") &&
+               itemPreviewRendererSource.Contains("HardEdgeDotThreshold") &&
+               itemPreviewRendererSource.Contains("HardEdgesFor") &&
+               itemPreviewRendererSource.Contains("EdgeAccumulator") &&
+               itemPreviewRendererSource.Contains("ShouldDrawHardEdge") &&
+               itemPreviewRendererSource.Contains("Mathf.Abs(Vector3.Dot"),
+            "Smart Builder item preview renderer uses FtD ItemDefinition meshes/materials for world ghosts and rotating palette thumbnails, caches preview-safe materials, and extracts hard/boundary mesh edges instead of all triangle diagonals.");
+        Assert(sessionSource.Contains("DrawShapePreviewGrid") &&
+               sessionSource.Contains("DrawShapeListRows") &&
+               sessionSource.Contains("FilterShapePaletteEntries") &&
+               sessionSource.Contains("ShapePaletteViewportHeight") &&
+               sessionSource.Contains("ClampShapePaletteScroll") &&
+               sessionSource.Contains("DrawShapePreviewCard") &&
+               sessionSource.Contains("DrawShapePaletteToolbar") &&
+               sessionSource.Contains("_shapePreviewGrid") &&
+               sessionSource.Contains("_shapeCategoryFilter") &&
+               sessionSource.Contains("_shapeFilter") &&
+               sessionSource.Contains("ShapePreviewGridTexturePixels") &&
+               sessionSource.Contains("DrawShapePaletteEmptyRow") &&
+               sessionSource.Contains("No shapes match the current palette filter.") &&
+               sessionSource.Contains("Filter shapes by label, item name, or FtD geometry name."),
+            "Smart Builder shape palette is compact, searchable, categorized, scroll-clamped, and supports list/grid mesh previews instead of a long text-only structural list.");
+        string drawShapePaletteSource = ExtractMethodSource(sessionSource, "DrawShapePalette");
+        Assert(drawShapePaletteSource.Contains("GUILayout.BeginScrollView") &&
+               !drawShapePaletteSource.Contains("GUI.BeginGroup(viewport)") &&
+               drawShapePaletteSource.Contains("DrawShapePreviewGrid(rows") &&
+               drawShapePaletteSource.Contains("DrawShapeListRows(rows"),
+            "Smart Builder shape palette renders rows directly in the layout scroll view instead of clipping them in a nested GUI group.");
+        string drawShapeListRowsSource = ExtractMethodSource(sessionSource, "DrawShapeListRows");
+        string drawShapePreviewGridSource = ExtractMethodSource(sessionSource, "DrawShapePreviewGrid");
+        Assert(drawShapeListRowsSource.Contains("_hoveredShapeEntry = entry") &&
+               drawShapeListRowsSource.Contains("row.Contains(Event.current.mousePosition)") &&
+               sessionSource.Contains("DrawShapePreviewCard") &&
+               drawShapePreviewGridSource.Contains("firstRow") &&
+               drawShapePreviewGridSource.Contains("lastRow") &&
+               drawShapePreviewGridSource.Contains("canRenderPreview") &&
+               drawShapePreviewGridSource.Contains("GetPreview(entry.Candidate") &&
+               drawShapePreviewGridSource.Contains("GetCachedPreview(entry.Candidate"),
+            "Smart Builder list rows drive hover preview cards, while 3D grid thumbnails remain virtualized to visible cards with cached off-repaint previews.");
+        string cycleShapeShortcutSource = ExtractMethodSource(sessionSource, "CycleShapeShortcut");
+        Assert(cycleShapeShortcutSource.Contains("OneMetreShapeDescriptors()") &&
+               cycleShapeShortcutSource.Contains("_selectedSlopeLength = 1") &&
+               sessionSource.Contains("HasOneMetreShapeCandidate") &&
+               sessionSource.Contains("PaletteCandidateForLength(descriptor, 1)") &&
+               !cycleShapeShortcutSource.Contains("_tool == SmartBuildTool.Draw"),
+            "Smart Builder 1-key shape cycling is independent of the active tool, filters to 1m-capable shapes, and forces the selected size back to 1m.");
+        Assert(sessionSource.Contains("ClearSmartPreviewRendererCache") &&
+               sessionSource.Contains("_itemPreviewRenderer?.ClearCache()") &&
+               ExtractMethodSource(sessionSource, "SetSelectedMaterial").Contains("ClearSmartPreviewRendererCache();") &&
+               ExtractMethodSource(sessionSource, "RefreshSelection").Contains("ClearSmartPreviewRendererCache();") &&
+               ExtractMethodSource(sessionSource, "RefreshSelection").Contains("HasActivePreviewScene") &&
+               sessionSource.Contains("s_shapeStackBottomRatio") &&
+               sessionSource.Contains("s_selectedSceneStackBottomRatio") &&
+               sessionSource.Contains("DrawShapePanelStack") &&
+               sessionSource.Contains("SplitSmartVerticalStack") &&
+               sessionSource.Contains("HandleSmartStackDividerDrag") &&
+               sessionSource.Contains("DrawSmartStackDividerGrip"),
+            "Smart Builder material changes clear preview caches and the Shapes panel uses persisted Palette/Selected/Scene split dividers.");
+        Assert(sessionSource.Contains("DrawPlanPlacementPreview") &&
+               sessionSource.Contains("plan.Placements") &&
+               sessionSource.Contains("DrawPlacementPreview(plan.Construct") &&
+               sessionSource.Contains("drawWire: false") &&
+               sessionSource.Contains("drewExactMaterialMeshes") &&
+               sessionSource.Contains("DrawPiecePreview(piece, variant, invalid, drawn, drawMaterialFill: !drewExactMaterialMeshes)") &&
+               ExtractMethodSource(sessionSource, "DrawPlacementPreview").Contains("if (!drawWire)") &&
+               sessionSource.Contains("PlacementMatrix") &&
+               sessionSource.Contains("Matrix4x4.TRS(local, placement.Rotation") &&
+               ExtractMethodSource(sessionSource, "DrawPlacementGhost").Contains("ghost.BuildFixedPlacements") &&
+               ExtractMethodSource(sessionSource, "DrawPlacementGhost").Contains("slopeGhost.BuildFixedPlacements") &&
+               itemPreviewRendererSource.Contains("mesh.triangles"),
+            "Smart Builder mesh-accurate material previews are derived from commit placements, while scene wire previews use aggregate piece hull outlines instead of per-placement internal wire seams.");
+        string handleMouseSource = ExtractMethodSource(sessionSource, "HandleMouse");
+        Assert(handleMouseSource.Contains("EndDrag(resetDraft: true)") &&
+               handleMouseSource.Contains("CancelAddMode()") &&
+               handleMouseSource.Contains("DeselectSmartBuilderPiece()") &&
+               handleMouseSource.Contains("TryOpenPreviewContextMenu()") &&
+               sessionSource.Contains("_scene.ClearSelection()") &&
+               sceneSource.Contains("ClearSelection") &&
+               sceneSource.Contains("HasSelection") &&
+               sceneSource.Contains("selectedId >= 0"),
+            "Smart Builder right-click cancels active edits before deselecting pieces, preserves no-selection preview scenes, and only then opens context menus for pointed pieces.");
         Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
                tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
@@ -5966,6 +6514,8 @@ f 0 2 3
                 !sessionSource.Contains("\"S\" + length.ToString(CultureInfo.InvariantCulture)") &&
                 descriptorSource.Contains("Place normal cuboids and beams.") &&
                 descriptorSource.Contains("Place 1m to 4m down-slope ramp segments.") &&
+                descriptorSource.Contains("\"Slope\"") &&
+                descriptorSource.Contains("Beam slope L") &&
                 descriptorSource.Contains("Triangle corner L") &&
                 descriptorSource.Contains("slope-transition-1-2-left") &&
                 descriptorSource.Contains("Place slope transition blocks.") &&
@@ -6138,7 +6688,7 @@ f 0 2 3
         string package = Path.Combine(root, "EndlessShapesUnlimited");
         string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
-               manifest.Contains("\"version\": \"1.0.4\"") &&
+               manifest.Contains("\"version\": \"1.0.5\"") &&
                manifest.Contains("\"workshop_id\": 3755667314") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&

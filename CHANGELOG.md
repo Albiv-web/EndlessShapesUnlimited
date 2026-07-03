@@ -7,6 +7,67 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
+## 1.0.5 - 2026-07-03
+
+### Added
+
+- Added explicit shared-anchor picking for Surface Builder same-anchor mode.
+  Surface Draw drafts and Extra Tools generator drafts can now pick one craft
+  block as the shared anchor, select it independently, and move it before
+  applying.
+- Added Surface Builder Extra Tools generators for partial circles, 2D cone
+  sectors, cones, frustums, spheres, and partial spheres.
+- Added Smart Builder shape palette list/grid previews with categorized filters,
+  searchable rows, size buttons, and visible-only 3D thumbnail rendering.
+- Added Smart Builder draggable split dividers for Palette, Selected, and Scene
+  sections.
+- Added a Hide Original Mesh view toggle to the ESU bottom controls.
+- Added finer transform snap settings and live snap-setting application so
+  values such as `0.625` can be typed without pressing Set every time.
+- Added extended decoration scale bounds so ESU scale editing and generated
+  placements can exceed the old 10x limit when needed.
+
+### Changed
+
+- Surface Builder preview/apply validation now uses Unity-compatible Euler and
+  LookRotation behavior so non-axis-aligned manually-created and bridged faces
+  keep strict normal validation without false rejections.
+- Surface Builder bridge creation now reuses the normal face winding checks,
+  validates conflicts between both new bridge faces, and tries alternate quad
+  bridge diagonals when the preferred pairing duplicates or conflicts.
+- Surface Builder Shift-click point workflows remain explicit: two selected
+  points can become an edge seed, and three selected points create a face from
+  the context action.
+- Smart Builder world previews now draw hard/boundary mesh outlines and
+  aggregate piece hulls instead of internal triangle diagonals and repeated
+  placement seams.
+- Smart Builder `1` shortcut now cycles only shapes with a 1m candidate and
+  forces the selected size back to 1m. Size buttons remain the way to choose
+  larger variants.
+- Smart Builder material changes now clear preview caches before rebuilding
+  palette thumbnails and scene previews.
+- Smart Builder right-click now cancels active edits, cancels Add cursor ghosts,
+  or deselects the active preview piece before opening piece context menus.
+- Smart Builder panel sizing now follows the same resizable split-panel pattern
+  as the other ESU editor modes.
+
+### Fixed
+
+- Fixed Surface Builder bridge previews rejected with transform-normal mismatch
+  errors on screenshot-like slanted roof triangles.
+- Fixed Smart Builder list mode hover previews not appearing.
+- Fixed Smart Builder 3D previews disappearing after switching material.
+- Fixed Smart Builder grid mode rendering off-screen thumbnails.
+- Fixed shared-anchor handle clicks moving the anchor by one block even when the
+  mouse had not crossed a block movement threshold.
+- Fixed generator same-anchor overlay trying to build a generator preview when
+  only an explicit shared anchor had been selected.
+
+### Notes
+
+- Steam Workshop descriptions now need a `Mod latest version 1.0.5` line so
+  installed copies can check whether a newer Workshop version exists.
+
 ## 1.0.4 - 2026-07-01
 
 ### Added
