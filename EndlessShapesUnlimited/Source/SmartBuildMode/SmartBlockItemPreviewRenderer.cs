@@ -124,6 +124,21 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPlacement placement,
             Matrix4x4 matrix,
             Color color,
+            float width) =>
+            DrawPlacementWire(
+                placement,
+                matrix,
+                matrix,
+                null,
+                color,
+                width);
+
+        internal bool DrawPlacementWire(
+            SmartBuildPlacement placement,
+            Matrix4x4 worldMatrix,
+            Matrix4x4 localMatrix,
+            Func<Vector3, Vector3, bool> shouldDrawLocalEdge,
+            Color color,
             float width)
         {
             Mesh mesh = GetMesh(placement?.Candidate);
@@ -138,20 +153,27 @@ namespace DecoLimitLifter.SmartBuildMode
             int stride = edges.Length > MaxWireEdgesPerPlacement
                 ? Mathf.CeilToInt(edges.Length / (float)MaxWireEdgesPerPlacement)
                 : 1;
+            bool hasRenderableEdge = false;
             for (int index = 0; index < edges.Length; index += stride)
             {
                 Edge edge = edges[index];
                 if (edge.A < 0 || edge.B < 0 || edge.A >= vertices.Length || edge.B >= vertices.Length)
                     continue;
 
+                hasRenderableEdge = true;
+                Vector3 localA = localMatrix.MultiplyPoint3x4(vertices[edge.A]);
+                Vector3 localB = localMatrix.MultiplyPoint3x4(vertices[edge.B]);
+                if (shouldDrawLocalEdge != null && !shouldDrawLocalEdge(localA, localB))
+                    continue;
+
                 DecorationEditorOverlay.Line(
-                    matrix.MultiplyPoint3x4(vertices[edge.A]),
-                    matrix.MultiplyPoint3x4(vertices[edge.B]),
+                    worldMatrix.MultiplyPoint3x4(vertices[edge.A]),
+                    worldMatrix.MultiplyPoint3x4(vertices[edge.B]),
                     color,
                     width);
             }
 
-            return true;
+            return hasRenderableEdge;
         }
 
         public void Dispose()

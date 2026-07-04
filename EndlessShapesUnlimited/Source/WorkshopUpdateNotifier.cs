@@ -3,6 +3,7 @@ using System.Collections;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Text;
 using BrilliantSkies.Core.Constants;
 using BrilliantSkies.Core.Timing;
 using BrilliantSkies.Modding;
@@ -72,6 +73,7 @@ namespace DecoLimitLifter
                 string line;
                 while ((line = reader.ReadLine()) != null)
                 {
+                    line = StripWorkshopMarkup(line).Trim();
                     if (!line.StartsWith(LatestVersionPrefix, StringComparison.Ordinal))
                         continue;
 
@@ -81,6 +83,34 @@ namespace DecoLimitLifter
             }
 
             return false;
+        }
+
+        private static string StripWorkshopMarkup(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            StringBuilder builder = new StringBuilder(value.Length);
+            bool insideTag = false;
+            foreach (char character in value)
+            {
+                if (character == '[')
+                {
+                    insideTag = true;
+                    continue;
+                }
+
+                if (character == ']' && insideTag)
+                {
+                    insideTag = false;
+                    continue;
+                }
+
+                if (!insideTag)
+                    builder.Append(character);
+            }
+
+            return builder.ToString();
         }
 
         internal static bool IsWorkshopVersionNewerForVerification(

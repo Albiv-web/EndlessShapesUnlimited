@@ -108,18 +108,21 @@ Exclude:
 4. Update the packaged Steam/player readme in
    `EndlessShapesUnlimited/README.md`. This is also the source text for the
    Steam Workshop description artifact.
-5. Keep this exact line in the Steam Workshop description and archived Steam
-   description artifact, with the version matching `plugin.json`:
+5. Keep this exact BBCode line in the Steam Workshop description and archived
+   Steam description artifact, with the version matching `plugin.json`:
 
    ```text
-   Mod latest version X.Y.Z
+   [b]Mod latest version X.Y.Z[/b]
    ```
 
    For the current release:
 
    ```text
-   Mod latest version 1.0.5
+   [b]Mod latest version 1.0.6[/b]
    ```
+
+   The in-game update notifier also tolerates the plain
+   `Mod latest version X.Y.Z` line for older descriptions.
 
 6. Confirm `EndlessShapesUnlimited/header.jpg` exists and is below 1 MB.
 7. Run:

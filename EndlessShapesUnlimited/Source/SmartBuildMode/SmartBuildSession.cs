@@ -26,10 +26,12 @@ namespace DecoLimitLifter.SmartBuildMode
         private const int ViewModeMenuButtonCount = 9;
         private const int SceneHistoryLimit = 64;
         private const float ShapePaletteRowHeight = 28f;
-        private const float ShapePreviewGridRowHeight = 96f;
-        private const int ShapePreviewGridColumns = 2;
-        private const float ShapePreviewGridCardWidth = 126f;
-        private const float ShapePreviewGridCardHeight = 92f;
+        private const float ShapePreviewGridMinCardWidth = 112f;
+        private const float ShapePreviewGridMinCardHeight = 86f;
+        private const float ShapePreviewGridMaxCardHeight = 124f;
+        private const float ShapePreviewGridCardAspect = 0.74f;
+        private const float ShapePreviewGridGap = 8f;
+        private const float ShapePreviewGridOuterPadding = 2f;
         private const int ShapePreviewGridTexturePixels = 96;
         private const int MaxExactMeshPreviewPlacements = 768;
         private const float ShapeStackDefaultLowerRatio = 0.4f;
@@ -365,7 +367,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 DrawPreviewContextMenu();
                 DrawShapePreviewCard();
-                EsuConsoleWindow.Draw();
+                EsuConsoleWindow.DrawForegroundWindow();
                 EsuCursorTooltip.Draw();
             }
 
@@ -3307,7 +3309,7 @@ namespace DecoLimitLifter.SmartBuildMode
             DrawShapePaletteToolbar(rows.Count);
             DrawShapeSizeSelector();
 
-            float paletteHeight = ShapePaletteViewportHeight(rows, availableHeight);
+            float paletteHeight = ShapePaletteViewportHeight(availableHeight);
             float viewportWidth = Mathf.Max(1f, _rightPanelRect.width - EsuHudLayout.Scale(32f));
             ClampShapePaletteScroll(rows, viewportWidth, paletteHeight);
             _shapePaletteScroll = GUILayout.BeginScrollView(
@@ -3447,27 +3449,12 @@ namespace DecoLimitLifter.SmartBuildMode
             return query;
         }
 
-        private float ShapePaletteViewportHeight(
-            List<SmartBuildShapePaletteEntry> rows,
-            float availableHeight)
+        private float ShapePaletteViewportHeight(float availableHeight)
         {
             float controlsHeight = EsuHudLayout.Scale(
                 SelectedShapeDescriptor.UsesLengthSelector ? 128f : 94f);
             float remainingHeight = Mathf.Max(0f, availableHeight - controlsHeight);
-            float maxHeight = Mathf.Clamp(
-                remainingHeight,
-                EsuHudLayout.Scale(54f),
-                EsuHudLayout.Scale(430f));
-            float rowHeight = _shapePreviewGrid
-                ? EsuHudLayout.Scale(ShapePreviewGridRowHeight)
-                : EsuHudLayout.Scale(ShapePaletteRowHeight);
-            int rowCount = _shapePreviewGrid
-                ? Mathf.CeilToInt((rows?.Count ?? 0) / (float)ShapePreviewGridColumns)
-                : rows?.Count ?? 0;
-            float contentHeight = rowCount <= 0
-                ? EsuHudLayout.Scale(54f)
-                : rowCount * rowHeight + EsuHudLayout.Scale(8f);
-            return Mathf.Clamp(contentHeight, EsuHudLayout.Scale(54f), maxHeight);
+            return Mathf.Max(EsuHudLayout.Scale(54f), remainingHeight);
         }
 
         private void ClampShapePaletteScroll(
@@ -3475,19 +3462,13 @@ namespace DecoLimitLifter.SmartBuildMode
             float viewportWidth,
             float viewportHeight)
         {
-            float rowHeight = _shapePreviewGrid
-                ? EsuHudLayout.Scale(ShapePreviewGridRowHeight)
-                : EsuHudLayout.Scale(ShapePaletteRowHeight);
+            float rowHeight = EsuHudLayout.Scale(ShapePaletteRowHeight);
             int contentRows;
             if (_shapePreviewGrid)
             {
-                float cardWidth = EsuHudLayout.Scale(ShapePreviewGridCardWidth);
-                int columns = Mathf.Max(
-                    1,
-                    Mathf.Min(
-                        ShapePreviewGridColumns,
-                        Mathf.FloorToInt((viewportWidth - EsuHudLayout.Scale(18f)) / cardWidth)));
-                contentRows = Mathf.CeilToInt((rows?.Count ?? 0) / (float)columns);
+                ShapePreviewGridLayout layout = ShapePreviewGridLayoutFor(viewportWidth);
+                rowHeight = layout.RowHeight;
+                contentRows = Mathf.CeilToInt((rows?.Count ?? 0) / (float)layout.Columns);
             }
             else
             {
@@ -3581,41 +3562,35 @@ namespace DecoLimitLifter.SmartBuildMode
             float viewportWidth,
             float viewportHeight)
         {
-            float rowHeight = EsuHudLayout.Scale(ShapePreviewGridRowHeight);
-            float cardWidth = EsuHudLayout.Scale(ShapePreviewGridCardWidth);
-            float cardHeight = EsuHudLayout.Scale(ShapePreviewGridCardHeight);
-            int columns = Mathf.Max(
-                1,
-                Mathf.Min(
-                    ShapePreviewGridColumns,
-                    Mathf.FloorToInt((viewportWidth - EsuHudLayout.Scale(18f)) / cardWidth)));
-            int totalRows = Mathf.CeilToInt(rows.Count / (float)columns);
-            int firstRow = Mathf.Max(0, Mathf.FloorToInt(_shapePaletteScroll.y / rowHeight));
+            ShapePreviewGridLayout layout = ShapePreviewGridLayoutFor(viewportWidth);
+            int totalRows = Mathf.CeilToInt(rows.Count / (float)layout.Columns);
+            int firstRow = Mathf.Max(0, Mathf.FloorToInt(_shapePaletteScroll.y / layout.RowHeight));
             int lastRow = Mathf.Min(
                 totalRows,
-                Mathf.CeilToInt((_shapePaletteScroll.y + viewportHeight) / rowHeight));
+                Mathf.CeilToInt((_shapePaletteScroll.y + viewportHeight) / layout.RowHeight));
             bool canRenderPreview = Event.current != null && Event.current.type == EventType.Repaint;
             if (firstRow > 0)
-                GUILayout.Space(firstRow * rowHeight);
+                GUILayout.Space(firstRow * layout.RowHeight);
             for (int gridRow = firstRow; gridRow < lastRow; gridRow++)
             {
-                GUILayout.BeginHorizontal();
-                for (int column = 0; column < columns; column++)
+                Rect rowRect = GUILayoutUtility.GetRect(
+                    Mathf.Max(1f, viewportWidth),
+                    layout.RowHeight,
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(layout.RowHeight));
+                for (int column = 0; column < layout.Columns; column++)
                 {
-                    int rowIndex = gridRow * columns + column;
+                    int rowIndex = gridRow * layout.Columns + column;
                     if (rowIndex >= rows.Count)
-                    {
-                        GUILayout.Space(cardWidth);
                         continue;
-                    }
 
                     SmartBuildShapePaletteEntry entry = rows[rowIndex];
                     bool active = entry.Descriptor?.Key == _selectedShapeDescriptorKey;
-                    Rect card = GUILayoutUtility.GetRect(
-                        cardWidth,
-                        cardHeight,
-                        GUILayout.Width(cardWidth),
-                        GUILayout.Height(cardHeight));
+                    Rect card = new Rect(
+                        rowRect.x + layout.OuterPadding + column * (layout.CardWidth + layout.Gap),
+                        rowRect.y,
+                        layout.CardWidth,
+                        layout.CardHeight);
                     if (GUI.Button(card, GUIContent.none, active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row))
                         SelectShapeDescriptor(entry.Descriptor);
                     EsuCursorTooltip.Register(card, entry.Descriptor.Tooltip);
@@ -3627,9 +3602,11 @@ namespace DecoLimitLifter.SmartBuildMode
                     }
 
                     int previewPixels = Mathf.Clamp(
-                        Mathf.RoundToInt(ShapePreviewGridTexturePixels * EsuHudLayout.CurrentScale),
+                        Mathf.RoundToInt(Mathf.Max(
+                            EsuHudLayout.Scale(ShapePreviewGridTexturePixels),
+                            Mathf.Min(card.width, layout.PreviewHeight))),
                         64,
-                        128);
+                        160);
                     Texture preview = canRenderPreview
                         ? _itemPreviewRenderer?.GetPreview(entry.Candidate, previewPixels, _shapePreviewSpin)
                         : _itemPreviewRenderer?.GetCachedPreview(entry.Candidate, previewPixels);
@@ -3637,7 +3614,7 @@ namespace DecoLimitLifter.SmartBuildMode
                         card.x + EsuHudLayout.Scale(6f),
                         card.y + EsuHudLayout.Scale(4f),
                         card.width - EsuHudLayout.Scale(12f),
-                        EsuHudLayout.Scale(55f));
+                        layout.PreviewHeight);
                     if (preview != null)
                         GUI.DrawTexture(previewRect, preview, ScaleMode.ScaleToFit, true);
                     else
@@ -3648,15 +3625,47 @@ namespace DecoLimitLifter.SmartBuildMode
                             card.yMax - EsuHudLayout.Scale(26f),
                             card.width - EsuHudLayout.Scale(8f),
                             EsuHudLayout.Scale(22f)),
-                        CompactText(entry.Descriptor.Label, 22),
+                        CompactText(
+                            entry.Descriptor.Label,
+                            Mathf.Clamp(
+                                Mathf.FloorToInt(card.width / EsuHudLayout.Scale(5.8f)),
+                                14,
+                                34)),
                         active ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini);
                 }
-
-                GUILayout.EndHorizontal();
             }
 
             if (lastRow < totalRows)
-                GUILayout.Space((totalRows - lastRow) * rowHeight);
+                GUILayout.Space((totalRows - lastRow) * layout.RowHeight);
+        }
+
+        private static ShapePreviewGridLayout ShapePreviewGridLayoutFor(float viewportWidth)
+        {
+            float outerPadding = EsuHudLayout.Scale(ShapePreviewGridOuterPadding);
+            float gap = EsuHudLayout.Scale(ShapePreviewGridGap);
+            float minCardWidth = EsuHudLayout.Scale(ShapePreviewGridMinCardWidth);
+            float available = Mathf.Max(minCardWidth, viewportWidth - outerPadding * 2f);
+            int columns = Mathf.Max(
+                1,
+                Mathf.FloorToInt((available + gap) / (minCardWidth + gap)));
+            float cardWidth = Mathf.Max(
+                minCardWidth,
+                (available - gap * Mathf.Max(0, columns - 1)) / columns);
+            float cardHeight = Mathf.Clamp(
+                cardWidth * ShapePreviewGridCardAspect,
+                EsuHudLayout.Scale(ShapePreviewGridMinCardHeight),
+                EsuHudLayout.Scale(ShapePreviewGridMaxCardHeight));
+            float previewHeight = Mathf.Max(
+                EsuHudLayout.Scale(52f),
+                cardHeight - EsuHudLayout.Scale(32f));
+            return new ShapePreviewGridLayout(
+                columns,
+                cardWidth,
+                cardHeight,
+                cardHeight + gap,
+                previewHeight,
+                gap,
+                outerPadding);
         }
 
         private void EnsureSelectedShapeAvailable()
@@ -4587,6 +4596,18 @@ namespace DecoLimitLifter.SmartBuildMode
                     : new Color(0.1f, 0.95f, 1f, 1f);
             float width = selectedOriginal ? 3.4f : 2.6f;
 
+            if (piece.IsFixedGeometry &&
+                TryDrawFixedGeometryPiecePreview(
+                    piece,
+                    variant,
+                    occupiedCells,
+                    color,
+                    width,
+                    drawMaterialFill))
+            {
+                return;
+            }
+
             if (piece.ShapeKind != SmartBuildShapeKind.DownSlope)
             {
                 SmartBuildVolume volume = VolumeFromCells(piece.Construct, occupiedCells);
@@ -4609,6 +4630,170 @@ namespace DecoLimitLifter.SmartBuildMode
                 piece.EnumerateSupportCells().Select(variant.Mirror),
                 supportColor,
                 selectedOriginal ? 1.6f : 1.2f);
+        }
+
+        private bool TryDrawFixedGeometryPiecePreview(
+            SmartBuildPiece piece,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
+            Vector3i[] occupiedCells,
+            Color wireColor,
+            float width,
+            bool drawMaterialFill)
+        {
+            IReadOnlyList<SmartBuildPlacement> placements = piece.BuildFixedPlacements(
+                _source,
+                out _);
+            if (placements.Count == 0)
+                return false;
+
+            var mirroredPlacements = new List<SmartBuildPlacement>(placements.Count);
+            for (int index = 0; index < placements.Count; index++)
+            {
+                SmartBuildPlacement mirrored = SmartBuildPieceScene.MirrorPlacement(
+                    placements[index],
+                    variant,
+                    _source);
+                if (mirrored == null)
+                    return false;
+
+                mirroredPlacements.Add(mirrored);
+            }
+
+            IReadOnlyList<SmartBuildInternalFace> internalFaces =
+                BuildInternalPreviewFaces(occupiedCells);
+            var drawnEdges = new HashSet<string>();
+            Color materialColor = wireColor.r > 0.9f && wireColor.g < 0.4f
+                ? new Color(1f, 0.2f, 0.15f, 0.34f)
+                : new Color(1f, 1f, 1f, 0.38f);
+            int exact = Math.Min(mirroredPlacements.Count, MaxExactMeshPreviewPlacements);
+            bool drewAnyPlacementWire = false;
+            for (int index = 0; index < exact; index++)
+            {
+                SmartBuildPlacement placement = mirroredPlacements[index];
+                Matrix4x4 localMatrix = PlacementLocalMatrix(placement);
+                Matrix4x4 worldMatrix = PlacementMatrix(piece.Construct, placement);
+                if (_previewMode == SmartBuildPreviewMode.Material && drawMaterialFill)
+                    _itemPreviewRenderer?.DrawPlacementMesh(placement, worldMatrix, materialColor);
+
+                bool drewWire = _itemPreviewRenderer?.DrawPlacementWire(
+                    placement,
+                    worldMatrix,
+                    localMatrix,
+                    (start, end) => ShouldDrawFixedGeometryPreviewEdge(
+                        start,
+                        end,
+                        internalFaces,
+                        drawnEdges),
+                    wireColor,
+                    width) == true;
+                drewAnyPlacementWire |= drewWire;
+            }
+
+            return drewAnyPlacementWire;
+        }
+
+        private static IReadOnlyList<SmartBuildInternalFace> BuildInternalPreviewFaces(
+            IEnumerable<Vector3i> occupiedCells)
+        {
+            Vector3i[] cells = occupiedCells?.ToArray() ?? Array.Empty<Vector3i>();
+            if (cells.Length <= 1)
+                return Array.Empty<SmartBuildInternalFace>();
+
+            var occupied = new HashSet<string>(
+                cells.Select(DecoLimitLifter.EsuSymmetry.CellKey));
+            var faces = new List<SmartBuildInternalFace>();
+            for (int index = 0; index < cells.Length; index++)
+            {
+                Vector3i cell = cells[index];
+                AddInternalFaceIfOccupied(
+                    faces,
+                    occupied,
+                    cell,
+                    new Vector3i(cell.x + 1, cell.y, cell.z),
+                    DecorationEditAxis.X,
+                    cell.x + 0.5f,
+                    DecorationEditAxis.Y,
+                    cell.y - 0.5f,
+                    cell.y + 0.5f,
+                    DecorationEditAxis.Z,
+                    cell.z - 0.5f,
+                    cell.z + 0.5f);
+                AddInternalFaceIfOccupied(
+                    faces,
+                    occupied,
+                    cell,
+                    new Vector3i(cell.x, cell.y + 1, cell.z),
+                    DecorationEditAxis.Y,
+                    cell.y + 0.5f,
+                    DecorationEditAxis.X,
+                    cell.x - 0.5f,
+                    cell.x + 0.5f,
+                    DecorationEditAxis.Z,
+                    cell.z - 0.5f,
+                    cell.z + 0.5f);
+                AddInternalFaceIfOccupied(
+                    faces,
+                    occupied,
+                    cell,
+                    new Vector3i(cell.x, cell.y, cell.z + 1),
+                    DecorationEditAxis.Z,
+                    cell.z + 0.5f,
+                    DecorationEditAxis.X,
+                    cell.x - 0.5f,
+                    cell.x + 0.5f,
+                    DecorationEditAxis.Y,
+                    cell.y - 0.5f,
+                    cell.y + 0.5f);
+            }
+
+            return faces;
+        }
+
+        private static void AddInternalFaceIfOccupied(
+            ICollection<SmartBuildInternalFace> faces,
+            ICollection<string> occupied,
+            Vector3i cell,
+            Vector3i neighbor,
+            DecorationEditAxis normalAxis,
+            float coordinate,
+            DecorationEditAxis axisA,
+            float minA,
+            float maxA,
+            DecorationEditAxis axisB,
+            float minB,
+            float maxB)
+        {
+            if (faces == null || occupied == null ||
+                !occupied.Contains(DecoLimitLifter.EsuSymmetry.CellKey(cell)) ||
+                !occupied.Contains(DecoLimitLifter.EsuSymmetry.CellKey(neighbor)))
+            {
+                return;
+            }
+
+            faces.Add(new SmartBuildInternalFace(
+                normalAxis,
+                coordinate,
+                axisA,
+                minA,
+                maxA,
+                axisB,
+                minB,
+                maxB));
+        }
+
+        private static bool ShouldDrawFixedGeometryPreviewEdge(
+            Vector3 start,
+            Vector3 end,
+            IReadOnlyList<SmartBuildInternalFace> internalFaces,
+            ISet<string> drawnEdges)
+        {
+            for (int index = 0; index < internalFaces.Count; index++)
+            {
+                if (internalFaces[index].Contains(start, end))
+                    return false;
+            }
+
+            return drawnEdges == null || drawnEdges.Add(EdgeKey(start, end));
         }
 
         private void DrawPlanPlacementPreview(
@@ -6092,8 +6277,7 @@ namespace DecoLimitLifter.SmartBuildMode
             AllConstruct construct,
             SmartBuildPlacement placement)
         {
-            Vector3 local = ToVector3(placement.Position);
-            Matrix4x4 localPlacement = Matrix4x4.TRS(local, placement.Rotation, Vector3.one);
+            Matrix4x4 localPlacement = PlacementLocalMatrix(placement);
             try
             {
                 if (construct?.myTransform != null)
@@ -6105,6 +6289,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             try
             {
+                Vector3 local = ToVector3(placement.Position);
                 return Matrix4x4.TRS(
                     construct.SafeLocalToGlobal(local),
                     placement.Rotation,
@@ -6115,6 +6300,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 return localPlacement;
             }
         }
+
+        private static Matrix4x4 PlacementLocalMatrix(SmartBuildPlacement placement) =>
+            Matrix4x4.TRS(ToVector3(placement.Position), placement.Rotation, Vector3.one);
 
         private static Vector3 FocusedConstructLocalCenter(AllConstruct construct)
         {
@@ -6308,6 +6496,99 @@ namespace DecoLimitLifter.SmartBuildMode
             internal DecorationEditAxis[] Axes { get; }
 
             internal int[] Signs { get; }
+        }
+
+        private readonly struct SmartBuildInternalFace
+        {
+            private const float EdgePlaneEpsilon = 0.0025f;
+
+            internal SmartBuildInternalFace(
+                DecorationEditAxis normalAxis,
+                float coordinate,
+                DecorationEditAxis axisA,
+                float minA,
+                float maxA,
+                DecorationEditAxis axisB,
+                float minB,
+                float maxB)
+            {
+                NormalAxis = normalAxis;
+                Coordinate = coordinate;
+                AxisA = axisA;
+                MinA = Mathf.Min(minA, maxA);
+                MaxA = Mathf.Max(minA, maxA);
+                AxisB = axisB;
+                MinB = Mathf.Min(minB, maxB);
+                MaxB = Mathf.Max(minB, maxB);
+            }
+
+            private DecorationEditAxis NormalAxis { get; }
+
+            private float Coordinate { get; }
+
+            private DecorationEditAxis AxisA { get; }
+
+            private float MinA { get; }
+
+            private float MaxA { get; }
+
+            private DecorationEditAxis AxisB { get; }
+
+            private float MinB { get; }
+
+            private float MaxB { get; }
+
+            internal bool Contains(Vector3 start, Vector3 end)
+            {
+                if (Mathf.Abs(AxisComponent(start, NormalAxis) - Coordinate) > EdgePlaneEpsilon ||
+                    Mathf.Abs(AxisComponent(end, NormalAxis) - Coordinate) > EdgePlaneEpsilon)
+                {
+                    return false;
+                }
+
+                Vector3 middle = (start + end) * 0.5f;
+                return InRange(AxisComponent(middle, AxisA), MinA, MaxA) &&
+                       InRange(AxisComponent(middle, AxisB), MinB, MaxB);
+            }
+
+            private static bool InRange(float value, float min, float max) =>
+                value >= min - EdgePlaneEpsilon &&
+                value <= max + EdgePlaneEpsilon;
+        }
+
+        private readonly struct ShapePreviewGridLayout
+        {
+            internal ShapePreviewGridLayout(
+                int columns,
+                float cardWidth,
+                float cardHeight,
+                float rowHeight,
+                float previewHeight,
+                float gap,
+                float outerPadding)
+            {
+                Columns = Math.Max(1, columns);
+                CardWidth = cardWidth;
+                CardHeight = cardHeight;
+                RowHeight = rowHeight;
+                PreviewHeight = previewHeight;
+                Gap = gap;
+                OuterPadding = outerPadding;
+            }
+
+            internal int Columns { get; }
+
+            internal float CardWidth { get; }
+
+            internal float CardHeight { get; }
+
+            internal float RowHeight { get; }
+
+            internal float PreviewHeight { get; }
+
+            internal float Gap { get; }
+
+            internal float OuterPadding { get; }
         }
 
         private sealed class SmartBuildHullEdgeBuilder

@@ -7,6 +7,63 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
+## 1.0.6 - 2026-07-04
+
+### Added
+
+- Added a Decoration Edit Mode viewport right-click context menu for the
+  decoration under the cursor. It can select, switch to Move, Rotate, Scale, or
+  Anchor, duplicate, hide/show the anchor mesh, or delete the decoration.
+- Decoration context-menu deletion now participates in undo/redo and Cancel
+  restores deleted existing decorations before leaving the edit session.
+
+### Changed
+
+- Smart Builder fixed-shape scene wires now use the real FtD item mesh hard
+  edges instead of an aggregate cuboid outline. Shared internal faces are
+  filtered so repeated/tiled preview shapes do not draw inner seams.
+- Decoration Builder Mesh Palette 3D grid now uses the same adaptive card
+  sizing behavior as Smart Builder's Shapes 3D grid.
+- Smart Builder Shapes panel sizing now uses the available panel space more
+  aggressively, and the 3D grid palette adapts its columns, card size, preview
+  image size, and scroll bounds to the current panel width.
+- Surface Builder Extra Tools now sizes its scroll area and material picker from
+  the live panel viewport instead of a fixed list height.
+- Surface Builder Extra Tools now opens the material override list by default.
+- Surface Builder paint color is now shared across Draw and Extra Tools, tints
+  previews before placement, and can be assigned per surface face with the face
+  color shown in the draft list.
+- Surface Builder bridge selection now reuses an already selected edge as the
+  first bridge edge, so only the second edge needs Shift-clicking.
+- ESU mode hotkeys now treat the profiled vanilla settings binding as the
+  authoritative input once loaded, so remapping actions such as Toggle
+  Decoration Edit Mode away from `Ctrl+D` works across sessions.
+- Surface Builder Extra Tools generated placements now orient from the clicked
+  block face normal rather than the camera direction.
+- The packaged Steam/player readme was rewritten into a shorter
+  Workshop-friendly BBCode description.
+- Release-channel documentation now treats
+  `[b]Mod latest version X.Y.Z[/b]` as the preferred Workshop update line while
+  keeping support for the older plain-text form.
+
+### Fixed
+
+- Fixed the Decoration Edit Hide mesh button so it hides only the selected
+  decoration's anchor/tether block mesh, matching the advanced mimic UI, instead
+  of switching the whole craft to decoration-only view.
+- Fixed the Decoration/Surface View submenu draw order so it renders in the
+  foreground over editor panels and the ESU console.
+- Fixed ESU Console and Log foreground priority in Smart Builder so it matches
+  Decoration Edit and Surface Builder behavior.
+- Fixed Smart Builder fixed-shape previews, such as wedges, corners,
+  transitions, facing slopes, and offset slopes, drawing as cuboid wireframes.
+- Fixed Smart Builder 3D grid palette cards staying fixed to a narrow two-column
+  layout when the Shapes panel had more available width.
+- Fixed packaging so the developer-only Smart Builder HUD notes are no longer
+  included in the shippable mod folder.
+- Fixed Workshop update checks failing to parse BBCode-wrapped
+  `Mod latest version` lines.
+
 ## 1.0.5 - 2026-07-03
 
 ### Added
@@ -65,8 +122,8 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Notes
 
-- Steam Workshop descriptions now need a `Mod latest version 1.0.5` line so
-  installed copies can check whether a newer Workshop version exists.
+- Steam Workshop descriptions now use a `[b]Mod latest version 1.0.5[/b]`
+  line so installed copies can check whether a newer Workshop version exists.
 
 ## 1.0.4 - 2026-07-01
 

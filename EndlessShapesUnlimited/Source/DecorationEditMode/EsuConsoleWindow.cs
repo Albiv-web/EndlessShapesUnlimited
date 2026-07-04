@@ -21,6 +21,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float MinHeight = 220f;
         private const float MaxScreenWidthFactor = 0.88f;
         private const float MaxScreenHeightFactor = 0.78f;
+        private static readonly int ForegroundWindowId =
+            "EndlessShapesUnlimited.EsuConsoleWindow.Foreground".GetHashCode();
 
         private static Rect _rect;
         private static Vector2 _scroll;
@@ -63,9 +65,39 @@ namespace DecoLimitLifter.DecorationEditMode
             EnsureRect();
             HandleDrag();
             HandleResize();
-            DrawPanel();
+            DrawPanel(_rect);
             _rect = ClampRect(_rect);
             EsuHudLayout.DrawResizeGrip(_rect, leftEdge: false);
+            EsuCursorTooltip.Register(HeaderDragRect(), "Drag to move the ESU console.");
+            EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(_rect, leftEdge: false), "Drag to resize the ESU console.");
+        }
+
+        internal static void DrawForegroundWindow()
+        {
+            if (!_open)
+                return;
+
+            EnsureRect();
+            HandleDrag();
+            HandleResize();
+            int previousDepth = GUI.depth;
+            GUI.depth = Math.Min(previousDepth, -10000);
+            try
+            {
+                _rect = GUI.Window(
+                    ForegroundWindowId,
+                    _rect,
+                    DrawForegroundWindowContents,
+                    GUIContent.none,
+                    GUIStyle.none);
+                GUI.BringWindowToFront(ForegroundWindowId);
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
+            }
+
+            _rect = ClampRect(_rect);
             EsuCursorTooltip.Register(HeaderDragRect(), "Drag to move the ESU console.");
             EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(_rect, leftEdge: false), "Drag to resize the ESU console.");
         }
@@ -179,10 +211,17 @@ namespace DecoLimitLifter.DecorationEditMode
                 EsuHudLayout.Scale(34f));
         }
 
-        private static void DrawPanel()
+        private static void DrawForegroundWindowContents(int id)
         {
-            GUI.Box(_rect, GUIContent.none, DecorationEditorTheme.Panel);
-            Rect inner = EsuHudLayout.PanelInnerRect(_rect);
+            Rect localRect = new Rect(0f, 0f, Mathf.Max(1f, _rect.width), Mathf.Max(1f, _rect.height));
+            DrawPanel(localRect);
+            EsuHudLayout.DrawResizeGrip(localRect, leftEdge: false);
+        }
+
+        private static void DrawPanel(Rect rect)
+        {
+            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            Rect inner = EsuHudLayout.PanelInnerRect(rect);
             GUILayout.BeginArea(inner);
             DrawHeader(inner.width);
             DecorationEditorTheme.Separator();

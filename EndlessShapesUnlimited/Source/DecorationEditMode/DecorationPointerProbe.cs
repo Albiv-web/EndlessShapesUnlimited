@@ -41,6 +41,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float MaxDistance = 650f;
         private const float Step = 0.2f;
         private const float SurfaceInset = 0.08f;
+        private const float SurfaceNormalMinimumOffset = 0.18f;
         private const int BoundaryRefinementIterations = 10;
         internal const float MeshPlacementCraftBubbleRadius = 100f;
 
@@ -196,7 +197,7 @@ namespace DecoLimitLifter.DecorationEditMode
             bool previousResolved = TryFindBlockAtWorld(
                 previousWorld,
                 previousWorld,
-                -direction,
+                Vector3.zero,
                 AnchorResolutionMode.Strict,
                 out _);
             int steps = Mathf.CeilToInt((limits.EndDistance - startDistance) / Step);
@@ -205,11 +206,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 float distance = Mathf.Min(limits.EndDistance, startDistance + index * Step);
                 Vector3 world = ray.origin + direction * distance;
                 if (TryFindBlockAtWorld(
-                        world,
-                        world,
-                        -direction,
-                        AnchorResolutionMode.Strict,
-                        out hit))
+                    world,
+                    world,
+                    Vector3.zero,
+                    AnchorResolutionMode.Strict,
+                    out hit))
                 {
                     Vector3 reportedWorld = previousResolved
                         ? world
@@ -219,13 +220,13 @@ namespace DecoLimitLifter.DecorationEditMode
                             sample => TryFindBlockAtWorld(
                                 sample,
                                 sample,
-                                -direction,
+                                Vector3.zero,
                                 AnchorResolutionMode.Strict,
                                 out _));
                     if (TryFindBlockAtWorld(
                             world,
                             reportedWorld,
-                            -direction,
+                            Vector3.zero,
                             AnchorResolutionMode.Strict,
                             out hit))
                     {
@@ -235,7 +236,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     return TryFindBlockAtWorld(
                         world,
                         world,
-                        -direction,
+                        Vector3.zero,
                         AnchorResolutionMode.Strict,
                         out hit);
                 }
@@ -516,11 +517,82 @@ namespace DecoLimitLifter.DecorationEditMode
                     continue;
 
                 bestDistance = distance;
-                best = new DecorationPointerHit(construct, anchor, reportedLocal, reportedWorld, worldNormal);
+                Vector3 resolvedWorldNormal = ResolveWorldNormal(
+                    construct,
+                    anchor,
+                    reportedLocal,
+                    worldNormal);
+                best = new DecorationPointerHit(construct, anchor, reportedLocal, reportedWorld, resolvedWorldNormal);
             }
 
             hit = best;
             return hit != null;
+        }
+
+        internal static bool TryGetLocalFaceNormal(
+            Vector3i anchor,
+            Vector3 localHit,
+            out Vector3 normal)
+        {
+            normal = Vector3.zero;
+            if (!DecorationEditMath.IsFinite(localHit))
+                return false;
+
+            Vector3 center = new Vector3(anchor.x, anchor.y, anchor.z);
+            Vector3 offset = localHit - center;
+            float x = Mathf.Abs(offset.x);
+            float y = Mathf.Abs(offset.y);
+            float z = Mathf.Abs(offset.z);
+            if (x < SurfaceNormalMinimumOffset &&
+                y < SurfaceNormalMinimumOffset &&
+                z < SurfaceNormalMinimumOffset)
+            {
+                return false;
+            }
+
+            if (x >= y && x >= z)
+            {
+                normal = offset.x >= 0f ? Vector3.right : Vector3.left;
+                return true;
+            }
+
+            if (y >= z)
+            {
+                normal = offset.y >= 0f ? Vector3.up : Vector3.down;
+                return true;
+            }
+
+            normal = offset.z >= 0f ? Vector3.forward : Vector3.back;
+            return true;
+        }
+
+        private static Vector3 ResolveWorldNormal(
+            AllConstruct construct,
+            Vector3i anchor,
+            Vector3 reportedLocal,
+            Vector3 worldNormal)
+        {
+            if (DecorationEditMath.IsFinite(worldNormal) && worldNormal.sqrMagnitude > 0.0001f)
+                return worldNormal.normalized;
+
+            if (!TryGetLocalFaceNormal(anchor, reportedLocal, out Vector3 localNormal))
+                return Vector3.up;
+
+            try
+            {
+                if (construct?.myTransform != null)
+                {
+                    Vector3 transformed = construct.myTransform.TransformDirection(localNormal);
+                    if (DecorationEditMath.IsFinite(transformed) && transformed.sqrMagnitude > 0.0001f)
+                        return transformed.normalized;
+                }
+            }
+            catch
+            {
+                // Fall back to local axes below.
+            }
+
+            return localNormal;
         }
 
         private static bool TryResolveAnchor(

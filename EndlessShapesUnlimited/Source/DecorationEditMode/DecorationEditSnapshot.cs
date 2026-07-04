@@ -18,6 +18,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Orientation = decoration.Orientation.Us;
             MeshGuid = decoration.MeshGuid.Us;
             Color = decoration.Color.Us;
+            HideOriginalMesh = decoration.HideOriginalMesh.Us;
             MaterialReplacement = decoration.MaterialReplacement.Us;
         }
 
@@ -32,6 +33,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal Guid MeshGuid { get; }
 
         internal int Color { get; }
+
+        internal bool HideOriginalMesh { get; }
 
         internal Guid MaterialReplacement { get; }
 
@@ -65,6 +68,7 @@ namespace DecoLimitLifter.DecorationEditMode
             decoration.Orientation.Us = Orientation;
             decoration.MeshGuid.Us = MeshGuid;
             decoration.Color.Us = Color;
+            decoration.HideOriginalMesh.Us = HideOriginalMesh;
             decoration.MaterialReplacement.Us = MaterialReplacement;
             decoration.Changed();
             return true;
@@ -81,6 +85,7 @@ namespace DecoLimitLifter.DecorationEditMode
                    SameVector(Orientation, decoration.Orientation.Us) &&
                    MeshGuid == decoration.MeshGuid.Us &&
                    Color == decoration.Color.Us &&
+                   HideOriginalMesh == decoration.HideOriginalMesh.Us &&
                    MaterialReplacement == decoration.MaterialReplacement.Us;
         }
 

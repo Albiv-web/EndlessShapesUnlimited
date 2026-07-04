@@ -65,6 +65,22 @@ namespace DecoLimitLifter.DecorationEditMode
         }
     }
 
+    internal struct SurfaceFaceStyle
+    {
+        internal SurfaceFaceStyle(int colorIndex)
+        {
+            ColorIndex = Mathf.Clamp(colorIndex, 0, 31);
+        }
+
+        internal int ColorIndex { get; }
+
+        internal bool SameAs(SurfaceFaceStyle other) =>
+            ColorIndex == other.ColorIndex;
+
+        internal static SurfaceFaceStyle FromSettings(SurfaceDecorationSettings settings) =>
+            new SurfaceFaceStyle(settings?.ColorIndex ?? 0);
+    }
+
     internal struct SurfaceEdge
     {
         internal SurfaceEdge(int a, int b)
@@ -180,6 +196,7 @@ namespace DecoLimitLifter.DecorationEditMode
             AllConstruct construct,
             IReadOnlyList<Vector3> points,
             IReadOnlyList<SurfaceFace> faces,
+            IReadOnlyList<SurfaceFaceStyle> faceStyles,
             IReadOnlyList<int> manualFaceSelection,
             IReadOnlyList<int> freeTriangleSelection,
             IReadOnlyList<SurfaceEdge> bridgeEdgeSelection,
@@ -195,6 +212,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Construct = construct;
             Points = (points ?? Array.Empty<Vector3>()).ToArray();
             Faces = (faces ?? Array.Empty<SurfaceFace>()).ToArray();
+            FaceStyles = (faceStyles ?? Array.Empty<SurfaceFaceStyle>()).ToArray();
             ManualFaceSelection = (manualFaceSelection ?? Array.Empty<int>()).ToArray();
             FreeTriangleSelection = (freeTriangleSelection ?? Array.Empty<int>()).ToArray();
             BridgeEdgeSelection = (bridgeEdgeSelection ?? Array.Empty<SurfaceEdge>()).ToArray();
@@ -213,6 +231,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal Vector3[] Points { get; }
 
         internal SurfaceFace[] Faces { get; }
+
+        internal SurfaceFaceStyle[] FaceStyles { get; }
 
         internal int[] ManualFaceSelection { get; }
 
@@ -250,6 +270,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 !(Settings == null ? other.Settings == null : Settings.SameAs(other.Settings)) ||
                 Points.Length != other.Points.Length ||
                 Faces.Length != other.Faces.Length ||
+                FaceStyles.Length != other.FaceStyles.Length ||
                 ManualFaceSelection.Length != other.ManualFaceSelection.Length ||
                 FreeTriangleSelection.Length != other.FreeTriangleSelection.Length ||
                 BridgeEdgeSelection.Length != other.BridgeEdgeSelection.Length)
@@ -271,6 +292,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     return false;
                 }
+            }
+
+            for (int index = 0; index < FaceStyles.Length; index++)
+            {
+                if (!FaceStyles[index].SameAs(other.FaceStyles[index]))
+                    return false;
             }
 
             for (int index = 0; index < ManualFaceSelection.Length; index++)
@@ -309,6 +336,7 @@ namespace DecoLimitLifter.DecorationEditMode
     {
         private readonly List<Vector3> _points = new List<Vector3>();
         private readonly List<SurfaceFace> _faces = new List<SurfaceFace>();
+        private readonly List<SurfaceFaceStyle> _faceStyles = new List<SurfaceFaceStyle>();
         private readonly List<int> _manualFaceSelection = new List<int>(3);
         private readonly List<int> _freeTriangleSelection = new List<int>(3);
         private readonly List<SurfaceEdge> _bridgeEdgeSelection = new List<SurfaceEdge>(2);
@@ -318,6 +346,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal IReadOnlyList<Vector3> Points => _points;
 
         internal IReadOnlyList<SurfaceFace> Faces => _faces;
+
+        internal IReadOnlyList<SurfaceFaceStyle> FaceStyles => _faceStyles;
 
         internal SurfaceDecorationSettings Settings { get; } = new SurfaceDecorationSettings();
 
@@ -373,6 +403,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 SurfaceFace face = _faces[index];
                 mirrored._faces.Add(flipWinding ? face.Flipped() : face);
+                mirrored._faceStyles.Add(FaceStyleAt(index));
             }
 
             if (HasSharedAnchor)
@@ -390,6 +421,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Construct = null;
             _points.Clear();
             _faces.Clear();
+            _faceStyles.Clear();
             _freeTriangleSelection.Clear();
             HasSharedAnchor = false;
             SharedAnchor = default;
@@ -462,6 +494,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 Construct,
                 _points,
                 _faces,
+                _faceStyles,
                 _manualFaceSelection,
                 _freeTriangleSelection,
                 _bridgeEdgeSelection,
@@ -480,9 +513,12 @@ namespace DecoLimitLifter.DecorationEditMode
             if (snapshot == null)
                 return;
 
+            snapshot.Settings?.Restore(Settings);
             Construct = snapshot.Construct;
             _points.AddRange(snapshot.Points ?? Array.Empty<Vector3>());
             _faces.AddRange(snapshot.Faces ?? Array.Empty<SurfaceFace>());
+            _faceStyles.AddRange(snapshot.FaceStyles ?? Array.Empty<SurfaceFaceStyle>());
+            NormalizeFaceStyleCount();
             _manualFaceSelection.AddRange(snapshot.ManualFaceSelection ?? Array.Empty<int>());
             _freeTriangleSelection.AddRange(snapshot.FreeTriangleSelection ?? Array.Empty<int>());
             _bridgeEdgeSelection.AddRange(snapshot.BridgeEdgeSelection ?? Array.Empty<SurfaceEdge>());
@@ -493,7 +529,6 @@ namespace DecoLimitLifter.DecorationEditMode
             HasSharedAnchor = snapshot.HasSharedAnchor;
             SharedAnchor = snapshot.SharedAnchor;
             SharedAnchorSelected = snapshot.SharedAnchorSelected;
-            snapshot.Settings?.Restore(Settings);
         }
 
         internal bool TryAddPoint(
@@ -760,6 +795,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
+            if (_bridgeEdgeSelection.Count == 0 &&
+                SelectedEdge.IsValid &&
+                !SelectedEdge.Matches(edge.A, edge.B) &&
+                IsBridgeEdgeStillValid(SelectedEdge))
+            {
+                _bridgeEdgeSelection.Add(SelectedEdge);
+            }
+
             _bridgeEdgeSelection.Add(edge);
             _manualFaceSelection.Clear();
             SelectionKind = SurfaceSelectionKind.Edge;
@@ -827,6 +870,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (SelectionKind == SurfaceSelectionKind.Face && SelectedFace >= 0 && SelectedFace < _faces.Count)
             {
                 _faces.RemoveAt(SelectedFace);
+                RemoveFaceStyleAt(SelectedFace);
                 ClearSelection();
                 message = "Surface face deleted.";
                 return true;
@@ -835,7 +879,15 @@ namespace DecoLimitLifter.DecorationEditMode
             if (SelectionKind == SurfaceSelectionKind.Point && SelectedPoint >= 0 && SelectedPoint < _points.Count)
             {
                 int removed = SelectedPoint;
-                _faces.RemoveAll(face => face.Contains(removed));
+                for (int index = _faces.Count - 1; index >= 0; index--)
+                {
+                    if (!_faces[index].Contains(removed))
+                        continue;
+
+                    _faces.RemoveAt(index);
+                    RemoveFaceStyleAt(index);
+                }
+
                 for (int index = 0; index < _faces.Count; index++)
                 {
                     SurfaceFace face = _faces[index];
@@ -877,8 +929,38 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
 
             _faces.Add(face);
+            _faceStyles.Add(SurfaceFaceStyle.FromSettings(Settings));
             SelectFace(_faces.Count - 1);
             return true;
+        }
+
+        internal SurfaceFaceStyle FaceStyleAt(int index) =>
+            index >= 0 && index < _faceStyles.Count
+                ? _faceStyles[index]
+                : SurfaceFaceStyle.FromSettings(Settings);
+
+        internal bool TrySetFaceColor(int index, int color, out string message)
+        {
+            message = null;
+            if (index < 0 || index >= _faces.Count)
+            {
+                message = "Select a surface face before assigning a face color.";
+                return false;
+            }
+
+            NormalizeFaceStyleCount();
+            _faceStyles[index] = new SurfaceFaceStyle(color);
+            SelectFace(index);
+            message = "Surface face color set to " + Mathf.Clamp(color, 0, 31).ToString(CultureInfo.InvariantCulture) + ".";
+            return true;
+        }
+
+        internal void SetAllFaceColors(int color)
+        {
+            NormalizeFaceStyleCount();
+            var style = new SurfaceFaceStyle(color);
+            for (int index = 0; index < _faceStyles.Count; index++)
+                _faceStyles[index] = style;
         }
 
         private bool TryOrientFace(SurfaceFace candidate, out SurfaceFace oriented, out string message) =>
@@ -994,9 +1076,28 @@ namespace DecoLimitLifter.DecorationEditMode
                 orientedFaces.Add(oriented);
             }
 
-            _faces.AddRange(orientedFaces);
+            for (int index = 0; index < orientedFaces.Count; index++)
+            {
+                _faces.Add(orientedFaces[index]);
+                _faceStyles.Add(SurfaceFaceStyle.FromSettings(Settings));
+            }
+
             SelectFace(_faces.Count - 1);
             return true;
+        }
+
+        private void RemoveFaceStyleAt(int index)
+        {
+            if (index >= 0 && index < _faceStyles.Count)
+                _faceStyles.RemoveAt(index);
+        }
+
+        private void NormalizeFaceStyleCount()
+        {
+            while (_faceStyles.Count < _faces.Count)
+                _faceStyles.Add(SurfaceFaceStyle.FromSettings(Settings));
+            while (_faceStyles.Count > _faces.Count)
+                _faceStyles.RemoveAt(_faceStyles.Count - 1);
         }
 
         private bool TryOrientBridgeFace(
@@ -1661,6 +1762,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 draft.Points[face.B],
                 draft.Points[face.C]
             };
+            SurfaceFaceStyle faceStyle = draft.FaceStyleAt(faceIndex);
             ValidateSurfaceFace(vertices, faceIndex);
             Vector3 parentNormal = IntendedFaceNormal(vertices, draft.Settings.NormalReversal);
             if (parentNormal == Vector3.zero)
@@ -1680,7 +1782,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         draft.Settings.FaceThickness,
                         draft.Settings.FaceThickness,
                         draft.Settings.StructureBlockType),
-                    Mathf.Clamp(draft.Settings.ColorIndex, 0, 31));
+                    Mathf.Clamp(faceStyle.ColorIndex, 0, 31));
 
                 Guid meshGuid;
                 Vector3 center;

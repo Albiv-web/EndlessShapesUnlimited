@@ -1,3 +1,4 @@
+using System;
 using BrilliantSkies.Core.Constants;
 using BrilliantSkies.PlayerProfiles;
 using DecoLimitLifter.SerializationHud;
@@ -17,7 +18,7 @@ namespace DecoLimitLifter
         internal static bool ConsumeSwitchModeDown()
         {
             bool down = ReadSwitchModeDown();
-            if (!down && !IsSwitchModeDefaultHeld())
+            if (!ReadSwitchModeHeld())
                 _switchModeRequiresRelease = false;
 
             if (_switchModeRequiresRelease ||
@@ -35,7 +36,7 @@ namespace DecoLimitLifter
         internal static bool ConsumeDecorationEditToggleDown()
         {
             bool down = ReadDecorationEditToggleDown();
-            if (!down && !IsDecorationEditToggleDefaultHeld())
+            if (!ReadDecorationEditToggleHeld())
                 _decorationEditToggleRequiresRelease = false;
 
             if (_decorationEditToggleRequiresRelease ||
@@ -53,7 +54,7 @@ namespace DecoLimitLifter
         internal static bool ConsumeSmartBuildToggleDown()
         {
             bool down = ReadSmartBuildToggleDown();
-            if (!down && !IsSmartBuildToggleDefaultHeld())
+            if (!ReadSmartBuildToggleHeld())
                 _smartBuildToggleRequiresRelease = false;
 
             if (_smartBuildToggleRequiresRelease ||
@@ -68,59 +69,57 @@ namespace DecoLimitLifter
             return true;
         }
 
-        private static bool ReadSwitchModeDown()
+        private static bool ReadSwitchModeDown() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.SwitchEsuBuildMode,
+                KeyInputEventType.Down,
+                () => Input.GetKeyDown(KeyCode.Tab));
+
+        private static bool ReadSwitchModeHeld() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.SwitchEsuBuildMode,
+                KeyInputEventType.Held,
+                () => Input.GetKey(KeyCode.Tab));
+
+        private static bool ReadDecorationEditToggleDown() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.ToggleDecorationEditMode,
+                KeyInputEventType.Down,
+                IsDecorationEditToggleDefaultDown);
+
+        private static bool ReadDecorationEditToggleHeld() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.ToggleDecorationEditMode,
+                KeyInputEventType.Held,
+                IsDecorationEditToggleDefaultHeld);
+
+        private static bool ReadSmartBuildToggleDown() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.ToggleSmartBuildMode,
+                KeyInputEventType.Down,
+                IsSmartBuildToggleDefaultDown);
+
+        private static bool ReadSmartBuildToggleHeld() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.ToggleSmartBuildMode,
+                KeyInputEventType.Held,
+                IsSmartBuildToggleDefaultHeld);
+
+        private static bool ReadProfileKey(
+            SerializationHudKeyInput input,
+            KeyInputEventType eventType,
+            Func<bool> fallback)
         {
-            bool switchDown = false;
             try
             {
-                switchDown = SerializationHudKeyMap.Instance.Bool(
-                    SerializationHudKeyInput.SwitchEsuBuildMode,
-                    KeyInputEventType.Down);
+                return SerializationHudKeyMap.Instance.Bool(input, eventType);
             }
             catch
             {
-                // Keep the fallback below available if the profile key map is not ready.
+                // The direct keyboard fallback is only for early boot/profile failures.
+                return fallback != null && fallback();
             }
-
-            return switchDown || Input.GetKeyDown(KeyCode.Tab);
         }
-
-        private static bool ReadDecorationEditToggleDown()
-        {
-            bool toggleDown = false;
-            try
-            {
-                toggleDown = SerializationHudKeyMap.Instance.Bool(
-                    SerializationHudKeyInput.ToggleDecorationEditMode,
-                    KeyInputEventType.Down);
-            }
-            catch
-            {
-                // Keep the fallback below available if the profile key map is not ready.
-            }
-
-            return toggleDown || IsDecorationEditToggleDefaultDown();
-        }
-
-        private static bool ReadSmartBuildToggleDown()
-        {
-            bool toggleDown = false;
-            try
-            {
-                toggleDown = SerializationHudKeyMap.Instance.Bool(
-                    SerializationHudKeyInput.ToggleSmartBuildMode,
-                    KeyInputEventType.Down);
-            }
-            catch
-            {
-                // Keep the fallback below available if the profile key map is not ready.
-            }
-
-            return toggleDown || IsSmartBuildToggleDefaultDown();
-        }
-
-        private static bool IsSwitchModeDefaultHeld() =>
-            Input.GetKey(KeyCode.Tab);
 
         private static bool IsDecorationEditToggleDefaultDown() =>
             IsControlHeld() &&

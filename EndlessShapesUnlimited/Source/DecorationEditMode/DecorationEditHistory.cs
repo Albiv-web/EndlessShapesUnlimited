@@ -213,6 +213,44 @@ namespace DecoLimitLifter.DecorationEditMode
             session.TryRestoreGeneratorDraftHistory(_after, Label + " redo");
     }
 
+    internal sealed class SurfaceBuilderStyleHistoryCommand : IDecorationEditCommand
+    {
+        private readonly SurfaceDraftSnapshot _surfaceBefore;
+        private readonly SurfaceDraftSnapshot _surfaceAfter;
+        private readonly DecorationGeneratorEditSnapshot _generatorBefore;
+        private readonly DecorationGeneratorEditSnapshot _generatorAfter;
+
+        internal SurfaceBuilderStyleHistoryCommand(
+            string label,
+            SurfaceDraftSnapshot surfaceBefore,
+            SurfaceDraftSnapshot surfaceAfter,
+            DecorationGeneratorEditSnapshot generatorBefore,
+            DecorationGeneratorEditSnapshot generatorAfter)
+        {
+            Label = string.IsNullOrEmpty(label) ? "Edit Surface Builder style" : label;
+            _surfaceBefore = surfaceBefore;
+            _surfaceAfter = surfaceAfter;
+            _generatorBefore = generatorBefore;
+            _generatorAfter = generatorAfter;
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreSurfaceBuilderStyleHistory(
+                _surfaceBefore,
+                _generatorBefore,
+                Label + " undo");
+
+        public bool Redo(DecorationEditSession session) =>
+            session != null &&
+            session.TryRestoreSurfaceBuilderStyleHistory(
+                _surfaceAfter,
+                _generatorAfter,
+                Label + " redo");
+    }
+
     internal sealed class DecorationCreateCommand : IDecorationEditCommand
     {
         private readonly AllConstruct _construct;
@@ -244,6 +282,58 @@ namespace DecoLimitLifter.DecorationEditMode
             if (session == null)
                 return false;
             return session.TryRedoCreatedDecoration(_construct, _created, out _decoration);
+        }
+    }
+
+    internal sealed class DecorationDeleteCommand : IDecorationEditCommand
+    {
+        private readonly AllConstruct _construct;
+        private readonly DecorationEditSnapshot _deleted;
+        private readonly DecorationEditSnapshot _original;
+        private readonly bool _createdInSession;
+        private Decoration _decoration;
+
+        internal DecorationDeleteCommand(
+            AllConstruct construct,
+            Decoration decoration,
+            DecorationEditSnapshot deleted,
+            DecorationEditSnapshot original,
+            bool createdInSession)
+        {
+            Label = "Delete decoration";
+            _construct = construct;
+            _decoration = decoration;
+            _deleted = deleted;
+            _original = original;
+            _createdInSession = createdInSession;
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session)
+        {
+            if (session == null)
+                return false;
+
+            return session.TryUndoDeletedDecoration(
+                _construct,
+                _deleted,
+                _original,
+                _createdInSession,
+                out _decoration);
+        }
+
+        public bool Redo(DecorationEditSession session)
+        {
+            if (session == null)
+                return false;
+
+            return session.TryRedoDeletedDecoration(
+                _construct,
+                ref _decoration,
+                _deleted,
+                _original,
+                _createdInSession);
         }
     }
 

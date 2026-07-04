@@ -438,7 +438,7 @@ namespace DecoLimitLifter.SmartBuildMode
             return MirrorPlacement(placement, variant, null);
         }
 
-        private static SmartBuildPlacement MirrorPlacement(
+        internal static SmartBuildPlacement MirrorPlacement(
             SmartBuildPlacement placement,
             DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
             SmartBuildSource source)
