@@ -1330,6 +1330,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 scaling,
             Vector3 orientation,
             int color,
+            StructureBlockType structureBlockType,
             Vector3 thicknessAxis,
             Vector3 transformThicknessAxis,
             float transformPlaneDistance)
@@ -1340,6 +1341,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Scaling = scaling;
             Orientation = orientation;
             Color = color;
+            StructureBlockType = structureBlockType;
             ThicknessAxis = thicknessAxis;
             TransformThicknessAxis = transformThicknessAxis;
             TransformPlaneDistance = transformPlaneDistance;
@@ -1356,6 +1358,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal Vector3 Orientation { get; }
 
         internal int Color { get; }
+
+        internal StructureBlockType StructureBlockType { get; }
 
         internal Vector3 ThicknessAxis { get; }
 
@@ -1773,12 +1777,16 @@ namespace DecoLimitLifter.DecorationEditMode
             foreach (PolygonData polygon in polygons)
             {
                 Vector3 thicknessAxis = DecorationThicknessAxis(polygon, parentNormal);
+                bool converterNormalReversal = ShouldReversePolygonForConverter(
+                    polygon,
+                    parentNormal,
+                    draft.Settings.NormalReversal);
                 var data = new MimicAndDecorationCommonData();
                 MADCD_PolygonInput.Start(
                     data,
                     polygon,
                     new PolygonDecorationSettings(
-                        draft.Settings.NormalReversal,
+                        converterNormalReversal,
                         draft.Settings.FaceThickness,
                         draft.Settings.FaceThickness,
                         draft.Settings.StructureBlockType),
@@ -1835,10 +1843,27 @@ namespace DecoLimitLifter.DecorationEditMode
                     scaling,
                     orientation,
                     color,
+                    draft.Settings.StructureBlockType,
                     thicknessAxis,
                     transformThicknessAxis,
                     transformPlaneDistance));
             }
+        }
+
+        private static bool ShouldReversePolygonForConverter(
+            PolygonData polygon,
+            Vector3 intendedNormal,
+            bool normalReversal)
+        {
+            if (!normalReversal ||
+                polygon == null ||
+                intendedNormal == Vector3.zero ||
+                polygon.NormalVector == Vector3.zero)
+            {
+                return normalReversal;
+            }
+
+            return Vector3.Dot(polygon.NormalVector, intendedNormal) < 0f;
         }
 
         private static void ValidateSurfaceFace(IReadOnlyList<Vector3> vertices, int faceIndex)

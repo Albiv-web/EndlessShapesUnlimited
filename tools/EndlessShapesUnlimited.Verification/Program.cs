@@ -1375,6 +1375,11 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "WorkshopUpdateNotifier.cs"));
+        string alertTextSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuAlertText.cs"));
         string changelogSource = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"));
         string releaseChannelsSource = File.ReadAllText(Path.Combine(root, "RELEASE_CHANNELS.md"));
         string steamReadmeSource = File.ReadAllText(Path.Combine(
@@ -1391,16 +1396,28 @@ f 0 2 3
             "The mod and verifier reference Steamworks.dll without copying it into the runtime package.");
         Assert(pluginSource.Contains("WorkshopUpdateNotifier.Start(name, version)"),
             "Plugin startup starts the Workshop update notifier after normal startup succeeds.");
+        Assert(alertTextSource.Contains("HudCyan = \"#0DE6FF\"") &&
+               alertTextSource.Contains("\"<color=\" + HudCyan + \">\"") &&
+               pluginSource.Contains("EsuAlertText.HudColorize($\"{name}  v{version.ToString(3)}  Active!\")") &&
+               notifierSource.Contains("EsuAlertText.HudColorize(_modName)") &&
+               notifierSource.Contains("EsuAlertText.HudColorize(\"New version released! v\""),
+            "Main-menu ESU alert rows use the same cyan accent color as the ESU HUD.");
         Assert(notifierSource.Contains("RequestUGCDetails") &&
                notifierSource.Contains("CallResult<SteamUGCRequestUGCDetailsResult_t>") &&
                notifierSource.Contains("LatestVersionPrefix = \"Mod latest version \"") &&
                notifierSource.Contains("StripWorkshopMarkup(line).Trim()") &&
                notifierSource.Contains("MaximumRequests = 5") &&
+               notifierSource.Contains("RequestTimeoutSeconds") &&
+               notifierSource.Contains("HasRequestTimedOut") &&
+               notifierSource.Contains("ScheduleRetry(cancelSteamCall: true)") &&
+               notifierSource.Contains("result.m_details.m_eResult != EResult.k_EResultOK") &&
+               notifierSource.Contains("string.IsNullOrWhiteSpace(result.m_details.m_rgchDescription)") &&
+               notifierSource.Contains("_steamCall?.Cancel()") &&
                notifierSource.Contains("ModProblems.AddModProblem(") &&
                notifierSource.Contains("\"New version released! v\"") &&
                notifierSource.Contains("false);") &&
                notifierSource.Contains("RefreshActiveGuis"),
-            "Workshop update notifier queries Steam UGC, writes a non-error ModProblems row, and refreshes active GUI screens.");
+            "Workshop update notifier queries Steam UGC, retries transient failed/empty responses with a timeout, writes a non-error ModProblems row, and refreshes active GUI screens.");
         Assert(changelogSource.Contains("Steam Workshop update notifier") &&
                changelogSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
                releaseChannelsSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
@@ -2789,6 +2806,16 @@ f 0 2 3
                Math.Abs(EsuSymmetry.MirrorVector(new Vector3(3.25f, 4.5f, 5.75f), DecorationEditAxis.Z, 3).z - 0.25f) < 0.001f,
             "ESU symmetry mirrors cells and decoration centers across X/Y/Z grid planes.");
 
+        var transformMirror = new EsuSymmetry.SymmetryVariant(new[] { DecorationEditAxis.X });
+        Vector3 sourceScale = new Vector3(2f, 3f, 4f);
+        Vector3 mirroredScale = transformMirror.MirrorScale(sourceScale);
+        Vector3 mirroredDirection = transformMirror.MirrorDirection(new Vector3(3f, 4f, 5f));
+        Assert(Math.Abs(mirroredScale.x + sourceScale.x) < 0.0001f &&
+               Math.Abs(mirroredScale.y - sourceScale.y) < 0.0001f &&
+               Math.Abs(mirroredScale.z - sourceScale.z) < 0.0001f &&
+               VectorApproximately(mirroredDirection, new Vector3(-3f, 4f, 5f), 0.0001f),
+            "ESU symmetry mirrors decoration directions and signed scale.");
+
         EsuSymmetry.Clear();
         EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 1);
         EsuSymmetry.SetPlaneForTests(DecorationEditAxis.Y, 2);
@@ -2935,6 +2962,8 @@ f 0 2 3
         string handleSceneInputSource = ExtractMethodSource(sessionSource, "HandleSceneInput").Replace("\r\n", "\n");
         string drawMeshPreviewGridSource = ExtractMethodSource(sessionSource, "DrawMeshPreviewGrid").Replace("\r\n", "\n");
         string meshPreviewGridLayoutSource = ExtractMethodSource(sessionSource, "MeshPreviewGridLayoutFor").Replace("\r\n", "\n");
+        string handleEditorKeybindsSource = ExtractMethodSource(sessionSource, "HandleEditorKeybinds").Replace("\r\n", "\n");
+        string readEditorKeyDownSource = ExtractMethodSource(sessionSource, "ReadEditorKeyDown").Replace("\r\n", "\n");
         int toolButtonSignature = sessionSource.IndexOf(
             "private void ToolButton(",
             StringComparison.Ordinal);
@@ -2965,8 +2994,14 @@ f 0 2 3
                buildModeInputGateSource.Contains("return SerializationHudKeyMap.Instance.Bool(input, eventType);") &&
                buildModeInputGateSource.Contains("fallback != null && fallback()") &&
                !buildModeInputGateSource.Contains("return toggleDown ||") &&
-               !buildModeInputGateSource.Contains("return switchDown ||"),
-            "Decoration Edit Mode has repository-profile keybinds, rejects direct opens over Smart Builder, and uses the shared one-press profile input gate with defaults only as a profile-failure fallback.");
+               !buildModeInputGateSource.Contains("return switchDown ||") &&
+               handleEditorKeybindsSource.Contains("SerializationHudKeyInput.UndoDecorationEdit") &&
+               handleEditorKeybindsSource.Contains("SerializationHudKeyInput.RedoDecorationEdit") &&
+               !handleEditorKeybindsSource.Contains("Input.GetKeyDown(KeyCode.Z)") &&
+               !handleEditorKeybindsSource.Contains("Input.GetKeyDown(KeyCode.Y)") &&
+               readEditorKeyDownSource.Contains("return SerializationHudKeyMap.Instance.Bool(") &&
+               readEditorKeyDownSource.Contains("fallback != null && fallback()"),
+            "Decoration Edit Mode has repository-profile keybinds, rejects direct opens over Smart Builder, and uses shared profiled input gates with defaults only as profile-failure fallbacks.");
         Assert(!sessionSource.Contains("SetGameControlOptions(") &&
                 focusGuardSource.Contains("internal static class EsuInputFocusGuard") &&
                 !focusGuardSource.Contains("SetGameControlOptions(") &&
@@ -3176,13 +3211,20 @@ f 0 2 3
                sessionSource.Contains("EsuCursorTooltip.Draw()") &&
                smartBuildSessionSource.Contains("EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed())") &&
                smartBuildSessionSource.Contains("EsuCursorTooltip.Draw()") &&
+               smartBuildSessionSource.Contains("SmartGUILayoutButton") &&
+               smartBuildSessionSource.Contains("SmartGUIButton") &&
+               smartBuildSessionSource.Contains("EsuCursorTooltip.RegisterLast(content?.tooltip)") &&
+               smartBuildSessionSource.Contains("EsuCursorTooltip.Register(rect, content?.tooltip)") &&
                sessionSource.Contains("Filter meshes by name or GUID.") &&
                sessionSource.Contains("Show the mesh palette as a virtualized 3D thumbnail grid.") &&
                sessionSource.Contains("Select this decoration.") &&
                sessionSource.Contains("Hide the inspector panel.") &&
                notificationSource.Contains("Open the ESU runtime log.") &&
                notificationSource.Contains("Show the full notification text.") &&
-               smartBuildSessionSource.Contains("Drag to resize the Smart Builder panel."),
+               smartBuildSessionSource.Contains("Drag to resize the Smart Builder panel.") &&
+               smartBuildSessionSource.Contains("Previous Smart Builder material.") &&
+               smartBuildSessionSource.Contains("Toggle occupied-cell handling.") &&
+               smartBuildSessionSource.Contains("Show Smart Builder shapes as rotating item thumbnails."),
             "ESU cursor tooltips use a 1-second ESU-owned delayed overlay, clamp near the cursor, reset on editing input, and are wired through Deco, Surface, Smart Builder, notifications, and common panel controls.");
 
         Assert(sessionSource.Contains("DrawEditorShell") &&
@@ -3408,7 +3450,8 @@ f 0 2 3
                sessionSource.Contains("TryUndoDeletedDecoration") &&
                sessionSource.Contains("TryRedoDeletedDecoration") &&
                sessionSource.Contains("_deletedDecorations.Count > 0") &&
-               historySource.Contains("DecorationDeleteCommand"),
+               historySource.Contains("DecorationDeleteCommand") &&
+               historySource.Contains("DecorationDeleteBatchCommand"),
             "Decoration Edit Mode right-click opens a foreground decoration context menu with duplicate/delete actions and undo/cancel-safe delete tracking.");
 
         string drawDecorationContextMenuSource = ExtractMethodSource(sessionSource, "DrawDecorationContextMenu").Replace("\r\n", "\n");
@@ -3487,6 +3530,11 @@ f 0 2 3
                sessionSource.Contains("DrawPlacementGhost") &&
                sessionSource.Contains("UpdatePlacementGhost") &&
                sessionSource.Contains("new GameObject(\"ESU Decoration Placement Ghost\")") &&
+               sessionSource.Contains("\"ESU Decoration Symmetry Placement Ghost\"") &&
+               sessionSource.Contains("UpdateSymmetryPlacementGhosts") &&
+               sessionSource.Contains("DrawSymmetryPlacementGhostHints") &&
+               ExtractMethodSource(sessionSource, "DrawPlacementGhost").Contains("DrawSymmetryPlacementGhostHints(color)") &&
+               sessionSource.Contains("HideSymmetryPlacementGhosts") &&
                sessionSource.Contains("ShadowCastingMode.Off") &&
                sessionSource.Contains("DestroyPlacementGhost") &&
                previewSource.Contains("internal Mesh GetMesh") &&
@@ -3525,6 +3573,8 @@ f 0 2 3
                sessionSource.Contains("DrawBottomAnchorFollowToggle") &&
                sessionSource.Contains("Anchor follow: on") &&
                sessionSource.Contains("Anchor follow range") &&
+               sessionSource.Contains("DrawSymmetryAnchorGizmoHints") &&
+               ExtractMethodSource(sessionSource, "DrawSymmetryAnchorGizmoHints").Contains("variant.Mirror(_anchorPreviewTether)") &&
                sessionSource.Contains("AnchorMenuPreferredWidth") &&
                sessionSource.Contains("AnchorMenuNeedsPresetWrap") &&
                sessionSource.Contains("DrawAnchorFollowDistanceButton") &&
@@ -3604,20 +3654,41 @@ f 0 2 3
                symmetrySource.Contains("TryPlacePending") &&
                symmetrySource.Contains("MirrorCell") &&
                symmetrySource.Contains("MirrorVector") &&
+               symmetrySource.Contains("MirrorDirection") &&
+               symmetrySource.Contains("MirrorScale") &&
+               symmetrySource.Contains("MirrorEuler") &&
+               symmetrySource.Contains("Quaternion.LookRotation") &&
+               symmetrySource.Contains("AxisSign(DecorationEditAxis.X)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.X)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z)") &&
                sessionSource.Contains("TryBuildDecorationPlacementPlans") &&
+               sessionSource.Contains("DecorationPlacementTemplate") &&
+               sessionSource.Contains("plan.Scaling") &&
+               sessionSource.Contains("plan.Orientation") &&
+               sessionSource.Contains("TryBuildDecorationDeletePlans") &&
+               historySource.Contains("Delete mirrored decorations") &&
+               sessionSource.Contains("trackTargetEdits: false") &&
+               sessionSource.Contains("DrawSymmetryAnchorGizmoHints") &&
+               sessionSource.Contains("DrawSymmetryPlacementGhostHints") &&
+               sessionSource.Contains("UpdateSymmetryPlacementGhosts") &&
+               sessionSource.Contains("ApplyPlacementGhostTransform") &&
                sessionSource.Contains("Symmetry placement rejected because a mirrored tether block is missing") &&
                sessionSource.Contains("DecorationCreateBatchCommand") &&
+               sessionSource.Contains("DecorationDeleteBatchCommand") &&
                sessionSource.Contains("BeginSymmetryFollow") &&
                sessionSource.Contains("TryFindSymmetryCounterpart") &&
                sessionSource.Contains("SelectedAnchorDecorations(expectedAnchor)") &&
                sessionSource.Contains("GetDecorationLocalCenter(decoration)") &&
                sessionSource.Contains("TryApplySymmetryFollow") &&
+               sessionSource.Contains("TryApplyDecorationSymmetryTransform") &&
                sessionSource.Contains("RecordSymmetrySnapshotEdit") &&
                sessionSource.Contains("RecordSnapshotEdit(\"Move decoration\", before, symmetryFollow)") &&
+               sessionSource.Contains("RecordSnapshotEdit(\"Rotate decoration\", before, symmetryFollow)") &&
+               sessionSource.Contains("RecordSnapshotEdit(\"Scale decoration\", before, symmetryFollow)") &&
                sessionSource.Contains("RecordSnapshotEdit(\"Set position\", before, symmetryFollow)") &&
+               sessionSource.Contains("RecordSnapshotEdit(\"Set rotation\", before, symmetryFollow)") &&
+               sessionSource.Contains("RecordSnapshotEdit(\"Set scale\", before, symmetryFollow)") &&
                sessionSource.Contains("ApplyAnchorShift(shift, before, symmetryFollow)") &&
                sessionSource.Contains("Symmetry follow skipped: ") &&
                sessionSource.Contains("Symmetry follow rejected: ") &&
@@ -3729,11 +3800,17 @@ f 0 2 3
 
         Assert(sessionSource.Contains("TryHandleEsuNumberShortcut()") &&
                sessionSource.Contains("CycleCreateSelectShortcut()") &&
+               sessionSource.Contains("CycleSurfaceCreateTool()") &&
                sessionSource.Contains("CycleTransformToolShortcut()") &&
                sessionSource.Contains("CycleCommonViewModeShortcut()") &&
                sessionSource.Contains("SetSurfaceBuilderTool(SurfaceBuilderTool.Draw)") &&
-               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
-               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
+               sessionSource.Contains("SurfaceCreateToolCycle") &&
+               sessionSource.Contains("SurfaceExtraTool.PartialCircle") &&
+               sessionSource.Contains("SurfaceExtraTool.Cone2D") &&
+               sessionSource.Contains("SurfaceExtraTool.Sphere") &&
+               sessionSource.Contains("SurfaceExtraTool.PartialSphere") &&
+               sessionSource.Contains("SurfaceExtraTool.Cone") &&
+               sessionSource.Contains("SurfaceExtraTool.Frustum") &&
                sessionSource.Contains("SetSurfaceExtraTool(SurfaceExtraTool.Path)") &&
                sessionSource.Contains("SetSurfaceExtraTool(SurfaceExtraTool.Circle)") &&
                sessionSource.Contains("SetActiveTool(DecorationEditorTool.Select)") &&
@@ -3752,8 +3829,9 @@ f 0 2 3
                smartBuildSessionSource.Contains("ArmAddMode();") &&
                smartBuildSessionSource.Contains("SetActiveToolFromShortcut(next)") &&
                smartBuildSessionSource.Contains("SmartBuildPreviewMode.Wireframe") &&
-               smartBuildSessionSource.Contains("SmartBuildPreviewMode.Material"),
-            "Decoration Edit Mode, Surface Builder, and Smart Builder bind 1/2/3 to create/select, transform, and display/preview cycles.");
+               smartBuildSessionSource.Contains("SmartBuildPreviewMode.Material") &&
+               smartBuildSessionSource.Contains("SmartBuildPreviewMode.MaterialOnly"),
+            "Decoration Edit Mode, Surface Builder, and Smart Builder bind 1/2/3 to create/select, transform, and display/preview cycles, including Smart Builder material-only preview.");
 
         Assert(sessionSource.Contains("SerializationForecastCalculator.Calculate") &&
                sessionSource.Contains("FlexibleFloatParser.TryParse") &&
@@ -3782,7 +3860,7 @@ f 0 2 3
                transformSnapSource.Contains("DefaultDecorationScaleSnap = 0.05f") &&
                transformSnapSource.Contains("DecorationMoveMinimum = 0.001f") &&
                transformSnapSource.Contains("DecorationRotateMinimum = 0.1f") &&
-               transformSnapSource.Contains("DecorationScaleMinimum = 0.001f") &&
+               transformSnapSource.Contains("DecorationScaleMinimum = 0.00001f") &&
                transformSnapSource.Contains("DecorationScaleMaximum = float.PositiveInfinity") &&
                transformSnapSource.Contains("value.ToString(\"0.#####\"") &&
                transformSnapSource.Contains("internal static class EsuTransformSnapHud") &&
@@ -3808,6 +3886,11 @@ f 0 2 3
                sessionSource.Contains("DecorationScaleBounds.AllowExtendedScale(decoration)") &&
                mimicAndDecorationCommonDataSource.Contains("DecorationScaleBounds.AllowExtendedScale(decoration)") &&
                sessionSource.Contains("value.ToString(\"0.#####\"") &&
+               sessionSource.Contains("MinimumNonZeroScale = 0.00001f") &&
+               sessionSource.Contains("private static bool IsValidScaleComponent(float value)") &&
+               sessionSource.Contains("value == 0f || Mathf.Abs(value) >= MinimumNonZeroScale") &&
+               sessionSource.Contains("Scale must be finite; each axis must be 0 or at least 0.00001.") &&
+               sessionSourceNormalized.Contains("Mathf.Max(\n                    0f,\n                    DecorationEditMath.Snap(1f + multiDelta, DecorationScaleSnap))") &&
                sessionSource.Contains("Mode: Deco | Tab to Surface when clean") &&
                sessionSource.Contains("Mode: Surface | Tab to Build when clean") &&
                sessionSource.Contains("GUI.Label(slots.Title, surface ? \"Surface Builder\" : \"Decoration Edit Mode\"") &&
@@ -3859,6 +3942,16 @@ f 0 2 3
                sessionSource.Contains("DrawPaintColorButton") &&
                sessionSource.Contains("DrawPaintSwatchLayout") &&
                sessionSource.Contains("PaintPreviewColor") &&
+               sessionSource.Contains("ColorsRestricted?.GetColor(colorIndex)") &&
+               sessionSource.Contains("VisiblePaintPreviewColor") &&
+               sessionSource.Contains("PaintDisplayColor") &&
+               sessionSource.Contains("PaintColorApplies") &&
+               sessionSource.Contains("BlendPaintOverMaterialPreview") &&
+               sessionSource.Contains("color.a = ClampVisiblePaintChannel(color.a);") &&
+               sessionSource.Contains("case 0: return new Color(0.01f, 0f, 0f, 0f);") &&
+               !sessionSource.Contains("Color color = Color.Lerp(materialColor, paintColor, 0.45f);") &&
+               sessionSource.Contains("DecodeVisiblePaintRedChannel") &&
+               sessionSource.Contains("FallbackPaintPreviewColor") &&
                sessionSource.Contains("PaintNearest") &&
                sessionSource.Contains("TryFindNearestDecoration") &&
                sessionSource.Contains("TryPaintPointedBlock") &&
@@ -4381,6 +4474,15 @@ f 0 2 3
             "Surface planner splits a scalene face into co-planar right-triangle decorations with matching final transform planes.");
         Assert(SurfacePlacementsMatchDraftNormal(scalene, plan.Placements),
             "Surface planner keeps scalene split child normals aligned with the parent face normal.");
+        SurfaceDraft flippedScalene = SurfaceDraftForTests(
+            new Vector3(0f, 0f, 0f),
+            new Vector3(2f, 0f, 0f),
+            new Vector3(0.25f, 1.1f, 0f));
+        flippedScalene.Settings.NormalReversal = true;
+        Assert(SurfaceDecorationPlanner.TryPlan(flippedScalene, resolver, out plan, out message) &&
+               SurfacePlacementsMatchDraftNormal(flippedScalene, plan.Placements) &&
+               SurfacePlacementCentersSitBehindDraftNormal(flippedScalene, plan.Placements),
+            "Surface planner keeps normal-flipped split surface centers on the committed side of the source plane.");
 
         SurfaceDraft slantedSeparateTriangles = SlantedTwoTriangleSurfaceDraftForTests();
         Assert(SurfaceDecorationPlanner.TryPlan(slantedSeparateTriangles, resolver, out plan, out message) &&
@@ -4447,6 +4549,7 @@ f 0 2 3
         coloredFaces.AddPointForTests(new Vector3(1f, 0f, 0f));
         coloredFaces.AddPointForTests(new Vector3(0f, 1f, 0f));
         coloredFaces.AddPointForTests(new Vector3(1f, 1f, 0f));
+        coloredFaces.Settings.StructureBlockType = StructureBlockType.HeavyArmour;
         coloredFaces.Settings.ColorIndex = 2;
         bool firstColoredFace = coloredFaces.TryAddFace(0, 1, 2, out message);
         coloredFaces.Settings.ColorIndex = 7;
@@ -4460,8 +4563,9 @@ f 0 2 3
                coloredFaces.FaceStyleAt(1).ColorIndex == 7 &&
                coloredPlan &&
                plan.Placements.Any(placement => placement.Color == 5) &&
-               plan.Placements.Any(placement => placement.Color == 7),
-            "Surface draft faces carry independent paint colors into planned decoration placements.");
+               plan.Placements.Any(placement => placement.Color == 7) &&
+               plan.Placements.All(placement => placement.StructureBlockType == StructureBlockType.HeavyArmour),
+            "Surface draft faces carry independent paint colors and the selected structure material into planned decoration placements.");
         coloredFaces.SetAllFaceColors(11);
         Assert(coloredFaces.FaceStyles.Count == coloredFaces.Faces.Count &&
                coloredFaces.FaceStyles.All(style => style.ColorIndex == 11) &&
@@ -5023,11 +5127,31 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditHistory.cs"));
+        string meshPreviewRendererSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationMeshPreviewRenderer.cs"));
         string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
         string sharedAnchorDragSource = ExtractMethodSource(sessionSource, "TryUpdateSharedAnchorDrag");
         string surfaceExtraToolsPanelSource = ExtractMethodSource(sessionSource, "DrawSurfaceExtraToolsPanel");
         string generatorMaterialEditorSource = ExtractMethodSource(sessionSource, "DrawGeneratorMaterialEditor");
         string generatorMaterialListViewportHeightSource = ExtractMethodSource(sessionSource, "GeneratorMaterialListViewportHeight");
+        string drawSurfaceOverlaySource = ExtractMethodSource(sessionSource, "DrawSurfaceOverlay");
+        string drawSurfacePlanMeshPreviewSource = ExtractMethodSource(sessionSource, "DrawSurfacePlanMeshPreview");
+        string surfacePreviewMaterialSource = ExtractMethodSource(sessionSource, "SurfacePreviewMaterial");
+        string surfacePlacementMatrixSource = ExtractMethodSource(sessionSource, "SurfacePlacementMatrix");
+        string createFaceFromSelectedSurfacePointsSource = ExtractMethodSource(sessionSource, "CreateFaceFromSelectedSurfacePoints");
+        string commitSharedAnchorDragSource = ExtractMethodSource(sessionSource, "CommitSharedAnchorDrag");
+        string drawSurfaceSameAnchorPreviewSource = ExtractMethodSource(sessionSource, "DrawSurfaceSameAnchorPreview");
+        string placeSurfacePlanSource = ExtractMethodSource(sessionSource, "PlaceSurfacePlan");
+        int surfacePreviewSafeTransformIndex = surfacePlacementMatrixSource.IndexOf(
+            "construct.SafeLocalToGlobal(centerLocal)",
+            StringComparison.Ordinal);
+        int surfacePreviewFullMatrixFallbackIndex = surfacePlacementMatrixSource.IndexOf(
+            "construct.myTransform.localToWorldMatrix * localPlacement",
+            StringComparison.Ordinal);
         string symmetrySource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -5050,6 +5174,7 @@ f 0 2 3
                plannerSource.Contains("IntendedFaceNormal") &&
                plannerSource.Contains("AlignChildVerticesToParentNormal") &&
                plannerSource.Contains("AlignAxisWithIntendedNormal") &&
+               plannerSource.Contains("ShouldReversePolygonForConverter") &&
                plannerSource.Contains("normal did not match the source face normal") &&
                plannerSource.Contains("RoundPlacementPosition") &&
                !plannerSource.Contains("DecorationEditMath.Snap(center - ToVector3(anchor))") &&
@@ -5073,9 +5198,8 @@ f 0 2 3
                sessionSource.Contains("HandleSurfaceSceneInput") &&
                sessionSource.Contains("DrawSurfaceOverlay") &&
                sessionSource.Contains("SurfaceBuilderTool") &&
-               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Draw") &&
-               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
-               sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
+               sessionSource.Contains("SurfaceCreateToolButton") &&
+               sessionSource.Contains("SurfaceCreateToolLabel") &&
                sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Move") &&
                sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Rotate") &&
                sessionSource.Contains("SurfaceToolButton(SurfaceBuilderTool.Scale") &&
@@ -5243,8 +5367,38 @@ f 0 2 3
                sessionSource.Contains("| color {4}") &&
                sessionSource.Contains("SurfaceDraftPaintColor") &&
                sessionSource.Contains("DrawMirroredSurfaceOverlay") &&
+               plannerSource.Contains("internal StructureBlockType StructureBlockType") &&
+               plannerSource.Contains("draft.Settings.StructureBlockType") &&
+               sessionSource.Contains("_surfacePreviewMaterials") &&
+               sessionSource.Contains("SurfaceMaterialPreviewColor") &&
+               sessionSource.Contains("SurfacePlacementMatrix") &&
+               meshPreviewRendererSource.Contains("internal Material GetMaterial") &&
+               meshPreviewRendererSource.Contains("definition.GetMaterial()") &&
+               drawSurfacePlanMeshPreviewSource.Contains("_previewRenderer?.GetMesh(entry)") &&
+               drawSurfacePlanMeshPreviewSource.Contains("SurfacePreviewMaterial(placement, entry)") &&
+               drawSurfacePlanMeshPreviewSource.Contains("Graphics.DrawMesh(mesh, SurfacePlacementMatrix") &&
+               drawSurfaceOverlaySource.Contains("bool drewPreviewMeshes = hasPreview && DrawSurfacePlanMeshPreview(_surfacePlan)") &&
+               drawSurfaceOverlaySource.Contains("bool drawDraftFill = !hasPreview || !drewPreviewMeshes") &&
+               drawSurfaceOverlaySource.Contains("if (drawDraftFill)") &&
+               surfacePreviewMaterialSource.Contains("_previewRenderer?.GetMaterial(entry)") &&
+               surfacePreviewMaterialSource.Contains("new Material(sourceMaterial)") &&
+               surfacePreviewMaterialSource.Contains("SurfaceMaterialPreviewColor") &&
                historySource.Contains("SurfaceBuilderStyleHistoryCommand"),
-            "Surface Builder shares paint color across Draw and Extra Tools, supports per-face surface colors, shows face colors in the draft list, and tints previews from selected paint.");
+            "Surface Builder shares paint color across Draw and Extra Tools, supports per-face surface colors, shows face colors in the draft list, and renders planned mesh/material previews from selected paint.");
+
+        Assert(surfacePlacementMatrixSource.Contains("Quaternion localRotation = Quaternion.Euler(placement.Orientation)") &&
+               surfacePlacementMatrixSource.Contains("ConstructRotation(construct) * localRotation") &&
+               surfacePreviewSafeTransformIndex >= 0 &&
+               surfacePreviewFullMatrixFallbackIndex > surfacePreviewSafeTransformIndex,
+            "Surface Builder material previews use construct local-to-global position/rotation before the full matrix fallback, avoiding subobject scale or shear distortion.");
+
+        Assert(!createFaceFromSelectedSurfacePointsSource.Contains("RebuildSurfacePreview") &&
+               !commitSharedAnchorDragSource.Contains("RebuildSurfacePreview") &&
+               drawSurfaceSameAnchorPreviewSource.Contains("TryBuildSurfacePlan(out plan") &&
+               !drawSurfaceSameAnchorPreviewSource.Contains("RebuildSurfacePreview") &&
+               placeSurfacePlanSource.Contains("TryBuildSurfacePlan(out SurfaceDecorationPlan plan") &&
+               !placeSurfacePlanSource.Contains("RebuildSurfacePreview"),
+            "Surface Builder only stores material preview plans from explicit Preview actions; create-face, same-anchor guides, and Place use invalidation or temporary plans.");
 
         Assert(surfaceExtraToolsPanelSource.Contains("_surfaceExtraToolsViewportHeight = Mathf.Max") &&
                surfaceExtraToolsPanelSource.Contains("GUILayout.Height(_surfaceExtraToolsViewportHeight)") &&
@@ -5287,9 +5441,10 @@ f 0 2 3
         string surfaceRightControlsBlock = surfaceRightControls >= 0 && surfaceRightControlsElse > surfaceRightControls
             ? sessionSourceNormalized.Substring(surfaceRightControls, surfaceRightControlsElse - surfaceRightControls)
             : string.Empty;
-        Assert(surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Draw") &&
-               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
-               surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
+        Assert(surfaceTopbarBlock.Contains("SurfaceCreateToolButton") &&
+               !surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Draw") &&
+               !surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Path") &&
+               !surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Circle") &&
                surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Move") &&
                surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Rotate") &&
                surfaceTopbarBlock.Contains("SurfaceToolButton(SurfaceBuilderTool.Scale") &&
@@ -5299,7 +5454,7 @@ f 0 2 3
                !surfaceRightControlsBlock.Contains("\"Pal\"") &&
                !surfaceRightControlsBlock.Contains("\"Out\"") &&
                !surfaceRightControlsBlock.Contains("\"Anch\""),
-            "Surface Builder top bar exposes Draw/Path/Circle/Move/Rotate/Scale/View and only the Tools panel toggle.");
+            "Surface Builder top bar exposes one cycling create tool plus Move/Rotate/Scale/View and only the Tools panel toggle.");
 
         int drawLeftPanel = sessionSourceNormalized.IndexOf("private void DrawLeftPanelStack", StringComparison.Ordinal);
         int drawRightPanel = sessionSourceNormalized.IndexOf("private void DrawRightPanel", StringComparison.Ordinal);
@@ -5544,6 +5699,31 @@ f 0 2 3
         return true;
     }
 
+    private static bool SurfacePlacementCentersSitBehindDraftNormal(
+        SurfaceDraft draft,
+        IReadOnlyList<SurfaceDecorationPlacement> placements)
+    {
+        if (draft == null || placements == null || placements.Count == 0 || draft.Faces.Count == 0)
+            return false;
+
+        SurfaceFace face = draft.Faces[0];
+        Vector3 normal = SurfaceDraftFirstNormal(draft);
+        if (normal == Vector3.zero)
+            return false;
+
+        float plane = Vector3.Dot(normal, draft.Points[face.A]);
+        float expectedCenterPlane = plane - draft.Settings.FaceThickness * 0.5f;
+        for (int index = 0; index < placements.Count; index++)
+        {
+            Vector3 center = PlacementCenter(placements[index]);
+            float centerPlane = Vector3.Dot(normal, center);
+            if (Mathf.Abs(centerPlane - expectedCenterPlane) > 0.002f)
+                return false;
+        }
+
+        return true;
+    }
+
     private static bool SurfacePlacementsMatchAnyDraftFaceNormal(
         SurfaceDraft draft,
         IReadOnlyList<SurfaceDecorationPlacement> placements)
@@ -5768,6 +5948,12 @@ f 0 2 3
         Mathf.Abs(left.x - right.x) <= 0.0001f &&
         Mathf.Abs(left.y - right.y) <= 0.0001f &&
         Mathf.Abs(left.z - right.z) <= 0.0001f;
+
+    private static Vector3 PlacementCenter(SurfaceDecorationPlacement placement) =>
+        new Vector3(
+            placement.Anchor.x,
+            placement.Anchor.y,
+            placement.Anchor.z) + placement.Positioning;
 
     private static bool SameCell(Vector3i left, Vector3i right) =>
         left.x == right.x &&
@@ -6465,6 +6651,7 @@ f 0 2 3
         string smartBuilderHudDocSource = ReadDocumentationText(
             root,
             "SMART_BUILDER_HUD.md");
+        string readFreezeDownSource = ExtractMethodSource(vanillaInputBridgeSource, "ReadFreezeDown").Replace("\r\n", "\n");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
                profileSource.Contains("SwitchEsuBuildMode") &&
@@ -6624,13 +6811,25 @@ f 0 2 3
                sessionSource.Contains("HandleSmartStackDividerDrag") &&
                sessionSource.Contains("DrawSmartStackDividerGrip"),
             "Smart Builder material changes clear preview caches and the Shapes panel uses persisted Palette/Selected/Scene split dividers.");
+        string drawPlacementPreviewSource = ExtractMethodSource(sessionSource, "DrawPlacementPreview");
+        string tryDrawFixedGeometryPiecePreviewSource = ExtractMethodSource(sessionSource, "TryDrawFixedGeometryPiecePreview");
+        string drawSlopeStepHullSource = ExtractMethodSource(sessionSource, "DrawSlopeStepHull");
+        string drawPlacementGhostSource = ExtractMethodSource(sessionSource, "DrawPlacementGhost");
         Assert(sessionSource.Contains("DrawPlanPlacementPreview") &&
                sessionSource.Contains("plan.Placements") &&
                sessionSource.Contains("DrawPlacementPreview(plan.Construct") &&
                sessionSource.Contains("drawWire: false") &&
                sessionSource.Contains("drewExactMaterialMeshes") &&
                sessionSource.Contains("DrawPiecePreview(piece, variant, invalid, drawn, drawMaterialFill: !drewExactMaterialMeshes)") &&
-               ExtractMethodSource(sessionSource, "DrawPlacementPreview").Contains("if (!drawWire)") &&
+               draftSource.Contains("MaterialOnly") &&
+               sessionSource.Contains("SmartBuildPreviewMode.MaterialOnly") &&
+               sessionSource.Contains("PreviewModeStripButton(new Rect(x, y, EsuHudLayout.Scale(96f), buttonHeight), SmartBuildPreviewMode.MaterialOnly, \"Mat only\"") &&
+               sessionSource.Contains("ShouldDrawMaterialPreview") &&
+               sessionSource.Contains("ShouldDrawPreviewWire") &&
+               drawPlacementPreviewSource.Contains("if (!drawWire || !ShouldDrawPreviewWire())") &&
+               drawPlacementPreviewSource.Contains("ShouldDrawMaterialPreview()") &&
+               tryDrawFixedGeometryPiecePreviewSource.Contains("if (ShouldDrawPreviewWire())") &&
+               drawSlopeStepHullSource.Contains("if (!ShouldDrawPreviewWire())") &&
                sessionSource.Contains("PlacementMatrix") &&
                sessionSource.Contains("Matrix4x4.TRS(ToVector3(placement.Position), placement.Rotation") &&
                sessionSource.Contains("TryDrawFixedGeometryPiecePreview") &&
@@ -6641,14 +6840,15 @@ f 0 2 3
                sessionSource.Contains("SmartBuildPieceScene.MirrorPlacement") &&
                sceneSource.Contains("internal static SmartBuildPlacement MirrorPlacement") &&
                ExtractMethodSource(sessionSource, "DrawPiecePreview").Contains("piece.IsFixedGeometry") &&
-               ExtractMethodSource(sessionSource, "TryDrawFixedGeometryPiecePreview").Contains("BuildFixedPlacements") &&
-               ExtractMethodSource(sessionSource, "TryDrawFixedGeometryPiecePreview").Contains("DrawPlacementWire(") &&
-               ExtractMethodSource(sessionSource, "TryDrawFixedGeometryPiecePreview").Contains("ShouldDrawFixedGeometryPreviewEdge") &&
-               ExtractMethodSource(sessionSource, "TryDrawFixedGeometryPiecePreview").Contains("MaxExactMeshPreviewPlacements") &&
-               ExtractMethodSource(sessionSource, "DrawPlacementGhost").Contains("ghost.BuildFixedPlacements") &&
-               ExtractMethodSource(sessionSource, "DrawPlacementGhost").Contains("slopeGhost.BuildFixedPlacements") &&
+               tryDrawFixedGeometryPiecePreviewSource.Contains("BuildFixedPlacements") &&
+               tryDrawFixedGeometryPiecePreviewSource.Contains("DrawPlacementWire(") &&
+               tryDrawFixedGeometryPiecePreviewSource.Contains("ShouldDrawFixedGeometryPreviewEdge") &&
+               tryDrawFixedGeometryPiecePreviewSource.Contains("MaxExactMeshPreviewPlacements") &&
+               drawPlacementGhostSource.Contains("ghost.BuildFixedPlacements") &&
+               drawPlacementGhostSource.Contains("slopeGhost.BuildFixedPlacements") &&
+               drawPlacementGhostSource.Contains("ShouldDrawPreviewWire()") &&
                itemPreviewRendererSource.Contains("mesh.triangles"),
-            "Smart Builder mesh-accurate material previews and fixed-shape scene wires are derived from commit placements, with shared-face filtering to avoid inner wire seams.");
+            "Smart Builder mesh-accurate material previews and fixed-shape scene wires are derived from commit placements, with shared-face filtering and a material-only preview mode that suppresses wire overlays.");
         string handleMouseSource = ExtractMethodSource(sessionSource, "HandleMouse");
         Assert(handleMouseSource.Contains("EndDrag(resetDraft: true)") &&
                handleMouseSource.Contains("CancelAddMode()") &&
@@ -6663,11 +6863,14 @@ f 0 2 3
                tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
                vanillaInputBridgeSource.Contains("KeyInputsFtd.Freeze") &&
+               readFreezeDownSource.Contains("return FtdKeyMap.Instance.Bool(") &&
+               readFreezeDownSource.Contains("return Input.GetKeyDown(KeyCode.CapsLock);") &&
+               !readFreezeDownSource.Contains("|| Input.GetKeyDown(KeyCode.CapsLock)") &&
                pluginSource.Contains("ResolveBuildFreezeTarget") &&
                smartInputScopeSource.Contains("ControlHeldWhileActive") &&
                smartInputScopeSource.Contains("DecoLimitLifter.EsuInputState.IsControlHeld()") &&
                smartInputScopeSource.Contains("ControlHeldWhileActive ||"),
-            "Smart Block Builder shares the modal build/Ctrl input guard and ESU has a one-frame vanilla freeze fallback for Caps Lock while ESU owns the HUD.");
+            "Smart Block Builder shares the modal build/Ctrl input guard and ESU forwards vanilla freeze through the profiled key map with Caps Lock only as a profile-failure fallback.");
         Assert(geometrySource.Contains("internal Vector3[] GetLocalCorners()") &&
                geometrySource.Contains("internal static SmartBuildVolume FromBounds") &&
                !ExtractMethodSource(geometrySource, "GetWorldCorners").Contains("EnumerateCells"),
@@ -6714,6 +6917,7 @@ f 0 2 3
                 sessionSource.Contains("PreviewModeStripButton(new Rect") &&
                 sessionSource.Contains("SmartBuildPreviewMode.Wireframe, \"Wireframe\"") &&
                 sessionSource.Contains("SmartBuildPreviewMode.Material, \"Material\"") &&
+                sessionSource.Contains("SmartBuildPreviewMode.MaterialOnly, \"Mat only\"") &&
                 sessionSource.Contains("TryPickEdge") &&
                 sessionSource.Contains("TryPickCorner") &&
                 sessionSource.Contains("TryGetEdgeWorldCorners") &&
@@ -6858,15 +7062,26 @@ f 0 2 3
                overlaySource.Contains("OverlayQuad"),
             "Smart Block Builder uses a runtime multi-piece scene, arms Add from the palette, switches to Scale after placement, has readable bottom-handle controls, draws placement ghosts and outer slope/support hulls, avoids right-click scene clearing, commits connected placements first, tolerates middle-mouse cursor input, and shares the ESU toolbar notification slot.");
         string smartStatusStripSource = ExtractMethodSource(sessionSource, "DrawStatusStrip");
+        string smartStatusRightLabelSource = ExtractMethodSource(sessionSource, "DrawStatusRightLabel");
+        string notifySmartPlanIssueSource = ExtractMethodSource(sessionSource, "NotifyPlanIssueIfNeeded");
+        string smartPlanIssueMessageSource = ExtractMethodSource(sessionSource, "TryGetPlanIssueMessage");
         Assert(sessionSource.Contains("Mathf.Clamp(Screen.height * 0.13f") &&
                !sessionSource.Contains("private const float StatusHeight = 56f") &&
                smartStatusStripSource.Contains("DrawSmartBottomHeader") &&
                smartStatusStripSource.Contains("DrawCyanLine") &&
                smartStatusStripSource.Contains("DrawSmartBottomControls") &&
                !smartStatusStripSource.Contains("GUILayout.BeginHorizontal") &&
+               sessionSource.Contains("_lastPlanIssueNotificationKey") &&
+               notifySmartPlanIssueSource.Contains("EsuHudNotifications.ShowSystem(") &&
+               notifySmartPlanIssueSource.Contains("\"Smart Builder\"") &&
+               smartPlanIssueMessageSource.Contains("_plan.FailureReason.Trim()") &&
+               smartPlanIssueMessageSource.Contains("Smart Builder skipped {0:N0} occupied preview cell{1}.") &&
+               smartPlanIssueMessageSource.Contains("EsuHudNotificationKind.Warning") &&
+               smartStatusRightLabelSource.Contains("text = \"Blocked\"") &&
+               !smartStatusRightLabelSource.Contains("_plan.FailureReason") &&
                sessionSource.Contains("\"Smart Block Builder\"") &&
                sessionSource.Contains("\"Mode: Smart | Tab to Deco when clean\""),
-            "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm instead of the old short GUILayout strip.");
+            "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm, keeps plan warnings in the shared notification/log flow, and does not clip full failure reasons into the status label.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
                smartInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&

@@ -129,7 +129,7 @@ namespace DecoLimitLifter
 
             ModProblems.AllModProblems.Remove(modPath);
             ModProblems.AddModProblem(
-                $"{name}  v{version.ToString(3)}  Active!",
+                EsuAlertText.HudColorize($"{name}  v{version.ToString(3)}  Active!"),
                 modPath,
                 string.Empty,
                 false);

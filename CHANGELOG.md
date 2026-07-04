@@ -7,6 +7,59 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
+## 1.0.7 - 2026-07-04
+
+### Added
+
+- Added a Smart Builder `Mat only` preview mode that shows material-family
+  preview faces without the wireframe overlay.
+- Added Smart Builder cursor tooltips for buttons and interactive panel
+  controls, matching Decoration Edit Mode and Surface Builder behavior.
+- Added mirrored Decoration Edit placement and anchor preview hints while
+  symmetry planes are active, so the original and mirrored side can be checked
+  before committing.
+
+### Changed
+
+- Surface Builder previews now draw the actual planned decoration meshes using
+  the selected material and paint color before Apply, while keeping draft
+  wireframes and points visible for editing.
+- Smart Builder blocked-placement and occupied-cell warnings now use the shared
+  ESU HUD notification/log path instead of clipped bottom-right status text.
+- The packaged Steam/player readme was synchronized with the current Workshop
+  description text.
+- Main-menu Alerts entries for ESU now use the same cyan accent color as the
+  in-game ESU HUD.
+- Decoration Edit Mode scale fields now accept `0` on any axis and allow
+  nonzero scale values down to `0.00001`; the scale snap minimum now matches
+  that precision.
+
+### Fixed
+
+- Fixed Decoration Edit symmetry deletion so deleting a decoration while
+  symmetry is active also deletes its mirrored counterpart decorations in the
+  same undoable operation.
+- Fixed mirrored anchor movement visibility and history handling so symmetry
+  anchor edits show the counterpart anchor and keep undo/redo grouped.
+- Fixed ESU undo/redo input so remapping away from `Ctrl+Z` / `Ctrl+Y` does not
+  leave the hardcoded defaults active.
+- Fixed the forwarded vanilla Freeze input so a remapped Freeze key no longer
+  keeps Caps Lock active after the profile key map is loaded.
+- Fixed the Workshop update notifier so stalled Steam detail requests time out
+  and transient failed or empty callbacks retry instead of suppressing update
+  checks until restart.
+- Fixed ESU paint color swatches and preview tints to read the active craft's
+  paint palette instead of a hardcoded color table.
+- Fixed Surface Builder material previews on spin-block and subobject
+  constructs so normal-flipped generated surfaces use the subobject's local
+  position and rotation without inheriting transform scale or shear.
+- Fixed Surface Builder context actions and same-anchor guide overlays
+  implicitly entering material preview mode after Create Face, shared-anchor
+  edits, or helper redraws.
+- Fixed Surface Builder normal-flipped split surfaces double-applying the
+  normal reversal during ES2 polygon conversion, which could corrupt placed
+  decorations on angled spin-block or subobject constructs.
+
 ## 1.0.6 - 2026-07-04
 
 ### Added

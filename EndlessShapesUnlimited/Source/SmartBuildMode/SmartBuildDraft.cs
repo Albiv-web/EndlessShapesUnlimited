@@ -39,7 +39,8 @@ namespace DecoLimitLifter.SmartBuildMode
     internal enum SmartBuildPreviewMode
     {
         Wireframe,
-        Material
+        Material,
+        MaterialOnly
     }
 
     internal sealed class SmartBuildDraft

@@ -19,6 +19,7 @@ namespace DecoLimitLifter
         internal const int MaximumRequests = 5;
 
         private const string UpdateStatusKeySuffix = "::WorkshopUpdate";
+        private const double RequestTimeoutSeconds = 30.0;
         private static readonly Action<ITimeStep> RequestCallback = OnRequestTick;
 
         private static string _modName;
@@ -28,6 +29,7 @@ namespace DecoLimitLifter
         private static int _requestCount;
         private static bool _registered;
         private static bool _requestInFlight;
+        private static DateTime _requestStartedUtc;
         private static CallResult<SteamUGCRequestUGCDetailsResult_t> _steamCall;
 
         internal static void Start(string modName, NetVersion fallbackVersion)
@@ -50,6 +52,7 @@ namespace DecoLimitLifter
 
                 _requestCount = 0;
                 _requestInFlight = false;
+                _requestStartedUtc = DateTime.MinValue;
                 TryUnregister();
                 GameEvents.Twice_Second.RegWithEvent(RequestCallback);
                 _registered = true;
@@ -128,7 +131,11 @@ namespace DecoLimitLifter
         private static void OnRequestTick(ITimeStep timeStep)
         {
             if (_requestInFlight)
+            {
+                if (HasRequestTimedOut())
+                    ScheduleRetry(cancelSteamCall: true);
                 return;
+            }
 
             if (_requestCount >= MaximumRequests)
             {
@@ -151,6 +158,7 @@ namespace DecoLimitLifter
                 _steamCall = new CallResult<SteamUGCRequestUGCDetailsResult_t>(
                     OnWorkshopDetailsReceived);
                 _requestInFlight = true;
+                _requestStartedUtc = DateTime.UtcNow;
                 _steamCall.Set(call);
             }
             catch
@@ -164,10 +172,14 @@ namespace DecoLimitLifter
             bool ioFailure)
         {
             _requestInFlight = false;
-            if (ioFailure)
+            _requestStartedUtc = DateTime.MinValue;
+            _steamCall = null;
+
+            if (ioFailure ||
+                result.m_details.m_eResult != EResult.k_EResultOK ||
+                string.IsNullOrWhiteSpace(result.m_details.m_rgchDescription))
             {
-                if (_requestCount >= MaximumRequests)
-                    TryUnregister();
+                ScheduleRetry(cancelSteamCall: false);
                 return;
             }
 
@@ -185,6 +197,23 @@ namespace DecoLimitLifter
             AddUpdateStatus(workshopVersion);
         }
 
+        private static bool HasRequestTimedOut() =>
+            _requestStartedUtc != DateTime.MinValue &&
+            (DateTime.UtcNow - _requestStartedUtc).TotalSeconds >= RequestTimeoutSeconds;
+
+        private static void ScheduleRetry(bool cancelSteamCall)
+        {
+            _requestInFlight = false;
+            _requestStartedUtc = DateTime.MinValue;
+            if (cancelSteamCall)
+                CancelSteamCall();
+            else
+                _steamCall = null;
+
+            if (_requestCount >= MaximumRequests)
+                TryUnregister();
+        }
+
         private static void AddUpdateStatus(NetVersion workshopVersion)
         {
             try
@@ -192,9 +221,9 @@ namespace DecoLimitLifter
                 string key = UpdateStatusKey;
                 ModProblems.AllModProblems.Remove(key);
                 ModProblems.AddModProblem(
-                    _modName,
+                    EsuAlertText.HudColorize(_modName),
                     key,
-                    "New version released! v" + FormatVersion(workshopVersion),
+                    EsuAlertText.HudColorize("New version released! v" + FormatVersion(workshopVersion)),
                     false);
                 RefreshActiveGuis();
             }
@@ -256,13 +285,24 @@ namespace DecoLimitLifter
 
         private static void TryUnregister()
         {
-            if (!_registered)
-                return;
+            CancelSteamCall();
 
-            try { GameEvents.Twice_Second.UnregWithEvent(RequestCallback); }
-            catch { }
+            if (_registered)
+            {
+                try { GameEvents.Twice_Second.UnregWithEvent(RequestCallback); }
+                catch { }
+            }
+
             _registered = false;
             _requestInFlight = false;
+            _requestStartedUtc = DateTime.MinValue;
+        }
+
+        private static void CancelSteamCall()
+        {
+            try { _steamCall?.Cancel(); }
+            catch { }
+            _steamCall = null;
         }
 
         private static string UpdateStatusKey =>

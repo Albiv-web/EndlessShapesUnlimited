@@ -92,6 +92,38 @@ namespace DecoLimitLifter.DecorationEditMode
             return mesh;
         }
 
+        internal Material GetMaterial(DecorationMeshCatalogEntry entry)
+        {
+            if (entry?.Component == null)
+                return null;
+
+            try
+            {
+                if (entry.Component is ItemDefinition definition)
+                    return definition.GetMaterial();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                MethodInfo method = entry.Component.GetType().GetMethod(
+                    "GetMaterial",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    Type.EmptyTypes,
+                    null);
+                if (method != null && typeof(Material).IsAssignableFrom(method.ReturnType))
+                    return method.Invoke(entry.Component, null) as Material;
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
         public void Dispose()
         {
             foreach (PreviewEntry entry in _cache.Values)

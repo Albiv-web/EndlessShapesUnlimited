@@ -53,19 +53,17 @@ namespace DecoLimitLifter
 
         private static bool ReadFreezeDown()
         {
-            bool freezeDown = false;
             try
             {
-                freezeDown = FtdKeyMap.Instance.Bool(
+                return FtdKeyMap.Instance.Bool(
                     KeyInputsFtd.Freeze,
                     KeyInputEventType.Down);
             }
             catch
             {
-                // Fallback below keeps Caps Lock usable if the profile key map is not ready.
+                // Direct keyboard fallback is only for early boot/profile failures.
+                return Input.GetKeyDown(KeyCode.CapsLock);
             }
-
-            return freezeDown || Input.GetKeyDown(KeyCode.CapsLock);
         }
     }
 

@@ -337,6 +337,123 @@ namespace DecoLimitLifter.DecorationEditMode
         }
     }
 
+    internal sealed class DecorationDeleteBatchCommand : IDecorationEditCommand
+    {
+        private readonly AllConstruct _construct;
+        private readonly DecorationEditSnapshot[] _deleted;
+        private readonly DecorationEditSnapshot[] _original;
+        private readonly bool[] _createdInSession;
+        private readonly Decoration[] _decorations;
+        private readonly int _primaryIndex;
+
+        internal DecorationDeleteBatchCommand(
+            AllConstruct construct,
+            Decoration[] decorations,
+            DecorationEditSnapshot[] deleted,
+            DecorationEditSnapshot[] original,
+            bool[] createdInSession,
+            int primaryIndex)
+        {
+            Label = "Delete mirrored decorations";
+            _construct = construct;
+            _decorations = decorations ?? Array.Empty<Decoration>();
+            _deleted = deleted ?? Array.Empty<DecorationEditSnapshot>();
+            _original = original ?? Array.Empty<DecorationEditSnapshot>();
+            _createdInSession = createdInSession ?? Array.Empty<bool>();
+            _primaryIndex = primaryIndex;
+        }
+
+        public string Label { get; }
+
+        public bool Undo(DecorationEditSession session)
+        {
+            if (session == null || !HasCompleteHistory())
+                return false;
+
+            var restored = new Decoration[_deleted.Length];
+            var restoredIndexes = new List<int>(_deleted.Length);
+            for (int step = 0; step < _deleted.Length; step++)
+            {
+                int index = UndoIndexForStep(step);
+                if (!session.TryUndoDeletedDecoration(
+                        _construct,
+                        _deleted[index],
+                        _original[index],
+                        _createdInSession[index],
+                        out restored[index]))
+                {
+                    for (int rollbackIndex = restoredIndexes.Count - 1; rollbackIndex >= 0; rollbackIndex--)
+                    {
+                        int rollback = restoredIndexes[rollbackIndex];
+                        Decoration decoration = restored[rollback];
+                        session.TryRedoDeletedDecoration(
+                            _construct,
+                            ref decoration,
+                            _deleted[rollback],
+                            _original[rollback],
+                            _createdInSession[rollback]);
+                    }
+
+                    return false;
+                }
+
+                restoredIndexes.Add(index);
+            }
+
+            for (int index = 0; index < restored.Length && index < _decorations.Length; index++)
+                _decorations[index] = restored[index];
+            return true;
+        }
+
+        public bool Redo(DecorationEditSession session)
+        {
+            if (session == null || !HasCompleteHistory())
+                return false;
+
+            for (int index = _decorations.Length - 1; index >= 0; index--)
+            {
+                if (session.TryRedoDeletedDecoration(
+                        _construct,
+                        ref _decorations[index],
+                        _deleted[index],
+                        _original[index],
+                        _createdInSession[index]))
+                {
+                    continue;
+                }
+
+                for (int rollback = index + 1; rollback < _decorations.Length; rollback++)
+                {
+                    session.TryUndoDeletedDecoration(
+                        _construct,
+                        _deleted[rollback],
+                        _original[rollback],
+                        _createdInSession[rollback],
+                        out _decorations[rollback]);
+                }
+
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool HasCompleteHistory() =>
+            _decorations.Length > 0 &&
+            _decorations.Length == _deleted.Length &&
+            _decorations.Length == _original.Length &&
+            _decorations.Length == _createdInSession.Length &&
+            _primaryIndex >= 0 &&
+            _primaryIndex < _decorations.Length;
+
+        private int UndoIndexForStep(int step)
+        {
+            if (step == _deleted.Length - 1)
+                return _primaryIndex;
+            return step < _primaryIndex ? step : step + 1;
+        }
+    }
+
     internal sealed class DecorationCreateBatchCommand : IDecorationEditCommand
     {
         private readonly AllConstruct _construct;

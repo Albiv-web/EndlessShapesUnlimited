@@ -102,6 +102,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private bool _dragging;
         private bool _rotating;
         private bool _planDirty;
+        private string _lastPlanIssueNotificationKey;
         private bool _dragStartedFromFace;
         private DecorationEditAxis _hoverFaceAxis = DecorationEditAxis.None;
         private int _hoverFaceSign = 1;
@@ -717,11 +718,12 @@ namespace DecoLimitLifter.SmartBuildMode
         private bool CyclePreviewShortcut()
         {
             SmartBuildInputScope.ClaimBuildInputForFrames();
-            _previewMode = _previewMode == SmartBuildPreviewMode.Wireframe
-                ? SmartBuildPreviewMode.Material
-                : SmartBuildPreviewMode.Wireframe;
+            _previewMode =
+                _previewMode == SmartBuildPreviewMode.Wireframe ? SmartBuildPreviewMode.Material :
+                _previewMode == SmartBuildPreviewMode.Material ? SmartBuildPreviewMode.MaterialOnly :
+                SmartBuildPreviewMode.Wireframe;
             _viewModeMenuOpen = false;
-            InfoStore.Add("Smart Builder preview: " + (_previewMode == SmartBuildPreviewMode.Wireframe ? "Wireframe." : "Material."));
+            InfoStore.Add("Smart Builder preview: " + PreviewModeLabel(_previewMode) + ".");
             return true;
         }
 
@@ -1963,6 +1965,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
                 _previewVolumes = Array.Empty<SmartBuildVolume>();
                 _planDirty = false;
+                ClearPlanIssueNotification();
                 return;
             }
 
@@ -1982,6 +1985,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     failureReason:
                     _sourceReason ?? "Selected Smart Builder material is unavailable.");
                 _planDirty = false;
+                NotifyPlanIssueIfNeeded();
                 return;
             }
 
@@ -2000,6 +2004,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     canCommit: false,
                     failureReason: reason);
                 _planDirty = false;
+                NotifyPlanIssueIfNeeded();
                 return;
             }
 
@@ -2027,7 +2032,70 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             _planDirty = false;
+            NotifyPlanIssueIfNeeded();
         }
+
+        private void NotifyPlanIssueIfNeeded()
+        {
+            if (!TryGetPlanIssueMessage(out string message, out EsuHudNotificationKind kind))
+            {
+                ClearPlanIssueNotification();
+                return;
+            }
+
+            string key = kind + "|" + message;
+            if (string.Equals(_lastPlanIssueNotificationKey, key, StringComparison.Ordinal))
+                return;
+
+            _lastPlanIssueNotificationKey = key;
+            EsuHudNotifications.ShowSystem(
+                "Smart Builder",
+                message,
+                kind);
+        }
+
+        private bool TryGetPlanIssueMessage(
+            out string message,
+            out EsuHudNotificationKind kind)
+        {
+            message = null;
+            kind = EsuHudNotificationKind.Info;
+            if (_planDirty || _plan == null)
+                return false;
+
+            if (!_plan.CanCommit)
+            {
+                message = string.IsNullOrWhiteSpace(_plan.FailureReason)
+                    ? "Smart Builder plan is blocked."
+                    : _plan.FailureReason.Trim();
+                kind = EsuHudNotificationKind.Warning;
+                return true;
+            }
+
+            if (_plan.SkippedCells.Count > 0)
+            {
+                message = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Smart Builder skipped {0:N0} occupied preview cell{1}.",
+                    _plan.SkippedCells.Count,
+                    _plan.SkippedCells.Count == 1 ? string.Empty : "s");
+                kind = EsuHudNotificationKind.Warning;
+                return true;
+            }
+
+            if (_plan.Warnings.Count > 0 &&
+                !string.IsNullOrWhiteSpace(_plan.Warnings[0]))
+            {
+                message = _plan.Warnings[0].Trim();
+                kind = EsuHudNotificationKind.Warning;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void ClearPlanIssueNotification() =>
+            _lastPlanIssueNotificationKey = null;
 
         private void BuildPreviewSymmetrySets(SmartBuildVolume volume)
         {
@@ -2419,6 +2487,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _dragging = false;
             _dragAxis = DecorationEditAxis.None;
             _planDirty = false;
+            ClearPlanIssueNotification();
             _dragStartedFromFace = false;
             _hoverFaceAxis = DecorationEditAxis.None;
             _dragSceneStart = null;
@@ -2466,6 +2535,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
                 _previewVolumes = Array.Empty<SmartBuildVolume>();
                 _planDirty = false;
+                ClearPlanIssueNotification();
             }
             else
             {
@@ -2482,6 +2552,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     canCommit: false,
                     failureReason: reason);
                 _planDirty = false;
+                NotifyPlanIssueIfNeeded();
             }
         }
 
@@ -2635,7 +2706,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void ViewModeButton(DecorationEditorViewMode mode, string label, Rect rect)
         {
-            if (GUI.Button(
+            if (SmartGUIButton(
                     rect,
                     new GUIContent(label, "Switch Smart Builder view to " + ViewModeDisplayName(mode) + "."),
                     DecorationEditorTheme.ToolButton(_viewMode == mode)))
@@ -2726,25 +2797,25 @@ namespace DecoLimitLifter.SmartBuildMode
             GUI.Box(_contextMenuRect, GUIContent.none, DecorationEditorTheme.Panel);
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(_contextMenuRect, 5f));
             GUILayout.Label("Preview piece", DecorationEditorTheme.SubHeader);
-            if (GUILayout.Button(new GUIContent("Select", "Select this preview piece for editing."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent("Select", "Select this preview piece for editing."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 _contextMenuOpen = false;
                 _tool = SmartBuildTool.Move;
             }
 
-            if (GUILayout.Button(new GUIContent("Duplicate", "Duplicate this preview piece one cell to the right."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent("Duplicate", "Duplicate this preview piece one cell to the right."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 DuplicateSelectedPiece();
                 _contextMenuOpen = false;
             }
 
-            if (GUILayout.Button(new GUIContent("Delete", "Delete this preview piece."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent("Delete", "Delete this preview piece."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 DeleteSelectedPiece();
                 _contextMenuOpen = false;
             }
 
-            if (GUILayout.Button(new GUIContent(SmartYawLabel(), "Rotate this preview piece around construct Y."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent(SmartYawLabel(), "Rotate this preview piece around construct Y."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 YawSelectedPiece();
                 _contextMenuOpen = false;
@@ -2754,7 +2825,7 @@ namespace DecoLimitLifter.SmartBuildMode
                            _draft?.IsFixedGeometry == true;
             bool previous = GUI.enabled;
             GUI.enabled = previous && canFlip;
-            if (GUILayout.Button(new GUIContent("Flip", "Reverse this shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent("Flip", "Reverse this shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 FlipSelectedPiece();
                 _contextMenuOpen = false;
@@ -2903,7 +2974,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void ModeSwitchButton()
         {
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(
                         "Build",
                         DecorationEditorIconCatalog.Get("build"),
@@ -2948,7 +3019,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 LabelRow("Cells", PreviewCellCount()
                     .ToString("N0", CultureInfo.InvariantCulture));
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button(
+                if (SmartGUILayoutButton(
                         new GUIContent(SmartYawLabel(), "Rotate the selected piece around construct Y."),
                         DecorationEditorTheme.Button,
                         GUILayout.Height(EsuHudLayout.Scale(26f))))
@@ -2960,7 +3031,7 @@ namespace DecoLimitLifter.SmartBuildMode
                                _draft.IsFixedGeometry;
                 bool previous = GUI.enabled;
                 GUI.enabled = previous && canFlip;
-                if (GUILayout.Button(
+                if (SmartGUILayoutButton(
                         new GUIContent("Flip", "Reverse the selected down-slope direction."),
                         canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                         GUILayout.Height(EsuHudLayout.Scale(26f))))
@@ -2986,7 +3057,7 @@ namespace DecoLimitLifter.SmartBuildMode
             bool canApply = !_planDirty && _plan != null && _plan.CanCommit;
             bool previous = GUI.enabled;
             GUI.enabled = previous && canApply;
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent("Apply", "Place the planned blocks."),
                     canApply ? DecorationEditorTheme.ToolButton(false) : DecorationEditorTheme.DisabledButton,
                     GUILayout.Height(EsuHudLayout.Scale(30f))))
@@ -2996,7 +3067,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             bool canCancel = HasActivePreviewScene;
             GUI.enabled = previous && canCancel;
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent("Cancel", "Clear the full Smart Builder preview scene."),
                     canCancel ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Height(EsuHudLayout.Scale(30f))))
@@ -3345,7 +3416,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private void DrawShapePaletteToolbar(int visibleCount)
         {
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent("List", "Show Smart Builder shapes as a compact list."),
                     DecorationEditorTheme.ToolButton(!_shapePreviewGrid),
                     GUILayout.Width(EsuHudLayout.Scale(58f)),
@@ -3354,7 +3425,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _shapePreviewGrid = false;
                 _shapePaletteScroll = Vector2.zero;
             }
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent("3D grid", "Show Smart Builder shapes as rotating item thumbnails."),
                     DecorationEditorTheme.ToolButton(_shapePreviewGrid),
                     GUILayout.Width(EsuHudLayout.Scale(76f)),
@@ -3399,7 +3470,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private void DrawShapeCategoryFilterButton(string key, string label, float width)
         {
             bool active = string.Equals(_shapeCategoryFilter, key, StringComparison.OrdinalIgnoreCase);
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(label, "Filter the Smart Builder shape palette to " + label + "."),
                     DecorationEditorTheme.ToolButton(active),
                     GUILayout.Width(EsuHudLayout.Scale(width)),
@@ -3780,7 +3851,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private void DrawShapeButton(SmartBuildShapeDescriptor descriptor)
         {
             bool active = descriptor?.Key == _selectedShapeDescriptorKey;
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(
                         descriptor?.Label ?? "Shape",
                         DecorationEditorIconCatalog.Get(descriptor?.IsCuboid == true ? "cube" : "scale"),
@@ -3795,7 +3866,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private void DrawShapeSizeButton(int length)
         {
             bool active = _selectedSlopeLength == length;
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(length.ToString(CultureInfo.InvariantCulture), length + "m shape size."),
                     DecorationEditorTheme.ToolButton(active),
                     GUILayout.Width(EsuHudLayout.Scale(36f)),
@@ -3811,7 +3882,7 @@ namespace DecoLimitLifter.SmartBuildMode
             bool selected = _draft != null && _draft.Id == piece.Id;
             string text = piece.CompactSceneLabel();
             string tooltip = piece.ShapeLabel() + " | " + piece.FormatDimensions() + " | origin " + FormatCell(piece.Origin);
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(text, tooltip),
                     DecorationEditorTheme.ToolButton(selected),
                     GUILayout.Height(EsuHudLayout.Scale(28f))))
@@ -3847,20 +3918,20 @@ namespace DecoLimitLifter.SmartBuildMode
             Rect yaw = new Rect(delete.xMax + gap, delete.y, columnWidth, rowHeight);
             Rect flip = new Rect(grid.x, delete.yMax + gap, grid.width, rowHeight);
 
-            if (GUI.Button(select, new GUIContent("Select", "Keep this piece selected for editing."), DecorationEditorTheme.Button))
+            if (SmartGUIButton(select, new GUIContent("Select", "Keep this piece selected for editing."), DecorationEditorTheme.Button))
                 _tool = SmartBuildTool.Move;
-            if (GUI.Button(duplicate, new GUIContent("Duplicate", "Duplicate the selected piece one cell to the right."), DecorationEditorTheme.Button))
+            if (SmartGUIButton(duplicate, new GUIContent("Duplicate", "Duplicate the selected piece one cell to the right."), DecorationEditorTheme.Button))
                 DuplicateSelectedPiece();
-            if (GUI.Button(delete, new GUIContent("Delete", "Remove the selected preview piece."), DecorationEditorTheme.Button))
+            if (SmartGUIButton(delete, new GUIContent("Delete", "Remove the selected preview piece."), DecorationEditorTheme.Button))
                 DeleteSelectedPiece();
-            if (GUI.Button(yaw, new GUIContent("Yaw", "Rotate the selected piece around construct Y."), DecorationEditorTheme.Button))
+            if (SmartGUIButton(yaw, new GUIContent("Yaw", "Rotate the selected piece around construct Y."), DecorationEditorTheme.Button))
                 YawSelectedPiece();
 
             bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
                            _draft?.IsFixedGeometry == true;
             bool previous = GUI.enabled;
             GUI.enabled = previous && canFlip;
-            if (GUI.Button(flip, new GUIContent("Flip", "Reverse the selected shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton))
+            if (SmartGUIButton(flip, new GUIContent("Flip", "Reverse the selected shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton))
                 FlipSelectedPiece();
             GUI.enabled = previous;
         }
@@ -3869,7 +3940,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             GUILayout.BeginHorizontal();
             DrawCompactIconHeader(text, iconKey);
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent("Hide", "Hide this Smart Builder panel."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(58f)),
@@ -3884,7 +3955,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             GUILayout.BeginHorizontal();
             GUILayout.Label(text, DecorationEditorTheme.SubHeader, GUILayout.ExpandWidth(true));
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(sectionVisible ? "Hide list" : "Show list", tooltip),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(76f)),
@@ -3978,8 +4049,8 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             else if (_plan != null && !_plan.CanCommit)
             {
-                text = _plan.FailureReason ?? "Plan blocked";
-                style = DecorationEditorTheme.Error;
+                text = "Blocked";
+                style = DecorationEditorTheme.Warning;
             }
             else if (_plan != null && _plan.SkippedCells.Count > 0)
             {
@@ -4067,7 +4138,8 @@ namespace DecoLimitLifter.SmartBuildMode
             x = label.xMax + gap;
 
             x = PreviewModeStripButton(new Rect(x, y, EsuHudLayout.Scale(88f), buttonHeight), SmartBuildPreviewMode.Wireframe, "Wireframe", "Draw clean ESU wireframe previews.") + gap;
-            x = PreviewModeStripButton(new Rect(x, y, EsuHudLayout.Scale(76f), buttonHeight), SmartBuildPreviewMode.Material, "Material", "Draw solid material-family ghost faces with the wireframe overlay.");
+            x = PreviewModeStripButton(new Rect(x, y, EsuHudLayout.Scale(82f), buttonHeight), SmartBuildPreviewMode.Material, "Material", "Draw solid material-family ghost faces with the wireframe overlay.") + gap;
+            x = PreviewModeStripButton(new Rect(x, y, EsuHudLayout.Scale(96f), buttonHeight), SmartBuildPreviewMode.MaterialOnly, "Mat only", "Draw material-family ghost faces without the wireframe overlay.");
 
             if (_selectedShape == SmartBuildShapeKind.DownSlope ||
                 _draft?.ShapeKind == SmartBuildShapeKind.DownSlope)
@@ -4075,7 +4147,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 x += groupGap;
                 Rect support = new Rect(x, y, EsuHudLayout.Scale(116f), buttonHeight);
                 if (support.xMax <= rect.xMax &&
-                    GUI.Button(
+                    SmartGUIButton(
                         support,
                         new GUIContent(
                             SupportFillLabel(),
@@ -4093,7 +4165,7 @@ namespace DecoLimitLifter.SmartBuildMode
             string label,
             string tooltip)
         {
-            if (GUI.Button(
+            if (SmartGUIButton(
                     rect,
                     new GUIContent(label, tooltip),
                     DecorationEditorTheme.ToolButton(_editHandleMode == mode)))
@@ -4114,17 +4186,37 @@ namespace DecoLimitLifter.SmartBuildMode
             string label,
             string tooltip)
         {
-            if (GUI.Button(
+            if (SmartGUIButton(
                     rect,
                     new GUIContent(label, tooltip),
                     DecorationEditorTheme.ToolButton(_previewMode == mode)))
             {
                 _previewMode = mode;
-                InfoStore.Add("Smart Builder preview: " + label + ".");
+                InfoStore.Add("Smart Builder preview: " + PreviewModeLabel(mode) + ".");
             }
 
             return rect.xMax;
         }
+
+        private static string PreviewModeLabel(SmartBuildPreviewMode mode)
+        {
+            switch (mode)
+            {
+                case SmartBuildPreviewMode.Material:
+                    return "Material";
+                case SmartBuildPreviewMode.MaterialOnly:
+                    return "Material only";
+                default:
+                    return "Wireframe";
+            }
+        }
+
+        private bool ShouldDrawMaterialPreview() =>
+            _previewMode == SmartBuildPreviewMode.Material ||
+            _previewMode == SmartBuildPreviewMode.MaterialOnly;
+
+        private bool ShouldDrawPreviewWire() =>
+            _previewMode != SmartBuildPreviewMode.MaterialOnly;
 
         private static void DrawCyanLine(Rect rect)
         {
@@ -4285,7 +4377,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             GUILayout.BeginHorizontal();
             GUILayout.Label("Material", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(72f)));
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent("<", "Previous Smart Builder material."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(28f)),
@@ -4297,7 +4389,7 @@ namespace DecoLimitLifter.SmartBuildMode
             GUILayout.Label(
                 SmartBlockFamilyCatalog.MaterialDisplayName(_selectedMaterial),
                 DecorationEditorTheme.BodyWrap);
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(">", "Next Smart Builder material."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(28f)),
@@ -4361,7 +4453,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 : DecoLimitLifter.EsuSymmetry.IsActive(axis)
                     ? "Click to clear this symmetry plane."
                     : "Click, then click the construct grid to place this symmetry plane.";
-            if (GUILayout.Button(
+            if (SmartGUILayoutButton(
                     new GUIContent(label, DecorationEditorIconCatalog.Get("axis"), tooltip),
                     DecorationEditorTheme.ToolButton(active),
                     GUILayout.Width(EsuHudLayout.Scale(36f)),
@@ -4377,6 +4469,26 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
+        private static bool SmartGUILayoutButton(
+            GUIContent content,
+            GUIStyle style,
+            params GUILayoutOption[] options)
+        {
+            bool clicked = GUILayout.Button(content, style, options);
+            EsuCursorTooltip.RegisterLast(content?.tooltip);
+            return clicked;
+        }
+
+        private static bool SmartGUIButton(
+            Rect rect,
+            GUIContent content,
+            GUIStyle style)
+        {
+            bool clicked = GUI.Button(rect, content, style);
+            EsuCursorTooltip.Register(rect, content?.tooltip);
+            return clicked;
+        }
+
         private bool IconButton(
             string icon,
             string label,
@@ -4386,7 +4498,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             bool previous = GUI.enabled;
             GUI.enabled = previous && enabled;
-            bool clicked = GUILayout.Button(
+            bool clicked = SmartGUILayoutButton(
                 new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
                 enabled ? style : DecorationEditorTheme.DisabledButton,
                 GUILayout.Width(EsuHudLayout.Scale(62f)),
@@ -4402,7 +4514,7 @@ namespace DecoLimitLifter.SmartBuildMode
             string tooltip,
             bool enabled = true)
         {
-            bool clicked = GUILayout.Button(
+            bool clicked = SmartGUILayoutButton(
                 new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
                 enabled ? style : DecorationEditorTheme.DisabledButton,
                 GUILayout.Width(EsuHudLayout.Scale(44f)),
@@ -4541,10 +4653,10 @@ namespace DecoLimitLifter.SmartBuildMode
             bool invalid = !_planDirty && _plan != null && !_plan.CanCommit;
             bool drewExactMaterialMeshes =
                 !_planDirty &&
-                _previewMode == SmartBuildPreviewMode.Material &&
+                ShouldDrawMaterialPreview() &&
                 _plan?.Placements.Count > 0;
             if (!_planDirty &&
-                _previewMode == SmartBuildPreviewMode.Material &&
+                ShouldDrawMaterialPreview() &&
                 _plan?.Placements.Count > 0)
             {
                 DrawPlanPlacementPreview(_plan, invalid, drawWire: false);
@@ -4613,9 +4725,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 SmartBuildVolume volume = VolumeFromCells(piece.Construct, occupiedCells);
                 if (volume != null)
                 {
-                    if (_previewMode == SmartBuildPreviewMode.Material && drawMaterialFill)
+                    if (ShouldDrawMaterialPreview() && drawMaterialFill)
                         DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selectedOriginal));
-                    DrawWireEdges(volume.GetWorldCorners(), color, width);
+                    if (ShouldDrawPreviewWire())
+                        DrawWireEdges(volume.GetWorldCorners(), color, width);
                 }
                 return;
             }
@@ -4625,11 +4738,14 @@ namespace DecoLimitLifter.SmartBuildMode
             Color supportColor = invalid
                 ? new Color(1f, 0.2f, 0.15f, 0.38f)
                 : new Color(0.58f, 0.8f, 0.9f, selectedOriginal ? 0.42f : 0.28f);
-            DrawSupportHulls(
-                piece.Construct,
-                piece.EnumerateSupportCells().Select(variant.Mirror),
-                supportColor,
-                selectedOriginal ? 1.6f : 1.2f);
+            if (ShouldDrawPreviewWire())
+            {
+                DrawSupportHulls(
+                    piece.Construct,
+                    piece.EnumerateSupportCells().Select(variant.Mirror),
+                    supportColor,
+                    selectedOriginal ? 1.6f : 1.2f);
+            }
         }
 
         private bool TryDrawFixedGeometryPiecePreview(
@@ -4666,30 +4782,36 @@ namespace DecoLimitLifter.SmartBuildMode
                 ? new Color(1f, 0.2f, 0.15f, 0.34f)
                 : new Color(1f, 1f, 1f, 0.38f);
             int exact = Math.Min(mirroredPlacements.Count, MaxExactMeshPreviewPlacements);
-            bool drewAnyPlacementWire = false;
+            bool drewAnyPlacementPreview = false;
             for (int index = 0; index < exact; index++)
             {
                 SmartBuildPlacement placement = mirroredPlacements[index];
                 Matrix4x4 localMatrix = PlacementLocalMatrix(placement);
                 Matrix4x4 worldMatrix = PlacementMatrix(piece.Construct, placement);
-                if (_previewMode == SmartBuildPreviewMode.Material && drawMaterialFill)
+                if (ShouldDrawMaterialPreview() && drawMaterialFill)
+                {
                     _itemPreviewRenderer?.DrawPlacementMesh(placement, worldMatrix, materialColor);
+                    drewAnyPlacementPreview = true;
+                }
 
-                bool drewWire = _itemPreviewRenderer?.DrawPlacementWire(
-                    placement,
-                    worldMatrix,
-                    localMatrix,
-                    (start, end) => ShouldDrawFixedGeometryPreviewEdge(
-                        start,
-                        end,
-                        internalFaces,
-                        drawnEdges),
-                    wireColor,
-                    width) == true;
-                drewAnyPlacementWire |= drewWire;
+                if (ShouldDrawPreviewWire())
+                {
+                    bool drewWire = _itemPreviewRenderer?.DrawPlacementWire(
+                        placement,
+                        worldMatrix,
+                        localMatrix,
+                        (start, end) => ShouldDrawFixedGeometryPreviewEdge(
+                            start,
+                            end,
+                            internalFaces,
+                            drawnEdges),
+                        wireColor,
+                        width) == true;
+                    drewAnyPlacementPreview |= drewWire;
+                }
             }
 
-            return drewAnyPlacementWire;
+            return drewAnyPlacementPreview;
         }
 
         private static IReadOnlyList<SmartBuildInternalFace> BuildInternalPreviewFaces(
@@ -4814,7 +4936,10 @@ namespace DecoLimitLifter.SmartBuildMode
             for (int index = 0; index < exact; index++)
                 DrawPlacementPreview(plan.Construct, plan.Placements[index], color, materialColor, 2.2f, drawWire);
 
-            if (!drawWire || plan.Placements.Count <= exact || plan.Volume == null)
+            if (!drawWire ||
+                !ShouldDrawPreviewWire() ||
+                plan.Placements.Count <= exact ||
+                plan.Volume == null)
                 return;
 
             Color fallback = invalid
@@ -4835,9 +4960,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             Matrix4x4 matrix = PlacementMatrix(construct, placement);
-            if (_previewMode == SmartBuildPreviewMode.Material)
+            if (ShouldDrawMaterialPreview())
                 _itemPreviewRenderer?.DrawPlacementMesh(placement, matrix, materialColor);
-            if (!drawWire)
+            if (!drawWire || !ShouldDrawPreviewWire())
                 return;
             if (_itemPreviewRenderer?.DrawPlacementWire(placement, matrix, wireColor, width) == true)
                 return;
@@ -4845,7 +4970,7 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildVolume volume = VolumeFromCells(construct, placement.CoveredCells());
             if (volume == null)
                 return;
-            if (_previewMode == SmartBuildPreviewMode.Material)
+            if (ShouldDrawMaterialPreview())
                 DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
             DrawWireEdges(volume.GetWorldCorners(), wireColor, width);
         }
@@ -4926,10 +5051,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 construct.SafeLocalToGlobal(local[7])
             };
 
-            Color fill = _previewMode == SmartBuildPreviewMode.Material
+            Color fill = ShouldDrawMaterialPreview()
                 ? SolidMaterialPreviewColor(selected: false)
                 : new Color(color.r, color.g, color.b, 0.12f);
-            if (_previewMode != SmartBuildPreviewMode.Material || drawMaterialFill)
+            if (!ShouldDrawMaterialPreview() || drawMaterialFill)
             {
                 DrawDoubleSidedSlopeQuad(world[0], world[1], world[2], world[3], fill);
                 DecorationEditorOverlay.Quad(world[0], world[4], world[5], world[1], fill);
@@ -4938,6 +5063,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 DecorationEditorOverlay.Quad(world[1], world[5], world[6], world[2], fill);
                 DecorationEditorOverlay.Quad(world[4], world[7], world[6], world[5], new Color(fill.r, fill.g, fill.b, fill.a * 0.55f));
             }
+            if (!ShouldDrawPreviewWire())
+                return;
+
             DrawWireEdge(world, 0, 1, color, width);
             DrawWireEdge(world, 1, 2, color, width);
             DrawWireEdge(world, 2, 3, color, width);
@@ -5958,9 +6086,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 Vector3i size = SmartBuildDraft.ClampSize(candidate.CuboidSize);
                 Vector3i max = candidate.Cell + new Vector3i(size.x - 1, size.y - 1, size.z - 1);
                 SmartBuildVolume volume = SmartBuildVolume.FromBounds(candidate.Construct, candidate.Cell, max);
-                if (volume != null && _previewMode == SmartBuildPreviewMode.Material)
+                if (volume != null && ShouldDrawMaterialPreview())
                     DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
-                if (volume != null)
+                if (volume != null && ShouldDrawPreviewWire())
                     DrawWireEdges(volume.GetWorldCorners(), color, 2.4f);
                 return;
             }
@@ -5989,7 +6117,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     Color materialColor = candidate.Valid
                         ? new Color(1f, 1f, 1f, 0.38f)
                         : new Color(1f, 0.2f, 0.15f, 0.34f);
-                    bool drewExactMaterialMeshes = _previewMode == SmartBuildPreviewMode.Material;
+                    bool drewExactMaterialMeshes = ShouldDrawMaterialPreview();
                     if (drewExactMaterialMeshes)
                     {
                         foreach (SmartBuildPlacement placement in placements.Take(MaxExactMeshPreviewPlacements))
@@ -6008,9 +6136,9 @@ namespace DecoLimitLifter.SmartBuildMode
                     SmartBuildVolume volume = VolumeFromCells(
                         candidate.Construct,
                         ghost.EnumeratePreviewCells(_source).ToArray());
-                    if (volume != null && _previewMode == SmartBuildPreviewMode.Material)
+                    if (volume != null && ShouldDrawMaterialPreview())
                         DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selected: false));
-                    if (volume != null)
+                    if (volume != null && ShouldDrawPreviewWire())
                         DrawWireEdges(volume.GetWorldCorners(), color, 2.4f);
                 }
                 return;
@@ -6038,7 +6166,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 Color materialColor = candidate.Valid
                     ? new Color(1f, 1f, 1f, 0.38f)
                     : new Color(1f, 0.2f, 0.15f, 0.34f);
-                bool drewExactMaterialMeshes = _previewMode == SmartBuildPreviewMode.Material;
+                bool drewExactMaterialMeshes = ShouldDrawMaterialPreview();
                 if (drewExactMaterialMeshes)
                 {
                     foreach (SmartBuildPlacement placement in slopePlacements.Take(MaxExactMeshPreviewPlacements))

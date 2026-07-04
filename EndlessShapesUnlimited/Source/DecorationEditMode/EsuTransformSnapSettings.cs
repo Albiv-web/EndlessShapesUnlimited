@@ -19,7 +19,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float DecorationMoveMaximum = 10f;
         private const float DecorationRotateMinimum = 0.1f;
         private const float DecorationRotateMaximum = 180f;
-        private const float DecorationScaleMinimum = 0.001f;
+        private const float DecorationScaleMinimum = 0.00001f;
         private static readonly float DecorationScaleMaximum = float.PositiveInfinity;
         private const int SmartStepMinimum = 1;
         private const int SmartStepMaximum = 20;

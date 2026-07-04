@@ -176,6 +176,24 @@ namespace DecoLimitLifter
             return value;
         }
 
+        internal static Vector3 MirrorDirection(Vector3 value, DecorationEditAxis axis)
+        {
+            switch (axis)
+            {
+                case DecorationEditAxis.X:
+                    value.x = -value.x;
+                    break;
+                case DecorationEditAxis.Y:
+                    value.y = -value.y;
+                    break;
+                case DecorationEditAxis.Z:
+                    value.z = -value.z;
+                    break;
+            }
+
+            return value;
+        }
+
         internal static IReadOnlyList<SymmetryVariant> Variants()
         {
             if (Planes.Count == 0)
@@ -489,6 +507,62 @@ namespace DecoLimitLifter
                     value = MirrorVector(value, _axes[index], Planes[_axes[index]]);
                 return value;
             }
+
+            internal Vector3 MirrorDirection(Vector3 value)
+            {
+                for (int index = 0; index < _axes.Length; index++)
+                    value = EsuSymmetry.MirrorDirection(value, _axes[index]);
+                return value;
+            }
+
+            internal Vector3 MirrorScale(Vector3 scale)
+            {
+                for (int index = 0; index < _axes.Length; index++)
+                {
+                    switch (_axes[index])
+                    {
+                        case DecorationEditAxis.X:
+                            scale.x = -scale.x;
+                            break;
+                        case DecorationEditAxis.Y:
+                            scale.y = -scale.y;
+                            break;
+                        case DecorationEditAxis.Z:
+                            scale.z = -scale.z;
+                            break;
+                    }
+                }
+
+                return scale;
+            }
+
+            internal Vector3 MirrorEuler(Vector3 euler)
+            {
+                if (_axes.Length == 0 || !DecorationEditMath.IsFinite(euler))
+                    return euler;
+
+                Quaternion rotation = Quaternion.Euler(euler);
+                Vector3 right = MirrorDirection(rotation * Vector3.right) *
+                                AxisSign(DecorationEditAxis.X);
+                Vector3 up = MirrorDirection(rotation * Vector3.up) *
+                             AxisSign(DecorationEditAxis.Y);
+                Vector3 forward = MirrorDirection(rotation * Vector3.forward) *
+                                  AxisSign(DecorationEditAxis.Z);
+                if (!DecorationEditMath.IsFinite(right) ||
+                    !DecorationEditMath.IsFinite(up) ||
+                    !DecorationEditMath.IsFinite(forward) ||
+                    right.sqrMagnitude <= 0.0001f ||
+                    up.sqrMagnitude <= 0.0001f ||
+                    forward.sqrMagnitude <= 0.0001f)
+                {
+                    return euler;
+                }
+
+                return Quaternion.LookRotation(forward.normalized, up.normalized).eulerAngles;
+            }
+
+            private int AxisSign(DecorationEditAxis axis) =>
+                _axes.Contains(axis) ? -1 : 1;
         }
     }
 }

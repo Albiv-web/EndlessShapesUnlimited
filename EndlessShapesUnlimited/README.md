@@ -36,7 +36,7 @@ Press F8 to see decoration counts, save format status, vanilla compatibility, an
 
 [b]Fast Blueprint Loading[/b]
 Optional V1/V2/V3 loading modes for special cases.
-V3 is mainly useful for extremely high block-count craft.
+V3 is mainly useful for extremely high block-count craft. I recommend not tweaking these settings for 99% of use cases. 
 
 
 [h2]VANILLA COMPATIBILITY[/h2]
@@ -69,6 +69,8 @@ F8 - Toggle Serialization HUD
 3 - Cycle view / preview mode
 
 Number keys only affect ESU while an ESU editor is open. Outside ESU, vanilla controls work normally.
+
+[b]There are actually a lot more controls and shortcuts, these can be viewed in the Discord as![/b]
 
 
 [h2]BEFORE USING[/h2]
