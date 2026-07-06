@@ -31,7 +31,8 @@ namespace DecoLimitLifter.AutomationEditMode
         private enum AutomationEditorPage
         {
             Graph,
-            Code
+            Code,
+            System
         }
 
         private enum AutomationContextMenuKind
@@ -177,6 +178,16 @@ namespace DecoLimitLifter.AutomationEditMode
         private string _automationCodeControllerKey = string.Empty;
         private int _automationCodeRecipeIndex;
         private AutomationCompileRevertSet _lastCompileRevert;
+        private readonly List<AutomationSystemBlockTemplate> _systemBlockTemplates =
+            new List<AutomationSystemBlockTemplate>();
+        private string _systemBlockDraftControllerKey = string.Empty;
+        private string _systemBlockDraftName = string.Empty;
+        private string _systemBlockDraftInputs = string.Empty;
+        private string _systemBlockDraftOutputs = string.Empty;
+        private string _systemBlockDraftComment = string.Empty;
+        private string _systemBlockValidationStatus = string.Empty;
+        private int _activeSystemBlockTemplateIndex = -1;
+        private bool _systemBlockDraftDirty;
         private bool _showLeftPanel = true;
         private bool _showRightPanel = true;
         private bool _showBlocksSection = true;
@@ -2446,7 +2457,14 @@ namespace DecoLimitLifter.AutomationEditMode
         private string WorkspaceStageLabel()
         {
             if (_editorOpen)
-                return _editorPage == AutomationEditorPage.Graph ? "Native graph" : "Recipe compile";
+            {
+                if (_editorPage == AutomationEditorPage.Graph)
+                    return "Native graph";
+                if (_editorPage == AutomationEditorPage.System)
+                    return "System Block";
+                return "Recipe compile";
+            }
+
             if (_tool == AutomationTool.Place)
                 return _selectedPlacement == null ? "Choose controller" : "Place controller";
             if (_selectedController == null)
@@ -2460,6 +2478,13 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 if (_selectedController == null)
                     return "Close the editor and select a live native controller.";
+
+                if (_editorPage == AutomationEditorPage.System)
+                {
+                    if (_systemBlockDraftDirty)
+                        return "Check the System Block ports, then Apply template or Revert draft.";
+                    return "Define named ports from linked targets, save as a template, or return to Graph/Code for native lowering.";
+                }
 
                 if (_editorPage == AutomationEditorPage.Code)
                 {
@@ -2498,6 +2523,8 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             if (CanRevertLastAutomationCompile())
                 return "Generated recipe nodes have a Revert compile path.";
+            if (_editorOpen && _editorPage == AutomationEditorPage.System)
+                return "System Blocks store ESU-only names, ports, comments, breadcrumbs, and template metadata.";
             if (_editorOpen && _editorPage == AutomationEditorPage.Code)
                 return "Recipes are deterministic and lower into native Breadboard nodes.";
             if (_editorOpen)
@@ -3627,11 +3654,16 @@ namespace DecoLimitLifter.AutomationEditMode
                     new GUIContent("Code", DecorationEditorIconCatalog.Get("settings"), "Generate or edit Automation code recipes."),
                     DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Code)))
                 _editorPage = AutomationEditorPage.Code;
+            if (AutomationGUILayoutButton(
+                    new GUIContent("System", DecorationEditorIconCatalog.Get("duplicate"), "Define ESU System Block ports and reusable template metadata."),
+                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.System)))
+                _editorPage = AutomationEditorPage.System;
             GUILayout.EndHorizontal();
+            GUILayout.Label("Breadcrumb: " + SystemBlockBreadcrumb(), DecorationEditorTheme.MiniWrap);
             DecorationEditorTheme.Separator();
             float scrollHeight = Mathf.Max(
                 EsuHudLayout.Scale(180f),
-                _editorRect.height - inset * 2f - EsuHudLayout.Scale(152f));
+                _editorRect.height - inset * 2f - EsuHudLayout.Scale(170f));
             _editorScroll = GUILayout.BeginScrollView(
                 _editorScroll,
                 alwaysShowHorizontal: false,
@@ -3639,8 +3671,10 @@ namespace DecoLimitLifter.AutomationEditMode
                 GUILayout.Height(scrollHeight));
             if (_editorPage == AutomationEditorPage.Graph)
                 DrawGraphEditor();
-            else
+            else if (_editorPage == AutomationEditorPage.Code)
                 DrawCodeEditor();
+            else
+                DrawSystemBlockEditor();
             GUILayout.EndScrollView();
             DrawEditorBottomStrip();
             GUI.DragWindow(new Rect(0f, 0f, _editorRect.width, EsuHudLayout.Scale(34f)));
@@ -3652,9 +3686,9 @@ namespace DecoLimitLifter.AutomationEditMode
             DecorationEditorTheme.Separator();
             GUILayout.BeginHorizontal(DecorationEditorTheme.Row);
             GUILayout.Label(
-                "Page: " + (_editorPage == AutomationEditorPage.Graph ? "Graph" : "Code"),
+                "Page: " + EditorPageLabel(),
                 DecorationEditorTheme.Mini,
-                GUILayout.Width(EsuHudLayout.Scale(86f)));
+                GUILayout.Width(EsuHudLayout.Scale(96f)));
             GUILayout.Label(
                 "Links: " + SelectedLinks.Count.ToString(CultureInfo.InvariantCulture),
                 DecorationEditorTheme.Mini,
@@ -3667,14 +3701,32 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label(
                 CanRevertLastAutomationCompile()
                     ? "Generated nodes: revert available"
+                    : _editorPage == AutomationEditorPage.System
+                        ? "System template: ESU metadata"
                     : "Native edits apply immediately",
                 CanRevertLastAutomationCompile()
                     ? DecorationEditorTheme.Warning
+                    : _editorPage == AutomationEditorPage.System
+                        ? DecorationEditorTheme.Body
                     : DecorationEditorTheme.Mini,
                 GUILayout.Width(EsuHudLayout.Scale(190f)));
             GUILayout.EndHorizontal();
+            GUILayout.Label("Breadcrumb: " + SystemBlockBreadcrumb(), DecorationEditorTheme.MiniWrap);
             GUILayout.Label("Next: " + NextSafeActionLine(), DecorationEditorTheme.MiniWrap);
             GUILayout.Label("Status: " + (_status ?? string.Empty), DecorationEditorTheme.MiniWrap);
+        }
+
+        private string EditorPageLabel()
+        {
+            switch (_editorPage)
+            {
+                case AutomationEditorPage.Code:
+                    return "Code";
+                case AutomationEditorPage.System:
+                    return "System";
+                default:
+                    return "Graph";
+            }
         }
 
         private string EditorGridStatus()
@@ -3933,6 +3985,419 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label(
                 "Compiles one expression into a native Maths Evaluator, or if condition / out = expression / else / out = number-or-expression into native Evaluator + Switch nodes. Conditions with one and/or insert a native Logic Gate. ESU binds compiled output to the selected linked target's Generic Setter, creating one when needed.",
                 DecorationEditorTheme.MiniWrap);
+        }
+
+        private void DrawSystemBlockEditor()
+        {
+            GUILayout.Label("System Block signature", DecorationEditorTheme.SubHeader);
+            if (_selectedController == null)
+            {
+                GUILayout.Label("Select a controller before creating a System Block template.", DecorationEditorTheme.MiniWrap);
+                return;
+            }
+
+            EnsureSystemBlockDraft();
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            DrawCompactIconHeader("Breadcrumb", "duplicate", DecorationEditorTheme.SubHeader);
+            GUILayout.Label(SystemBlockBreadcrumb(), DecorationEditorTheme.Body);
+            GUILayout.Label(
+                "This first System Block slice stores ESU-only template metadata: name, comments, breadcrumbs, and named ports. It does not create a parallel runtime; native behavior still lives in Graph/Code nodes.",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.EndVertical();
+
+            GUILayout.BeginVertical(DecorationEditorTheme.Row);
+            GUILayout.Label("Name", DecorationEditorTheme.Mini);
+            string name = GUILayout.TextField(_systemBlockDraftName ?? string.Empty, DecorationEditorTheme.TextField);
+            SetSystemBlockDraftText(ref _systemBlockDraftName, name);
+
+            GUILayout.Label("Input ports", DecorationEditorTheme.Mini);
+            string inputs = GUILayout.TextArea(
+                _systemBlockDraftInputs ?? string.Empty,
+                DecorationEditorTheme.TextField,
+                GUILayout.MinHeight(EsuHudLayout.Scale(54f)));
+            SetSystemBlockDraftText(ref _systemBlockDraftInputs, inputs);
+
+            GUILayout.Label("Output ports", DecorationEditorTheme.Mini);
+            string outputs = GUILayout.TextArea(
+                _systemBlockDraftOutputs ?? string.Empty,
+                DecorationEditorTheme.TextField,
+                GUILayout.MinHeight(EsuHudLayout.Scale(54f)));
+            SetSystemBlockDraftText(ref _systemBlockDraftOutputs, outputs);
+
+            GUILayout.Label("Comment", DecorationEditorTheme.Mini);
+            string comment = GUILayout.TextArea(
+                _systemBlockDraftComment ?? string.Empty,
+                DecorationEditorTheme.TextField,
+                GUILayout.MinHeight(EsuHudLayout.Scale(46f)));
+            SetSystemBlockDraftText(ref _systemBlockDraftComment, comment);
+            GUILayout.EndVertical();
+
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Suggest ports", DecorationEditorIconCatalog.Get("filter"), "Populate ports from currently linked readable/writable targets."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(116f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                SuggestSystemBlockPortsFromLinks();
+            }
+
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Check", DecorationEditorIconCatalog.Get("risk"), "Validate the System Block signature without mutating native data."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(72f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                CheckSystemBlockDraft();
+            }
+
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Apply template", DecorationEditorIconCatalog.Get("save"), "Save this ESU-only System Block template for the current session."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(122f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                ApplySystemBlockTemplate();
+            }
+
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && _systemBlockDraftDirty;
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Revert draft", DecorationEditorIconCatalog.Get("cancel"), "Restore the System Block draft from the selected controller and linked targets."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(110f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                ResetSystemBlockDraftFromSelection();
+                _status = "System Block draft reverted from the current native workspace.";
+            }
+            GUI.enabled = previous;
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrWhiteSpace(_systemBlockValidationStatus))
+            {
+                GUILayout.Label(
+                    _systemBlockValidationStatus,
+                    _systemBlockValidationStatus.StartsWith("System Block check passed", StringComparison.Ordinal)
+                        ? DecorationEditorTheme.Body
+                        : DecorationEditorTheme.Warning);
+            }
+
+            DrawSystemBlockTemplateList();
+        }
+
+        private void DrawSystemBlockTemplateList()
+        {
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            GUILayout.Label("Session templates", DecorationEditorTheme.SubHeader);
+            if (_systemBlockTemplates.Count == 0)
+            {
+                GUILayout.Label("No System Block templates saved this session.", DecorationEditorTheme.MiniWrap);
+                return;
+            }
+
+            for (int index = 0; index < _systemBlockTemplates.Count; index++)
+            {
+                AutomationSystemBlockTemplate template = _systemBlockTemplates[index];
+                if (template == null)
+                    continue;
+
+                bool active = index == _activeSystemBlockTemplateIndex;
+                GUILayout.BeginVertical(active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(template.Name, DecorationEditorTheme.Body);
+                GUILayout.FlexibleSpace();
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Open", DecorationEditorIconCatalog.Get("open"), "Open this System Block template signature."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Width(EsuHudLayout.Scale(62f)),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    LoadSystemBlockTemplate(index);
+                }
+
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove this session template."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Width(EsuHudLayout.Scale(76f)),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    _systemBlockTemplates.RemoveAt(index);
+                    if (_activeSystemBlockTemplateIndex >= _systemBlockTemplates.Count)
+                        _activeSystemBlockTemplateIndex = -1;
+                    _status = "Removed System Block session template.";
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                    return;
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.Label(
+                    "Controller: " + template.ControllerLabel +
+                    " | inputs " + template.InputPorts.Count.ToString(CultureInfo.InvariantCulture) +
+                    " | outputs " + template.OutputPorts.Count.ToString(CultureInfo.InvariantCulture),
+                    DecorationEditorTheme.MiniWrap);
+                if (!string.IsNullOrWhiteSpace(template.Comment))
+                    GUILayout.Label(template.Comment, DecorationEditorTheme.MiniWrap);
+                GUILayout.EndVertical();
+            }
+        }
+
+        private void EnsureSystemBlockDraft()
+        {
+            string controllerKey = _selectedController?.StableKey ?? string.Empty;
+            if (string.Equals(_systemBlockDraftControllerKey, controllerKey, StringComparison.Ordinal) &&
+                !string.IsNullOrWhiteSpace(_systemBlockDraftName))
+            {
+                return;
+            }
+
+            ResetSystemBlockDraftFromSelection();
+        }
+
+        private void ResetSystemBlockDraftFromSelection()
+        {
+            _systemBlockDraftControllerKey = _selectedController?.StableKey ?? string.Empty;
+            _systemBlockDraftName = SuggestedSystemBlockName();
+            _systemBlockDraftInputs = string.Join("\n", SuggestedSystemBlockPorts(readable: true).ToArray());
+            _systemBlockDraftOutputs = string.Join("\n", SuggestedSystemBlockPorts(readable: false).ToArray());
+            _systemBlockDraftComment =
+                "ESU System Block template for " +
+                (_selectedController?.Label ?? "selected controller") +
+                ". Native lowering remains in Graph/Code until System Block lowering is implemented.";
+            _systemBlockValidationStatus = string.Empty;
+            _activeSystemBlockTemplateIndex = -1;
+            _systemBlockDraftDirty = false;
+        }
+
+        private void SuggestSystemBlockPortsFromLinks()
+        {
+            _systemBlockDraftInputs = string.Join("\n", SuggestedSystemBlockPorts(readable: true).ToArray());
+            _systemBlockDraftOutputs = string.Join("\n", SuggestedSystemBlockPorts(readable: false).ToArray());
+            _systemBlockValidationStatus = string.Empty;
+            _systemBlockDraftDirty = true;
+            _status = "System Block ports suggested from linked readable/writable targets.";
+        }
+
+        private string SuggestedSystemBlockName()
+        {
+            string label = _selectedController?.Controller?.ShortLabel ??
+                           _selectedController?.Label ??
+                           "Automation";
+            return NormalizeSystemBlockPortName(label) + "_system";
+        }
+
+        private IReadOnlyList<string> SuggestedSystemBlockPorts(bool readable)
+        {
+            var ports = new List<string>();
+            foreach (AutomationLink link in SelectedLinks)
+            {
+                AutomationTarget target = link?.Target;
+                if (target == null)
+                    continue;
+
+                bool matches = readable
+                    ? AutomationTargetCatalog.IsBreadboardReadableTarget(target)
+                    : AutomationTargetCatalog.IsBreadboardWritableTarget(target);
+                if (!matches)
+                    continue;
+
+                string name = NormalizeSystemBlockPortName(AutomationCodeIdentifierForTarget(target));
+                if (!ports.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    ports.Add(name);
+            }
+
+            if (ports.Count == 0)
+                ports.Add(readable ? "input_signal" : "output_signal");
+            return ports;
+        }
+
+        private void SetSystemBlockDraftText(ref string field, string value)
+        {
+            value = value ?? string.Empty;
+            if (string.Equals(field ?? string.Empty, value, StringComparison.Ordinal))
+                return;
+
+            field = value;
+            _systemBlockDraftDirty = true;
+            _systemBlockValidationStatus = string.Empty;
+        }
+
+        private void CheckSystemBlockDraft()
+        {
+            _systemBlockValidationStatus = ValidateSystemBlockDraft(out _, out _, out string message)
+                ? "System Block check passed: " + message
+                : message;
+            _status = _systemBlockValidationStatus;
+        }
+
+        private void ApplySystemBlockTemplate()
+        {
+            if (!ValidateSystemBlockDraft(
+                    out IReadOnlyList<string> inputs,
+                    out IReadOnlyList<string> outputs,
+                    out string message))
+            {
+                _systemBlockValidationStatus = message;
+                _status = message;
+                return;
+            }
+
+            var template = new AutomationSystemBlockTemplate(
+                _systemBlockDraftName,
+                _selectedController?.StableKey ?? string.Empty,
+                _selectedController?.Label ?? "Controller",
+                inputs,
+                outputs,
+                _systemBlockDraftComment);
+            if (_activeSystemBlockTemplateIndex >= 0 &&
+                _activeSystemBlockTemplateIndex < _systemBlockTemplates.Count)
+            {
+                _systemBlockTemplates[_activeSystemBlockTemplateIndex] = template;
+            }
+            else
+            {
+                _systemBlockTemplates.Add(template);
+                _activeSystemBlockTemplateIndex = _systemBlockTemplates.Count - 1;
+            }
+
+            _systemBlockDraftDirty = false;
+            _systemBlockValidationStatus =
+                "System Block check passed: template stores ESU-only metadata and mutates no native controller data.";
+            _status =
+                "Applied System Block template '" +
+                template.Name +
+                "' with " +
+                inputs.Count.ToString(CultureInfo.InvariantCulture) +
+                " input port(s) and " +
+                outputs.Count.ToString(CultureInfo.InvariantCulture) +
+                " output port(s).";
+        }
+
+        private void LoadSystemBlockTemplate(int index)
+        {
+            if (index < 0 || index >= _systemBlockTemplates.Count)
+                return;
+
+            AutomationSystemBlockTemplate template = _systemBlockTemplates[index];
+            if (template == null)
+                return;
+
+            _activeSystemBlockTemplateIndex = index;
+            _systemBlockDraftControllerKey = _selectedController?.StableKey ?? template.ControllerKey;
+            _systemBlockDraftName = template.Name;
+            _systemBlockDraftInputs = string.Join("\n", template.InputPorts.ToArray());
+            _systemBlockDraftOutputs = string.Join("\n", template.OutputPorts.ToArray());
+            _systemBlockDraftComment = template.Comment;
+            _systemBlockValidationStatus = "System Block template opened at breadcrumb " + SystemBlockBreadcrumb() + ".";
+            _systemBlockDraftDirty = false;
+            _status = _systemBlockValidationStatus;
+        }
+
+        private bool ValidateSystemBlockDraft(
+            out IReadOnlyList<string> inputs,
+            out IReadOnlyList<string> outputs,
+            out string message)
+        {
+            inputs = ParseSystemBlockPorts(_systemBlockDraftInputs);
+            outputs = ParseSystemBlockPorts(_systemBlockDraftOutputs);
+            string name = NormalizeSystemBlockPortName(_systemBlockDraftName);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                message = "System Block needs a stable template name.";
+                return false;
+            }
+
+            if (inputs.Count == 0 && outputs.Count == 0)
+            {
+                message = "System Block needs at least one input or output port.";
+                return false;
+            }
+
+            string duplicate = inputs
+                .Concat(outputs)
+                .GroupBy(port => port, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(duplicate))
+            {
+                message = "System Block port '" + duplicate + "' is duplicated.";
+                return false;
+            }
+
+            _systemBlockDraftName = name;
+            _systemBlockDraftInputs = string.Join("\n", inputs.ToArray());
+            _systemBlockDraftOutputs = string.Join("\n", outputs.ToArray());
+            message =
+                "metadata only, " +
+                inputs.Count.ToString(CultureInfo.InvariantCulture) +
+                " input port(s), " +
+                outputs.Count.ToString(CultureInfo.InvariantCulture) +
+                " output port(s), no native mutation.";
+            return true;
+        }
+
+        private static IReadOnlyList<string> ParseSystemBlockPorts(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return Array.Empty<string>();
+
+            string[] parts = text.Split(new[] { '\r', '\n', ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries);
+            var ports = new List<string>();
+            foreach (string part in parts)
+            {
+                string name = NormalizeSystemBlockPortName(part);
+                if (string.IsNullOrWhiteSpace(name) ||
+                    ports.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                ports.Add(name);
+            }
+
+            return ports;
+        }
+
+        private static string NormalizeSystemBlockPortName(string value)
+        {
+            value = (value ?? string.Empty).Trim();
+            if (value.Length == 0)
+                return string.Empty;
+
+            var chars = new List<char>(value.Length);
+            foreach (char character in value)
+            {
+                if (char.IsLetterOrDigit(character))
+                    chars.Add(char.ToLowerInvariant(character));
+                else if (character == '_' || character == '-' || char.IsWhiteSpace(character))
+                    chars.Add('_');
+            }
+
+            while (chars.Count > 0 && chars[0] == '_')
+                chars.RemoveAt(0);
+            while (chars.Count > 0 && chars[chars.Count - 1] == '_')
+                chars.RemoveAt(chars.Count - 1);
+            if (chars.Count == 0)
+                return string.Empty;
+            if (char.IsDigit(chars[0]))
+                chars.Insert(0, '_');
+            return new string(chars.ToArray());
+        }
+
+        private string SystemBlockBreadcrumb()
+        {
+            string root = _selectedController == null
+                ? "Root"
+                : "Root > " + _selectedController.Label;
+            if (_editorPage != AutomationEditorPage.System)
+                return root;
+
+            string name = string.IsNullOrWhiteSpace(_systemBlockDraftName)
+                ? "Draft System Block"
+                : _systemBlockDraftName.Trim();
+            return root + " > " + name;
         }
 
         private void DrawAutomationCodeOutputTargetPicker()
@@ -5940,6 +6405,37 @@ namespace DecoLimitLifter.AutomationEditMode
             internal AutomationTargetCategory Category { get; }
 
             internal string Code { get; }
+        }
+
+        private sealed class AutomationSystemBlockTemplate
+        {
+            internal AutomationSystemBlockTemplate(
+                string name,
+                string controllerKey,
+                string controllerLabel,
+                IReadOnlyList<string> inputPorts,
+                IReadOnlyList<string> outputPorts,
+                string comment)
+            {
+                Name = string.IsNullOrWhiteSpace(name) ? "system_block" : name;
+                ControllerKey = controllerKey ?? string.Empty;
+                ControllerLabel = string.IsNullOrWhiteSpace(controllerLabel) ? "Controller" : controllerLabel;
+                InputPorts = inputPorts?.ToArray() ?? Array.Empty<string>();
+                OutputPorts = outputPorts?.ToArray() ?? Array.Empty<string>();
+                Comment = comment ?? string.Empty;
+            }
+
+            internal string Name { get; }
+
+            internal string ControllerKey { get; }
+
+            internal string ControllerLabel { get; }
+
+            internal IReadOnlyList<string> InputPorts { get; }
+
+            internal IReadOnlyList<string> OutputPorts { get; }
+
+            internal string Comment { get; }
         }
 
         private sealed class AutomationCompileRevertSet

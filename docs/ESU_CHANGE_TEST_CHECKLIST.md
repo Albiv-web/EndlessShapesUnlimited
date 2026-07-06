@@ -142,6 +142,10 @@ release pass.
 - Confirm the graph/code editor bottom strip reports page, link count, grid
   state, status text, immediate native edit behavior, and generated-node revert
   availability.
+- Open the `System` tab, confirm the breadcrumb reads from `Root` through the
+  selected controller into the draft System Block, use `Suggest ports`, `Check`,
+  `Apply template`, and `Revert draft`, and confirm the tab stores only ESU
+  metadata for named ports/templates with no native controller mutation.
 - Use the proxy property picker on created Generic Getter/Setter nodes and
   confirm FtD exposes a sensible property list for the selected target type.
 - Run `Run checks` again after creating proxy nodes and confirm the runtime

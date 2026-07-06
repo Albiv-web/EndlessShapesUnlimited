@@ -7159,6 +7159,11 @@ f 0 2 3
         string automationNextSafeActionSource = ExtractMethodSource(automationSessionSource, "NextSafeActionLine");
         string automationWorkspaceStageSource = ExtractMethodSource(automationSessionSource, "WorkspaceStageLabel");
         string automationWorkspaceSafetySource = ExtractMethodSource(automationSessionSource, "WorkspaceSafetyLine");
+        string automationDrawSystemBlockEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockEditor");
+        string automationValidateSystemBlockDraftSource = ExtractMethodSource(automationSessionSource, "ValidateSystemBlockDraft");
+        string automationApplySystemBlockTemplateSource = ExtractMethodSource(automationSessionSource, "ApplySystemBlockTemplate");
+        string automationParseSystemBlockPortsSource = ExtractMethodSource(automationSessionSource, "ParseSystemBlockPorts");
+        string automationSystemBlockBreadcrumbSource = ExtractMethodSource(automationSessionSource, "SystemBlockBreadcrumb");
         string automationCompactHeaderSource = ExtractMethodSource(automationSessionSource, "DrawCompactIconHeader");
         string automationCategoryIconKeySource = ExtractMethodSource(automationSessionSource, "CategoryIconKey");
         string automationTargetIconKeySource = ExtractMethodSource(automationSessionSource, "AutomationTargetIconKey");
@@ -7604,6 +7609,11 @@ f 0 2 3
                automationTargetSearchControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("DrawEditorBottomStrip()") &&
+               automationSessionSource.Contains("AutomationEditorPage.System") &&
+               automationSessionSource.Contains("AutomationSystemBlockTemplate") &&
+               automationDrawEditorSource.Contains("new GUIContent(\"System\"") &&
+               automationDrawEditorSource.Contains("DrawSystemBlockEditor()") &&
+               automationDrawEditorSource.Contains("SystemBlockBreadcrumb()") &&
                automationDrawWorkspaceGuideSource.Contains("Workspace guide") &&
                automationDrawWorkspaceGuideSource.Contains("WorkspaceStageLabel()") &&
                automationDrawWorkspaceGuideSource.Contains("WorkspaceNativeSurfaceLine()") &&
@@ -7612,11 +7622,28 @@ f 0 2 3
                automationDrawWorkspaceGuideSource.Contains("System Blocks: planned nested graphs") &&
                automationNextSafeActionSource.Contains("Compile expression into native graph nodes") &&
                automationNextSafeActionSource.Contains("Inspect native nodes, add Generic proxy nodes") &&
+               automationNextSafeActionSource.Contains("Check the System Block ports") &&
                automationNextSafeActionSource.Contains("Point at an exposed craft face") &&
                automationWorkspaceStageSource.Contains("Recipe compile") &&
+               automationWorkspaceStageSource.Contains("System Block") &&
                automationWorkspaceStageSource.Contains("Build graph") &&
                automationWorkspaceSafetySource.Contains("Revert compile") &&
+               automationWorkspaceSafetySource.Contains("System Blocks store ESU-only names") &&
                automationWorkspaceSafetySource.Contains("deterministic and lower into native Breadboard nodes") &&
+               automationDrawSystemBlockEditorSource.Contains("System Block signature") &&
+               automationDrawSystemBlockEditorSource.Contains("ESU-only template metadata") &&
+               automationDrawSystemBlockEditorSource.Contains("Suggest ports") &&
+               automationDrawSystemBlockEditorSource.Contains("Apply template") &&
+               automationDrawSystemBlockEditorSource.Contains("Revert draft") &&
+               automationValidateSystemBlockDraftSource.Contains("metadata only") &&
+               automationValidateSystemBlockDraftSource.Contains("no native mutation") &&
+               automationValidateSystemBlockDraftSource.Contains("is duplicated") &&
+               automationApplySystemBlockTemplateSource.Contains("mutates no native controller data") &&
+               automationParseSystemBlockPortsSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
+               automationSystemBlockBreadcrumbSource.Contains("Root >") &&
+               changeTestChecklistSource.Contains("System` tab") &&
+               changeTestChecklistSource.Contains("Apply template") &&
+               changeTestChecklistSource.Contains("no native controller mutation") &&
                automationBreadboardMoveControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationBreadboardWireControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationCompactHeaderSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&
