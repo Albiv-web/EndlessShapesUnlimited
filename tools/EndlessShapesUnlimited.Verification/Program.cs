@@ -7110,15 +7110,21 @@ f 0 2 3
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
         string automationCancelRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationRightClick");
+        string automationGUILayoutButtonSource = ExtractMethodSource(automationSessionSource, "AutomationGUILayoutButton");
         string automationToolbarButtonSource = ExtractMethodSource(automationSessionSource, "ToolbarButton");
+        string automationStatusStripSource = ExtractMethodSource(automationSessionSource, "DrawStatusStrip");
         string automationPanelHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationPanelHeader");
         string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
+        string automationTargetSearchControlsSource = ExtractMethodSource(automationSessionSource, "DrawTargetSearchControls");
+        string automationDrawEditorSource = ExtractMethodSource(automationSessionSource, "DrawEditor");
         string automationCompactHeaderSource = ExtractMethodSource(automationSessionSource, "DrawCompactIconHeader");
         string automationCategoryIconKeySource = ExtractMethodSource(automationSessionSource, "CategoryIconKey");
         string automationTargetIconKeySource = ExtractMethodSource(automationSessionSource, "AutomationTargetIconKey");
         string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
         string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
         string automationTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawTargetListRow");
+        string automationBreadboardMoveControlsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardMoveControls");
+        string automationBreadboardWireControlsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardWireControls");
         string automationExecuteBoardCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteBoardCommand");
         string automationExecuteAddComponentCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteAddComponentCommand");
         string readmeDocumentationSource = ReadDocumentationText(root);
@@ -7500,10 +7506,21 @@ f 0 2 3
                automationSessionSource.Contains("DrawAutomationSectionHeader") &&
                automationSessionSource.Contains("DrawAutomationPanelHeader(\"Automation Editor\", \"build\"") &&
                automationSessionSource.Contains("DrawAutomationPanelHeader(\"Automation Blocks\", \"cube\"") &&
+               automationGUILayoutButtonSource.Contains("GUILayout.Button(content, style, options)") &&
+               automationGUILayoutButtonSource.Contains("EsuCursorTooltip.RegisterLast(content?.tooltip)") &&
+               automationToolbarButtonSource.Contains("AutomationGUILayoutButton(") &&
                automationToolbarButtonSource.Contains("new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip)") &&
+               automationStatusStripSource.Contains("AutomationGUILayoutButton(") &&
+               automationStatusStripSource.Contains("new GUIContent(\"Link\", DecorationEditorIconCatalog.Get(\"anchor\")") &&
+               automationPanelHeaderSource.Contains("AutomationGUILayoutButton(") &&
                automationPanelHeaderSource.Contains("DecorationEditorIconCatalog.Get(\"close\")") &&
+               automationSectionHeaderSource.Contains("AutomationGUILayoutButton(") &&
                automationSectionHeaderSource.Contains("sectionVisible ? \"Hide list\" : \"Show list\"") &&
                automationSectionHeaderSource.Contains("DecorationEditorIconCatalog.Get(sectionVisible ? \"close\" : iconKey)") &&
+               automationTargetSearchControlsSource.Contains("AutomationGUILayoutButton(") &&
+               automationDrawEditorSource.Contains("AutomationGUILayoutButton(") &&
+               automationBreadboardMoveControlsSource.Contains("AutomationGUILayoutButton(") &&
+               automationBreadboardWireControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationCompactHeaderSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&
                automationCategoryIconKeySource.Contains("AutomationTargetCategory.Missiles") &&
                automationCategoryIconKeySource.Contains("return \"cone\"") &&
