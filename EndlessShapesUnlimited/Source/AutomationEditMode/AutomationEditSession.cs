@@ -32,6 +32,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private enum AutomationEditorPage
         {
+            Blocks,
             Graph,
             Code,
             System
@@ -175,7 +176,11 @@ namespace DecoLimitLifter.AutomationEditMode
             AutomationControllerCatalog.All.FirstOrDefault();
         private AutomationTargetCategory _filter = AutomationTargetCategory.All;
         private AutomationTool _tool = AutomationTool.Link;
-        private AutomationEditorPage _editorPage = AutomationEditorPage.Graph;
+        private AutomationEditorPage _editorPage = AutomationEditorPage.Blocks;
+        private AutomationBlockWorkspace _blockWorkspace;
+        private AutomationLoweringPlan _blockLoweringPlan;
+        private string _blockWorkspaceControllerKey = string.Empty;
+        private string _blockLoweringStatus = string.Empty;
         private string _automationCodeText = string.Empty;
         private string _automationCodeControllerKey = string.Empty;
         private int _automationCodeRecipeIndex;
@@ -274,6 +279,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedLinkTargetKey = string.Empty;
             CloseAutomationContextMenu();
             _links.Clear();
+            ClearAutomationBlockWorkspace();
             ClearSystemBlockWorkspace();
         }
 
@@ -445,6 +451,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedCanvasComponentId = NoWireSourceComponentId;
             _canvasDragComponentId = NoWireSourceComponentId;
             _canvasDragPreviewDelta = Vector2.zero;
+            ClearAutomationBlockWorkspace();
             ClearSystemBlockWorkspace();
             CloseAutomationContextMenu();
             CloseEditor();
@@ -587,8 +594,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return false;
             }
 
-            if (page.HasValue)
-                _editorPage = page.Value;
+            _editorPage = page ?? AutomationEditorPage.Blocks;
             _editorOpen = true;
             FitEditorToViewport();
             return true;
@@ -1024,7 +1030,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 yield return new AutomationContextMenuItem(
                     "Open editor",
                     AutomationContextAction.OpenEditor,
-                    "Open the graph/code editor for this controller.",
+                    "Open the ESU Blocks builder for this controller.",
                     canOpenEditor);
             }
 
@@ -1102,9 +1108,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 "Show this link in the Automation details panel.",
                 link != null);
             yield return new AutomationContextMenuItem(
-                "Open graph",
+                "Open builder",
                 AutomationContextAction.OpenEditor,
-                "Open the graph editor for this link's controller.",
+                "Open the ESU Blocks builder for this link's controller.",
                 ContextController() != null);
             yield return new AutomationContextMenuItem(
                 "Remove link",
@@ -1216,7 +1222,7 @@ namespace DecoLimitLifter.AutomationEditMode
             AutomationTarget controller = ContextController();
             if (controller != null)
                 SelectAutomationController(controller);
-            TryOpenEditor(AutomationEditorPage.Graph);
+            TryOpenEditor(AutomationEditorPage.Blocks);
         }
 
         private void ToggleContextTargetLink()
@@ -1615,6 +1621,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     _selectedLinkTargetKey = string.Empty;
                 if (string.Equals(_automationCodeOutputTargetKey, targetKey, StringComparison.Ordinal))
                     _automationCodeOutputTargetKey = string.Empty;
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = "Linked targets changed; Check ESU Blocks again before applying.";
                 _status = "Removed automation link to " + target.Label + ".";
                 return;
             }
@@ -1623,6 +1631,8 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedLinkTargetKey = targetKey;
             if (AutomationTargetCatalog.IsBreadboardWritableTarget(target))
                 _automationCodeOutputTargetKey = targetKey;
+            _blockLoweringPlan = null;
+            _blockLoweringStatus = "Linked targets changed; Check ESU Blocks again before applying.";
             _status = IsAcbControllerBridgeTarget(target)
                 ? "Linked " + controller.Label + " to ACB Controller button keyword output."
                 : IsAcbProxyTarget(target)
@@ -1648,6 +1658,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _selectedCanvasComponentId = NoWireSourceComponentId;
                 _canvasDragComponentId = NoWireSourceComponentId;
                 _canvasDragPreviewDelta = Vector2.zero;
+                ClearAutomationBlockWorkspace();
                 ClearSystemBlockWorkspace();
             }
 
@@ -2123,7 +2134,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _tool = AutomationTool.Place;
                 _status = PlacementArmedStatus();
             }
-            if (ToolbarButton("open", "Edit", "Open the ESU automation graph/code editor.", _editorOpen))
+            if (ToolbarButton("open", "Edit", "Open the ESU Blocks automation editor.", _editorOpen))
             {
                 TryOpenEditor();
             }
@@ -2354,7 +2365,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             if (AutomationGUILayoutButton(
-                    new GUIContent("Editor", DecorationEditorIconCatalog.Get("open"), "Open the ESU automation graph/code editor."),
+                    new GUIContent("Editor", DecorationEditorIconCatalog.Get("open"), "Open the ESU Blocks automation editor."),
                     DecorationEditorTheme.ToolButton(_editorOpen),
                     GUILayout.Width(EsuHudLayout.Scale(80f)),
                     GUILayout.Height(controlsHeight)))
@@ -2368,7 +2379,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && _editorOpen;
             if (AutomationGUILayoutButton(
-                    new GUIContent("Fit", DecorationEditorIconCatalog.Get("focus"), "Fit the graph/code editor to the viewport."),
+                    new GUIContent("Fit", DecorationEditorIconCatalog.Get("focus"), "Fit the automation editor to the viewport."),
                     _editorOpen ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Width(EsuHudLayout.Scale(60f)),
                     GUILayout.Height(controlsHeight)))
@@ -2482,6 +2493,8 @@ namespace DecoLimitLifter.AutomationEditMode
                         : _editorPage == AutomationEditorPage.Code
                             ? "System lowering"
                             : "System graph";
+                if (_editorPage == AutomationEditorPage.Blocks)
+                    return "ESU Blocks";
                 if (_editorPage == AutomationEditorPage.Graph)
                     return "Native graph";
                 if (_editorPage == AutomationEditorPage.System)
@@ -2493,7 +2506,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return _selectedPlacement == null ? "Choose controller" : "Place controller";
             if (_selectedController == null)
                 return "Select controller";
-            return SelectedLinks.Count == 0 ? "Link targets" : "Build graph";
+            return SelectedLinks.Count == 0 ? "Link targets" : "Build blocks";
         }
 
         private string NextSafeActionLine()
@@ -2512,6 +2525,17 @@ namespace DecoLimitLifter.AutomationEditMode
                     if (_editorPage == AutomationEditorPage.Code)
                         return "Compile deterministic code into native nodes, then return to System Graph to record the lowering plan.";
                     return "Edit the internal graph plan, use Code for native lowering, or go Up to the host graph.";
+                }
+
+                if (_editorPage == AutomationEditorPage.Blocks)
+                {
+                    if (SelectedLinks.Count == 0)
+                        return "Close the editor or use Link mode, click a target this Breadboard affects, then return to ESU Blocks.";
+                    if (_blockLoweringPlan == null)
+                        return "Use linked targets in Read/Set blocks, then Check blocks before applying.";
+                    if (CanRevertLastAutomationCompile())
+                        return "Review generated native nodes through Advanced, or use Revert blocks.";
+                    return "Apply blocks to native Breadboard nodes, collapse selected blocks to a System Block, or open Advanced.";
                 }
 
                 if (_editorPage == AutomationEditorPage.System)
@@ -2554,9 +2578,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 return "Click a controller on the craft, or choose a controller block to place one.";
 
             if (SelectedLinks.Count == 0)
-                return "Click highlighted world targets to link them, or open Editor to inspect native data.";
+                return "Click highlighted world targets to link them to the Breadboard.";
 
-            return "Open Editor for graph/code work, or click linked targets to inspect or unlink them.";
+            return "Open Editor to build ESU Blocks, or click linked targets to inspect or unlink them.";
         }
 
         private string WorkspaceSafetyLine()
@@ -2567,6 +2591,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 return "System Block native proxy lowering has a Revert path.";
             if (_editorOpen && IsSystemBlockWorkspaceOpen())
                 return "Nested System Blocks store ESU layout/group metadata only; Graph/Code lowering still writes native nodes.";
+            if (_editorOpen && _editorPage == AutomationEditorPage.Blocks)
+                return "ESU Blocks are metadata until Check/Apply lowers them into native Breadboard nodes.";
             if (_editorOpen && _editorPage == AutomationEditorPage.System)
                 return "System Blocks store ESU-only names, ports, comments, breadcrumbs, and template metadata.";
             if (_editorOpen && _editorPage == AutomationEditorPage.Code)
@@ -2575,7 +2601,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return "Viewing existing native data does not mutate it; inspector edits apply directly.";
             if (_selectedController == null)
                 return "Selection and target discovery are HUD-only until you place or edit a native controller.";
-            return "World links are ESU workspace state until proxy nodes are created in the native graph.";
+            return "World links are ESU workspace state until Blocks Apply or Advanced proxy tools create native nodes.";
         }
 
         private string WorkspaceNativeSurfaceLine()
@@ -2823,7 +2849,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 LabelRow("Type", _selectedController.Controller?.ClassName ?? _selectedController.RuntimeType);
                 LabelRow("Cell", FormatCell(_selectedController.LocalPosition));
                 if (AutomationGUILayoutButton(
-                        new GUIContent("Open editor", DecorationEditorIconCatalog.Get("open"), "Open the graph/code editor for the selected controller."),
+                        new GUIContent("Open editor", DecorationEditorIconCatalog.Get("open"), "Open the ESU Blocks builder for the selected controller."),
                         DecorationEditorTheme.ToolButton(_editorOpen),
                         GUILayout.Height(EsuHudLayout.Scale(28f))))
                 {
@@ -2834,7 +2860,8 @@ namespace DecoLimitLifter.AutomationEditMode
                         DecorationEditorTheme.Button,
                         GUILayout.Height(EsuHudLayout.Scale(28f))))
                     ClearSelectedLinks();
-                DrawRuntimeDiagnosticsPanel();
+                if (_editorOpen && _editorPage != AutomationEditorPage.Blocks)
+                    DrawRuntimeDiagnosticsPanel();
             }
 
             DecorationEditorTheme.Separator();
@@ -2864,7 +2891,7 @@ namespace DecoLimitLifter.AutomationEditMode
             LabelRow("Native data", WorkspaceNativeSurfaceLine());
             GUILayout.Label("Next: " + NextSafeActionLine(), DecorationEditorTheme.MiniWrap);
             GUILayout.Label("Safety: " + WorkspaceSafetyLine(), DecorationEditorTheme.MiniWrap);
-            GUILayout.Label("System Blocks: planned nested graphs with exposed ports and native lowering.", DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("Default: ESU Blocks. Advanced keeps native Breadboard graph/code/System tools available when you need them.", DecorationEditorTheme.MiniWrap);
         }
 
         private void DrawLinkedTargetListRow(AutomationLink link)
@@ -2974,11 +3001,11 @@ namespace DecoLimitLifter.AutomationEditMode
 
             GUILayout.BeginHorizontal();
             if (AutomationGUILayoutButton(
-                    new GUIContent("Open graph", DecorationEditorIconCatalog.Get("open"), "Open the graph editor for this link."),
+                    new GUIContent("Open builder", DecorationEditorIconCatalog.Get("open"), "Open the ESU Blocks builder for this link."),
                     DecorationEditorTheme.Button,
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                TryOpenEditor(AutomationEditorPage.Graph);
+                TryOpenEditor(AutomationEditorPage.Blocks);
             }
             if (AutomationGUILayoutButton(
                     new GUIContent("Remove link", DecorationEditorIconCatalog.Get("delete"), "Remove this linked target."),
@@ -3699,17 +3726,36 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             if (AutomationGUILayoutButton(
-                    new GUIContent("Graph", DecorationEditorIconCatalog.Get("outliner"), "Edit Automation graph nodes."),
-                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Graph)))
-                _editorPage = AutomationEditorPage.Graph;
+                    new GUIContent("Blocks", DecorationEditorIconCatalog.Get("build"), "Build beginner-friendly ESU Automation Blocks."),
+                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Blocks)))
+            {
+                ClearSystemBlockWorkspace();
+                _editorPage = AutomationEditorPage.Blocks;
+            }
+            bool advanced = _editorPage != AutomationEditorPage.Blocks;
             if (AutomationGUILayoutButton(
-                    new GUIContent("Code", DecorationEditorIconCatalog.Get("settings"), "Generate or edit Automation code recipes."),
-                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Code)))
-                _editorPage = AutomationEditorPage.Code;
-            if (AutomationGUILayoutButton(
-                    new GUIContent("System", DecorationEditorIconCatalog.Get("duplicate"), "Define ESU System Block ports and reusable template metadata."),
-                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.System)))
-                _editorPage = AutomationEditorPage.System;
+                    new GUIContent("Advanced", DecorationEditorIconCatalog.Get("settings"), "Open native Breadboard graph/code/System Block tools."),
+                    DecorationEditorTheme.ToolButton(advanced)))
+            {
+                if (_editorPage == AutomationEditorPage.Blocks)
+                    _editorPage = AutomationEditorPage.Graph;
+            }
+            if (advanced)
+            {
+                GUILayout.Space(EsuHudLayout.Scale(10f));
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Native", DecorationEditorIconCatalog.Get("outliner"), "Edit native Automation graph nodes."),
+                        DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Graph)))
+                    _editorPage = AutomationEditorPage.Graph;
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Code", DecorationEditorIconCatalog.Get("settings"), "Generate or edit native Automation code recipes."),
+                        DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Code)))
+                    _editorPage = AutomationEditorPage.Code;
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Systems", DecorationEditorIconCatalog.Get("duplicate"), "Define reusable ESU System Block metadata and native ports."),
+                        DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.System)))
+                    _editorPage = AutomationEditorPage.System;
+            }
             GUILayout.EndHorizontal();
             GUILayout.Label("Breadcrumb: " + SystemBlockBreadcrumb(), DecorationEditorTheme.MiniWrap);
             DecorationEditorTheme.Separator();
@@ -3721,7 +3767,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 alwaysShowHorizontal: false,
                 alwaysShowVertical: true,
                 GUILayout.Height(scrollHeight));
-            if (_editorPage == AutomationEditorPage.Graph)
+            if (_editorPage == AutomationEditorPage.Blocks)
+                DrawBlocksEditor();
+            else if (_editorPage == AutomationEditorPage.Graph)
                 DrawGraphEditor();
             else if (_editorPage == AutomationEditorPage.Code)
                 DrawCodeEditor();
@@ -3755,6 +3803,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     ? "Generated nodes: revert available"
                     : CanRevertLastSystemBlockLowering()
                         ? "System proxies: revert available"
+                    : _editorPage == AutomationEditorPage.Blocks
+                        ? "ESU Blocks: metadata until Apply"
                     : _editorPage == AutomationEditorPage.System
                         ? "System template: ESU metadata"
                     : "Native edits apply immediately",
@@ -3762,6 +3812,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     ? DecorationEditorTheme.Warning
                     : CanRevertLastSystemBlockLowering()
                         ? DecorationEditorTheme.Warning
+                    : _editorPage == AutomationEditorPage.Blocks
+                        ? DecorationEditorTheme.Body
                     : _editorPage == AutomationEditorPage.System
                         ? DecorationEditorTheme.Body
                     : DecorationEditorTheme.Mini,
@@ -3777,6 +3829,8 @@ namespace DecoLimitLifter.AutomationEditMode
             string prefix = IsSystemBlockWorkspaceOpen() ? "System " : string.Empty;
             switch (_editorPage)
             {
+                case AutomationEditorPage.Blocks:
+                    return prefix + "ESU Blocks";
                 case AutomationEditorPage.Code:
                     return prefix + "Code";
                 case AutomationEditorPage.System:
@@ -3810,8 +3864,544 @@ namespace DecoLimitLifter.AutomationEditMode
                 return "System Block - " + template.Name;
 
             return _selectedController == null
-                ? "Automation Graph"
-                : "Automation Graph - " + _selectedController.Label;
+                ? "Automation Blocks"
+                : _editorPage == AutomationEditorPage.Blocks
+                    ? "Automation Blocks - " + _selectedController.Label
+                    : "Native Breadboard - " + _selectedController.Label;
+        }
+
+        private void DrawBlocksEditor()
+        {
+            GUILayout.Label("ESU Blocks builder", DecorationEditorTheme.SubHeader);
+            if (_selectedController == null)
+            {
+                GUILayout.Label("Select or place a Breadboard, link a target it affects, then open the editor.", DecorationEditorTheme.MiniWrap);
+                return;
+            }
+
+            if (!IsBreadboardController(_selectedController.Controller))
+            {
+                GUILayout.Label("ESU Blocks currently lower into native Breadboard controllers. Use Advanced for ACB inspection.", DecorationEditorTheme.Warning);
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Open Advanced", DecorationEditorIconCatalog.Get("settings"), "Open native Automation tools for this controller."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Width(EsuHudLayout.Scale(132f)),
+                        GUILayout.Height(EsuHudLayout.Scale(26f))))
+                    _editorPage = AutomationEditorPage.Graph;
+                return;
+            }
+
+            EnsureBlockWorkspace();
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            DrawCompactIconHeader("Beginner workflow", "build", DecorationEditorTheme.SubHeader);
+            GUILayout.Label("Click Breadboard -> click target -> stack ESU Blocks -> Check -> Apply. Advanced native Breadboard tools stay behind the Advanced tab.", DecorationEditorTheme.MiniWrap);
+            GUILayout.Label(
+                SelectedLinks.Count == 0
+                    ? "No linked targets yet. Close the editor or use Link mode, then click the target this Breadboard should affect."
+                    : SelectedLinks.Count.ToString(CultureInfo.InvariantCulture) + " linked target option(s) available to Read/Set blocks.",
+                SelectedLinks.Count == 0 ? DecorationEditorTheme.Warning : DecorationEditorTheme.Body);
+            GUILayout.EndVertical();
+
+            DrawBlockAddToolbar();
+
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+            DrawCompactIconHeader("Block stack", "outliner", DecorationEditorTheme.SubHeader);
+            if (_blockWorkspace.Nodes.Count == 0)
+            {
+                GUILayout.Label("Add a When/If block or use Reset stack to rebuild a starter automation.", DecorationEditorTheme.MiniWrap);
+            }
+            else
+            {
+                foreach (AutomationBlockNode node in _blockWorkspace.Nodes)
+                    DrawAutomationBlockNodeRow(node);
+            }
+
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Move up", DecorationEditorIconCatalog.Get("up"), "Move the selected ESU Block up in the stack."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(86f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+                MoveSelectedEsuBlock(-1);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Move down", DecorationEditorIconCatalog.Get("down"), "Move the selected ESU Block down in the stack."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(98f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+                MoveSelectedEsuBlock(1);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove the selected ESU Block."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(82f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+                RemoveSelectedEsuBlock();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Reset stack", DecorationEditorIconCatalog.Get("cancel"), "Rebuild the starter ESU Blocks stack from current linked targets."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(104f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                ClearAutomationBlockWorkspace();
+                EnsureBlockWorkspace();
+                _status = "Reset ESU Blocks starter stack from current linked targets.";
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            DrawBlocksLoweringPanel();
+            DrawBlocksSystemBlockPanel();
+        }
+
+        private void DrawBlockAddToolbar()
+        {
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+            GUILayout.Label("Add block", DecorationEditorTheme.Mini);
+            GUILayout.BeginHorizontal();
+            DrawAddAutomationBlockButton(AutomationBlockKind.WhenIf, "If", "risk");
+            DrawAddAutomationBlockButton(AutomationBlockKind.ReadTarget, "Read", "visibility");
+            DrawAddAutomationBlockButton(AutomationBlockKind.Compare, "Compare", "filter");
+            DrawAddAutomationBlockButton(AutomationBlockKind.MathScale, "Math", "settings");
+            DrawAddAutomationBlockButton(AutomationBlockKind.SetTarget, "Set", "anchor");
+            DrawAddAutomationBlockButton(AutomationBlockKind.Constant, "Const", "cube");
+            DrawAddAutomationBlockButton(AutomationBlockKind.Delay, "Delay", "time");
+            DrawAddAutomationBlockButton(AutomationBlockKind.Comment, "Note", "info");
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawAddAutomationBlockButton(
+            AutomationBlockKind kind,
+            string label,
+            string icon)
+        {
+            if (AutomationGUILayoutButton(
+                    new GUIContent(label, DecorationEditorIconCatalog.Get(icon), "Add " + label + " to the ESU Blocks stack."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(72f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+            {
+                EnsureBlockWorkspace();
+                _blockWorkspace.AddBlock(kind);
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = "Block stack changed; Check ESU Blocks again before applying.";
+                _status = "Added " + label + " ESU Block.";
+            }
+        }
+
+        private void DrawAutomationBlockNodeRow(AutomationBlockNode node)
+        {
+            if (node == null)
+                return;
+
+            bool selected = string.Equals(_blockWorkspace.SelectedNodeId, node.Id, StringComparison.Ordinal);
+            GUILayout.BeginVertical(selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+            Rect rowRect = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(34f),
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(34f)));
+            GUI.Label(rowRect, GUIContent.none, selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+            DrawAutomationSingleLineIconRow(
+                rowRect,
+                node.IconKey,
+                BlockNodeTitle(node),
+                DecorationEditorTheme.Body);
+            if (Event.current != null &&
+                Event.current.type == EventType.MouseDown &&
+                Event.current.button == 0 &&
+                rowRect.Contains(Event.current.mousePosition))
+            {
+                _blockWorkspace.Select(node.Id);
+                Event.current.Use();
+            }
+
+            DrawAutomationBlockNodeControls(node);
+            GUILayout.EndVertical();
+        }
+
+        private string BlockNodeTitle(AutomationBlockNode node)
+        {
+            if (node == null)
+                return "Block";
+
+            switch (node.Kind)
+            {
+                case AutomationBlockKind.ReadTarget:
+                case AutomationBlockKind.SetTarget:
+                    return node.Label + ": " + (string.IsNullOrWhiteSpace(node.TargetLabel) ? "choose linked target" : node.TargetLabel);
+                case AutomationBlockKind.Compare:
+                    return node.Label + ": " + CompareOperatorLabel(node.Operator) + " " +
+                           node.NumericValue.ToString("0.###", CultureInfo.InvariantCulture);
+                case AutomationBlockKind.MathScale:
+                    return node.Label + ": x " + node.NumericValue.ToString("0.###", CultureInfo.InvariantCulture);
+                case AutomationBlockKind.Constant:
+                    return node.Label + ": " + node.NumericValue.ToString("0.###", CultureInfo.InvariantCulture);
+                case AutomationBlockKind.Delay:
+                    return node.Label + ": " + node.NumericValue.ToString("0.###", CultureInfo.InvariantCulture) + "s";
+                case AutomationBlockKind.Comment:
+                    return string.IsNullOrWhiteSpace(node.Comment) ? "Comment" : "Comment: " + node.Comment;
+                default:
+                    return node.Label;
+            }
+        }
+
+        private void DrawAutomationBlockNodeControls(AutomationBlockNode node)
+        {
+            if (node.Kind == AutomationBlockKind.ReadTarget ||
+                node.Kind == AutomationBlockKind.SetTarget)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(
+                    node.Kind == AutomationBlockKind.SetTarget ? "Writable target" : "Readable target",
+                    DecorationEditorTheme.Mini,
+                    GUILayout.Width(EsuHudLayout.Scale(110f)));
+                if (AutomationGUILayoutButton(
+                        new GUIContent(
+                            string.IsNullOrWhiteSpace(node.TargetLabel) ? "Choose target" : node.TargetLabel,
+                            DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_blockWorkspace.TargetForNode(node))),
+                            "Cycle linked targets available to this ESU Block."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                    CycleAutomationBlockTarget(node);
+                GUILayout.EndHorizontal();
+                return;
+            }
+
+            if (node.Kind == AutomationBlockKind.Compare)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Operator", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(76f)));
+                if (AutomationGUILayoutButton(
+                        new GUIContent(CompareOperatorLabel(node.Operator), DecorationEditorIconCatalog.Get("filter"), "Cycle comparison operator."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Width(EsuHudLayout.Scale(92f)),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                    CycleAutomationCompareOperator(node);
+                DrawEsuBlockFloatStepper("Threshold", node.NumericValue, 0.1f, value =>
+                {
+                    node.NumericValue = value;
+                    InvalidateEsuBlockPlan();
+                });
+                GUILayout.EndHorizontal();
+                return;
+            }
+
+            if (node.Kind == AutomationBlockKind.MathScale ||
+                node.Kind == AutomationBlockKind.Constant ||
+                node.Kind == AutomationBlockKind.Delay)
+            {
+                string label = node.Kind == AutomationBlockKind.Delay
+                    ? "Seconds"
+                    : node.Kind == AutomationBlockKind.Constant
+                        ? "Value"
+                        : "Scale";
+                DrawEsuBlockFloatStepper(label, node.NumericValue, node.Kind == AutomationBlockKind.Delay ? 0.05f : 0.1f, value =>
+                {
+                    node.NumericValue = node.Kind == AutomationBlockKind.Delay ? Mathf.Max(0f, value) : value;
+                    InvalidateEsuBlockPlan();
+                });
+                return;
+            }
+
+            if (node.Kind == AutomationBlockKind.Comment)
+            {
+                string next = GUILayout.TextField(node.Comment ?? string.Empty, DecorationEditorTheme.TextField);
+                if (!string.Equals(next, node.Comment ?? string.Empty, StringComparison.Ordinal))
+                {
+                    node.Comment = next;
+                    InvalidateEsuBlockPlan();
+                }
+            }
+        }
+
+        private void DrawBlocksLoweringPanel()
+        {
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            DrawCompactIconHeader("Native lowering", "settings", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            GUILayout.Label("Check validates the native plan without mutation. Apply lowers through Breadboard nodes and tracks generated component ids for Revert.", DecorationEditorTheme.MiniWrap);
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Check blocks", DecorationEditorIconCatalog.Get("risk"), "Validate ESU Blocks and preview native lowering."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(112f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                CheckEsuBlocks();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Apply blocks", DecorationEditorIconCatalog.Get("save"), "Lower ESU Blocks into native Breadboard nodes."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(112f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                ApplyEsuBlocks();
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && CanRevertLastAutomationCompile();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Revert blocks", DecorationEditorIconCatalog.Get("cancel"), "Remove native nodes generated by the last ESU Blocks apply."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(116f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                RevertEsuBlocks();
+            GUI.enabled = previous;
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            if (_blockLoweringPlan != null)
+            {
+                GUILayout.Label("Plan: " + _blockLoweringPlan.Summary, DecorationEditorTheme.Body);
+                foreach (string step in _blockLoweringPlan.Steps.Take(4))
+                    GUILayout.Label("- " + step, DecorationEditorTheme.MiniWrap);
+            }
+
+            if (!string.IsNullOrWhiteSpace(_blockLoweringStatus))
+            {
+                GUILayout.Label(
+                    _blockLoweringStatus,
+                    _blockLoweringStatus.IndexOf("passed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    _blockLoweringStatus.IndexOf("Applied", StringComparison.OrdinalIgnoreCase) >= 0
+                        ? DecorationEditorTheme.Body
+                        : DecorationEditorTheme.Warning);
+            }
+            GUILayout.EndVertical();
+        }
+
+        private void DrawBlocksSystemBlockPanel()
+        {
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            DrawCompactIconHeader("System Blocks", "duplicate", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            GUILayout.Label("Select ESU Blocks and collapse them into a reusable System Block. It stays ESU metadata until checked/applied into native Breadboard nodes.", DecorationEditorTheme.MiniWrap);
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Collapse to System Block", DecorationEditorIconCatalog.Get("duplicate"), "Create a reusable System Block from selected ESU Blocks."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(184f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                CollapseEsuBlocksToSystemBlock();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Open Systems", DecorationEditorIconCatalog.Get("open"), "Open Advanced System Block template tools."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(116f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                _editorPage = AutomationEditorPage.System;
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            DrawSystemBlockTemplateList();
+            GUILayout.EndVertical();
+        }
+
+        private void EnsureBlockWorkspace()
+        {
+            string controllerKey = _selectedController?.StableKey ?? string.Empty;
+            if (_blockWorkspace == null ||
+                !string.Equals(_blockWorkspaceControllerKey, controllerKey, StringComparison.Ordinal))
+            {
+                _blockWorkspace = AutomationBlockWorkspace.CreateDefault(
+                    controllerKey,
+                    _selectedController?.Label ?? "Automation controller",
+                    SelectedLinks.Select(link => link.Target).Where(target => target != null).ToArray());
+                _blockWorkspaceControllerKey = controllerKey;
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = "ESU Blocks starter stack is ready. Link targets become Read/Set options.";
+                return;
+            }
+
+            _blockWorkspace.ReplaceTargets(
+                SelectedLinks.Select(link => link.Target).Where(target => target != null).ToArray());
+        }
+
+        private void MoveSelectedEsuBlock(int delta)
+        {
+            EnsureBlockWorkspace();
+            if (_blockWorkspace.MoveSelected(delta))
+                InvalidateEsuBlockPlan();
+        }
+
+        private void RemoveSelectedEsuBlock()
+        {
+            EnsureBlockWorkspace();
+            if (_blockWorkspace.RemoveSelected())
+            {
+                InvalidateEsuBlockPlan();
+                _status = "Removed selected ESU Block.";
+            }
+        }
+
+        private void CycleAutomationBlockTarget(AutomationBlockNode node)
+        {
+            if (node == null)
+                return;
+
+            EnsureBlockWorkspace();
+            AutomationTarget[] options = BlockTargetOptions(node.Kind);
+            if (options.Length == 0)
+            {
+                _status = "Link a target before assigning this ESU Block.";
+                return;
+            }
+
+            int current = Array.FindIndex(options, target =>
+                string.Equals(target.StableKey, node.TargetKey, StringComparison.Ordinal));
+            int next = PositiveModulo(current + 1, options.Length);
+            node.SetTarget(options[next]);
+            InvalidateEsuBlockPlan();
+            _status = node.Label + " now uses " + options[next].Label + ".";
+        }
+
+        private AutomationTarget[] BlockTargetOptions(AutomationBlockKind kind)
+        {
+            IEnumerable<AutomationTarget> targets = SelectedLinks
+                .Select(link => link.Target)
+                .Where(target => target != null);
+            if (kind == AutomationBlockKind.SetTarget)
+                targets = targets.Where(AutomationTargetCatalog.IsBreadboardWritableTarget);
+            else if (kind == AutomationBlockKind.ReadTarget)
+                targets = targets.Where(AutomationTargetCatalog.IsBreadboardReadableTarget);
+
+            return targets.ToArray();
+        }
+
+        private void CycleAutomationCompareOperator(AutomationBlockNode node)
+        {
+            if (node == null)
+                return;
+
+            int value = PositiveModulo((int)node.Operator + 1, Enum.GetValues(typeof(AutomationCompareOperator)).Length);
+            node.Operator = (AutomationCompareOperator)value;
+            InvalidateEsuBlockPlan();
+        }
+
+        private static string CompareOperatorLabel(AutomationCompareOperator compareOperator)
+        {
+            switch (compareOperator)
+            {
+                case AutomationCompareOperator.LessThan:
+                    return "<";
+                case AutomationCompareOperator.EqualOrGreater:
+                    return ">=";
+                case AutomationCompareOperator.EqualOrLess:
+                    return "<=";
+                default:
+                    return ">";
+            }
+        }
+
+        private void DrawEsuBlockFloatStepper(
+            string label,
+            float value,
+            float step,
+            Action<float> apply)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(86f)));
+            if (AutomationGUILayoutButton(
+                    new GUIContent("-", "Decrease " + label + "."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                apply?.Invoke(value - Mathf.Max(0.001f, step));
+            GUILayout.Label(value.ToString("0.###", CultureInfo.InvariantCulture), DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(72f)));
+            if (AutomationGUILayoutButton(
+                    new GUIContent("+", "Increase " + label + "."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                apply?.Invoke(value + Mathf.Max(0.001f, step));
+            GUILayout.EndHorizontal();
+        }
+
+        private void InvalidateEsuBlockPlan()
+        {
+            _blockLoweringPlan = null;
+            _blockLoweringStatus = "Block stack changed; Check ESU Blocks again before applying.";
+        }
+
+        private bool CheckEsuBlocks()
+        {
+            EnsureBlockWorkspace();
+            if (!IsBreadboardController(_selectedController?.Controller))
+            {
+                _blockLoweringStatus = "ESU Blocks currently require a Breadboard controller.";
+                _status = _blockLoweringStatus;
+                return false;
+            }
+
+            bool ok = AutomationBlockLowering.CheckBlocksToNative(
+                _blockWorkspace,
+                out AutomationLoweringPlan plan,
+                out string message);
+            _blockLoweringPlan = ok ? plan : null;
+            _blockLoweringStatus = message;
+            _status = message;
+            if (ok && plan != null)
+                _automationCodeOutputTargetKey = plan.OutputTargetKey;
+            return ok;
+        }
+
+        private void ApplyEsuBlocks()
+        {
+            if (_blockLoweringPlan == null && !CheckEsuBlocks())
+                return;
+
+            if (_blockLoweringPlan == null)
+            {
+                _blockLoweringStatus = "Check ESU Blocks before applying native lowering.";
+                _status = _blockLoweringStatus;
+                return;
+            }
+
+            _automationCodeControllerKey = _selectedController?.StableKey ?? string.Empty;
+            _automationCodeOutputTargetKey = _blockLoweringPlan.OutputTargetKey;
+            _automationCodeText = _blockLoweringPlan.ToNativeCode();
+            bool applied = CompileAutomationCodeExpression(returnToGraph: false);
+            _editorPage = AutomationEditorPage.Blocks;
+            _blockLoweringStatus = applied
+                ? "Applied ESU Blocks to native Breadboard nodes. Revert blocks can remove the generated component ids."
+                : _status;
+            if (applied)
+                _status = _blockLoweringStatus;
+        }
+
+        private void RevertEsuBlocks()
+        {
+            RevertLastAutomationCompile();
+            _blockLoweringStatus = _status;
+            _editorPage = AutomationEditorPage.Blocks;
+        }
+
+        private void CollapseEsuBlocksToSystemBlock()
+        {
+            EnsureBlockWorkspace();
+            AutomationSystemBlockDefinition definition = _blockWorkspace.CollapseSelectionToSystemBlock(
+                "ESU " + (_selectedController?.Label ?? "Automation") + " System");
+            string[] inputs = definition.InputPorts
+                .Select(port => NormalizeSystemBlockPortName(port.Name))
+                .Where(port => !string.IsNullOrWhiteSpace(port))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            string[] outputs = definition.OutputPorts
+                .Select(port => NormalizeSystemBlockPortName(port.Name))
+                .Where(port => !string.IsNullOrWhiteSpace(port))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var template = new AutomationSystemBlockTemplate(
+                definition.Name,
+                _selectedController?.StableKey ?? string.Empty,
+                _selectedController?.Label ?? "Controller",
+                inputs,
+                outputs,
+                "Collapsed from ESU Blocks: " + definition.InternalSummary,
+                "ESU Blocks: " + definition.InternalSummary);
+            _systemBlockTemplates.Add(template);
+            _activeSystemBlockTemplateIndex = _systemBlockTemplates.Count - 1;
+            PersistSystemBlockTemplateLibrary();
+            _blockLoweringStatus =
+                "Created System Block '" +
+                template.Name +
+                "' with " +
+                inputs.Length.ToString(CultureInfo.InvariantCulture) +
+                " input port(s) and " +
+                outputs.Length.ToString(CultureInfo.InvariantCulture) +
+                " output port(s).";
+            _status = _blockLoweringStatus;
         }
 
         private void DrawGraphEditor()
@@ -4894,6 +5484,14 @@ namespace DecoLimitLifter.AutomationEditMode
             _systemBlockInternalApplied = string.Empty;
             _systemBlockInternalStatus = string.Empty;
             _systemBlockInternalDirty = false;
+        }
+
+        private void ClearAutomationBlockWorkspace()
+        {
+            _blockWorkspace = null;
+            _blockLoweringPlan = null;
+            _blockWorkspaceControllerKey = string.Empty;
+            _blockLoweringStatus = string.Empty;
         }
 
         private void RemoveSystemBlockTemplateAt(int index)
@@ -7614,7 +8212,7 @@ namespace DecoLimitLifter.AutomationEditMode
             return -1;
         }
 
-        private bool CompileAutomationCodeExpression()
+        private bool CompileAutomationCodeExpression(bool returnToGraph = true)
         {
             _lastCompileBoundOutput = false;
             if (!AutomationBreadboardInspector.TryCreate(
@@ -7648,7 +8246,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 _status = compiled
                     ? RecordAutomationCompileResult(compileResult, ifElseMessage)
                     : ifElseMessage ?? "Could not compile if/else to native nodes.";
-                _editorPage = AutomationEditorPage.Graph;
+                if (returnToGraph)
+                    _editorPage = AutomationEditorPage.Graph;
                 return compiled;
             }
 
@@ -7665,7 +8264,8 @@ namespace DecoLimitLifter.AutomationEditMode
             _status = expressionCompiled
                 ? RecordAutomationCompileResult(expressionResult, message + " Expression: " + expression)
                 : message ?? "Could not compile expression to a native Evaluator.";
-            _editorPage = AutomationEditorPage.Graph;
+            if (returnToGraph)
+                _editorPage = AutomationEditorPage.Graph;
             return expressionCompiled;
         }
 
@@ -8468,6 +9068,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _links.RemoveAll(link => link.ControllerKey == key);
             _selectedLinkTargetKey = string.Empty;
             _automationCodeOutputTargetKey = string.Empty;
+            ClearAutomationBlockWorkspace();
             _status = "Cleared links for " + _selectedController.Label + ".";
         }
 

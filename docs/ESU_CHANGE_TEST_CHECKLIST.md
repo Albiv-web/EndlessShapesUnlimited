@@ -84,15 +84,15 @@ release pass.
 
 - Open Automation Editor with `Ctrl+Shift+A` and confirm the ESU toolbar,
   left status panel, right controller palette, filters, and target list appear.
-- Confirm the Automation status panel, controller palette, and graph/code editor
+- Confirm the Automation status panel, controller palette, and Automation editor
   have Decoration/Smart-style resize grips, clamp to the screen, and leave a
   full-width bottom status strip visible.
 - Confirm the bottom strip and left `Workspace guide` report the current stage,
-  native data surface, next safe action, safety note, and planned System Block
+  native data surface, next safe action, safety note, and ESU Blocks
   vocabulary while selecting, placing, linking, and editing.
-- Open the graph/code editor from the toolbar, left panel, linked-target
-  inspector, and `Controllers on craft` list. Confirm it fits the central
-  viewport between the side panels and the bottom strip, and that `Fit` restores
+- Open the ESU Blocks editor from the toolbar, left panel, linked-target
+  inspector, and `Controllers on craft` list. Confirm it opens to the `Blocks`
+  workflow by default, fits the full focused viewport, and that `Fit` restores
   that layout after dragging or resizing.
 - Place a Bread Board, AI Breadboard, ACB, ACB Controller, and Missile
   Breadboard Controller from the right palette where the current FtD install
@@ -125,9 +125,19 @@ release pass.
   the Breadboard, and confirm the linked-target list rehydrates from persisted
   native proxies without manual relinking.
 - Inspect a linked target in the left panel and confirm category/roles/runtime/
-  cell, proxy hints, reflective warning text, `Open graph`, and `Remove link`
+  cell, proxy hints, reflective warning text, `Open builder`, and `Remove link`
   work for live and missing targets.
-- In the Breadboard graph page, create Getter/Setter/Both proxy nodes for linked
+- In the default `Blocks` page, build `If read target > value -> Set target`,
+  confirm `Check blocks` reports the native lowering plan without mutation,
+  `Apply blocks` creates native Breadboard nodes and output binding, and
+  `Revert blocks` removes only the generated component ids.
+- Confirm linked targets appear as readable/writable block options rather than
+  raw Generic Getter/Setter nodes in the default workflow.
+- Use `Collapse to System Block` on a selected ESU Block and confirm a reusable
+  System Block template appears with named input/output ports derived from the
+  Read/Set target usage.
+- Open `Advanced`, then in the native Breadboard graph page create
+  Getter/Setter/Both proxy nodes for linked
   world targets, create a Button getter for an ACB Controller output, and create
   Rule getter/setter proxies for a linked ACB.
 - Confirm linked target cards also expose in-card proxy buttons and visible
@@ -142,7 +152,7 @@ release pass.
 - Confirm the graph/code editor bottom strip reports page, link count, grid
   state, status text, immediate native edit behavior, and generated-node revert
   availability.
-- Open the `System` tab, confirm the breadcrumb reads from `Root` through the
+- Open the `Advanced` -> `Systems` tab, confirm the breadcrumb reads from `Root` through the
   selected controller into the draft System Block, use `Suggest ports`, `Check`,
   `Apply template`, and `Revert draft`, and confirm the tab stores only ESU
   metadata for named ports/templates with no native controller mutation.

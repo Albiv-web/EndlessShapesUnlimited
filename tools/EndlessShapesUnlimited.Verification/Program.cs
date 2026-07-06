@@ -7142,6 +7142,12 @@ f 0 2 3
             "Source",
             "AutomationEditMode",
             "AutomationRuntimeDiagnostics.cs"));
+        string automationBlockWorkspaceSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationBlockWorkspace.cs"));
         string automationRefreshTargetsSource = ExtractMethodSource(automationSessionSource, "RefreshTargets");
         string automationClearStaleControllerSource = ExtractMethodSource(automationSessionSource, "ClearStaleSelectedController");
         string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
@@ -7171,6 +7177,13 @@ f 0 2 3
         string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
         string automationTargetSearchControlsSource = ExtractMethodSource(automationSessionSource, "DrawTargetSearchControls");
         string automationDrawEditorSource = ExtractMethodSource(automationSessionSource, "DrawEditor");
+        string automationDrawBlocksEditorSource = ExtractMethodSource(automationSessionSource, "DrawBlocksEditor");
+        string automationDrawBlocksLoweringPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksLoweringPanel");
+        string automationDrawBlocksSystemBlockPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksSystemBlockPanel");
+        string automationCheckEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CheckEsuBlocks");
+        string automationApplyEsuBlocksSource = ExtractMethodSource(automationSessionSource, "ApplyEsuBlocks");
+        string automationRevertEsuBlocksSource = ExtractMethodSource(automationSessionSource, "RevertEsuBlocks");
+        string automationCollapseEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CollapseEsuBlocksToSystemBlock");
         string automationDrawWorkspaceGuideSource = ExtractMethodSource(automationSessionSource, "DrawWorkspaceGuide");
         string automationNextSafeActionSource = ExtractMethodSource(automationSessionSource, "NextSafeActionLine");
         string automationWorkspaceStageSource = ExtractMethodSource(automationSessionSource, "WorkspaceStageLabel");
@@ -7271,7 +7284,7 @@ f 0 2 3
                automationNestedWorkspaceGoalSource.Contains("docs/AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md") &&
                inGameTestPlanSource.Contains("Automation Editor") &&
                changeTestChecklistSource.Contains("Workspace guide") &&
-               changeTestChecklistSource.Contains("planned System Block") &&
+               changeTestChecklistSource.Contains("ESU Blocks") &&
                automationSessionSource.Contains("SwitchToDecorationEditRequested") &&
                automationSessionSource.Contains("SuspendForModeSwitchHandoff") &&
                automationSessionSource.Contains("DrawModeSwitchHandoffGui") &&
@@ -7421,7 +7434,7 @@ f 0 2 3
                automationSessionSource.Contains("Selected linked target") &&
                automationSessionSource.Contains("SelectedLink()") &&
                automationSessionSource.Contains("LinkedTargetWarning") &&
-               automationSessionSource.Contains("Open graph") &&
+               automationSessionSource.Contains("Open builder") &&
                automationSessionSource.Contains("Generic Getter/Setter properties are discovered") &&
                automationSessionSource.Contains("internal bool IsStale => Target == null") &&
                automationSessionSource.Contains("Target { get; private set; }") &&
@@ -7645,12 +7658,52 @@ f 0 2 3
                automationDrawEditorSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("DrawEditorBottomStrip()") &&
                automationSessionSource.Contains("AutomationEditorPage.System") &&
+               automationSessionSource.Contains("AutomationEditorPage.Blocks") &&
+               automationSessionSource.Contains("_editorPage = AutomationEditorPage.Blocks") &&
                automationSessionSource.Contains("AutomationSystemBlockTemplate") &&
                automationSessionSource.Contains("LoadSystemBlockTemplateLibrary()") &&
-               automationDrawEditorSource.Contains("new GUIContent(\"System\"") &&
+               automationSessionSource.Contains("AutomationBlockWorkspace") &&
+               automationSessionSource.Contains("AutomationLoweringPlan") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockWorkspace") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockNode") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockPort") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockLink") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationLoweringPlan") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationSystemBlockDefinition") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockKind") &&
+               automationBlockWorkspaceSource.Contains("WhenIf") &&
+               automationBlockWorkspaceSource.Contains("ReadTarget") &&
+               automationBlockWorkspaceSource.Contains("Compare") &&
+               automationBlockWorkspaceSource.Contains("MathScale") &&
+               automationBlockWorkspaceSource.Contains("SetTarget") &&
+               automationBlockWorkspaceSource.Contains("Constant") &&
+               automationBlockWorkspaceSource.Contains("Delay") &&
+               automationBlockWorkspaceSource.Contains("Comment") &&
+               automationBlockWorkspaceSource.Contains("CheckBlocksToNative") &&
+               automationBlockWorkspaceSource.Contains("ApplyLoweringPlan") &&
+               automationBlockWorkspaceSource.Contains("RevertLowering") &&
+               automationDrawEditorSource.Contains("new GUIContent(\"Blocks\"") &&
+               automationDrawEditorSource.Contains("new GUIContent(\"Advanced\"") &&
+               automationDrawEditorSource.Contains("new GUIContent(\"Systems\"") &&
                automationDrawEditorSource.Contains("new GUIContent(\"Up\"") &&
+               automationDrawEditorSource.Contains("DrawBlocksEditor()") &&
                automationDrawEditorSource.Contains("DrawSystemBlockEditor()") &&
                automationDrawEditorSource.Contains("SystemBlockBreadcrumb()") &&
+               automationDrawBlocksEditorSource.Contains("ESU Blocks builder") &&
+               automationDrawBlocksEditorSource.Contains("Beginner workflow") &&
+               automationDrawBlocksEditorSource.Contains("DrawBlocksLoweringPanel()") &&
+               automationDrawBlocksEditorSource.Contains("DrawBlocksSystemBlockPanel()") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Check blocks") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Apply blocks") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Revert blocks") &&
+               automationDrawBlocksSystemBlockPanelSource.Contains("Collapse to System Block") &&
+               automationCheckEsuBlocksSource.Contains("CheckBlocksToNative") &&
+               automationCheckEsuBlocksSource.Contains("_blockLoweringPlan") &&
+               automationApplyEsuBlocksSource.Contains("ToNativeCode()") &&
+               automationApplyEsuBlocksSource.Contains("CompileAutomationCodeExpression(returnToGraph: false)") &&
+               automationRevertEsuBlocksSource.Contains("RevertLastAutomationCompile()") &&
+               automationCollapseEsuBlocksSource.Contains("CollapseSelectionToSystemBlock") &&
+               automationCollapseEsuBlocksSource.Contains("PersistSystemBlockTemplateLibrary()") &&
                automationSessionSource.Contains("_openSystemBlockTemplateIndex") &&
                automationSessionSource.Contains("WithInternalGraph") &&
                automationSessionSource.Contains("new GUIContent(\"Enter\"") &&
@@ -7684,17 +7737,21 @@ f 0 2 3
                automationDrawWorkspaceGuideSource.Contains("WorkspaceNativeSurfaceLine()") &&
                automationDrawWorkspaceGuideSource.Contains("\"Next: \" + NextSafeActionLine()") &&
                automationDrawWorkspaceGuideSource.Contains("\"Safety: \" + WorkspaceSafetyLine()") &&
-               automationDrawWorkspaceGuideSource.Contains("System Blocks: planned nested graphs") &&
+               automationDrawWorkspaceGuideSource.Contains("Default: ESU Blocks") &&
                automationNextSafeActionSource.Contains("Compile expression into native graph nodes") &&
                automationNextSafeActionSource.Contains("create/enter System Blocks") &&
+               automationNextSafeActionSource.Contains("Check blocks") &&
+               automationNextSafeActionSource.Contains("Apply blocks") &&
                automationNextSafeActionSource.Contains("Check the System Block ports") &&
                automationNextSafeActionSource.Contains("Apply internal graph") &&
                automationNextSafeActionSource.Contains("Point at an exposed craft face") &&
+               automationWorkspaceStageSource.Contains("ESU Blocks") &&
                automationWorkspaceStageSource.Contains("Recipe compile") &&
                automationWorkspaceStageSource.Contains("System Block") &&
                automationWorkspaceStageSource.Contains("System graph") &&
-               automationWorkspaceStageSource.Contains("Build graph") &&
+               automationWorkspaceStageSource.Contains("Build blocks") &&
                automationWorkspaceSafetySource.Contains("Revert compile") &&
+               automationWorkspaceSafetySource.Contains("ESU Blocks are metadata until Check/Apply") &&
                automationWorkspaceSafetySource.Contains("System Block native proxy lowering has a Revert path") &&
                automationWorkspaceSafetySource.Contains("Nested System Blocks store ESU layout/group metadata") &&
                automationWorkspaceSafetySource.Contains("System Blocks store ESU-only names") &&
@@ -7736,7 +7793,7 @@ f 0 2 3
                automationParseSystemBlockPortsSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
                automationSystemBlockBreadcrumbSource.Contains("Root >") &&
                automationSystemBlockBreadcrumbSource.Contains("Internal Graph") &&
-               changeTestChecklistSource.Contains("System` tab") &&
+               changeTestChecklistSource.Contains("Advanced` -> `Systems` tab") &&
                changeTestChecklistSource.Contains("Apply template") &&
                changeTestChecklistSource.Contains("reusable template library reloads") &&
                changeTestChecklistSource.Contains("`System Block nodes`") &&
@@ -7963,7 +8020,10 @@ f 0 2 3
                changeTestChecklistSource.Contains("Inspect a linked target in the left panel") &&
                changeTestChecklistSource.Contains("category/roles/runtime") &&
                changeTestChecklistSource.Contains("reflective warning text") &&
-               changeTestChecklistSource.Contains("`Open graph`") &&
+               changeTestChecklistSource.Contains("`Open builder`") &&
+               changeTestChecklistSource.Contains("`Check blocks`") &&
+               changeTestChecklistSource.Contains("`Apply blocks`") &&
+               changeTestChecklistSource.Contains("`Revert blocks`") &&
                changeTestChecklistSource.Contains("edit a linked ACB node") &&
                changeTestChecklistSource.Contains("ACB Controller node's first buttons") &&
                changeTestChecklistSource.Contains("bottom strip reports page") &&
