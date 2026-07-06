@@ -34,6 +34,39 @@ namespace DecoLimitLifter.AutomationEditMode
             Code
         }
 
+        private enum AutomationContextMenuKind
+        {
+            None,
+            Placement,
+            Controller,
+            Target,
+            Link,
+            BreadboardNode,
+            Selection
+        }
+
+        private enum AutomationContextAction
+        {
+            None,
+            ArmPlacement,
+            CancelPlacement,
+            SelectController,
+            OpenEditor,
+            CloseEditor,
+            LinkTarget,
+            UnlinkTarget,
+            InspectLink,
+            RemoveLink,
+            ClearLinks,
+            ClearSelection,
+            FilterCategory,
+            RunChecks,
+            DeleteController,
+            SelectNode,
+            DeleteNode,
+            ClearWireSource
+        }
+
         private delegate bool AcbControllerTextApply(
             AutomationAcbControllerButtonSummary button,
             string value,
@@ -162,6 +195,13 @@ namespace DecoLimitLifter.AutomationEditMode
         private int _wireSourceOutputIndex = -1;
         private uint _selectedCanvasComponentId = NoWireSourceComponentId;
         private uint _canvasDragComponentId = NoWireSourceComponentId;
+        private AutomationContextMenuKind _contextMenuKind = AutomationContextMenuKind.None;
+        private Rect _contextMenuRect;
+        private Vector2 _contextMenuAnchor;
+        private AutomationControllerDescriptor _contextMenuPlacement;
+        private string _contextMenuControllerKey = string.Empty;
+        private string _contextMenuTargetKey = string.Empty;
+        private uint _contextMenuComponentId = NoWireSourceComponentId;
         private string _selectedLinkTargetKey = string.Empty;
         private Vector2 _canvasDragStartMouse;
         private Vector2 _canvasDragPreviewDelta;
@@ -212,6 +252,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedController = null;
             _hoverTarget = null;
             _selectedLinkTargetKey = string.Empty;
+            CloseAutomationContextMenu();
             _links.Clear();
         }
 
@@ -277,6 +318,7 @@ namespace DecoLimitLifter.AutomationEditMode
                         GUIStyle.none);
 
                 DrawAutomationResizeGrips();
+                DrawAutomationContextMenu();
                 EsuHudNotifications.DrawExpandedPopup();
                 EsuConsoleWindow.DrawForegroundWindow();
                 EsuCursorTooltip.Draw();
@@ -344,6 +386,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedCanvasComponentId = NoWireSourceComponentId;
             _canvasDragComponentId = NoWireSourceComponentId;
             _canvasDragPreviewDelta = Vector2.zero;
+            CloseAutomationContextMenu();
             CloseEditor();
             _status = label + " is no longer available. Select a live Automation controller.";
         }
@@ -510,8 +553,14 @@ namespace DecoLimitLifter.AutomationEditMode
             if (Input.GetMouseButtonDown(1))
             {
                 AutomationInputScope.ClaimBuildInputForFrames();
+                if (TryCancelAutomationPlacementRightClick())
+                    return;
+                if (TryOpenAutomationWorldContextMenu())
+                    return;
+                if (TryOpenAutomationSelectionContextMenu(MouseGuiPosition()))
+                    return;
                 if (!TryCancelAutomationRightClick())
-                    _status = "No Automation placement or selection to clear.";
+                    _status = "No Automation target or selection under the cursor.";
                 return;
             }
 
@@ -572,16 +621,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private bool TryCancelAutomationRightClick()
         {
-            if (_tool == AutomationTool.Place || _selectedPlacement != null)
-            {
-                string block = SelectedPlacementSummary();
-                _selectedPlacement = null;
-                _tool = AutomationTool.Link;
-                _status = string.Equals(block, "none", StringComparison.Ordinal)
-                    ? "Automation placement cancelled."
-                    : "Automation placement cancelled: " + block + ".";
+            if (TryCancelAutomationPlacementRightClick())
                 return true;
-            }
 
             if (_selectedController == null &&
                 string.IsNullOrEmpty(_selectedLinkTargetKey) &&
@@ -610,6 +651,772 @@ namespace DecoLimitLifter.AutomationEditMode
                 ? "Automation selection cleared."
                 : "Automation selection cleared: " + selected + ".";
             return true;
+        }
+
+        private bool TryCancelAutomationPlacementRightClick()
+        {
+            if (_tool != AutomationTool.Place)
+                return false;
+
+            string block = SelectedPlacementSummary();
+            _selectedPlacement = null;
+            _tool = AutomationTool.Link;
+            CloseAutomationContextMenu();
+            _status = string.Equals(block, "none", StringComparison.Ordinal)
+                ? "Automation placement cancelled."
+                : "Automation placement cancelled: " + block + ".";
+            return true;
+        }
+
+        private bool TryOpenAutomationWorldContextMenu()
+        {
+            Vector2 mouse = MouseGuiPosition();
+            if (TryPickProjectedController(out AutomationTarget projectedController))
+            {
+                OpenAutomationTargetContextMenu(projectedController, mouse);
+                return true;
+            }
+
+            if (_pointerProbe.TryProbe(out DecorationPointerHit hit) &&
+                AutomationTargetCatalog.TryTargetFromHit(hit, out AutomationTarget target))
+            {
+                OpenAutomationTargetContextMenu(target, mouse);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryOpenAutomationSelectionContextMenu(Vector2 mouse)
+        {
+            AutomationLink selectedLink = SelectedLink();
+            if (selectedLink != null)
+            {
+                OpenAutomationLinkContextMenu(selectedLink, mouse);
+                return true;
+            }
+
+            if (_selectedCanvasComponentId != NoWireSourceComponentId &&
+                ContextBreadboardComponent(_selectedCanvasComponentId, out _) != null)
+            {
+                OpenAutomationBreadboardNodeContextMenu(_selectedCanvasComponentId, mouse);
+                return true;
+            }
+
+            if (_wireSourceComponentId != NoWireSourceComponentId &&
+                ContextBreadboardComponent(_wireSourceComponentId, out _) != null)
+            {
+                OpenAutomationBreadboardNodeContextMenu(_wireSourceComponentId, mouse);
+                return true;
+            }
+
+            if (_selectedController != null)
+            {
+                OpenAutomationControllerContextMenu(_selectedController, mouse);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void OpenAutomationPlacementContextMenu(
+            AutomationControllerDescriptor descriptor,
+            Vector2 mouse)
+        {
+            _contextMenuKind = AutomationContextMenuKind.Placement;
+            _contextMenuPlacement = descriptor;
+            _contextMenuControllerKey = string.Empty;
+            _contextMenuTargetKey = string.Empty;
+            _contextMenuComponentId = NoWireSourceComponentId;
+            OpenAutomationContextMenuAt(mouse, buttonCount: descriptor == null ? 1 : 2);
+        }
+
+        private void OpenAutomationTargetContextMenu(AutomationTarget target, Vector2 mouse)
+        {
+            if (target == null)
+                return;
+
+            if (target.IsController)
+            {
+                OpenAutomationControllerContextMenu(target, mouse);
+                return;
+            }
+
+            _contextMenuKind = AutomationContextMenuKind.Target;
+            _contextMenuPlacement = null;
+            _contextMenuControllerKey = _selectedController?.StableKey ?? string.Empty;
+            _contextMenuTargetKey = target.StableKey;
+            _contextMenuComponentId = NoWireSourceComponentId;
+            OpenAutomationContextMenuAt(mouse, buttonCount: ContextMenuButtonCount());
+        }
+
+        private void OpenAutomationControllerContextMenu(AutomationTarget controller, Vector2 mouse)
+        {
+            if (controller == null)
+                return;
+
+            _contextMenuKind = AutomationContextMenuKind.Controller;
+            _contextMenuPlacement = null;
+            _contextMenuControllerKey = controller.StableKey;
+            _contextMenuTargetKey = controller.StableKey;
+            _contextMenuComponentId = NoWireSourceComponentId;
+            OpenAutomationContextMenuAt(mouse, buttonCount: ContextMenuButtonCount());
+        }
+
+        private void OpenAutomationLinkContextMenu(AutomationLink link, Vector2 mouse)
+        {
+            if (link == null)
+                return;
+
+            _contextMenuKind = AutomationContextMenuKind.Link;
+            _contextMenuPlacement = null;
+            _contextMenuControllerKey = link.ControllerKey ?? string.Empty;
+            _contextMenuTargetKey = link.TargetKey ?? string.Empty;
+            _contextMenuComponentId = NoWireSourceComponentId;
+            OpenAutomationContextMenuAt(mouse, buttonCount: ContextMenuButtonCount());
+        }
+
+        private void OpenAutomationBreadboardNodeContextMenu(uint componentId, Vector2 mouse)
+        {
+            if (componentId == NoWireSourceComponentId)
+                return;
+
+            _contextMenuKind = AutomationContextMenuKind.BreadboardNode;
+            _contextMenuPlacement = null;
+            _contextMenuControllerKey = _selectedController?.StableKey ?? string.Empty;
+            _contextMenuTargetKey = string.Empty;
+            _contextMenuComponentId = componentId;
+            OpenAutomationContextMenuAt(mouse, buttonCount: ContextMenuButtonCount());
+        }
+
+        private void OpenAutomationContextMenuAt(Vector2 mouse, int buttonCount)
+        {
+            _contextMenuAnchor = mouse;
+            _contextMenuRect = AutomationContextRect(mouse, buttonCount);
+        }
+
+        private Rect AutomationContextRect(Vector2 mouse, int buttonCount)
+        {
+            float width = EsuHudLayout.Scale(172f);
+            float height = EsuHudLayout.Scale(34f + Mathf.Max(1, buttonCount) * 26f);
+            var rect = new Rect(mouse.x, mouse.y, width, height);
+            rect.x = Mathf.Clamp(rect.x, EsuHudLayout.Scale(8f), Screen.width - width - EsuHudLayout.Scale(8f));
+            rect.y = Mathf.Clamp(rect.y, EsuHudLayout.Scale(8f), Screen.height - height - EsuHudLayout.Scale(8f));
+            return rect;
+        }
+
+        private int ContextMenuButtonCount() =>
+            Math.Max(1, AutomationContextMenuItems().Count());
+
+        private void DrawAutomationContextMenu()
+        {
+            if (_contextMenuKind == AutomationContextMenuKind.None)
+                return;
+
+            Event current = Event.current;
+            if (current != null &&
+                current.type == EventType.MouseDown &&
+                !_contextMenuRect.Contains(current.mousePosition))
+            {
+                CloseAutomationContextMenu();
+                return;
+            }
+
+            AutomationContextMenuItem[] items = AutomationContextMenuItems().ToArray();
+            if (items.Length == 0)
+            {
+                CloseAutomationContextMenu();
+                return;
+            }
+
+            _contextMenuRect = AutomationContextRect(_contextMenuAnchor, items.Length);
+            AutomationContextAction action = AutomationContextAction.None;
+            GUI.Box(_contextMenuRect, GUIContent.none, DecorationEditorTheme.Panel);
+            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(_contextMenuRect, 5f));
+            GUILayout.Label(AutomationContextTitle(), DecorationEditorTheme.SubHeader);
+            foreach (AutomationContextMenuItem item in items)
+            {
+                bool previous = GUI.enabled;
+                GUI.enabled = previous && item.Enabled;
+                if (AutomationGUILayoutButton(
+                        new GUIContent(item.Label, item.Tooltip),
+                        item.Enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    action = item.Action;
+                }
+                GUI.enabled = previous;
+            }
+            GUILayout.EndArea();
+
+            if (ShouldConsumeAutomationContextEvent(current))
+                current.Use();
+
+            ExecuteAutomationContextAction(action);
+        }
+
+        private string AutomationContextTitle()
+        {
+            switch (_contextMenuKind)
+            {
+                case AutomationContextMenuKind.Placement:
+                    return "Automation block";
+                case AutomationContextMenuKind.Controller:
+                    return "Controller";
+                case AutomationContextMenuKind.Target:
+                    return "Target";
+                case AutomationContextMenuKind.Link:
+                    return "Automation link";
+                case AutomationContextMenuKind.BreadboardNode:
+                    return "Breadboard node";
+                default:
+                    return "Automation";
+            }
+        }
+
+        private IEnumerable<AutomationContextMenuItem> AutomationContextMenuItems()
+        {
+            switch (_contextMenuKind)
+            {
+                case AutomationContextMenuKind.Placement:
+                    yield return new AutomationContextMenuItem(
+                        "Arm placement",
+                        AutomationContextAction.ArmPlacement,
+                        "Arm this Automation controller for placement.",
+                        _contextMenuPlacement != null);
+                    yield return new AutomationContextMenuItem(
+                        "Cancel placement",
+                        AutomationContextAction.CancelPlacement,
+                        "Cancel the current Automation placement.",
+                        _tool == AutomationTool.Place);
+                    break;
+
+                case AutomationContextMenuKind.Controller:
+                    foreach (AutomationContextMenuItem item in ControllerContextMenuItems())
+                        yield return item;
+                    break;
+
+                case AutomationContextMenuKind.Target:
+                    foreach (AutomationContextMenuItem item in TargetContextMenuItems())
+                        yield return item;
+                    break;
+
+                case AutomationContextMenuKind.Link:
+                    foreach (AutomationContextMenuItem item in LinkContextMenuItems())
+                        yield return item;
+                    break;
+
+                case AutomationContextMenuKind.BreadboardNode:
+                    foreach (AutomationContextMenuItem item in BreadboardNodeContextMenuItems())
+                        yield return item;
+                    break;
+
+                case AutomationContextMenuKind.Selection:
+                    yield return new AutomationContextMenuItem(
+                        "Clear selection",
+                        AutomationContextAction.ClearSelection,
+                        "Clear the current Automation selection.",
+                        _selectedController != null);
+                    break;
+            }
+        }
+
+        private IEnumerable<AutomationContextMenuItem> ControllerContextMenuItems()
+        {
+            AutomationTarget controller = ContextController();
+            bool hasController = controller != null;
+            bool canOpenEditor = hasController;
+            bool canRunChecks = hasController;
+            bool selectedCanLink = _selectedController != null &&
+                                   controller != null &&
+                                   !string.Equals(_selectedController.StableKey, controller.StableKey, StringComparison.Ordinal) &&
+                                   CanLinkControllerTarget(_selectedController, controller);
+            bool linked = selectedCanLink && IsLinked(_selectedController, controller);
+            yield return new AutomationContextMenuItem(
+                "Select",
+                AutomationContextAction.SelectController,
+                "Select this Automation controller.",
+                hasController);
+            if (_editorOpen && _selectedController != null &&
+                controller != null &&
+                string.Equals(_selectedController.StableKey, controller.StableKey, StringComparison.Ordinal))
+            {
+                yield return new AutomationContextMenuItem(
+                    "Close editor",
+                    AutomationContextAction.CloseEditor,
+                    "Close the fullscreen Automation editor.",
+                    true);
+            }
+            else
+            {
+                yield return new AutomationContextMenuItem(
+                    "Open editor",
+                    AutomationContextAction.OpenEditor,
+                    "Open the graph/code editor for this controller.",
+                    canOpenEditor);
+            }
+
+            if (_selectedController != null &&
+                controller != null &&
+                !string.Equals(_selectedController.StableKey, controller.StableKey, StringComparison.Ordinal))
+            {
+                yield return new AutomationContextMenuItem(
+                    linked ? "Unlink controller" : "Link controller",
+                    linked ? AutomationContextAction.UnlinkTarget : AutomationContextAction.LinkTarget,
+                    linked
+                        ? "Remove the link from the selected controller to this controller."
+                        : "Link the selected Breadboard controller to this Automation controller.",
+                    selectedCanLink || linked);
+            }
+
+            yield return new AutomationContextMenuItem(
+                "Clear links",
+                AutomationContextAction.ClearLinks,
+                "Remove every linked target from this controller.",
+                hasController && LinksForController(controller).Count > 0);
+            yield return new AutomationContextMenuItem(
+                "Run checks",
+                AutomationContextAction.RunChecks,
+                "Run live runtime checks for this controller.",
+                canRunChecks);
+            yield return new AutomationContextMenuItem(
+                "Delete controller",
+                AutomationContextAction.DeleteController,
+                "Delete this Automation controller block. Undo can restore it.",
+                hasController);
+            yield return new AutomationContextMenuItem(
+                "Clear selection",
+                AutomationContextAction.ClearSelection,
+                "Clear the current Automation selection.",
+                _selectedController != null);
+        }
+
+        private IEnumerable<AutomationContextMenuItem> TargetContextMenuItems()
+        {
+            AutomationTarget target = ContextTarget();
+            bool canLink = CanContextLinkTarget(target);
+            bool linked = _selectedController != null && target != null && IsLinked(_selectedController, target);
+            AutomationLink link = ContextLinkForTarget(target);
+            yield return new AutomationContextMenuItem(
+                linked ? "Unlink target" : "Link target",
+                linked ? AutomationContextAction.UnlinkTarget : AutomationContextAction.LinkTarget,
+                linked
+                    ? "Remove this target from the selected controller."
+                    : "Link this target to the selected controller.",
+                linked || canLink);
+            yield return new AutomationContextMenuItem(
+                "Inspect link",
+                AutomationContextAction.InspectLink,
+                "Show this link in the Automation details panel.",
+                link != null);
+            yield return new AutomationContextMenuItem(
+                "Filter category",
+                AutomationContextAction.FilterCategory,
+                "Filter the target list to this target category.",
+                target != null);
+            yield return new AutomationContextMenuItem(
+                "Clear selection",
+                AutomationContextAction.ClearSelection,
+                "Clear the current Automation selection.",
+                _selectedController != null);
+        }
+
+        private IEnumerable<AutomationContextMenuItem> LinkContextMenuItems()
+        {
+            AutomationLink link = ContextLink();
+            yield return new AutomationContextMenuItem(
+                "Inspect link",
+                AutomationContextAction.InspectLink,
+                "Show this link in the Automation details panel.",
+                link != null);
+            yield return new AutomationContextMenuItem(
+                "Open graph",
+                AutomationContextAction.OpenEditor,
+                "Open the graph editor for this link's controller.",
+                ContextController() != null);
+            yield return new AutomationContextMenuItem(
+                "Remove link",
+                AutomationContextAction.RemoveLink,
+                "Remove this Automation link.",
+                link != null);
+            yield return new AutomationContextMenuItem(
+                "Filter category",
+                AutomationContextAction.FilterCategory,
+                "Filter the target list to this target category.",
+                link?.Target != null);
+        }
+
+        private IEnumerable<AutomationContextMenuItem> BreadboardNodeContextMenuItems()
+        {
+            AutomationBreadboardComponentSummary component =
+                ContextBreadboardComponent(_contextMenuComponentId, out _);
+            yield return new AutomationContextMenuItem(
+                "Select node",
+                AutomationContextAction.SelectNode,
+                "Select this native breadboard node.",
+                component != null);
+            yield return new AutomationContextMenuItem(
+                "Delete node",
+                AutomationContextAction.DeleteNode,
+                "Delete this native breadboard node from the graph.",
+                component != null);
+            yield return new AutomationContextMenuItem(
+                "Clear wire source",
+                AutomationContextAction.ClearWireSource,
+                "Clear the active breadboard wire source.",
+                _wireSourceComponentId != NoWireSourceComponentId);
+            yield return new AutomationContextMenuItem(
+                "Close editor",
+                AutomationContextAction.CloseEditor,
+                "Close the fullscreen Automation editor.",
+                _editorOpen);
+        }
+
+        private void ExecuteAutomationContextAction(AutomationContextAction action)
+        {
+            if (action == AutomationContextAction.None)
+                return;
+
+            switch (action)
+            {
+                case AutomationContextAction.ArmPlacement:
+                    if (_contextMenuPlacement != null)
+                    {
+                        _selectedPlacement = _contextMenuPlacement;
+                        _tool = AutomationTool.Place;
+                        _status = PlacementArmedStatus();
+                    }
+                    break;
+                case AutomationContextAction.CancelPlacement:
+                    TryCancelAutomationPlacementRightClick();
+                    break;
+                case AutomationContextAction.SelectController:
+                    SelectAutomationController(ContextController());
+                    break;
+                case AutomationContextAction.OpenEditor:
+                    OpenContextEditor();
+                    break;
+                case AutomationContextAction.CloseEditor:
+                    CloseEditor();
+                    _status = "Automation editor closed.";
+                    break;
+                case AutomationContextAction.LinkTarget:
+                case AutomationContextAction.UnlinkTarget:
+                    ToggleContextTargetLink();
+                    break;
+                case AutomationContextAction.InspectLink:
+                    InspectContextLink();
+                    break;
+                case AutomationContextAction.RemoveLink:
+                    RemoveAutomationLink(ContextLink());
+                    break;
+                case AutomationContextAction.ClearLinks:
+                    ClearContextControllerLinks();
+                    break;
+                case AutomationContextAction.ClearSelection:
+                    TryCancelAutomationRightClick();
+                    break;
+                case AutomationContextAction.FilterCategory:
+                    FilterToContextTargetCategory();
+                    break;
+                case AutomationContextAction.RunChecks:
+                    RunContextControllerChecks();
+                    break;
+                case AutomationContextAction.DeleteController:
+                    DeleteContextController();
+                    break;
+                case AutomationContextAction.SelectNode:
+                    SelectContextBreadboardNode();
+                    break;
+                case AutomationContextAction.DeleteNode:
+                    DeleteContextBreadboardNode();
+                    break;
+                case AutomationContextAction.ClearWireSource:
+                    ClearContextWireSource();
+                    break;
+            }
+
+            CloseAutomationContextMenu();
+        }
+
+        private void OpenContextEditor()
+        {
+            AutomationTarget controller = ContextController();
+            if (controller != null)
+                SelectAutomationController(controller);
+            TryOpenEditor(AutomationEditorPage.Graph);
+        }
+
+        private void ToggleContextTargetLink()
+        {
+            AutomationTarget target = ContextTarget() ?? ContextLink()?.Target;
+            if (!CanContextLinkTarget(target) && !IsLinked(_selectedController, target))
+            {
+                _status = _selectedController == null
+                    ? "Select a controller before linking Automation targets."
+                    : "This Automation target cannot be linked from the selected controller.";
+                return;
+            }
+
+            ToggleLink(_selectedController, target);
+        }
+
+        private void InspectContextLink()
+        {
+            AutomationLink link = ContextLink();
+            if (link == null)
+                link = ContextLinkForTarget(ContextTarget());
+            if (link == null)
+                return;
+
+            _selectedLinkTargetKey = link.TargetKey;
+            _showLeftPanel = true;
+            _status = "Inspecting Automation link: " + link.TargetLabel + ".";
+        }
+
+        private void RemoveAutomationLink(AutomationLink link)
+        {
+            if (link == null)
+                return;
+
+            string label = link.TargetLabel;
+            _links.Remove(link);
+            if (string.Equals(_selectedLinkTargetKey, link.TargetKey, StringComparison.Ordinal))
+                _selectedLinkTargetKey = string.Empty;
+            if (string.Equals(_automationCodeOutputTargetKey, link.TargetKey, StringComparison.Ordinal))
+                _automationCodeOutputTargetKey = string.Empty;
+            _status = "Removed automation link to " + label + ".";
+        }
+
+        private void ClearContextControllerLinks()
+        {
+            AutomationTarget controller = ContextController();
+            if (controller != null)
+                SelectAutomationController(controller);
+            ClearSelectedLinks();
+        }
+
+        private void FilterToContextTargetCategory()
+        {
+            AutomationTarget target = ContextTarget() ?? ContextLink()?.Target;
+            if (target == null)
+                return;
+
+            _filter = target.Category;
+            _showRightPanel = true;
+            _showFilterSection = true;
+            _status = "Automation target filter: " + AutomationTargetCatalog.CategoryLabel(_filter) + ".";
+        }
+
+        private void RunContextControllerChecks()
+        {
+            AutomationTarget controller = ContextController();
+            if (controller != null)
+                SelectAutomationController(controller);
+            RunAutomationRuntimeDiagnostics();
+        }
+
+        private void DeleteContextController()
+        {
+            AutomationTarget controller = ContextController();
+            if (controller == null)
+                return;
+
+            string key = controller.StableKey;
+            if (!AutomationControllerCommitter.TryRemoveController(
+                    _build,
+                    controller,
+                    out string message))
+            {
+                _status = message ?? "Could not delete Automation controller.";
+                EsuHudNotifications.ShowSystem(
+                    "Automation Editor",
+                    _status,
+                    EsuHudNotificationKind.Warning,
+                    "Automation controller delete rejected.\nController=" + controller.Label);
+                return;
+            }
+
+            _links.RemoveAll(link =>
+                string.Equals(link.ControllerKey, key, StringComparison.Ordinal) ||
+                string.Equals(link.TargetKey, key, StringComparison.Ordinal));
+            if (_selectedController != null &&
+                string.Equals(_selectedController.StableKey, key, StringComparison.Ordinal))
+            {
+                _selectedController = null;
+                _selectedLinkTargetKey = string.Empty;
+                _automationCodeOutputTargetKey = string.Empty;
+                _automationCodeControllerKey = string.Empty;
+                _wireSourceComponentId = NoWireSourceComponentId;
+                _wireSourceOutputIndex = -1;
+                _selectedCanvasComponentId = NoWireSourceComponentId;
+                _canvasDragComponentId = NoWireSourceComponentId;
+                _canvasDragPreviewDelta = Vector2.zero;
+                CloseEditor();
+            }
+
+            _status = message ?? "Deleted Automation controller.";
+            EsuHudNotifications.ShowSystem(
+                "Automation Editor",
+                _status,
+                EsuHudNotificationKind.Info,
+                "Deleted Automation controller block.\nController=" + controller.Label);
+            RefreshTargets(force: true);
+        }
+
+        private void SelectContextBreadboardNode()
+        {
+            AutomationBreadboardComponentSummary component =
+                ContextBreadboardComponent(_contextMenuComponentId, out _);
+            if (component == null)
+                return;
+
+            _selectedCanvasComponentId = component.UniqueId;
+            _status = "Selected " + component.Label + " in the native graph.";
+        }
+
+        private void DeleteContextBreadboardNode()
+        {
+            AutomationBreadboardComponentSummary component =
+                ContextBreadboardComponent(_contextMenuComponentId, out AutomationBreadboardInspector inspector);
+            if (component == null || inspector == null)
+                return;
+
+            DeleteBreadboardComponent(inspector, component);
+        }
+
+        private void ClearContextWireSource()
+        {
+            _wireSourceComponentId = NoWireSourceComponentId;
+            _wireSourceOutputIndex = -1;
+            _status = "Cleared breadboard wire source.";
+        }
+
+        private bool CanContextLinkTarget(AutomationTarget target)
+        {
+            if (_selectedController == null || target == null)
+                return false;
+
+            if (target.IsController)
+                return CanLinkControllerTarget(_selectedController, target);
+
+            return !string.Equals(_selectedController.StableKey, target.StableKey, StringComparison.Ordinal);
+        }
+
+        private AutomationTarget ContextController()
+        {
+            AutomationTarget controller = TargetByKey(_contextMenuControllerKey);
+            if (controller?.IsController == true)
+                return controller;
+
+            AutomationTarget target = TargetByKey(_contextMenuTargetKey);
+            return target?.IsController == true ? target : _selectedController;
+        }
+
+        private AutomationTarget ContextTarget()
+        {
+            AutomationTarget target = TargetByKey(_contextMenuTargetKey);
+            return target ?? ContextLink()?.Target;
+        }
+
+        private AutomationTarget TargetByKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key) || _targets == null)
+                return null;
+
+            return _targets.FirstOrDefault(
+                target => string.Equals(target.StableKey, key, StringComparison.Ordinal));
+        }
+
+        private AutomationLink ContextLink()
+        {
+            if (string.IsNullOrWhiteSpace(_contextMenuTargetKey))
+                return null;
+
+            return _links.FirstOrDefault(link =>
+                string.Equals(link.TargetKey, _contextMenuTargetKey, StringComparison.Ordinal) &&
+                (string.IsNullOrWhiteSpace(_contextMenuControllerKey) ||
+                 string.Equals(link.ControllerKey, _contextMenuControllerKey, StringComparison.Ordinal)));
+        }
+
+        private AutomationLink ContextLinkForTarget(AutomationTarget target)
+        {
+            if (_selectedController == null || target == null)
+                return null;
+
+            string controllerKey = _selectedController.StableKey;
+            string targetKey = target.StableKey;
+            return _links.FirstOrDefault(link =>
+                string.Equals(link.ControllerKey, controllerKey, StringComparison.Ordinal) &&
+                string.Equals(link.TargetKey, targetKey, StringComparison.Ordinal));
+        }
+
+        private IReadOnlyList<AutomationLink> LinksForController(AutomationTarget controller)
+        {
+            if (controller == null)
+                return Array.Empty<AutomationLink>();
+
+            string key = controller.StableKey;
+            return _links
+                .Where(link => string.Equals(link.ControllerKey, key, StringComparison.Ordinal))
+                .ToArray();
+        }
+
+        private AutomationBreadboardComponentSummary ContextBreadboardComponent(
+            uint componentId,
+            out AutomationBreadboardInspector inspector)
+        {
+            inspector = null;
+            if (componentId == NoWireSourceComponentId ||
+                !TryCreateSelectedBreadboardInspector(out inspector, out _))
+            {
+                return null;
+            }
+
+            return inspector.Components.FirstOrDefault(component => component.UniqueId == componentId);
+        }
+
+        private bool TryOpenAutomationRowContextMenu(Rect row, Action<Vector2> open)
+        {
+            Event current = Event.current;
+            if (current == null ||
+                current.type != EventType.MouseDown ||
+                current.button != 1 ||
+                !row.Contains(current.mousePosition))
+            {
+                return false;
+            }
+
+            open?.Invoke(GUIUtility.GUIToScreenPoint(current.mousePosition));
+            AutomationInputScope.ClaimBuildInputForFrames();
+            current.Use();
+            return true;
+        }
+
+        private bool ShouldConsumeAutomationContextEvent(Event current)
+        {
+            return current != null &&
+                   _contextMenuRect.Contains(current.mousePosition) &&
+                   (current.type == EventType.MouseDown ||
+                    current.type == EventType.MouseUp ||
+                    current.type == EventType.MouseDrag ||
+                    current.type == EventType.ScrollWheel ||
+                    current.type == EventType.ContextClick);
+        }
+
+        private bool IsAutomationContextMenuAt(Vector2 mouse) =>
+            _contextMenuKind != AutomationContextMenuKind.None &&
+            _contextMenuRect.Contains(mouse);
+
+        private void CloseAutomationContextMenu()
+        {
+            _contextMenuKind = AutomationContextMenuKind.None;
+            _contextMenuRect = Rect.zero;
+            _contextMenuAnchor = Vector2.zero;
+            _contextMenuPlacement = null;
+            _contextMenuControllerKey = string.Empty;
+            _contextMenuTargetKey = string.Empty;
+            _contextMenuComponentId = NoWireSourceComponentId;
         }
 
         private void TryPlaceSelectedController(DecorationPointerHit hit)
@@ -1659,6 +2466,10 @@ namespace DecoLimitLifter.AutomationEditMode
                     _automationCodeOutputTargetKey = string.Empty;
             }
             GUILayout.EndHorizontal();
+            Rect row = GUILayoutUtility.GetLastRect();
+            TryOpenAutomationRowContextMenu(
+                row,
+                mouse => OpenAutomationLinkContextMenu(link, mouse));
         }
 
         private void DrawSelectedLinkedTargetInspector()
@@ -2221,6 +3032,13 @@ namespace DecoLimitLifter.AutomationEditMode
                 armed ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini,
                 available ? DecorationEditorTheme.MiniWrap : DecorationEditorTheme.Warning);
             EsuCursorTooltip.Register(row, "Click to arm this Automation controller for placement.");
+            if (TryOpenAutomationRowContextMenu(
+                    row,
+                    mouse => OpenAutomationPlacementContextMenu(descriptor, mouse)))
+            {
+                return;
+            }
+
             if (clicked)
             {
                 _selectedPlacement = descriptor;
@@ -2305,6 +3123,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 rowText,
                 selected ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini);
             EsuCursorTooltip.Register(row, "Click to select this Automation controller.");
+            TryOpenAutomationRowContextMenu(
+                row,
+                mouse => OpenAutomationControllerContextMenu(target, mouse));
         }
 
         private void DrawTargetListRow(AutomationTarget target)
@@ -2342,6 +3163,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 selected || linked ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini,
                 DecorationEditorTheme.MiniWrap);
             EsuCursorTooltip.Register(row, TargetRowTooltip(target));
+            TryOpenAutomationRowContextMenu(
+                row,
+                mouse => OpenAutomationTargetContextMenu(target, mouse));
         }
 
         private static string TargetRowTooltip(AutomationTarget target)
@@ -3669,6 +4493,23 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
             }
 
+            if (current.type == EventType.MouseDown && current.button == 1)
+            {
+                for (int index = nodes.Count - 1; index >= 0; index--)
+                {
+                    AutomationBreadboardCanvasNode node = nodes[index];
+                    if (!node.Rect.Contains(current.mousePosition))
+                        continue;
+
+                    OpenAutomationBreadboardNodeContextMenu(
+                        node.Component.UniqueId,
+                        GUIUtility.GUIToScreenPoint(current.mousePosition));
+                    AutomationInputScope.ClaimBuildInputForFrames();
+                    current.Use();
+                    return;
+                }
+            }
+
             if (current.type != EventType.MouseDown || current.button != 0)
                 return;
 
@@ -4286,6 +5127,10 @@ namespace DecoLimitLifter.AutomationEditMode
                     DrawBreadboardProxyPropertyPicker(inspector, component);
                 DrawBreadboardWireControls(inspector, components, component);
                 GUILayout.EndVertical();
+                Rect componentRow = GUILayoutUtility.GetLastRect();
+                TryOpenAutomationRowContextMenu(
+                    componentRow,
+                    mouse => OpenAutomationBreadboardNodeContextMenu(component.UniqueId, mouse));
             }
 
             if (components.Count > shown)
@@ -6101,14 +6946,16 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!_layoutInitialized || !ValidRect(_toolbarRect))
                 PrepareAutomationLayout();
 
-            Vector2 mouse = new Vector2(
-                Input.mousePosition.x,
-                Screen.height - Input.mousePosition.y);
-            return IsMouseOverAnyUi(mouse);
+            return IsMouseOverAnyUi(MouseGuiPosition());
         }
+
+        private static Vector2 MouseGuiPosition() =>
+            new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
 
         private bool IsMouseOverAnyUi(Vector2 mouse)
         {
+            if (IsAutomationContextMenuAt(mouse))
+                return true;
             if (_editorOpen)
                 return true;
 
@@ -6132,6 +6979,29 @@ namespace DecoLimitLifter.AutomationEditMode
                    current.type == EventType.MouseUp ||
                    current.type == EventType.MouseDrag ||
                    current.type == EventType.ScrollWheel;
+        }
+
+        private sealed class AutomationContextMenuItem
+        {
+            internal AutomationContextMenuItem(
+                string label,
+                AutomationContextAction action,
+                string tooltip,
+                bool enabled = true)
+            {
+                Label = label ?? string.Empty;
+                Action = action;
+                Tooltip = tooltip ?? string.Empty;
+                Enabled = enabled;
+            }
+
+            internal string Label { get; }
+
+            internal AutomationContextAction Action { get; }
+
+            internal string Tooltip { get; }
+
+            internal bool Enabled { get; }
         }
 
         private sealed class AutomationValidationBaseline

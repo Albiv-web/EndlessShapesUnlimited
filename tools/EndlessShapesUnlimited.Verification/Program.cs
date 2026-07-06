@@ -7110,6 +7110,13 @@ f 0 2 3
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
         string automationCancelRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationRightClick");
+        string automationCancelPlacementRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationPlacementRightClick");
+        string automationTryOpenWorldContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationWorldContextMenu");
+        string automationTryOpenSelectionContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationSelectionContextMenu");
+        string automationDrawContextMenuSource = ExtractMethodSource(automationSessionSource, "DrawAutomationContextMenu");
+        string automationContextMenuItemsSource = ExtractMethodSource(automationSessionSource, "AutomationContextMenuItems");
+        string automationExecuteContextActionSource = ExtractMethodSource(automationSessionSource, "ExecuteAutomationContextAction");
+        string automationRowContextMenuSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationRowContextMenu");
         string automationGUILayoutButtonSource = ExtractMethodSource(automationSessionSource, "AutomationGUILayoutButton");
         string automationToolbarButtonSource = ExtractMethodSource(automationSessionSource, "ToolbarButton");
         string automationStatusStripSource = ExtractMethodSource(automationSessionSource, "DrawStatusStrip");
@@ -7123,6 +7130,9 @@ f 0 2 3
         string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
         string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
         string automationTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawTargetListRow");
+        string automationLinkedTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawLinkedTargetListRow");
+        string automationBreadboardCanvasInputSource = ExtractMethodSource(automationSessionSource, "HandleBreadboardCanvasInput");
+        string automationBreadboardComponentListSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardComponentList");
         string automationBreadboardMoveControlsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardMoveControls");
         string automationBreadboardWireControlsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardWireControls");
         string automationExecuteBoardCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteBoardCommand");
@@ -7534,22 +7544,57 @@ f 0 2 3
                automationControllerCommitterSource.Contains("CandidatePlacementRotations") &&
                automationControllerCommitterSource.Contains("CubeRotations") &&
                automationControllerCommitterSource.Contains("Quaternion.LookRotation") &&
+               automationControllerCommitterSource.Contains("TryRemoveController") &&
+               automationControllerCommitterSource.Contains("new RemoveBlockCommand") &&
+               automationControllerCommitterSource.Contains("AutomationControllerRemoveUndoCommand") &&
                automationControllerCommitterSource.Contains("BeginSilentInfoStoreCapture") &&
                automationControllerCommitterSource.Contains("valid attach-face rotations") &&
                automationSessionSource.Contains("EsuHudNotifications.ShowSystem") &&
                automationSessionSource.Contains("Placement preview shows green") &&
                automationSessionSource.Contains("Automation controller placement rejected") &&
                automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()") &&
+               automationOnGuiSource.Contains("DrawAutomationContextMenu()") &&
                automationOnGuiSource.Contains("mouseOverUi && ShouldConsumeGuiEvent(Event.current)") &&
                automationOnGuiSource.Contains("Event.current.Use();") &&
                automationHandleMouseSource.Contains("AutomationInputScope.ClaimMouseWheelInputForFrames();") &&
                automationHandleMouseSource.Contains("Input.GetMouseButtonDown(1)") &&
+               automationHandleMouseSource.Contains("TryCancelAutomationPlacementRightClick()") &&
+               automationHandleMouseSource.Contains("TryOpenAutomationWorldContextMenu()") &&
+               automationHandleMouseSource.Contains("TryOpenAutomationSelectionContextMenu(MouseGuiPosition())") &&
                automationHandleMouseSource.Contains("TryCancelAutomationRightClick()") &&
-               automationCancelRightClickSource.Contains("_selectedPlacement = null") &&
-               automationCancelRightClickSource.Contains("_tool = AutomationTool.Link") &&
+               automationCancelPlacementRightClickSource.Contains("if (_tool != AutomationTool.Place)") &&
+               automationCancelPlacementRightClickSource.Contains("_selectedPlacement = null") &&
+               automationCancelPlacementRightClickSource.Contains("_tool = AutomationTool.Link") &&
+               automationTryOpenWorldContextSource.Contains("TryPickProjectedController") &&
+               automationTryOpenWorldContextSource.Contains("OpenAutomationTargetContextMenu") &&
+               automationTryOpenSelectionContextSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
+               automationTryOpenSelectionContextSource.Contains("OpenAutomationControllerContextMenu") &&
+               automationDrawContextMenuSource.Contains("AutomationContextRect(_contextMenuAnchor, items.Length)") &&
+               automationDrawContextMenuSource.Contains("GUI.Box(_contextMenuRect") &&
+               automationDrawContextMenuSource.Contains("AutomationGUILayoutButton(") &&
+               automationDrawContextMenuSource.Contains("ShouldConsumeAutomationContextEvent(current)") &&
+               automationDrawContextMenuSource.Contains("ExecuteAutomationContextAction(action)") &&
+               automationContextMenuItemsSource.Contains("AutomationContextMenuKind.Controller") &&
+               automationContextMenuItemsSource.Contains("AutomationContextMenuKind.Target") &&
+               automationSessionSource.Contains("\"Delete controller\"") &&
+               automationSessionSource.Contains("\"Remove link\"") &&
+               automationSessionSource.Contains("\"Delete node\"") &&
+               automationExecuteContextActionSource.Contains("DeleteContextController()") &&
+               automationExecuteContextActionSource.Contains("DeleteContextBreadboardNode()") &&
+               automationExecuteContextActionSource.Contains("RemoveAutomationLink(ContextLink())") &&
+               automationRowContextMenuSource.Contains("current.button != 1") &&
+               automationRowContextMenuSource.Contains("GUIUtility.GUIToScreenPoint(current.mousePosition)") &&
+               automationControllerPaletteRowSource.Contains("OpenAutomationPlacementContextMenu") &&
+               automationControllerIndexRowSource.Contains("OpenAutomationControllerContextMenu") &&
+               automationTargetListRowSource.Contains("OpenAutomationTargetContextMenu") &&
+               automationLinkedTargetListRowSource.Contains("OpenAutomationLinkContextMenu") &&
+               automationBreadboardCanvasInputSource.Contains("current.button == 1") &&
+               automationBreadboardCanvasInputSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
+               automationBreadboardComponentListSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
+               automationMouseOverUiSource.Contains("IsAutomationContextMenuAt(mouse)") &&
                automationCancelRightClickSource.Contains("_selectedController = null") &&
                automationCancelRightClickSource.Contains("CloseEditor()"),
-            "Automation Editor shares the resizable foreground ESU shell pattern, uses the same iconized toolbar/header/list treatment as the other ESU editor modes, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and lets right-click clear active placement/selection.");
+            "Automation Editor shares the resizable foreground ESU shell pattern, uses the same iconized toolbar/header/list treatment as the other ESU editor modes, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and routes right-click through active-placement cancel or a contextual Automation menu for controllers, targets, links, and breadboard nodes.");
         Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
                automationExecuteBoardCommandSource.Contains("return false;") &&
                automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&

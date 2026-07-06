@@ -86,6 +86,54 @@ namespace DecoLimitLifter.AutomationEditMode
             }
         }
 
+        internal static bool TryRemoveController(
+            cBuild build,
+            AutomationTarget target,
+            out string message)
+        {
+            message = null;
+            if (build == null || target?.Construct == null)
+            {
+                message = "No valid construct is available.";
+                return false;
+            }
+
+            if (!target.IsController)
+            {
+                message = "Select an Automation controller before deleting.";
+                return false;
+            }
+
+            try
+            {
+                if (target.Construct.AllBasics.GetBlockViaLocalPosition(target.LocalPosition) == null)
+                {
+                    message = "Automation controller block is already gone.";
+                    return false;
+                }
+
+                var command = new RemoveBlockCommand(
+                    target.Construct,
+                    target.LocalPosition,
+                    MirrorInfo.none);
+                command.Apply();
+                if (!command.Success)
+                {
+                    message = "FtD rejected the Automation controller delete.";
+                    return false;
+                }
+
+                RegisterUndo(build, command);
+                message = "Deleted " + target.Label + ".";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                message = "Automation controller delete failed: " + exception.Message;
+                return false;
+            }
+        }
+
         private static Quaternion[] CandidatePlacementRotations(Quaternion preferred)
         {
             var rotations = new List<Quaternion>();
@@ -161,6 +209,40 @@ namespace DecoLimitLifter.AutomationEditMode
             }
         }
 
+        private static void RegisterUndo(cBuild build, RemoveBlockCommand command)
+        {
+            try
+            {
+                if (build == null || command == null)
+                    return;
+
+                object undoRedo = typeof(cBuild)
+                    .GetProperty(
+                        "UndoRedo",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?.GetValue(build, null);
+                object container = undoRedo?.GetType()
+                    .GetProperty(
+                        "Container",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?.GetValue(undoRedo, null);
+                MethodInfo register = container?.GetType()
+                    .GetMethod(
+                        "Register",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                        null,
+                        new[] { typeof(ICommand) },
+                        null);
+                register?.Invoke(
+                    container,
+                    new object[] { new AutomationControllerRemoveUndoCommand(command) });
+            }
+            catch
+            {
+                // The delete succeeded; missing undo registration should not put the block back.
+            }
+        }
+
         private sealed class AutomationControllerUndoCommand : ICommand
         {
             private readonly PlaceBlockCommand _command;
@@ -188,6 +270,37 @@ namespace DecoLimitLifter.AutomationEditMode
 
             public string GetDescription() =>
                 "Automation Editor controller placement";
+
+            public ICommand GetLast() => Next == null ? this : Next.GetLast();
+        }
+
+        private sealed class AutomationControllerRemoveUndoCommand : ICommand
+        {
+            private readonly RemoveBlockCommand _command;
+
+            internal AutomationControllerRemoveUndoCommand(RemoveBlockCommand command)
+            {
+                _command = command;
+            }
+
+            public string Name => "Automation Editor";
+
+            public IConnectionData Owner { get; set; }
+
+            public GameTime StartTime { get; set; }
+
+            public bool IsFirstExecute { get; set; }
+
+            public ICommand Next { get; set; }
+
+            public void Execute() => Apply();
+
+            public void Apply() => _command?.Apply();
+
+            public void Undo() => _command?.Undo();
+
+            public string GetDescription() =>
+                "Automation Editor controller delete";
 
             public ICommand GetLast() => Next == null ? this : Next.GetLast();
         }
