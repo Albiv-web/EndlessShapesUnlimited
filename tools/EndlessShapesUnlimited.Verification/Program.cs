@@ -3927,6 +3927,7 @@ f 0 2 3
                modeSwitchHandoffSource.Contains("HandoffFrames = 3") &&
                modeSwitchHandoffSource.Contains("PassiveGuiFrames => HandoffFrames") &&
                modeSwitchHandoffSource.Contains("ShouldDrawPassiveGui") &&
+               modeSwitchHandoffSource.Contains("s_beginFrame != Time.frameCount") &&
                modeSwitchHandoffSource.Contains("!DecorationEditMode.DecorationEditModeRegistration.Active") &&
                modeSwitchHandoffSource.Contains("!SmartBuildMode.SmartBuildModeRegistration.Active") &&
                modeSwitchHandoffSource.Contains("!AutomationEditMode.AutomationEditModeRegistration.Active") &&
@@ -7154,6 +7155,10 @@ f 0 2 3
         string automationDrawGuiSource = ExtractMethodSource(automationSessionSource, "DrawGui");
         string automationSuspendHandoffSource = ExtractMethodSource(automationSessionSource, "SuspendForModeSwitchHandoff");
         string automationRefreshHoverTargetSource = ExtractMethodSource(automationSessionSource, "RefreshHoverTarget");
+        string automationDrawWorldOverlaySource = ExtractMethodSource(automationSessionSource, "DrawWorldOverlay");
+        string automationDrawTargetHighlightsSource = ExtractMethodSource(automationSessionSource, "DrawTargetHighlights");
+        string automationShouldDrawWorldHighlightSource = ExtractMethodSource(automationSessionSource, "ShouldDrawAutomationWorldHighlight");
+        string automationWorldHoverTooltipSource = ExtractMethodSource(automationSessionSource, "AutomationWorldHoverTooltip");
         string automationHandleMouseSource = ExtractMethodSource(automationSessionSource, "HandleMouse");
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
@@ -7162,6 +7167,7 @@ f 0 2 3
         string automationTryOpenWorldContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationWorldContextMenu");
         string automationHandleTargetClickSource = ExtractMethodSource(automationSessionSource, "TryHandleAutomationTargetClick");
         string automationProjectedTargetPickableSource = ExtractMethodSource(automationSessionSource, "IsProjectedAutomationTargetPickable");
+        string automationWorldPickableTargetSource = ExtractMethodSource(automationSessionSource, "IsAutomationWorldPickableTarget");
         string automationProjectedTargetRectSource = ExtractMethodSource(automationSessionSource, "TryProjectedAutomationTargetScreenRect");
         string automationTryOpenSelectionContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationSelectionContextMenu");
         string automationDrawContextMenuSource = ExtractMethodSource(automationSessionSource, "DrawAutomationContextMenu");
@@ -7178,6 +7184,11 @@ f 0 2 3
         string automationTargetSearchControlsSource = ExtractMethodSource(automationSessionSource, "DrawTargetSearchControls");
         string automationDrawEditorSource = ExtractMethodSource(automationSessionSource, "DrawEditor");
         string automationDrawBlocksEditorSource = ExtractMethodSource(automationSessionSource, "DrawBlocksEditor");
+        string automationDrawTinkercadPaletteSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockPalette");
+        string automationDrawTinkercadCanvasSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockCanvas");
+        string automationHandleBlockCanvasDropSource = ExtractMethodSource(automationSessionSource, "HandleBlockCanvasDrop");
+        string automationDrawTinkercadInspectorSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockInspector");
+        string automationDrawTinkercadShapeSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockShape");
         string automationDrawBlocksLoweringPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksLoweringPanel");
         string automationDrawBlocksSystemBlockPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksSystemBlockPanel");
         string automationCheckEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CheckEsuBlocks");
@@ -7651,10 +7662,11 @@ f 0 2 3
                automationStatusStripSource.Contains("\"Stage: \" + WorkspaceStageLabel()") &&
                automationStatusStripSource.Contains("\"Next: \" + NextSafeActionLine()") &&
                automationPanelHeaderSource.Contains("AutomationGUILayoutButton(") &&
-               automationPanelHeaderSource.Contains("DecorationEditorIconCatalog.Get(\"close\")") &&
+               automationPanelHeaderSource.Contains("new GUIContent(\"Hide\", hideTooltip)") &&
+               !automationPanelHeaderSource.Contains("DecorationEditorIconCatalog.Get(\"close\")") &&
                automationSectionHeaderSource.Contains("AutomationGUILayoutButton(") &&
                automationSectionHeaderSource.Contains("sectionVisible ? \"Hide list\" : \"Show list\"") &&
-               automationSectionHeaderSource.Contains("DecorationEditorIconCatalog.Get(sectionVisible ? \"close\" : iconKey)") &&
+               !automationSectionHeaderSource.Contains("DecorationEditorIconCatalog.Get(sectionVisible ? \"close\" : iconKey)") &&
                automationTargetSearchControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("DrawEditorBottomStrip()") &&
@@ -7672,6 +7684,10 @@ f 0 2 3
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationLoweringPlan") &&
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationSystemBlockDefinition") &&
                automationBlockWorkspaceSource.Contains("AutomationBlockKind") &&
+               automationBlockWorkspaceSource.Contains("internal enum AutomationBlockCategory") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockCanvasPosition") &&
+               automationBlockWorkspaceSource.Contains("PaletteTemplateId") &&
+               automationBlockWorkspaceSource.Contains("MoveNodeToIndex") &&
                automationBlockWorkspaceSource.Contains("WhenIf") &&
                automationBlockWorkspaceSource.Contains("ReadTarget") &&
                automationBlockWorkspaceSource.Contains("Compare") &&
@@ -7692,8 +7708,24 @@ f 0 2 3
                automationDrawEditorSource.Contains("SystemBlockBreadcrumb()") &&
                automationDrawBlocksEditorSource.Contains("ESU Blocks builder") &&
                automationDrawBlocksEditorSource.Contains("Beginner workflow") &&
+               automationDrawBlocksEditorSource.Contains("DrawTinkercadBlockPalette()") &&
+               automationDrawBlocksEditorSource.Contains("DrawTinkercadBlockCanvas()") &&
+               automationDrawBlocksEditorSource.Contains("DrawTinkercadBlockInspector()") &&
                automationDrawBlocksEditorSource.Contains("DrawBlocksLoweringPanel()") &&
                automationDrawBlocksEditorSource.Contains("DrawBlocksSystemBlockPanel()") &&
+               automationSessionSource.Contains("return \"Output\"") &&
+               automationSessionSource.Contains("return \"Control\"") &&
+               automationSessionSource.Contains("return \"Input\"") &&
+               automationSessionSource.Contains("return \"Math\"") &&
+               automationSessionSource.Contains("return \"Variables\"") &&
+               automationSessionSource.Contains("return \"Notation\"") &&
+               automationSessionSource.Contains("\"on start\"") &&
+               automationSessionSource.Contains("\"forever\"") &&
+               automationDrawTinkercadCanvasSource.Contains("DrawTinkercadProgram") &&
+               automationHandleBlockCanvasDropSource.Contains("MoveNodeToIndex") &&
+               automationHandleBlockCanvasDropSource.Contains("AddAutomationBlock") &&
+               automationDrawTinkercadInspectorSource.Contains("Selected block") &&
+               automationDrawTinkercadShapeSource.Contains("DrawFilledRect") &&
                automationDrawBlocksLoweringPanelSource.Contains("Check blocks") &&
                automationDrawBlocksLoweringPanelSource.Contains("Apply blocks") &&
                automationDrawBlocksLoweringPanelSource.Contains("Revert blocks") &&
@@ -7827,8 +7859,17 @@ f 0 2 3
                automationDrawGuiSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
                automationDrawGuiSource.Contains("if (!interactive)") &&
                automationDrawGuiSource.Contains("return;") &&
+               automationDrawGuiSource.Contains("RegisterAutomationWorldHoverTooltip()") &&
                automationDrawGuiSource.Contains("if (!_editorOpen)") &&
                automationDrawGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
+               automationDrawWorldOverlaySource.Contains("DrawTargetHighlights()") &&
+               !automationDrawWorldOverlaySource.Contains("0.92f, 0.25f") &&
+               automationDrawTargetHighlightsSource.Contains("ShouldDrawAutomationWorldHighlight(target)") &&
+               automationShouldDrawWorldHighlightSource.Contains("IsCuratedAutomationWorldTarget(target)") &&
+               automationShouldDrawWorldHighlightSource.Contains("AutomationTargetCategory.BreadboardReadable") &&
+               automationShouldDrawWorldHighlightSource.Contains("IsLinked(_selectedController, target)") &&
+               automationWorldHoverTooltipSource.Contains("\"Link to \" + target.Label") &&
+               automationWorldHoverTooltipSource.Contains("\"Already linked: click to unlink \" + target.Label") &&
                automationPrepareLayoutSource.Contains("FullScreenEditorRect()") &&
                automationMouseOverUiSource.Contains("if (_editorOpen)") &&
                automationMouseOverUiSource.Contains("return true;") &&
@@ -7858,9 +7899,13 @@ f 0 2 3
                automationHandleMouseSource.Contains("TryHandleAutomationTargetClick(") &&
                automationHandleMouseSource.Contains("Selected through x-ray Automation pick") &&
                automationHandleTargetClickSource.Contains("ToggleLink(_selectedController, target)") &&
+               automationHandleTargetClickSource.Contains("IsAutomationWorldPickableTarget(target)") &&
                automationHandleTargetClickSource.Contains("AutomationTargetCatalog.PassesFilter(target, _filter)") &&
-               automationProjectedTargetPickableSource.Contains("AutomationTargetCatalog.PassesFilter(candidate, _filter)") &&
-               automationProjectedTargetPickableSource.Contains("IsLinked(_selectedController, candidate)") &&
+               automationProjectedTargetPickableSource.Contains("IsAutomationWorldPickableTarget(candidate)") &&
+               automationWorldPickableTargetSource.Contains("IsCuratedAutomationWorldTarget(candidate)") &&
+               automationWorldPickableTargetSource.Contains("AutomationTargetCatalog.MatchesSearch(candidate, _targetSearchText)") &&
+               automationWorldPickableTargetSource.Contains("AutomationTargetCategory.BreadboardReadable") &&
+               automationWorldPickableTargetSource.Contains("IsLinked(_selectedController, candidate)") &&
                automationProjectedTargetRectSource.Contains("CellCorners(target.Construct, target.LocalPosition)") &&
                automationProjectedTargetRectSource.Contains("camera.WorldToScreenPoint(corners[index])") &&
                automationProjectedTargetRectSource.Contains("Rect.MinMaxRect") &&

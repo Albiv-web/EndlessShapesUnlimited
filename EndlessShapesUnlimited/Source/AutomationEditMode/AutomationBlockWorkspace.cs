@@ -18,6 +18,16 @@ namespace DecoLimitLifter.AutomationEditMode
         SystemBlock
     }
 
+    internal enum AutomationBlockCategory
+    {
+        Output,
+        Input,
+        Control,
+        Math,
+        Variables,
+        Notation
+    }
+
     internal enum AutomationBlockPortDirection
     {
         Input,
@@ -98,14 +108,19 @@ namespace DecoLimitLifter.AutomationEditMode
             RebuildPortsAndLinks();
         }
 
-        internal AutomationBlockNode AddBlock(AutomationBlockKind kind)
+        internal AutomationBlockNode AddBlock(AutomationBlockKind kind) =>
+            AddBlock(kind, _nodes.Count);
+
+        internal AutomationBlockNode AddBlock(AutomationBlockKind kind, int insertIndex)
         {
             AutomationTarget target = DefaultTargetFor(kind);
             var node = new AutomationBlockNode(
                 "esu-block-" + _nextNodeIndex.ToString(CultureInfo.InvariantCulture),
                 kind,
                 DefaultLabelFor(kind),
-                DefaultIconFor(kind));
+                DefaultIconFor(kind),
+                CategoryFor(kind),
+                PaletteTemplateIdFor(kind));
             _nextNodeIndex++;
 
             if (target != null)
@@ -121,8 +136,10 @@ namespace DecoLimitLifter.AutomationEditMode
             if (kind == AutomationBlockKind.Comment)
                 node.Comment = "Describe what this automation does.";
 
-            _nodes.Add(node);
+            int clamped = Math.Max(0, Math.Min(_nodes.Count, insertIndex));
+            _nodes.Insert(clamped, node);
             Select(node.Id);
+            RefreshCanvasOrder();
             RebuildPortsAndLinks();
             return node;
         }
@@ -159,6 +176,33 @@ namespace DecoLimitLifter.AutomationEditMode
             AutomationBlockNode nodeToMove = _nodes[index];
             _nodes.RemoveAt(index);
             _nodes.Insert(next, nodeToMove);
+            RefreshCanvasOrder();
+            RebuildPortsAndLinks();
+            return true;
+        }
+
+        internal bool MoveNodeToIndex(string nodeId, int insertIndex)
+        {
+            if (string.IsNullOrWhiteSpace(nodeId))
+                return false;
+
+            int index = _nodes.FindIndex(node =>
+                string.Equals(node.Id, nodeId, StringComparison.Ordinal));
+            if (index < 0)
+                return false;
+
+            AutomationBlockNode nodeToMove = _nodes[index];
+            _nodes.RemoveAt(index);
+            int clamped = Math.Max(0, Math.Min(_nodes.Count, insertIndex));
+            if (clamped == index)
+            {
+                _nodes.Insert(clamped, nodeToMove);
+                return false;
+            }
+
+            _nodes.Insert(clamped, nodeToMove);
+            Select(nodeId);
+            RefreshCanvasOrder();
             RebuildPortsAndLinks();
             return true;
         }
@@ -166,6 +210,8 @@ namespace DecoLimitLifter.AutomationEditMode
         internal void Select(string nodeId)
         {
             SelectedNodeId = nodeId ?? string.Empty;
+            foreach (AutomationBlockNode node in _nodes)
+                node.IsSelected = string.Equals(node.Id, SelectedNodeId, StringComparison.Ordinal);
         }
 
         internal AutomationBlockNode SelectedNode() =>
@@ -297,6 +343,41 @@ namespace DecoLimitLifter.AutomationEditMode
             }
         }
 
+        private void RefreshCanvasOrder()
+        {
+            for (int index = 0; index < _nodes.Count; index++)
+            {
+                AutomationBlockNode node = _nodes[index];
+                node.CanvasOrder = index;
+                node.CanvasPosition = new AutomationBlockCanvasPosition(0f, index * 68f);
+            }
+        }
+
+        internal static AutomationBlockCategory CategoryFor(AutomationBlockKind kind)
+        {
+            switch (kind)
+            {
+                case AutomationBlockKind.SetTarget:
+                    return AutomationBlockCategory.Output;
+                case AutomationBlockKind.ReadTarget:
+                    return AutomationBlockCategory.Input;
+                case AutomationBlockKind.WhenIf:
+                case AutomationBlockKind.Delay:
+                    return AutomationBlockCategory.Control;
+                case AutomationBlockKind.Compare:
+                case AutomationBlockKind.MathScale:
+                    return AutomationBlockCategory.Math;
+                case AutomationBlockKind.Constant:
+                case AutomationBlockKind.SystemBlock:
+                    return AutomationBlockCategory.Variables;
+                default:
+                    return AutomationBlockCategory.Notation;
+            }
+        }
+
+        private static string PaletteTemplateIdFor(AutomationBlockKind kind) =>
+            "esu-" + kind.ToString().ToLowerInvariant();
+
         private static string DefaultLabelFor(AutomationBlockKind kind)
         {
             switch (kind)
@@ -354,12 +435,18 @@ namespace DecoLimitLifter.AutomationEditMode
             string id,
             AutomationBlockKind kind,
             string label,
-            string iconKey)
+            string iconKey,
+            AutomationBlockCategory category,
+            string paletteTemplateId)
         {
             Id = id ?? string.Empty;
             Kind = kind;
             Label = string.IsNullOrWhiteSpace(label) ? kind.ToString() : label;
             IconKey = string.IsNullOrWhiteSpace(iconKey) ? "info" : iconKey;
+            Category = category;
+            PaletteTemplateId = string.IsNullOrWhiteSpace(paletteTemplateId)
+                ? "esu-" + Kind.ToString().ToLowerInvariant()
+                : paletteTemplateId;
             Operator = AutomationCompareOperator.GreaterThan;
             TargetLabel = "target";
         }
@@ -371,6 +458,18 @@ namespace DecoLimitLifter.AutomationEditMode
         internal string Label { get; }
 
         internal string IconKey { get; }
+
+        internal AutomationBlockCategory Category { get; }
+
+        internal string PaletteTemplateId { get; }
+
+        internal string ParentNodeId { get; set; }
+
+        internal int CanvasOrder { get; set; }
+
+        internal AutomationBlockCanvasPosition CanvasPosition { get; set; }
+
+        internal bool IsSelected { get; set; }
 
         internal string TargetKey { get; private set; }
 
@@ -392,6 +491,19 @@ namespace DecoLimitLifter.AutomationEditMode
             TargetKey = target.StableKey;
             TargetLabel = target.Label;
         }
+    }
+
+    internal struct AutomationBlockCanvasPosition
+    {
+        internal AutomationBlockCanvasPosition(float x, float y)
+        {
+            X = x;
+            Y = y;
+        }
+
+        internal float X { get; }
+
+        internal float Y { get; }
     }
 
     internal sealed class AutomationBlockPort

@@ -147,6 +147,15 @@ namespace DecoLimitLifter.AutomationEditMode
                 "else:\n" +
                 "    out = 0\n")
         };
+        private static readonly AutomationBlockCategory[] s_blockPaletteCategories =
+        {
+            AutomationBlockCategory.Output,
+            AutomationBlockCategory.Control,
+            AutomationBlockCategory.Input,
+            AutomationBlockCategory.Math,
+            AutomationBlockCategory.Notation,
+            AutomationBlockCategory.Variables
+        };
 
         private readonly cBuild _build;
         private readonly DecorationPointerProbe _pointerProbe;
@@ -169,6 +178,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private Vector2 _leftScroll;
         private Vector2 _rightScroll;
         private Vector2 _editorScroll;
+        private Vector2 _blockPaletteScroll;
         private IReadOnlyList<AutomationTarget> _targets = Array.Empty<AutomationTarget>();
         private AutomationTarget _selectedController;
         private AutomationTarget _hoverTarget;
@@ -177,6 +187,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private AutomationTargetCategory _filter = AutomationTargetCategory.All;
         private AutomationTool _tool = AutomationTool.Link;
         private AutomationEditorPage _editorPage = AutomationEditorPage.Blocks;
+        private AutomationBlockCategory _blockPaletteCategory = AutomationBlockCategory.Output;
         private AutomationBlockWorkspace _blockWorkspace;
         private AutomationLoweringPlan _blockLoweringPlan;
         private string _blockWorkspaceControllerKey = string.Empty;
@@ -219,6 +230,13 @@ namespace DecoLimitLifter.AutomationEditMode
         private int _wireSourceOutputIndex = -1;
         private uint _selectedCanvasComponentId = NoWireSourceComponentId;
         private uint _canvasDragComponentId = NoWireSourceComponentId;
+        private bool _draggingPaletteBlock;
+        private bool _draggingWorkspaceBlock;
+        private AutomationBlockKind _dragPaletteBlockKind;
+        private string _dragWorkspaceBlockId = string.Empty;
+        private int _blockDropIndex = -1;
+        private Rect _lastBlockCanvasRect = Rect.zero;
+        private Vector2 _blockDragMouseStart;
         private AutomationContextMenuKind _contextMenuKind = AutomationContextMenuKind.None;
         private Rect _contextMenuRect;
         private Vector2 _contextMenuAnchor;
@@ -373,6 +391,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 if (interactive)
                 {
+                    RegisterAutomationWorldHoverTooltip();
                     DrawAutomationResizeGrips();
                     DrawAutomationContextMenu();
                     EsuHudNotifications.DrawExpandedPopup();
@@ -546,7 +565,8 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             if (_pointerProbe.TryProbe(out DecorationPointerHit hit) &&
-                AutomationTargetCatalog.TryTargetFromHit(hit, out AutomationTarget target))
+                AutomationTargetCatalog.TryTargetFromHit(hit, out AutomationTarget target) &&
+                IsAutomationWorldPickableTarget(target))
             {
                 _hoverTarget = target;
             }
@@ -723,7 +743,8 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             if (_pointerProbe.TryProbe(out DecorationPointerHit hit) &&
-                AutomationTargetCatalog.TryTargetFromHit(hit, out AutomationTarget target))
+                AutomationTargetCatalog.TryTargetFromHit(hit, out AutomationTarget target) &&
+                IsAutomationWorldPickableTarget(target))
             {
                 OpenAutomationTargetContextMenu(target, mouse);
                 return true;
@@ -751,6 +772,12 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_selectedController == null)
             {
                 _status = "Select a Breadboard/ACB before linking targets.";
+                return true;
+            }
+
+            if (!IsAutomationWorldPickableTarget(target))
+            {
+                _status = target.Label + " is hidden by the Automation world filter. Use search, a specific filter, or the target list to link it.";
                 return true;
             }
 
@@ -1812,8 +1839,40 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_selectedController == null)
                 return false;
 
-            return AutomationTargetCatalog.PassesFilter(candidate, _filter) ||
-                   IsLinked(_selectedController, candidate);
+            return IsAutomationWorldPickableTarget(candidate);
+        }
+
+        private bool IsAutomationWorldPickableTarget(AutomationTarget candidate)
+        {
+            if (candidate == null)
+                return false;
+
+            if (candidate.IsController)
+                return true;
+
+            if (_selectedController == null)
+                return false;
+
+            if (IsLinked(_selectedController, candidate))
+                return true;
+
+            if (!AutomationTargetCatalog.MatchesSearch(candidate, _targetSearchText))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(_targetSearchText) &&
+                AutomationTargetCatalog.PassesFilter(candidate, _filter))
+            {
+                return true;
+            }
+
+            if (_filter != AutomationTargetCategory.All &&
+                _filter != AutomationTargetCategory.BreadboardReadable &&
+                AutomationTargetCatalog.PassesFilter(candidate, _filter))
+            {
+                return true;
+            }
+
+            return IsCuratedAutomationWorldTarget(candidate);
         }
 
         private static bool TryProjectedAutomationTargetScreenRect(
@@ -1895,8 +1954,6 @@ namespace DecoLimitLifter.AutomationEditMode
                 DrawTargetHighlights();
                 DrawPlacementPreview();
                 DrawLinks();
-                if (_hoverTarget != null)
-                    DrawTargetBox(_hoverTarget, new Color(1f, 0.92f, 0.25f, 0.92f), 4.4f, 0.08f);
                 if (_selectedController != null)
                     DrawTargetBox(_selectedController, new Color(0.1f, 0.95f, 1f, 1f), 5.4f, 0.13f);
             }
@@ -1939,9 +1996,7 @@ namespace DecoLimitLifter.AutomationEditMode
             IEnumerable<AutomationTarget> visible = _targets
                 .Where(target =>
                     target != null &&
-                    (target.IsController ||
-                     (_selectedController != null &&
-                      AutomationTargetCatalog.PassesFilter(target, _filter))))
+                    ShouldDrawAutomationWorldHighlight(target))
                 .Take(WorldHighlightLimit);
 
             foreach (AutomationTarget target in visible)
@@ -1952,11 +2007,141 @@ namespace DecoLimitLifter.AutomationEditMode
                     continue;
                 }
 
+                bool linked = IsLinked(_selectedController, target);
+                bool hovered = _hoverTarget != null &&
+                               string.Equals(_hoverTarget.StableKey, target.StableKey, StringComparison.Ordinal);
                 Color color = target.IsController
                     ? new Color(0.1f, 0.95f, 1f, 0.78f)
-                    : CategoryColor(target.Category);
-                DrawTargetBox(target, color, target.IsController ? 3.2f : 2.2f, target.IsController ? 0.07f : 0.035f);
+                    : linked
+                        ? new Color(0.2f, 1f, 0.65f, 0.86f)
+                        : CategoryColor(target.Category);
+                float width = hovered ? 2.8f : target.IsController ? 3.2f : 2.2f;
+                float pulse = hovered ? 0.055f : target.IsController ? 0.07f : 0.035f;
+                DrawTargetBox(target, color, width, pulse);
             }
+        }
+
+        private bool ShouldDrawAutomationWorldHighlight(AutomationTarget target)
+        {
+            if (target == null)
+                return false;
+
+            if (target.IsController)
+                return true;
+
+            if (_selectedController == null)
+                return false;
+
+            if (_hoverTarget != null &&
+                string.Equals(_hoverTarget.StableKey, target.StableKey, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (IsLinked(_selectedController, target))
+                return true;
+
+            bool matchesSearch = AutomationTargetCatalog.MatchesSearch(target, _targetSearchText);
+            if (!matchesSearch)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(_targetSearchText) &&
+                AutomationTargetCatalog.PassesFilter(target, _filter))
+            {
+                return true;
+            }
+
+            if (_filter != AutomationTargetCategory.All &&
+                _filter != AutomationTargetCategory.BreadboardReadable &&
+                AutomationTargetCatalog.PassesFilter(target, _filter))
+            {
+                return true;
+            }
+
+            return IsCuratedAutomationWorldTarget(target);
+        }
+
+        private static bool IsCuratedAutomationWorldTarget(AutomationTarget target)
+        {
+            if (target == null)
+                return false;
+
+            if (AutomationTargetCatalog.IsAcbActionTarget(target))
+                return true;
+
+            switch (target.Category)
+            {
+                case AutomationTargetCategory.Controllers:
+                case AutomationTargetCategory.Spinblocks:
+                case AutomationTargetCategory.TurretsWeapons:
+                case AutomationTargetCategory.Propulsion:
+                case AutomationTargetCategory.Pistons:
+                case AutomationTargetCategory.Pumps:
+                case AutomationTargetCategory.ControlSurfaces:
+                case AutomationTargetCategory.Ai:
+                case AutomationTargetCategory.Missiles:
+                case AutomationTargetCategory.Lights:
+                case AutomationTargetCategory.ShieldsDefence:
+                case AutomationTargetCategory.Detection:
+                case AutomationTargetCategory.DoorsDocking:
+                case AutomationTargetCategory.ResourcePower:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void RegisterAutomationWorldHoverTooltip()
+        {
+            if (_hoverTarget == null ||
+                _tool == AutomationTool.Place ||
+                AutomationInputScope.MouseOverUi ||
+                IsMouseCurrentlyOverUi())
+            {
+                return;
+            }
+
+            string tooltip = AutomationWorldHoverTooltip(_hoverTarget);
+            if (string.IsNullOrWhiteSpace(tooltip))
+                return;
+
+            Vector2 mouse = Event.current.mousePosition;
+            Rect cursorRect = new Rect(
+                mouse.x - EsuHudLayout.Scale(12f),
+                mouse.y - EsuHudLayout.Scale(12f),
+                EsuHudLayout.Scale(24f),
+                EsuHudLayout.Scale(24f));
+            EsuCursorTooltip.Register(cursorRect, tooltip);
+        }
+
+        private string AutomationWorldHoverTooltip(AutomationTarget target)
+        {
+            if (target == null)
+                return string.Empty;
+
+            if (target.IsController)
+            {
+                if (_selectedController != null && CanLinkControllerTarget(_selectedController, target))
+                    return IsLinked(_selectedController, target)
+                        ? "Already linked: click to unlink " + target.Label + "."
+                        : "Link controller target " + target.Label + ".";
+
+                return "Select " + target.Label + ".";
+            }
+
+            if (_selectedController == null)
+                return "Select a Breadboard first.";
+
+            if (IsLinked(_selectedController, target))
+                return "Already linked: click to unlink " + target.Label + ".";
+
+            if (!AutomationTargetCatalog.PassesFilter(target, _filter) &&
+                !IsCuratedAutomationWorldTarget(target))
+            {
+                return string.Empty;
+            }
+
+            return "Link to " + target.Label + ".";
         }
 
         private void DrawLinks()
@@ -3438,7 +3623,7 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginHorizontal();
             DrawCompactIconHeader(text, iconKey, DecorationEditorTheme.Header);
             if (AutomationGUILayoutButton(
-                    new GUIContent("Hide", DecorationEditorIconCatalog.Get("close"), hideTooltip),
+                    new GUIContent("Hide", hideTooltip),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(58f)),
                     GUILayout.Height(EsuHudLayout.Scale(22f))))
@@ -3456,7 +3641,6 @@ namespace DecoLimitLifter.AutomationEditMode
             if (AutomationGUILayoutButton(
                     new GUIContent(
                         sectionVisible ? "Hide list" : "Show list",
-                        DecorationEditorIconCatalog.Get(sectionVisible ? "close" : iconKey),
                         tooltip),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(76f)),
@@ -3894,7 +4078,7 @@ namespace DecoLimitLifter.AutomationEditMode
             EnsureBlockWorkspace();
             GUILayout.BeginVertical(DecorationEditorTheme.Panel);
             DrawCompactIconHeader("Beginner workflow", "build", DecorationEditorTheme.SubHeader);
-            GUILayout.Label("Click Breadboard -> click target -> stack ESU Blocks -> Check -> Apply. Advanced native Breadboard tools stay behind the Advanced tab.", DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("Click Breadboard -> click target -> drag ESU Blocks from the palette -> Check -> Apply. Advanced native Breadboard tools stay behind the Advanced tab.", DecorationEditorTheme.MiniWrap);
             GUILayout.Label(
                 SelectedLinks.Count == 0
                     ? "No linked targets yet. Close the editor or use Link mode, then click the target this Breadboard should affect."
@@ -3902,54 +4086,720 @@ namespace DecoLimitLifter.AutomationEditMode
                 SelectedLinks.Count == 0 ? DecorationEditorTheme.Warning : DecorationEditorTheme.Body);
             GUILayout.EndVertical();
 
-            DrawBlockAddToolbar();
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            GUILayout.BeginHorizontal();
+            DrawTinkercadBlockPalette();
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            GUILayout.BeginVertical();
+            DrawTinkercadBlockCanvas();
+            DrawBlocksLoweringPanel();
+            GUILayout.EndVertical();
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            GUILayout.BeginVertical(GUILayout.Width(EsuHudLayout.Scale(260f)));
+            DrawTinkercadBlockInspector();
+            DrawBlocksSystemBlockPanel();
+            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
+            DrawAutomationBlockDragGhost();
+        }
 
-            GUILayout.Space(EsuHudLayout.Scale(6f));
-            DrawCompactIconHeader("Block stack", "outliner", DecorationEditorTheme.SubHeader);
+        private void DrawTinkercadBlockPalette()
+        {
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel, GUILayout.Width(EsuHudLayout.Scale(300f)));
+            DrawCompactIconHeader("Blocks", "outliner", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginHorizontal();
+            for (int index = 0; index < s_blockPaletteCategories.Length; index++)
+            {
+                AutomationBlockCategory category = s_blockPaletteCategories[index];
+                if (index == 3)
+                {
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                }
+
+                string label = AutomationBlockCategoryLabel(category);
+                if (AutomationGUILayoutButton(
+                        new GUIContent(label, "Show " + label + " Automation blocks."),
+                        DecorationEditorTheme.ToolButton(_blockPaletteCategory == category),
+                        GUILayout.Height(EsuHudLayout.Scale(26f))))
+                {
+                    _blockPaletteCategory = category;
+                }
+            }
+            GUILayout.EndHorizontal();
+            DecorationEditorTheme.Separator();
+
+            _blockPaletteScroll = GUILayout.BeginScrollView(
+                _blockPaletteScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.Height(EsuHudLayout.Scale(392f)));
+            foreach (AutomationBlockKind kind in BlockKindsForCategory(_blockPaletteCategory))
+                DrawPaletteBlockTemplate(kind);
+            GUILayout.EndScrollView();
+            GUILayout.Label("Drag blocks onto the canvas, or click a block to append it.", DecorationEditorTheme.MiniWrap);
+            GUILayout.EndVertical();
+        }
+
+        private void DrawPaletteBlockTemplate(AutomationBlockKind kind)
+        {
+            Rect rect = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(52f),
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(52f)));
+            DrawTinkercadBlockShape(
+                rect,
+                BlockCategoryColor(AutomationBlockWorkspace.CategoryFor(kind)),
+                PaletteBlockPreviewText(kind),
+                DefaultBlockIcon(kind),
+                selected: false,
+                hat: kind == AutomationBlockKind.WhenIf);
+            EsuCursorTooltip.Register(rect, "Drag or click to add " + PaletteBlockPreviewText(kind) + ".");
+            HandlePaletteBlockTemplateInput(rect, kind);
+        }
+
+        private void HandlePaletteBlockTemplateInput(Rect rect, AutomationBlockKind kind)
+        {
+            Event current = Event.current;
+            if (current == null)
+                return;
+
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                rect.Contains(current.mousePosition))
+            {
+                _draggingPaletteBlock = true;
+                _draggingWorkspaceBlock = false;
+                _dragPaletteBlockKind = kind;
+                _dragWorkspaceBlockId = string.Empty;
+                _blockDropIndex = -1;
+                _blockDragMouseStart = current.mousePosition;
+                _status = "Drag " + PaletteBlockPreviewText(kind) + " onto the ESU Blocks canvas.";
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp &&
+                current.button == 0 &&
+                _draggingPaletteBlock &&
+                _dragPaletteBlockKind == kind &&
+                rect.Contains(current.mousePosition) &&
+                !_lastBlockCanvasRect.Contains(current.mousePosition) &&
+                (current.mousePosition - _blockDragMouseStart).sqrMagnitude <= EsuHudLayout.Scale(8f) * EsuHudLayout.Scale(8f))
+            {
+                AddAutomationBlock(kind, -1);
+                ClearAutomationBlockDrag();
+                current.Use();
+            }
+        }
+
+        private void DrawTinkercadBlockCanvas()
+        {
+            DrawCompactIconHeader("Block canvas", "outliner", DecorationEditorTheme.SubHeader);
+            float canvasHeight = Mathf.Max(
+                EsuHudLayout.Scale(520f),
+                EsuHudLayout.Scale(210f) + _blockWorkspace.Nodes.Count * EsuHudLayout.Scale(72f));
+            Rect canvas = GUILayoutUtility.GetRect(
+                1f,
+                canvasHeight,
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(canvasHeight));
+            _lastBlockCanvasRect = canvas;
+            GUI.Box(canvas, GUIContent.none, DecorationEditorTheme.Panel);
+            DrawFilledRect(
+                new Rect(canvas.x + EsuHudLayout.Scale(2f), canvas.y + EsuHudLayout.Scale(2f), canvas.width - EsuHudLayout.Scale(4f), canvas.height - EsuHudLayout.Scale(4f)),
+                new Color(0.92f, 0.95f, 0.96f, 0.11f));
+
+            List<Rect> nodeRects = DrawTinkercadProgram(canvas);
+            HandleBlockCanvasDrop(canvas, nodeRects);
+        }
+
+        private List<Rect> DrawTinkercadProgram(Rect canvas)
+        {
+            var nodeRects = new List<Rect>(_blockWorkspace.Nodes.Count);
+            float blockWidth = Mathf.Clamp(
+                canvas.width - EsuHudLayout.Scale(140f),
+                EsuHudLayout.Scale(300f),
+                EsuHudLayout.Scale(620f));
+            float x = canvas.x + Mathf.Clamp(
+                canvas.width * 0.44f,
+                EsuHudLayout.Scale(140f),
+                Mathf.Max(EsuHudLayout.Scale(18f), canvas.width - blockWidth - EsuHudLayout.Scale(24f)));
+            float y = canvas.y + EsuHudLayout.Scale(42f);
+            Rect start = new Rect(x, y, Mathf.Min(blockWidth, EsuHudLayout.Scale(190f)), EsuHudLayout.Scale(58f));
+            DrawTinkercadBlockShape(
+                start,
+                BlockCategoryColor(AutomationBlockCategory.Control),
+                "on start",
+                "build",
+                selected: false,
+                hat: true);
+
+            y = start.yMax + EsuHudLayout.Scale(42f);
+            float stackHeight = Mathf.Max(
+                EsuHudLayout.Scale(132f),
+                _blockWorkspace.Nodes.Sum(node => TinkercadBlockHeight(node)) + EsuHudLayout.Scale(74f));
+            Rect forever = new Rect(x, y, blockWidth, stackHeight);
+            DrawTinkercadBlockShape(
+                forever,
+                BlockCategoryColor(AutomationBlockCategory.Control),
+                "forever",
+                "time",
+                selected: false,
+                hat: true);
+
+            float blockX = forever.x + EsuHudLayout.Scale(22f);
+            float blockY = forever.y + EsuHudLayout.Scale(54f);
+            float childWidth = Mathf.Max(EsuHudLayout.Scale(220f), forever.width - EsuHudLayout.Scale(44f));
+            for (int index = 0; index < _blockWorkspace.Nodes.Count; index++)
+            {
+                AutomationBlockNode node = _blockWorkspace.Nodes[index];
+                float height = TinkercadBlockHeight(node);
+                Rect rect = new Rect(blockX, blockY, childWidth, height);
+                nodeRects.Add(rect);
+                DrawTinkercadWorkspaceBlock(rect, node);
+                blockY += height + EsuHudLayout.Scale(8f);
+            }
+
             if (_blockWorkspace.Nodes.Count == 0)
             {
-                GUILayout.Label("Add a When/If block or use Reset stack to rebuild a starter automation.", DecorationEditorTheme.MiniWrap);
+                GUI.Label(
+                    new Rect(blockX, blockY, childWidth, EsuHudLayout.Scale(42f)),
+                    "Drag a Control, Input, Math, or Output block here.",
+                    DecorationEditorTheme.MiniWrap);
+            }
+
+            DrawBlockDropIndicator(nodeRects);
+            return nodeRects;
+        }
+
+        private void DrawTinkercadWorkspaceBlock(Rect rect, AutomationBlockNode node)
+        {
+            if (node == null)
+                return;
+
+            bool selected = string.Equals(_blockWorkspace.SelectedNodeId, node.Id, StringComparison.Ordinal);
+            DrawTinkercadBlockShape(
+                rect,
+                BlockCategoryColor(node.Category),
+                BlockNodeTitle(node),
+                node.IconKey,
+                selected,
+                node.Kind == AutomationBlockKind.WhenIf);
+            DrawTinkercadBlockControls(rect, node);
+            HandleWorkspaceBlockInput(rect, node);
+        }
+
+        private void DrawTinkercadBlockControls(Rect rect, AutomationBlockNode node)
+        {
+            float pad = EsuHudLayout.Scale(10f);
+            Rect control = new Rect(
+                rect.x + pad,
+                rect.y + EsuHudLayout.Scale(30f),
+                rect.width - pad * 2f,
+                Mathf.Max(EsuHudLayout.Scale(22f), rect.height - EsuHudLayout.Scale(36f)));
+
+            if (node.Kind == AutomationBlockKind.ReadTarget ||
+                node.Kind == AutomationBlockKind.SetTarget)
+            {
+                Rect labelRect = new Rect(control.x, control.y, EsuHudLayout.Scale(86f), EsuHudLayout.Scale(24f));
+                GUI.Label(
+                    labelRect,
+                    node.Kind == AutomationBlockKind.SetTarget ? "write" : "read",
+                    TinkercadBlockTextStyle(TextAnchor.MiddleLeft));
+                Rect pill = new Rect(labelRect.xMax + EsuHudLayout.Scale(6f), control.y, control.width - labelRect.width - EsuHudLayout.Scale(6f), EsuHudLayout.Scale(24f));
+                if (AutomationGUIButton(
+                        pill,
+                        new GUIContent(
+                            string.IsNullOrWhiteSpace(node.TargetLabel) ? "choose linked target" : node.TargetLabel,
+                            DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_blockWorkspace.TargetForNode(node))),
+                            "Cycle linked targets available to this ESU Block."),
+                        DecorationEditorTheme.Button))
+                    CycleAutomationBlockTarget(node);
+                return;
+            }
+
+            if (node.Kind == AutomationBlockKind.Compare)
+            {
+                Rect op = new Rect(control.x, control.y, EsuHudLayout.Scale(68f), EsuHudLayout.Scale(24f));
+                if (AutomationGUIButton(
+                        op,
+                        new GUIContent(CompareOperatorLabel(node.Operator), "Cycle comparison operator."),
+                        DecorationEditorTheme.Button))
+                    CycleAutomationCompareOperator(node);
+                DrawTinkercadFloatStepper(
+                    new Rect(op.xMax + EsuHudLayout.Scale(8f), control.y, control.width - op.width - EsuHudLayout.Scale(8f), EsuHudLayout.Scale(24f)),
+                    node.NumericValue,
+                    0.1f,
+                    value =>
+                    {
+                        node.NumericValue = value;
+                        InvalidateEsuBlockPlan();
+                    });
+                return;
+            }
+
+            if (node.Kind == AutomationBlockKind.MathScale ||
+                node.Kind == AutomationBlockKind.Constant ||
+                node.Kind == AutomationBlockKind.Delay)
+            {
+                DrawTinkercadFloatStepper(
+                    new Rect(control.x, control.y, Mathf.Min(control.width, EsuHudLayout.Scale(220f)), EsuHudLayout.Scale(24f)),
+                    node.NumericValue,
+                    node.Kind == AutomationBlockKind.Delay ? 0.05f : 0.1f,
+                    value =>
+                    {
+                        node.NumericValue = node.Kind == AutomationBlockKind.Delay ? Mathf.Max(0f, value) : value;
+                        InvalidateEsuBlockPlan();
+                    });
+                return;
+            }
+
+            if (node.Kind == AutomationBlockKind.Comment)
+            {
+                string next = GUI.TextField(control, node.Comment ?? string.Empty, DecorationEditorTheme.TextField);
+                if (!string.Equals(next, node.Comment ?? string.Empty, StringComparison.Ordinal))
+                {
+                    node.Comment = next;
+                    InvalidateEsuBlockPlan();
+                }
+            }
+        }
+
+        private void DrawTinkercadFloatStepper(Rect rect, float value, float step, Action<float> apply)
+        {
+            float button = EsuHudLayout.Scale(28f);
+            Rect minus = new Rect(rect.x, rect.y, button, rect.height);
+            Rect valueRect = new Rect(minus.xMax + EsuHudLayout.Scale(4f), rect.y, Mathf.Max(EsuHudLayout.Scale(54f), rect.width - button * 2f - EsuHudLayout.Scale(8f)), rect.height);
+            Rect plus = new Rect(valueRect.xMax + EsuHudLayout.Scale(4f), rect.y, button, rect.height);
+            if (AutomationGUIButton(minus, new GUIContent("-", "Decrease value."), DecorationEditorTheme.Button))
+                apply?.Invoke(value - Mathf.Max(0.001f, step));
+            GUI.Label(valueRect, value.ToString("0.###", CultureInfo.InvariantCulture), TinkercadValueStyle());
+            if (AutomationGUIButton(plus, new GUIContent("+", "Increase value."), DecorationEditorTheme.Button))
+                apply?.Invoke(value + Mathf.Max(0.001f, step));
+        }
+
+        private void HandleWorkspaceBlockInput(Rect rect, AutomationBlockNode node)
+        {
+            Event current = Event.current;
+            if (current == null || node == null)
+                return;
+
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                rect.Contains(current.mousePosition))
+            {
+                _blockWorkspace.Select(node.Id);
+                _draggingWorkspaceBlock = true;
+                _draggingPaletteBlock = false;
+                _dragWorkspaceBlockId = node.Id;
+                _blockDropIndex = BlockNodeIndex(node.Id);
+                _blockDragMouseStart = current.mousePosition;
+                current.Use();
+            }
+        }
+
+        private void HandleBlockCanvasDrop(Rect canvas, IReadOnlyList<Rect> nodeRects)
+        {
+            Event current = Event.current;
+            if (current == null ||
+                (!_draggingPaletteBlock && !_draggingWorkspaceBlock))
+            {
+                return;
+            }
+
+            if (canvas.Contains(current.mousePosition))
+            {
+                _blockDropIndex = BlockDropIndexForMouse(nodeRects, current.mousePosition);
             }
             else
             {
-                foreach (AutomationBlockNode node in _blockWorkspace.Nodes)
-                    DrawAutomationBlockNodeRow(node);
+                _blockDropIndex = -1;
             }
 
-            GUILayout.BeginHorizontal();
-            if (AutomationGUILayoutButton(
-                    new GUIContent("Move up", DecorationEditorIconCatalog.Get("up"), "Move the selected ESU Block up in the stack."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(86f)),
-                    GUILayout.Height(EsuHudLayout.Scale(26f))))
-                MoveSelectedEsuBlock(-1);
-            if (AutomationGUILayoutButton(
-                    new GUIContent("Move down", DecorationEditorIconCatalog.Get("down"), "Move the selected ESU Block down in the stack."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(98f)),
-                    GUILayout.Height(EsuHudLayout.Scale(26f))))
-                MoveSelectedEsuBlock(1);
-            if (AutomationGUILayoutButton(
-                    new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove the selected ESU Block."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(82f)),
-                    GUILayout.Height(EsuHudLayout.Scale(26f))))
-                RemoveSelectedEsuBlock();
+            if (current.type != EventType.MouseUp || current.button != 0)
+                return;
+
+            if (_blockDropIndex >= 0)
+            {
+                if (_draggingPaletteBlock)
+                {
+                    AddAutomationBlock(_dragPaletteBlockKind, _blockDropIndex);
+                }
+                else if (_draggingWorkspaceBlock)
+                {
+                    int targetIndex = _blockDropIndex;
+                    int currentIndex = BlockNodeIndex(_dragWorkspaceBlockId);
+                    if (currentIndex >= 0 && currentIndex < targetIndex)
+                        targetIndex--;
+                    if (_blockWorkspace.MoveNodeToIndex(_dragWorkspaceBlockId, targetIndex))
+                    {
+                        InvalidateEsuBlockPlan();
+                        _status = "Moved ESU Block on the canvas.";
+                    }
+                }
+            }
+
+            ClearAutomationBlockDrag();
+            current.Use();
+        }
+
+        private void DrawBlockDropIndicator(IReadOnlyList<Rect> nodeRects)
+        {
+            if ((!_draggingPaletteBlock && !_draggingWorkspaceBlock) ||
+                _blockDropIndex < 0)
+            {
+                return;
+            }
+
+            Rect line;
+            if (nodeRects == null || nodeRects.Count == 0)
+            {
+                Rect canvas = _lastBlockCanvasRect;
+                line = new Rect(
+                    canvas.x + EsuHudLayout.Scale(40f),
+                    canvas.y + EsuHudLayout.Scale(150f),
+                    Mathf.Max(1f, canvas.width - EsuHudLayout.Scale(80f)),
+                    EsuHudLayout.Scale(3f));
+            }
+            else if (_blockDropIndex >= nodeRects.Count)
+            {
+                Rect last = nodeRects[nodeRects.Count - 1];
+                line = new Rect(last.x, last.yMax + EsuHudLayout.Scale(4f), last.width, EsuHudLayout.Scale(3f));
+            }
+            else
+            {
+                Rect next = nodeRects[_blockDropIndex];
+                line = new Rect(next.x, next.y - EsuHudLayout.Scale(5f), next.width, EsuHudLayout.Scale(3f));
+            }
+
+            DrawFilledRect(line, DecorationEditorTheme.Cyan);
+        }
+
+        private int BlockDropIndexForMouse(IReadOnlyList<Rect> nodeRects, Vector2 mouse)
+        {
+            if (nodeRects == null || nodeRects.Count == 0)
+                return 0;
+
+            for (int index = 0; index < nodeRects.Count; index++)
+            {
+                if (mouse.y < nodeRects[index].center.y)
+                    return index;
+            }
+
+            return nodeRects.Count;
+        }
+
+        private void DrawTinkercadBlockInspector()
+        {
+            DrawCompactIconHeader("Selected block", "focus", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            AutomationBlockNode node = _blockWorkspace.SelectedNode();
+            if (node == null)
+            {
+                GUILayout.Label("Select a block on the canvas to edit its target, value, or order.", DecorationEditorTheme.MiniWrap);
+            }
+            else
+            {
+                LabelRow("Type", node.Label);
+                LabelRow("Category", AutomationBlockCategoryLabel(node.Category));
+                LabelRow("Template", node.PaletteTemplateId);
+                GUILayout.BeginHorizontal();
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Up", DecorationEditorIconCatalog.Get("up"), "Move the selected ESU Block up."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Height(EsuHudLayout.Scale(26f))))
+                    MoveSelectedEsuBlock(-1);
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Down", DecorationEditorIconCatalog.Get("down"), "Move the selected ESU Block down."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Height(EsuHudLayout.Scale(26f))))
+                    MoveSelectedEsuBlock(1);
+                GUILayout.EndHorizontal();
+                if (AutomationGUILayoutButton(
+                        new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove the selected ESU Block."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Height(EsuHudLayout.Scale(26f))))
+                    RemoveSelectedEsuBlock();
+            }
+
             if (AutomationGUILayoutButton(
                     new GUIContent("Reset stack", DecorationEditorIconCatalog.Get("cancel"), "Rebuild the starter ESU Blocks stack from current linked targets."),
                     DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(104f)),
                     GUILayout.Height(EsuHudLayout.Scale(26f))))
             {
                 ClearAutomationBlockWorkspace();
                 EnsureBlockWorkspace();
                 _status = "Reset ESU Blocks starter stack from current linked targets.";
             }
-            GUILayout.FlexibleSpace();
-            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+        }
 
-            DrawBlocksLoweringPanel();
-            DrawBlocksSystemBlockPanel();
+        private void DrawAutomationBlockDragGhost()
+        {
+            Event current = Event.current;
+            if (current == null ||
+                current.type != EventType.Repaint ||
+                (!_draggingPaletteBlock && !_draggingWorkspaceBlock))
+            {
+                return;
+            }
+
+            string text;
+            string icon;
+            Color color;
+            if (_draggingPaletteBlock)
+            {
+                text = PaletteBlockPreviewText(_dragPaletteBlockKind);
+                icon = DefaultBlockIcon(_dragPaletteBlockKind);
+                color = BlockCategoryColor(AutomationBlockWorkspace.CategoryFor(_dragPaletteBlockKind));
+            }
+            else
+            {
+                AutomationBlockNode node = _blockWorkspace?.Nodes.FirstOrDefault(item =>
+                    string.Equals(item.Id, _dragWorkspaceBlockId, StringComparison.Ordinal));
+                text = BlockNodeTitle(node);
+                icon = node?.IconKey ?? "outliner";
+                color = BlockCategoryColor(node?.Category ?? AutomationBlockCategory.Control);
+            }
+
+            Rect ghost = new Rect(
+                current.mousePosition.x + EsuHudLayout.Scale(16f),
+                current.mousePosition.y + EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(210f),
+                EsuHudLayout.Scale(44f));
+            DrawTinkercadBlockShape(ghost, color, text, icon, selected: true, hat: false);
+        }
+
+        private void AddAutomationBlock(AutomationBlockKind kind, int insertIndex)
+        {
+            EnsureBlockWorkspace();
+            if (insertIndex < 0)
+                _blockWorkspace.AddBlock(kind);
+            else
+                _blockWorkspace.AddBlock(kind, insertIndex);
+            _blockLoweringPlan = null;
+            _blockLoweringStatus = "Block stack changed; Check ESU Blocks again before applying.";
+            _status = "Added " + PaletteBlockPreviewText(kind) + " ESU Block.";
+        }
+
+        private void ClearAutomationBlockDrag()
+        {
+            _draggingPaletteBlock = false;
+            _draggingWorkspaceBlock = false;
+            _dragWorkspaceBlockId = string.Empty;
+            _blockDropIndex = -1;
+        }
+
+        private int BlockNodeIndex(string nodeId)
+        {
+            if (_blockWorkspace == null ||
+                string.IsNullOrWhiteSpace(nodeId))
+            {
+                return -1;
+            }
+
+            for (int index = 0; index < _blockWorkspace.Nodes.Count; index++)
+            {
+                if (string.Equals(_blockWorkspace.Nodes[index].Id, nodeId, StringComparison.Ordinal))
+                    return index;
+            }
+
+            return -1;
+        }
+
+        private static IReadOnlyList<AutomationBlockKind> BlockKindsForCategory(AutomationBlockCategory category)
+        {
+            switch (category)
+            {
+                case AutomationBlockCategory.Output:
+                    return new[] { AutomationBlockKind.SetTarget };
+                case AutomationBlockCategory.Input:
+                    return new[] { AutomationBlockKind.ReadTarget };
+                case AutomationBlockCategory.Control:
+                    return new[] { AutomationBlockKind.WhenIf, AutomationBlockKind.Delay };
+                case AutomationBlockCategory.Math:
+                    return new[] { AutomationBlockKind.Compare, AutomationBlockKind.MathScale };
+                case AutomationBlockCategory.Variables:
+                    return new[] { AutomationBlockKind.Constant, AutomationBlockKind.SystemBlock };
+                default:
+                    return new[] { AutomationBlockKind.Comment };
+            }
+        }
+
+        private static string AutomationBlockCategoryLabel(AutomationBlockCategory category)
+        {
+            switch (category)
+            {
+                case AutomationBlockCategory.Output:
+                    return "Output";
+                case AutomationBlockCategory.Input:
+                    return "Input";
+                case AutomationBlockCategory.Control:
+                    return "Control";
+                case AutomationBlockCategory.Math:
+                    return "Math";
+                case AutomationBlockCategory.Variables:
+                    return "Variables";
+                default:
+                    return "Notation";
+            }
+        }
+
+        private static string PaletteBlockPreviewText(AutomationBlockKind kind)
+        {
+            switch (kind)
+            {
+                case AutomationBlockKind.WhenIf:
+                    return "if value then";
+                case AutomationBlockKind.ReadTarget:
+                    return "read target";
+                case AutomationBlockKind.Compare:
+                    return "compare value";
+                case AutomationBlockKind.MathScale:
+                    return "scale value";
+                case AutomationBlockKind.SetTarget:
+                    return "set target to";
+                case AutomationBlockKind.Constant:
+                    return "constant value";
+                case AutomationBlockKind.Delay:
+                    return "wait seconds";
+                case AutomationBlockKind.SystemBlock:
+                    return "system block";
+                default:
+                    return "note";
+            }
+        }
+
+        private static string DefaultBlockIcon(AutomationBlockKind kind)
+        {
+            switch (kind)
+            {
+                case AutomationBlockKind.WhenIf:
+                    return "risk";
+                case AutomationBlockKind.ReadTarget:
+                    return "visibility";
+                case AutomationBlockKind.Compare:
+                    return "filter";
+                case AutomationBlockKind.MathScale:
+                    return "settings";
+                case AutomationBlockKind.SetTarget:
+                    return "anchor";
+                case AutomationBlockKind.Constant:
+                    return "cube";
+                case AutomationBlockKind.Delay:
+                    return "time";
+                case AutomationBlockKind.SystemBlock:
+                    return "duplicate";
+                default:
+                    return "info";
+            }
+        }
+
+        private static float TinkercadBlockHeight(AutomationBlockNode node)
+        {
+            if (node?.Kind == AutomationBlockKind.Comment)
+                return EsuHudLayout.Scale(66f);
+            return EsuHudLayout.Scale(58f);
+        }
+
+        private static Color BlockCategoryColor(AutomationBlockCategory category)
+        {
+            switch (category)
+            {
+                case AutomationBlockCategory.Output:
+                    return new Color(0.16f, 0.53f, 1f, 0.94f);
+                case AutomationBlockCategory.Input:
+                    return new Color(0.55f, 0.32f, 0.96f, 0.94f);
+                case AutomationBlockCategory.Control:
+                    return new Color(1f, 0.62f, 0.08f, 0.96f);
+                case AutomationBlockCategory.Math:
+                    return new Color(0.2f, 0.74f, 0.28f, 0.94f);
+                case AutomationBlockCategory.Variables:
+                    return new Color(0.83f, 0.28f, 0.82f, 0.94f);
+                default:
+                    return new Color(0.58f, 0.6f, 0.62f, 0.94f);
+            }
+        }
+
+        private static void DrawTinkercadBlockShape(
+            Rect rect,
+            Color color,
+            string label,
+            string iconKey,
+            bool selected,
+            bool hat)
+        {
+            Color baseColor = selected
+                ? new Color(Mathf.Min(1f, color.r + 0.08f), Mathf.Min(1f, color.g + 0.08f), Mathf.Min(1f, color.b + 0.08f), color.a)
+                : color;
+            DrawFilledRect(rect, baseColor);
+            DrawFilledRect(
+                new Rect(rect.x, rect.yMax - EsuHudLayout.Scale(2f), rect.width, EsuHudLayout.Scale(2f)),
+                new Color(0f, 0f, 0f, 0.18f));
+            if (hat)
+            {
+                DrawFilledRect(
+                    new Rect(rect.x + EsuHudLayout.Scale(16f), rect.y - EsuHudLayout.Scale(5f), EsuHudLayout.Scale(44f), EsuHudLayout.Scale(10f)),
+                    baseColor);
+            }
+
+            DrawFilledRect(
+                new Rect(rect.x + EsuHudLayout.Scale(22f), rect.yMax - EsuHudLayout.Scale(5f), EsuHudLayout.Scale(34f), EsuHudLayout.Scale(8f)),
+                new Color(0f, 0f, 0f, 0.18f));
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            Rect iconRect = new Rect(
+                rect.x + EsuHudLayout.Scale(9f),
+                rect.y + EsuHudLayout.Scale(7f),
+                EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(16f));
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+            GUI.Label(
+                new Rect(iconRect.xMax + EsuHudLayout.Scale(6f), rect.y + EsuHudLayout.Scale(3f), rect.width - EsuHudLayout.Scale(42f), EsuHudLayout.Scale(24f)),
+                label ?? string.Empty,
+                TinkercadBlockTextStyle(TextAnchor.MiddleLeft));
+            if (selected)
+            {
+                DrawFilledRect(new Rect(rect.x, rect.y, rect.width, EsuHudLayout.Scale(2f)), DecorationEditorTheme.Cyan);
+                DrawFilledRect(new Rect(rect.x, rect.yMax - EsuHudLayout.Scale(2f), rect.width, EsuHudLayout.Scale(2f)), DecorationEditorTheme.Cyan);
+            }
+        }
+
+        private static void DrawFilledRect(Rect rect, Color color)
+        {
+            Color previous = GUI.color;
+            GUI.color = color;
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = previous;
+        }
+
+        private static GUIStyle TinkercadBlockTextStyle(TextAnchor alignment)
+        {
+            var style = new GUIStyle(DecorationEditorTheme.Body)
+            {
+                alignment = alignment,
+                clipping = TextClipping.Clip,
+                wordWrap = false,
+                fontStyle = FontStyle.Bold
+            };
+            style.normal.background = null;
+            style.normal.textColor = Color.white;
+            return style;
+        }
+
+        private static GUIStyle TinkercadValueStyle()
+        {
+            var style = new GUIStyle(DecorationEditorTheme.Button)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                clipping = TextClipping.Clip,
+                wordWrap = false
+            };
+            style.normal.background = null;
+            style.normal.textColor = Color.white;
+            return style;
         }
 
         private void DrawBlockAddToolbar()

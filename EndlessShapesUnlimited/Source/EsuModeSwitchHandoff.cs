@@ -7,6 +7,7 @@ namespace DecoLimitLifter
         private const int HandoffFrames = 3;
         private static int s_framesRemaining;
         private static int s_lastConsumedFrame = -1;
+        private static int s_beginFrame = -1;
 
         internal static bool Active => s_framesRemaining > 0;
 
@@ -14,6 +15,7 @@ namespace DecoLimitLifter
 
         internal static bool ShouldDrawPassiveGui() =>
             Active &&
+            s_beginFrame != Time.frameCount &&
             !DecorationEditMode.DecorationEditModeRegistration.Active &&
             !SmartBuildMode.SmartBuildModeRegistration.Active &&
             !AutomationEditMode.AutomationEditModeRegistration.Active;
@@ -22,6 +24,7 @@ namespace DecoLimitLifter
         {
             s_framesRemaining = HandoffFrames;
             s_lastConsumedFrame = -1;
+            s_beginFrame = Time.frameCount;
         }
 
         internal static bool ConsumeInactiveCleanupFrame()
