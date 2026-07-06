@@ -4353,11 +4353,105 @@ namespace DecoLimitLifter.AutomationEditMode
             _automationCodeText = _blockLoweringPlan.ToNativeCode();
             bool applied = CompileAutomationCodeExpression(returnToGraph: false);
             _editorPage = AutomationEditorPage.Blocks;
-            _blockLoweringStatus = applied
-                ? "Applied ESU Blocks to native Breadboard nodes. Revert blocks can remove the generated component ids."
-                : _status;
             if (applied)
+            {
+                string inputBindingMessage = TryBindEsuBlockInputGetter(_blockLoweringPlan);
+                _blockLoweringStatus =
+                    "Applied ESU Blocks to native Breadboard nodes. Revert blocks can remove the generated component ids." +
+                    (string.IsNullOrWhiteSpace(inputBindingMessage) ? string.Empty : " " + inputBindingMessage);
                 _status = _blockLoweringStatus;
+            }
+            else
+            {
+                _blockLoweringStatus = _status;
+            }
+        }
+
+        private string TryBindEsuBlockInputGetter(AutomationLoweringPlan plan)
+        {
+            if (plan == null || _lastCompileRevert == null)
+                return string.Empty;
+
+            AutomationLink readLink = SelectedLinks.FirstOrDefault(link =>
+                string.Equals(link.TargetKey, plan.ReadTargetKey, StringComparison.Ordinal));
+            AutomationTarget readTarget = readLink?.Target;
+            if (readTarget == null)
+                return "Read target getter binding skipped because the linked target is no longer live.";
+
+            if (!AutomationBreadboardInspector.TryCreate(
+                    _selectedController.Block,
+                    _selectedController.Controller,
+                    out AutomationBreadboardInspector inspector,
+                    out string reason))
+            {
+                return reason ?? "Read target getter binding skipped because the native board could not be reopened.";
+            }
+
+            IReadOnlyList<AutomationBreadboardComponentSummary> components = inspector.Components;
+            AutomationBreadboardComponentSummary[] getters = TargetGettersFor(components, readTarget);
+            IReadOnlyList<uint> getterComponentIds = Array.Empty<uint>();
+            string proxyMessage = string.Empty;
+            if (getters.Length == 0)
+            {
+                if (!inspector.TryCreateTargetProxy(
+                        readTarget,
+                        getter: true,
+                        setter: false,
+                        out AutomationBreadboardCompileResult proxyResult,
+                        out proxyMessage))
+                {
+                    return "Read target getter binding could not create a Generic Getter: " +
+                           (proxyMessage ?? "FtD rejected the native proxy node.") +
+                           ".";
+                }
+
+                getterComponentIds = proxyResult?.ComponentIds?.Where(id => id != 0U).ToArray() ?? Array.Empty<uint>();
+                components = inspector.Components;
+                getters = TargetGettersFor(components, readTarget);
+            }
+
+            AutomationBreadboardComponentSummary getter = getters.FirstOrDefault(item =>
+                inspector.OutputPorts(item, 1).Count > 0);
+            if (getter == null)
+                return "Read target getter binding skipped because no Generic Getter output was visible.";
+
+            int connected = 0;
+            foreach (uint componentId in _lastCompileRevert.ComponentIds)
+            {
+                AutomationBreadboardComponentSummary component = FindComponentById(components, componentId);
+                if (component == null || !component.IsEvaluator)
+                    continue;
+
+                AutomationBreadboardPortSummary input = inspector.InputPorts(component, 4).FirstOrDefault();
+                if (input == null)
+                    continue;
+
+                if (inspector.TryConnectPorts(getter, 0, component, input.Index, out _))
+                    connected++;
+            }
+
+            if (getterComponentIds.Count > 0)
+            {
+                uint[] combined = _lastCompileRevert.ComponentIds
+                    .Concat(getterComponentIds)
+                    .Where(id => id != 0U)
+                    .Distinct()
+                    .ToArray();
+                _lastCompileRevert = new AutomationCompileRevertSet(
+                    _selectedController?.StableKey,
+                    new AutomationBreadboardCompileResult("esu blocks lowering", combined));
+            }
+
+            if (connected == 0)
+                return "Read target getter is available, but generated evaluator input ports were not visible; inspect Advanced if the native graph needs manual wiring.";
+
+            return "Bound " +
+                   readLink.TargetLabel +
+                   " getter to " +
+                   connected.ToString(CultureInfo.InvariantCulture) +
+                   " generated evaluator input(s)" +
+                   (getterComponentIds.Count > 0 ? "; auto-created getter proxy." : ".") +
+                   (string.IsNullOrWhiteSpace(proxyMessage) ? string.Empty : " " + proxyMessage);
         }
 
         private void RevertEsuBlocks()

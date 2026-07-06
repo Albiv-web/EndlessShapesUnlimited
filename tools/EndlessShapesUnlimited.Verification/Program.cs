@@ -7182,6 +7182,7 @@ f 0 2 3
         string automationDrawBlocksSystemBlockPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksSystemBlockPanel");
         string automationCheckEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CheckEsuBlocks");
         string automationApplyEsuBlocksSource = ExtractMethodSource(automationSessionSource, "ApplyEsuBlocks");
+        string automationTryBindEsuBlockInputGetterSource = ExtractMethodSource(automationSessionSource, "TryBindEsuBlockInputGetter");
         string automationRevertEsuBlocksSource = ExtractMethodSource(automationSessionSource, "RevertEsuBlocks");
         string automationCollapseEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CollapseEsuBlocksToSystemBlock");
         string automationDrawWorkspaceGuideSource = ExtractMethodSource(automationSessionSource, "DrawWorkspaceGuide");
@@ -7701,6 +7702,13 @@ f 0 2 3
                automationCheckEsuBlocksSource.Contains("_blockLoweringPlan") &&
                automationApplyEsuBlocksSource.Contains("ToNativeCode()") &&
                automationApplyEsuBlocksSource.Contains("CompileAutomationCodeExpression(returnToGraph: false)") &&
+               automationApplyEsuBlocksSource.Contains("TryBindEsuBlockInputGetter(_blockLoweringPlan)") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("TryCreateTargetProxy") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("getter: true") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("setter: false") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("TargetGettersFor") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("TryConnectPorts") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("new AutomationCompileRevertSet") &&
                automationRevertEsuBlocksSource.Contains("RevertLastAutomationCompile()") &&
                automationCollapseEsuBlocksSource.Contains("CollapseSelectionToSystemBlock") &&
                automationCollapseEsuBlocksSource.Contains("PersistSystemBlockTemplateLibrary()") &&
