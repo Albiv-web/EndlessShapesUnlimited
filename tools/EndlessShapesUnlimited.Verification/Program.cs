@@ -3119,10 +3119,12 @@ f 0 2 3
                iconCatalogSource.Contains("DrawFloppy(texture, color);") &&
                iconCatalogSource.Contains("DrawTrash(texture, color);") &&
                !iconCatalogSource.Contains("DrawBoxLetter") &&
-               !iconCatalogSource.Contains("TryFindRuntimeTexture(definition) ??") &&
+               iconCatalogSource.Contains("Texture2D runtime = GetRuntimeIcon(key);") &&
+               iconCatalogSource.Contains("if (runtime != null)") &&
+               iconCatalogSource.Contains("return runtime;") &&
                iconCatalogSource.Contains("internal static Texture2D GetRuntimeIcon(string key)") &&
                iconCatalogSource.Contains("Texture2D texture = TryFindRuntimeTexture(definition);"),
-            "Decoration Edit Mode icon catalog records FTD runtime icon GUIDs and ESU-owned fallback concepts, while editor buttons use deterministic ESU icons instead of loose global texture matches.");
+            "Decoration Edit Mode icon catalog records FTD runtime icon GUIDs and ESU-owned fallback concepts, while editor buttons prefer FTD runtime icons and only use generated ESU icons as fallbacks.");
 
         string themeSource = File.ReadAllText(Path.Combine(
             root,

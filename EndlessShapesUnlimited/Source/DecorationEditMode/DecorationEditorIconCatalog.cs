@@ -99,16 +99,16 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static Texture2D Get(string key)
         {
-            if (string.IsNullOrEmpty(key))
-                key = "settings";
+            key = NormalizeKey(key);
+
+            Texture2D runtime = GetRuntimeIcon(key);
+            if (runtime != null)
+                return runtime;
 
             if (_icons.TryGetValue(key, out Texture2D cached) && cached != null)
                 return cached;
 
-            DecorationEditorIconDefinition definition = _definitions.FirstOrDefault(
-                item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase)) ??
-                _definitions[0];
-
+            DecorationEditorIconDefinition definition = ResolveDefinition(key);
             Texture2D texture = CreateFallback(definition);
             _icons[key] = texture;
             return texture;
