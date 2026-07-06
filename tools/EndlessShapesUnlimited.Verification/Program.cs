@@ -7108,7 +7108,12 @@ f 0 2 3
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
         string automationCancelRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationRightClick");
+        string automationToolbarButtonSource = ExtractMethodSource(automationSessionSource, "ToolbarButton");
+        string automationPanelHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationPanelHeader");
         string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
+        string automationCompactHeaderSource = ExtractMethodSource(automationSessionSource, "DrawCompactIconHeader");
+        string automationCategoryIconKeySource = ExtractMethodSource(automationSessionSource, "CategoryIconKey");
+        string automationTargetIconKeySource = ExtractMethodSource(automationSessionSource, "AutomationTargetIconKey");
         string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
         string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
         string automationTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawTargetListRow");
@@ -7491,9 +7496,16 @@ f 0 2 3
                automationSessionSource.Contains("DrawPlacementPreview") &&
                automationControllerPaletteRowSource.Contains("[armed]") &&
                automationSessionSource.Contains("DrawAutomationSectionHeader") &&
-               automationSessionSource.Contains("new GUIContent(\"Hide\", \"Hide the Automation Editor panel.\")") &&
-               automationSessionSource.Contains("new GUIContent(\"Hide\", \"Hide the Automation Blocks panel.\")") &&
-               automationSectionHeaderSource.Contains("new GUIContent(sectionVisible ? \"Hide list\" : \"Show list\"") &&
+               automationSessionSource.Contains("DrawAutomationPanelHeader(\"Automation Editor\", \"build\"") &&
+               automationSessionSource.Contains("DrawAutomationPanelHeader(\"Automation Blocks\", \"cube\"") &&
+               automationToolbarButtonSource.Contains("new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip)") &&
+               automationPanelHeaderSource.Contains("DecorationEditorIconCatalog.Get(\"close\")") &&
+               automationSectionHeaderSource.Contains("sectionVisible ? \"Hide list\" : \"Show list\"") &&
+               automationSectionHeaderSource.Contains("DecorationEditorIconCatalog.Get(sectionVisible ? \"close\" : iconKey)") &&
+               automationCompactHeaderSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&
+               automationCategoryIconKeySource.Contains("AutomationTargetCategory.Missiles") &&
+               automationCategoryIconKeySource.Contains("return \"cone\"") &&
+               automationTargetIconKeySource.Contains("ControllerIconKey(target.Controller)") &&
                automationOnGuiSource.Contains("GUI.depth = Math.Min(previousDepth, -10000)") &&
                automationOnGuiSource.Contains("if (!_editorOpen)") &&
                automationOnGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
@@ -7518,7 +7530,7 @@ f 0 2 3
                automationCancelRightClickSource.Contains("_tool = AutomationTool.Link") &&
                automationCancelRightClickSource.Contains("_selectedController = null") &&
                automationCancelRightClickSource.Contains("CloseEditor()"),
-            "Automation Editor shares the resizable foreground ESU shell pattern, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and lets right-click clear active placement/selection.");
+            "Automation Editor shares the resizable foreground ESU shell pattern, uses the same iconized toolbar/header/list treatment as the other ESU editor modes, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and lets right-click clear active placement/selection.");
         Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
                automationExecuteBoardCommandSource.Contains("return false;") &&
                automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&
@@ -7535,9 +7547,17 @@ f 0 2 3
                !automationControllerIndexRowSource.Contains("\"edit\"") &&
                !automationTargetListRowSource.Contains("? \"unlink\" : \"link\"") &&
                automationControllerPaletteRowSource.Contains("Click to arm this Automation controller") &&
+               automationControllerPaletteRowSource.Contains("DrawAutomationIconRow") &&
+               automationControllerPaletteRowSource.Contains("ControllerIconKey(descriptor)") &&
+               automationControllerPaletteRowSource.Contains("GUI.Button(") &&
                automationControllerIndexRowSource.Contains("Click to select this Automation controller") &&
+               automationControllerIndexRowSource.Contains("DrawAutomationSingleLineIconRow") &&
+               automationControllerIndexRowSource.Contains("AutomationTargetIconKey(target)") &&
+               automationControllerIndexRowSource.Contains("GUI.Button(row") &&
+               automationTargetListRowSource.Contains("DrawAutomationIconRow") &&
+               automationTargetListRowSource.Contains("AutomationTargetIconKey(target)") &&
                automationTargetListRowSource.Contains("HandleTargetRowClick(target)"),
-            "Automation block and target lists use whole-row click targets instead of per-row set/select/place/link buttons.");
+            "Automation block and target lists use iconized whole-row click targets instead of per-row set/select/place/link buttons.");
         Assert(automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnostics") &&
                automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnosticResult") &&
                automationRuntimeDiagnosticsSource.Contains("AvailableComponentTypes is empty") &&

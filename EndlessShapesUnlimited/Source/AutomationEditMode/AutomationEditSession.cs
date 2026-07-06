@@ -1111,16 +1111,16 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginArea(frame.Rect);
             GUILayout.BeginHorizontal();
             GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth));
-            if (ToolbarButton("Auto", "Tab: switch to Decoration Edit Mode.", true))
+            if (ToolbarButton("build", "Auto", "Tab: switch to Decoration Edit Mode.", true))
                 SwitchToDecorationEditRequested = true;
-            if (ToolbarButton("Link", "Select controllers and link target blocks.", _tool == AutomationTool.Link))
+            if (ToolbarButton("anchor", "Link", "Select controllers and link target blocks.", _tool == AutomationTool.Link))
                 _tool = AutomationTool.Link;
-            if (ToolbarButton("Place", "Place the selected Breadboard/ACB controller.", _tool == AutomationTool.Place))
+            if (ToolbarButton("create", "Place", "Place the selected Breadboard/ACB controller.", _tool == AutomationTool.Place))
             {
                 _tool = AutomationTool.Place;
                 _status = PlacementArmedStatus();
             }
-            if (ToolbarButton("Edit", "Open the ESU automation graph/code editor.", _editorOpen))
+            if (ToolbarButton("open", "Edit", "Open the ESU automation graph/code editor.", _editorOpen))
             {
                 TryOpenEditor();
             }
@@ -1133,23 +1133,23 @@ namespace DecoLimitLifter.AutomationEditMode
                 new Vector2(_toolbarRect.x + frame.Rect.x, _toolbarRect.y + frame.Rect.y));
             GUILayout.Space(budget.Gap);
             GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));
-            if (ToolbarButton("Info", "Show or hide Automation details.", _showLeftPanel))
+            if (ToolbarButton("settings", "Info", "Show or hide Automation details.", _showLeftPanel))
                 _showLeftPanel = !_showLeftPanel;
-            if (ToolbarButton("Blocks", "Show or hide Automation controller blocks.", _showRightPanel && _showBlocksSection))
+            if (ToolbarButton("cube", "Blocks", "Show or hide Automation controller blocks.", _showRightPanel && _showBlocksSection))
                 ToggleRightPanelSection(ref _showBlocksSection);
-            if (ToolbarButton("Filter", "Show or hide Automation target filters.", _showRightPanel && _showFilterSection))
+            if (ToolbarButton("filter", "Filter", "Show or hide Automation target filters.", _showRightPanel && _showFilterSection))
                 ToggleRightPanelSection(ref _showFilterSection);
-            if (ToolbarButton("Close", "Close Automation Editor.", false))
+            if (ToolbarButton("close", "Close", "Close Automation Editor.", false))
                 _closeRequested = true;
             GUILayout.EndHorizontal();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
         }
 
-        private static bool ToolbarButton(string label, string tooltip, bool active)
+        private static bool ToolbarButton(string icon, string label, string tooltip, bool active)
         {
             return GUILayout.Button(
-                new GUIContent(label, tooltip),
+                new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
                 DecorationEditorTheme.ToolButton(active),
                 GUILayout.Width(EsuHudLayout.Scale(58f)),
                 GUILayout.Height(EsuHudLayout.Scale(40f)));
@@ -1185,7 +1185,10 @@ namespace DecoLimitLifter.AutomationEditMode
 
             GUILayout.BeginArea(new Rect(inner.x, y, inner.width, headerHeight));
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Automation Editor", DecorationEditorTheme.SubHeader, GUILayout.Width(EsuHudLayout.Scale(160f)));
+            GUILayout.Label(
+                new GUIContent("Automation Editor", DecorationEditorIconCatalog.Get("build")),
+                DecorationEditorTheme.SubHeader,
+                GUILayout.Width(EsuHudLayout.Scale(160f)));
             GUILayout.Label("Mode: " + ToolLabel(_tool), DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(180f)));
             GUILayout.Label("Filter: " + AutomationTargetCatalog.CategoryLabel(_filter), DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(170f)));
             GUILayout.FlexibleSpace();
@@ -1205,7 +1208,7 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginArea(new Rect(inner.x, y, inner.width, controlsHeight));
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(
-                    "Link",
+                    new GUIContent("Link", DecorationEditorIconCatalog.Get("anchor"), "Select controllers and link target blocks."),
                     DecorationEditorTheme.ToolButton(_tool == AutomationTool.Link),
                     GUILayout.Width(EsuHudLayout.Scale(72f)),
                     GUILayout.Height(controlsHeight)))
@@ -1215,7 +1218,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             if (GUILayout.Button(
-                    "Place",
+                    new GUIContent("Place", DecorationEditorIconCatalog.Get("create"), "Place the selected Breadboard/ACB controller."),
                     DecorationEditorTheme.ToolButton(_tool == AutomationTool.Place),
                     GUILayout.Width(EsuHudLayout.Scale(76f)),
                     GUILayout.Height(controlsHeight)))
@@ -1225,7 +1228,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             if (GUILayout.Button(
-                    "Editor",
+                    new GUIContent("Editor", DecorationEditorIconCatalog.Get("open"), "Open the ESU automation graph/code editor."),
                     DecorationEditorTheme.ToolButton(_editorOpen),
                     GUILayout.Width(EsuHudLayout.Scale(80f)),
                     GUILayout.Height(controlsHeight)))
@@ -1239,7 +1242,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && _editorOpen;
             if (GUILayout.Button(
-                    "Fit",
+                    new GUIContent("Fit", DecorationEditorIconCatalog.Get("focus"), "Fit the graph/code editor to the viewport."),
                     _editorOpen ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Width(EsuHudLayout.Scale(60f)),
                     GUILayout.Height(controlsHeight)))
@@ -1362,22 +1365,202 @@ namespace DecoLimitLifter.AutomationEditMode
             GUI.color = previous;
         }
 
+        private static void DrawCompactIconHeader(string text, string iconKey, GUIStyle baseStyle)
+        {
+            Rect rect = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(22f), GUILayout.ExpandWidth(true));
+            GUI.Label(rect, GUIContent.none, baseStyle);
+
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            Rect iconRect = new Rect(
+                rect.x + EsuHudLayout.Scale(5f),
+                rect.y + EsuHudLayout.Scale(3f),
+                EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(16f));
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            Rect textRect = new Rect(
+                iconRect.xMax + EsuHudLayout.Scale(6f),
+                rect.y,
+                Mathf.Max(0f, rect.xMax - iconRect.xMax - EsuHudLayout.Scale(8f)),
+                rect.height);
+            if (textRect.width > 1f)
+                GUI.Label(textRect, text, IconHeaderTextStyle(baseStyle));
+        }
+
+        private static GUIStyle IconHeaderTextStyle(GUIStyle baseStyle)
+        {
+            var style = new GUIStyle(baseStyle)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                clipping = TextClipping.Clip,
+                padding = new RectOffset(0, 0, 0, 0),
+                wordWrap = false
+            };
+            style.normal.background = null;
+            return style;
+        }
+
+        private static void DrawAutomationIconRow(
+            Rect row,
+            string iconKey,
+            string title,
+            string detail,
+            GUIStyle titleStyle,
+            GUIStyle detailStyle)
+        {
+            float inset = EsuHudLayout.Scale(5f);
+            float iconSize = Mathf.Min(EsuHudLayout.Scale(22f), Mathf.Max(1f, row.height - inset * 2f));
+            Rect iconRect = new Rect(
+                row.x + inset,
+                row.y + (row.height - iconSize) * 0.5f,
+                iconSize,
+                iconSize);
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            float textX = iconRect.xMax + EsuHudLayout.Scale(7f);
+            float textWidth = Mathf.Max(0f, row.xMax - textX - EsuHudLayout.Scale(6f));
+            float titleHeight = Mathf.Min(EsuHudLayout.Scale(18f), row.height);
+            GUI.Label(
+                new Rect(textX, row.y + EsuHudLayout.Scale(2f), textWidth, titleHeight),
+                title ?? string.Empty,
+                titleStyle);
+
+            if (!string.IsNullOrWhiteSpace(detail))
+            {
+                GUI.Label(
+                    new Rect(
+                        textX,
+                        row.y + titleHeight,
+                        textWidth,
+                        Mathf.Max(0f, row.height - titleHeight - EsuHudLayout.Scale(2f))),
+                    detail,
+                    detailStyle);
+            }
+        }
+
+        private static void DrawAutomationSingleLineIconRow(
+            Rect row,
+            string iconKey,
+            string label,
+            GUIStyle textStyle)
+        {
+            float inset = EsuHudLayout.Scale(5f);
+            float iconSize = Mathf.Min(EsuHudLayout.Scale(18f), Mathf.Max(1f, row.height - inset * 2f));
+            Rect iconRect = new Rect(
+                row.x + inset,
+                row.y + (row.height - iconSize) * 0.5f,
+                iconSize,
+                iconSize);
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            Rect textRect = new Rect(
+                iconRect.xMax + EsuHudLayout.Scale(7f),
+                row.y,
+                Mathf.Max(0f, row.xMax - iconRect.xMax - EsuHudLayout.Scale(12f)),
+                row.height);
+            GUI.Label(textRect, label ?? string.Empty, SingleLineRowStyle(textStyle));
+        }
+
+        private static GUIStyle SingleLineRowStyle(GUIStyle baseStyle)
+        {
+            var style = new GUIStyle(baseStyle)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                clipping = TextClipping.Clip,
+                wordWrap = false
+            };
+            style.normal.background = null;
+            return style;
+        }
+
+        private static string AutomationTargetIconKey(AutomationTarget target) =>
+            target?.IsController == true ? ControllerIconKey(target.Controller) : CategoryIconKey(target?.Category ?? AutomationTargetCategory.Other);
+
+        private static string ControllerIconKey(AutomationControllerDescriptor descriptor)
+        {
+            if (descriptor == null)
+                return "cube";
+
+            switch (descriptor.Kind)
+            {
+                case AutomationControllerKind.Breadboard:
+                    return "build";
+                case AutomationControllerKind.AiBreadboard:
+                    return "settings";
+                case AutomationControllerKind.Acb:
+                    return "gear";
+                case AutomationControllerKind.AcbController:
+                    return "anchor";
+                case AutomationControllerKind.MissileBreadboard:
+                    return "cone";
+                default:
+                    return "cube";
+            }
+        }
+
+        private static string CategoryIconKey(AutomationTargetCategory category)
+        {
+            switch (category)
+            {
+                case AutomationTargetCategory.All:
+                    return "outliner";
+                case AutomationTargetCategory.Controllers:
+                    return "build";
+                case AutomationTargetCategory.AcbActions:
+                    return "gear";
+                case AutomationTargetCategory.BreadboardReadable:
+                    return "visibility";
+                case AutomationTargetCategory.BreadboardWritable:
+                    return "save";
+                case AutomationTargetCategory.Movement:
+                case AutomationTargetCategory.Pistons:
+                    return "move";
+                case AutomationTargetCategory.Subobjects:
+                case AutomationTargetCategory.DoorsDocking:
+                    return "anchor";
+                case AutomationTargetCategory.Utility:
+                    return "settings";
+                case AutomationTargetCategory.Media:
+                case AutomationTargetCategory.SoundDisplay:
+                    return "camera";
+                case AutomationTargetCategory.Spinblocks:
+                    return "rotate";
+                case AutomationTargetCategory.TurretsWeapons:
+                    return "focus";
+                case AutomationTargetCategory.Propulsion:
+                    return "path";
+                case AutomationTargetCategory.Pumps:
+                    return "material";
+                case AutomationTargetCategory.ControlSurfaces:
+                    return "axis";
+                case AutomationTargetCategory.Ai:
+                    return "settings";
+                case AutomationTargetCategory.Missiles:
+                    return "cone";
+                case AutomationTargetCategory.Lights:
+                    return "paint";
+                case AutomationTargetCategory.ShieldsDefence:
+                    return "lock";
+                case AutomationTargetCategory.Detection:
+                    return "visibility";
+                case AutomationTargetCategory.ResourcePower:
+                    return "build";
+                default:
+                    return "cube";
+            }
+        }
+
         private void DrawLeftPanel(int id)
         {
             GUI.Box(new Rect(0f, 0f, _leftPanelRect.width, _leftPanelRect.height), GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
             GUILayout.BeginArea(new Rect(inset, inset, _leftPanelRect.width - inset * 2f, _leftPanelRect.height - inset * 2f));
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Automation Editor", DecorationEditorTheme.Header);
-            if (GUILayout.Button(
-                    new GUIContent("Hide", "Hide the Automation Editor panel."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(58f)),
-                    GUILayout.Height(EsuHudLayout.Scale(22f))))
-            {
-                _showLeftPanel = false;
-            }
-            GUILayout.EndHorizontal();
+            DrawAutomationPanelHeader("Automation Editor", "build", ref _showLeftPanel, "Hide the Automation Editor panel.");
             DecorationEditorTheme.Separator();
             float scrollHeight = Mathf.Max(
                 EsuHudLayout.Scale(160f),
@@ -1393,26 +1576,32 @@ namespace DecoLimitLifter.AutomationEditMode
             LabelRow("Visible links", SelectedLinks.Count.ToString("N0", CultureInfo.InvariantCulture));
             if (_selectedController == null)
             {
-                GUILayout.Label("No controller selected", DecorationEditorTheme.SubHeader);
+                DrawCompactIconHeader("No controller selected", "build", DecorationEditorTheme.SubHeader);
                 GUILayout.Label("Select a Breadboard/ACB in the world or place one from the right panel.", DecorationEditorTheme.MiniWrap);
             }
             else
             {
-                GUILayout.Label("Selected controller", DecorationEditorTheme.SubHeader);
+                DrawCompactIconHeader("Selected controller", AutomationTargetIconKey(_selectedController), DecorationEditorTheme.SubHeader);
                 LabelRow("Block", _selectedController.Label);
                 LabelRow("Type", _selectedController.Controller?.ClassName ?? _selectedController.RuntimeType);
                 LabelRow("Cell", FormatCell(_selectedController.LocalPosition));
-                if (GUILayout.Button("Open editor", DecorationEditorTheme.ToolButton(_editorOpen), GUILayout.Height(EsuHudLayout.Scale(28f))))
+                if (GUILayout.Button(
+                        new GUIContent("Open editor", DecorationEditorIconCatalog.Get("open"), "Open the graph/code editor for the selected controller."),
+                        DecorationEditorTheme.ToolButton(_editorOpen),
+                        GUILayout.Height(EsuHudLayout.Scale(28f))))
                 {
                     TryOpenEditor();
                 }
-                if (GUILayout.Button("Clear links", DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(28f))))
+                if (GUILayout.Button(
+                        new GUIContent("Clear links", DecorationEditorIconCatalog.Get("delete"), "Remove every linked target from the selected controller."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Height(EsuHudLayout.Scale(28f))))
                     ClearSelectedLinks();
                 DrawRuntimeDiagnosticsPanel();
             }
 
             DecorationEditorTheme.Separator();
-            GUILayout.Label("Linked targets", DecorationEditorTheme.SubHeader);
+            DrawCompactIconHeader("Linked targets", "anchor", DecorationEditorTheme.SubHeader);
             IReadOnlyList<AutomationLink> selectedLinks = SelectedLinks;
             if (selectedLinks.Count == 0)
                 GUILayout.Label("No targets linked to the selected controller.", DecorationEditorTheme.MiniWrap);
@@ -1438,12 +1627,20 @@ namespace DecoLimitLifter.AutomationEditMode
             bool selected = string.Equals(_selectedLinkTargetKey, link.TargetKey, StringComparison.Ordinal);
             GUILayout.BeginHorizontal(selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
             GUILayout.Label(
-                link.IsStale ? link.TargetLabel + " (missing)" : link.TargetLabel,
+                new GUIContent(
+                    link.IsStale ? link.TargetLabel + " (missing)" : link.TargetLabel,
+                    DecorationEditorIconCatalog.Get(AutomationTargetIconKey(link.Target))),
                 link.IsStale ? DecorationEditorTheme.Warning : DecorationEditorTheme.Mini);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("inspect", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(72f))))
+            if (GUILayout.Button(
+                    new GUIContent("Inspect", DecorationEditorIconCatalog.Get("focus"), "Inspect this linked target."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(82f))))
                 _selectedLinkTargetKey = link.TargetKey;
-            if (GUILayout.Button("remove", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(72f))))
+            if (GUILayout.Button(
+                    new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove this linked target."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(86f))))
             {
                 _links.Remove(link);
                 if (selected)
@@ -1465,7 +1662,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             GUILayout.Space(EsuHudLayout.Scale(6f));
-            GUILayout.Label("Selected linked target", DecorationEditorTheme.SubHeader);
+            DrawCompactIconHeader("Selected linked target", AutomationTargetIconKey(link.Target), DecorationEditorTheme.SubHeader);
             GUILayout.BeginVertical(DecorationEditorTheme.Row);
             GUILayout.Label(link.TargetLabel + (link.IsStale ? " (missing)" : string.Empty), link.IsStale ? DecorationEditorTheme.Warning : DecorationEditorTheme.Body);
             if (link.Target == null)
@@ -1484,11 +1681,17 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Open graph", DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (GUILayout.Button(
+                    new GUIContent("Open graph", DecorationEditorIconCatalog.Get("open"), "Open the graph editor for this link."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 TryOpenEditor(AutomationEditorPage.Graph);
             }
-            if (GUILayout.Button("Remove link", DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (GUILayout.Button(
+                    new GUIContent("Remove link", DecorationEditorIconCatalog.Get("delete"), "Remove this linked target."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 _links.Remove(link);
                 _selectedLinkTargetKey = string.Empty;
@@ -1502,10 +1705,10 @@ namespace DecoLimitLifter.AutomationEditMode
         private void DrawRuntimeDiagnosticsPanel()
         {
             GUILayout.Space(EsuHudLayout.Scale(6f));
-            GUILayout.Label("Runtime checks", DecorationEditorTheme.SubHeader);
+            DrawCompactIconHeader("Runtime checks", "settings", DecorationEditorTheme.SubHeader);
             GUILayout.BeginVertical(DecorationEditorTheme.Row);
             if (GUILayout.Button(
-                    "Run checks",
+                    new GUIContent("Run checks", DecorationEditorIconCatalog.Get("settings"), "Run live runtime checks for the selected controller."),
                     DecorationEditorTheme.Button,
                     GUILayout.Height(EsuHudLayout.Scale(26f))))
             {
@@ -1619,7 +1822,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && canPrepareValidationGraph;
             if (GUILayout.Button(
-                    "Prepare validation graph",
+                    new GUIContent("Prepare validation graph", DecorationEditorIconCatalog.Get("create"), "Create validation graph nodes for save/reload checks."),
                     canPrepareValidationGraph ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
@@ -1655,7 +1858,7 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginHorizontal();
             GUI.enabled = previous && completeEvidence;
             if (GUILayout.Button(
-                    "Capture baseline",
+                    new GUIContent("Capture baseline", DecorationEditorIconCatalog.Get("save"), "Capture the current Automation validation baseline."),
                     completeEvidence ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
@@ -1664,7 +1867,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
             GUI.enabled = previous && s_validationBaseline != null && completeEvidence;
             if (GUILayout.Button(
-                    "Compare baseline",
+                    new GUIContent("Compare baseline", DecorationEditorIconCatalog.Get("focus"), "Compare this controller against the captured baseline."),
                     s_validationBaseline == null || !completeEvidence
                         ? DecorationEditorTheme.DisabledButton
                         : DecorationEditorTheme.Button,
@@ -1833,17 +2036,7 @@ namespace DecoLimitLifter.AutomationEditMode
             GUI.Box(new Rect(0f, 0f, _rightPanelRect.width, _rightPanelRect.height), GUIContent.none, DecorationEditorTheme.Panel);
             float inset = EsuHudLayout.Scale(8f);
             GUILayout.BeginArea(new Rect(inset, inset, _rightPanelRect.width - inset * 2f, _rightPanelRect.height - inset * 2f));
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Automation Blocks", DecorationEditorTheme.Header);
-            if (GUILayout.Button(
-                    new GUIContent("Hide", "Hide the Automation Blocks panel."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(58f)),
-                    GUILayout.Height(EsuHudLayout.Scale(22f))))
-            {
-                _showRightPanel = false;
-            }
-            GUILayout.EndHorizontal();
+            DrawAutomationPanelHeader("Automation Blocks", "cube", ref _showRightPanel, "Hide the Automation Blocks panel.");
             DecorationEditorTheme.Separator();
             float scrollHeight = Mathf.Max(
                 EsuHudLayout.Scale(180f),
@@ -1854,7 +2047,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 alwaysShowVertical: true,
                 GUILayout.Height(scrollHeight));
 
-            if (DrawAutomationSectionHeader("Controllers", ref _showBlocksSection, "Show or hide the Automation controller palette and craft controller list."))
+            if (DrawAutomationSectionHeader("Controllers", "build", ref _showBlocksSection, "Show or hide the Automation controller palette and craft controller list."))
             {
                 foreach (AutomationControllerDescriptor descriptor in AutomationControllerCatalog.All)
                     DrawControllerPaletteRow(descriptor);
@@ -1864,7 +2057,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             DecorationEditorTheme.Separator();
-            if (DrawAutomationSectionHeader("Target filters", ref _showFilterSection, "Show or hide Automation target search, filters, and world target list."))
+            if (DrawAutomationSectionHeader("Target filters", "filter", ref _showFilterSection, "Show or hide Automation target search, filters, and world target list."))
             {
                 DrawTargetSearchControls(drawHeader: false);
                 DecorationEditorTheme.Separator();
@@ -1876,7 +2069,10 @@ namespace DecoLimitLifter.AutomationEditMode
                                    count.ToString("N0", CultureInfo.InvariantCulture) +
                                    ")";
                     if (GUILayout.Button(
-                            label,
+                            new GUIContent(
+                                label,
+                                DecorationEditorIconCatalog.Get(CategoryIconKey(category)),
+                                "Filter Automation targets by " + AutomationTargetCatalog.CategoryLabel(category) + "."),
                             DecorationEditorTheme.ToolButton(_filter == category),
                             GUILayout.Height(EsuHudLayout.Scale(25f))))
                     {
@@ -1886,12 +2082,13 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 DecorationEditorTheme.Separator();
                 IReadOnlyList<AutomationTarget> visibleTargets = FilteredWorldTargets();
-                GUILayout.Label(
+                DrawCompactIconHeader(
                     "World targets (" +
                     Math.Min(visibleTargets.Count, 80).ToString("N0", CultureInfo.InvariantCulture) +
                     "/" +
                     visibleTargets.Count.ToString("N0", CultureInfo.InvariantCulture) +
                     ")",
+                    "outliner",
                     DecorationEditorTheme.SubHeader);
                 if (visibleTargets.Count == 0)
                 {
@@ -1913,13 +2110,35 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.EndArea();
         }
 
-        private static bool DrawAutomationSectionHeader(string text, ref bool sectionVisible, string tooltip)
+        private static void DrawAutomationPanelHeader(
+            string text,
+            string iconKey,
+            ref bool panelVisible,
+            string hideTooltip)
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label(text, DecorationEditorTheme.SubHeader);
-            GUILayout.FlexibleSpace();
+            DrawCompactIconHeader(text, iconKey, DecorationEditorTheme.Header);
             if (GUILayout.Button(
-                    new GUIContent(sectionVisible ? "Hide list" : "Show list", tooltip),
+                    new GUIContent("Hide", DecorationEditorIconCatalog.Get("close"), hideTooltip),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                panelVisible = false;
+            }
+
+            GUILayout.EndHorizontal();
+        }
+
+        private static bool DrawAutomationSectionHeader(string text, string iconKey, ref bool sectionVisible, string tooltip)
+        {
+            GUILayout.BeginHorizontal();
+            DrawCompactIconHeader(text, iconKey, DecorationEditorTheme.SubHeader);
+            if (GUILayout.Button(
+                    new GUIContent(
+                        sectionVisible ? "Hide list" : "Show list",
+                        DecorationEditorIconCatalog.Get(sectionVisible ? "close" : iconKey),
+                        tooltip),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(76f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -1933,8 +2152,12 @@ namespace DecoLimitLifter.AutomationEditMode
         private void DrawTargetSearchControls(bool drawHeader = true)
         {
             if (drawHeader)
-                GUILayout.Label("Target search", DecorationEditorTheme.SubHeader);
+                DrawCompactIconHeader("Target search", "filter", DecorationEditorTheme.SubHeader);
             GUILayout.BeginHorizontal();
+            GUILayout.Label(
+                new GUIContent(string.Empty, DecorationEditorIconCatalog.Get("filter")),
+                GUILayout.Width(EsuHudLayout.Scale(24f)),
+                GUILayout.Height(EsuHudLayout.Scale(24f)));
             string next = GUILayout.TextField(
                 _targetSearchText ?? string.Empty,
                 DecorationEditorTheme.TextField,
@@ -1945,7 +2168,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_targetSearchText);
             if (GUILayout.Button(
-                    "clear",
+                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear Automation target search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -1965,25 +2188,35 @@ namespace DecoLimitLifter.AutomationEditMode
             bool available = descriptor.ResolveItemDefinition() != null;
             bool armed = _selectedPlacement == descriptor && _tool == AutomationTool.Place;
             string description = available ? descriptor.Description : "Unavailable in this FtD install.";
-            string label = descriptor.Label +
-                           (armed ? "  [armed]" : string.Empty) +
-                           "\n" +
-                           description;
+            string label = descriptor.Label + (armed ? "  [armed]" : string.Empty);
+            Rect row = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(48f),
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(48f)));
             bool previous = GUI.enabled;
             GUI.enabled = previous && available;
-            if (GUILayout.Button(
-                    new GUIContent(label, "Click to arm this Automation controller for placement."),
-                    _selectedPlacement == descriptor
-                        ? DecorationEditorTheme.RowSelected
-                        : DecorationEditorTheme.Row,
-                    GUILayout.MinHeight(EsuHudLayout.Scale(44f)),
-                    GUILayout.ExpandWidth(true)))
+            bool clicked = GUI.Button(
+                row,
+                GUIContent.none,
+                _selectedPlacement == descriptor
+                    ? DecorationEditorTheme.RowSelected
+                    : DecorationEditorTheme.Row);
+            GUI.enabled = previous;
+            DrawAutomationIconRow(
+                row,
+                ControllerIconKey(descriptor),
+                label,
+                description,
+                armed ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini,
+                available ? DecorationEditorTheme.MiniWrap : DecorationEditorTheme.Warning);
+            EsuCursorTooltip.Register(row, "Click to arm this Automation controller for placement.");
+            if (clicked)
             {
                 _selectedPlacement = descriptor;
                 _tool = AutomationTool.Place;
                 _status = PlacementArmedStatus();
             }
-            GUI.enabled = previous;
         }
 
         private void DrawControllerIndex()
@@ -2046,14 +2279,22 @@ namespace DecoLimitLifter.AutomationEditMode
                 "    " +
                 FormatCell(target.LocalPosition) +
                 (selected ? "    [selected]" : string.Empty);
-            if (GUILayout.Button(
-                    new GUIContent(rowText, "Click to select this Automation controller."),
-                    selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row,
-                    GUILayout.Height(EsuHudLayout.Scale(26f)),
-                    GUILayout.ExpandWidth(true)))
+            Rect row = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(28f),
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(28f)));
+            if (GUI.Button(row, GUIContent.none, selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row))
             {
                 SelectAutomationController(target);
             }
+
+            DrawAutomationSingleLineIconRow(
+                row,
+                AutomationTargetIconKey(target),
+                rowText,
+                selected ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini);
+            EsuCursorTooltip.Register(row, "Click to select this Automation controller.");
         }
 
         private void DrawTargetListRow(AutomationTarget target)
@@ -2070,16 +2311,27 @@ namespace DecoLimitLifter.AutomationEditMode
                 detail = roleSummary + " | " + detail;
             if (linked)
                 detail += " | linked";
-            string rowText = target.Label + "\n" + detail;
-            if (GUILayout.Button(
-                    new GUIContent(rowText, TargetRowTooltip(target)),
-                    selected || linked ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row,
-                    GUILayout.MinHeight(EsuHudLayout.Scale(38f)),
-                    GUILayout.ExpandWidth(true)))
+            Rect row = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(42f),
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(42f)));
+            if (GUI.Button(
+                    row,
+                    GUIContent.none,
+                    selected || linked ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row))
             {
                 HandleTargetRowClick(target);
             }
 
+            DrawAutomationIconRow(
+                row,
+                AutomationTargetIconKey(target),
+                target.Label,
+                detail,
+                selected || linked ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini,
+                DecorationEditorTheme.MiniWrap);
+            EsuCursorTooltip.Register(row, TargetRowTooltip(target));
         }
 
         private static string TargetRowTooltip(AutomationTarget target)
@@ -2117,19 +2369,29 @@ namespace DecoLimitLifter.AutomationEditMode
             float inset = EsuHudLayout.Scale(10f);
             GUILayout.BeginArea(new Rect(inset, inset, _editorRect.width - inset * 2f, _editorRect.height - inset * 2f));
             GUILayout.BeginHorizontal();
-            GUILayout.Label(EditorTitle(), DecorationEditorTheme.Header);
-            if (GUILayout.Button("fit", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(42f))))
+            DrawCompactIconHeader(EditorTitle(), "open", DecorationEditorTheme.Header);
+            if (GUILayout.Button(
+                    new GUIContent("Fit", DecorationEditorIconCatalog.Get("focus"), "Fit the graph/code editor to the viewport."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f))))
             {
                 FitEditorToViewport();
                 _status = "Automation editor fitted to the available viewport.";
             }
-            if (GUILayout.Button("Close", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(58f))))
+            if (GUILayout.Button(
+                    new GUIContent("Close", DecorationEditorIconCatalog.Get("close"), "Close the fullscreen Automation editor."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(68f))))
                 CloseEditor();
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Graph", DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Graph)))
+            if (GUILayout.Button(
+                    new GUIContent("Graph", DecorationEditorIconCatalog.Get("outliner"), "Edit Automation graph nodes."),
+                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Graph)))
                 _editorPage = AutomationEditorPage.Graph;
-            if (GUILayout.Button("Code", DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Code)))
+            if (GUILayout.Button(
+                    new GUIContent("Code", DecorationEditorIconCatalog.Get("settings"), "Generate or edit Automation code recipes."),
+                    DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Code)))
                 _editorPage = AutomationEditorPage.Code;
             GUILayout.EndHorizontal();
             DecorationEditorTheme.Separator();
