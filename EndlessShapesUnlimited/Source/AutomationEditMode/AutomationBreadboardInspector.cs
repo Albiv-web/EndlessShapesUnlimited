@@ -1426,13 +1426,19 @@ namespace DecoLimitLifter.AutomationEditMode
                 parameters[0] = _board;
                 Array.Copy(args, 0, parameters, 1, args.Length);
                 object command = Activator.CreateInstance(commandType, parameters);
+                if (command == null)
+                    return false;
+
                 MethodInfo execute = commandType.GetMethod(
                     "Execute",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
                     null,
                     Type.EmptyTypes,
                     null);
-                execute?.Invoke(command, null);
+                if (execute == null)
+                    return false;
+
+                execute.Invoke(command, null);
                 return true;
             }
             catch
@@ -1560,13 +1566,19 @@ namespace DecoLimitLifter.AutomationEditMode
                     return false;
 
                 object command = Activator.CreateInstance(commandType, _board, component);
+                if (command == null)
+                    return false;
+
                 MethodInfo execute = commandType.GetMethod(
                     "Execute",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
                     null,
                     Type.EmptyTypes,
                     null);
-                execute?.Invoke(command, null);
+                if (execute == null)
+                    return false;
+
+                execute.Invoke(command, null);
                 return true;
             }
             catch

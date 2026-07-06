@@ -4171,7 +4171,9 @@ f 0 2 3
                tooltipSuppressorSource.Contains("return color != 0 &&") &&
                tooltipSuppressorSource.Contains("StaticOptionsManager.ShowMouseCursor") &&
                tooltipSuppressorSource.Contains("!EsuOwnsEditorView;") &&
-               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
+               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active") &&
+               tooltipSuppressorSource.Contains("SmartBuildInputScope.Active") &&
+               tooltipSuppressorSource.Contains("AutomationInputScope.Active") &&
                tooltipSuppressorSource.Contains("return false;") &&
                !tooltipSuppressorSource.Contains("harmony.Patch(method, prefix: patch)") &&
                !tooltipSuppressorSource.Contains("LogSuppressedCall(__originalMethod, __args);") &&
@@ -7091,6 +7093,16 @@ f 0 2 3
             "Source",
             "AutomationEditMode",
             "AutomationRuntimeDiagnostics.cs"));
+        string automationRefreshTargetsSource = ExtractMethodSource(automationSessionSource, "RefreshTargets");
+        string automationClearStaleControllerSource = ExtractMethodSource(automationSessionSource, "ClearStaleSelectedController");
+        string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
+        string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
+        string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
+        string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
+        string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
+        string automationTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawTargetListRow");
+        string automationExecuteBoardCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteBoardCommand");
+        string automationExecuteAddComponentCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteAddComponentCommand");
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string changeTestChecklistSource = ReadDocumentationText(root, "docs", "ESU_CHANGE_TEST_CHECKLIST.md");
@@ -7464,14 +7476,39 @@ f 0 2 3
                automationSessionSource.Contains("HandleAutomationPanelResize") &&
                automationSessionSource.Contains("EsuHudLayout.DrawResizeGrip(_leftPanelRect") &&
                automationSessionSource.Contains("EsuHudLayout.DrawResizeGrip(_rightPanelRect") &&
-               automationSessionSource.Contains("EsuHudLayout.DrawResizeGrip(_editorRect") &&
                automationSessionSource.Contains("FitEditorToViewport") &&
                automationSessionSource.Contains("DrawPlacementPreview") &&
-               automationSessionSource.Contains("\"placing\"") &&
+               automationControllerPaletteRowSource.Contains("[armed]") &&
+               automationSessionSource.Contains("DrawAutomationSectionHeader") &&
+               automationOnGuiSource.Contains("GUI.depth = Math.Min(previousDepth, -10000)") &&
+               automationOnGuiSource.Contains("if (!_editorOpen)") &&
+               automationOnGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
+               automationPrepareLayoutSource.Contains("FullScreenEditorRect()") &&
+               automationMouseOverUiSource.Contains("if (_editorOpen)") &&
+               automationMouseOverUiSource.Contains("return true;") &&
                automationSessionSource.Contains("Placement preview shows green") &&
                automationSessionSource.Contains("Automation controller placement rejected") &&
                automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()"),
-            "Automation Editor shares the resizable full-screen ESU shell pattern, fits the graph editor to the central viewport, arms palette placement explicitly, previews target cells, logs placement failures, and blocks panel clicks from world placement.");
+            "Automation Editor shares the resizable foreground ESU shell pattern, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, logs placement failures, and blocks panel clicks from world placement.");
+        Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
+               automationExecuteBoardCommandSource.Contains("return false;") &&
+               automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&
+               automationExecuteAddComponentCommandSource.Contains("if (execute == null)") &&
+               automationExecuteAddComponentCommandSource.Contains("return false;") &&
+               automationExecuteAddComponentCommandSource.Contains("execute.Invoke(command, null)") &&
+               automationRefreshTargetsSource.Contains("ClearStaleSelectedController(selectedKey)") &&
+               automationClearStaleControllerSource.Contains("CloseEditor()") &&
+               automationClearStaleControllerSource.Contains("_selectedController = null") &&
+               automationClearStaleControllerSource.Contains("_selectedCanvasComponentId = NoWireSourceComponentId"),
+            "Automation Editor fails reflected Breadboard commands honestly and clears stale selected controllers before graph/code writes can reuse old block references.");
+        Assert(!automationControllerPaletteRowSource.Contains("? \"placing\" : \"place\"") &&
+               !automationControllerIndexRowSource.Contains("\"select\"") &&
+               !automationControllerIndexRowSource.Contains("\"edit\"") &&
+               !automationTargetListRowSource.Contains("? \"unlink\" : \"link\"") &&
+               automationControllerPaletteRowSource.Contains("Click to arm this Automation controller") &&
+               automationControllerIndexRowSource.Contains("Click to select this Automation controller") &&
+               automationTargetListRowSource.Contains("HandleTargetRowClick(target)"),
+            "Automation block and target lists use whole-row click targets instead of per-row set/select/place/link buttons.");
         Assert(automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnostics") &&
                automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnosticResult") &&
                automationRuntimeDiagnosticsSource.Contains("AvailableComponentTypes is empty") &&
@@ -7866,7 +7903,9 @@ f 0 2 3
                sceneSource.Contains("selectedId >= 0"),
             "Smart Builder right-click cancels active edits before deselecting pieces, preserves no-selection preview scenes, and only then opens context menus for pointed pieces.");
         Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
-               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active || SmartBuildInputScope.Active") &&
+               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active") &&
+               tooltipSuppressorSource.Contains("SmartBuildInputScope.Active") &&
+               tooltipSuppressorSource.Contains("AutomationInputScope.Active") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
                vanillaInputBridgeSource.Contains("KeyInputsFtd.Freeze") &&
                readFreezeDownSource.Contains("return FtdKeyMap.Instance.Bool(") &&

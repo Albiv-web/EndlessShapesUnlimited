@@ -127,10 +127,8 @@ namespace DecoLimitLifter.AutomationEditMode
         private Rect _statusRect;
         private Rect _leftPanelResizeStart;
         private Rect _rightPanelResizeStart;
-        private Rect _editorResizeStart;
         private Vector2 _leftPanelResizeMouseStart;
         private Vector2 _rightPanelResizeMouseStart;
-        private Vector2 _editorResizeMouseStart;
         private Vector2 _leftScroll;
         private Vector2 _rightScroll;
         private Vector2 _editorScroll;
@@ -148,6 +146,8 @@ namespace DecoLimitLifter.AutomationEditMode
         private AutomationCompileRevertSet _lastCompileRevert;
         private bool _showLeftPanel = true;
         private bool _showRightPanel = true;
+        private bool _showBlocksSection = true;
+        private bool _showFilterSection = true;
         private bool _editorOpen;
         private bool _closeRequested;
         private bool _layoutInitialized;
@@ -233,53 +233,67 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!Active)
                 return;
 
-            DecorationEditorTheme.Ensure();
-            if (Event.current.type == EventType.Repaint)
-                DecorationEditorOverlay.Render();
-
-            EsuCursorTooltip.BeginFrame(
-                Event.current.mousePosition,
-                _resizingLeftPanel || _resizingRightPanel || _resizingEditor);
-            ApplyLayoutResetIfNeeded();
-            PrepareAutomationLayout();
-            HandleAutomationPanelResizes();
-
-            GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
-            if (_showLeftPanel)
-                _leftPanelRect = GUI.Window(
-                    _leftPanelWindowId,
-                    _leftPanelRect,
-                    DrawLeftPanel,
-                    GUIContent.none,
-                    GUIStyle.none);
-            if (_showRightPanel)
-                _rightPanelRect = GUI.Window(
-                    _rightPanelWindowId,
-                    _rightPanelRect,
-                    DrawRightPanel,
-                    GUIContent.none,
-                    GUIStyle.none);
-            if (_editorOpen)
-                _editorRect = GUI.Window(
-                    _editorWindowId,
-                    _editorRect,
-                    DrawEditor,
-                    GUIContent.none,
-                    GUIStyle.none);
-            GUI.Window(_statusWindowId, _statusRect, DrawStatusStrip, GUIContent.none, GUIStyle.none);
-
-            DrawAutomationResizeGrips();
-            EsuHudNotifications.DrawExpandedPopup();
-            EsuCursorTooltip.Draw();
-            PersistLayoutState();
-
-            bool mouseOverUi = IsMouseOverAnyUi(Event.current.mousePosition);
-            AutomationInputScope.SetMouseOverUi(mouseOverUi);
-            if (mouseOverUi)
+            int previousDepth = GUI.depth;
+            GUI.depth = Math.Min(previousDepth, -10000);
+            try
             {
-                AutomationInputScope.ClaimBuildInputForFrames();
-                if (Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
-                    AutomationInputScope.ClaimMouseWheelInputForFrames();
+                DecorationEditorTheme.Ensure();
+                if (Event.current.type == EventType.Repaint)
+                    DecorationEditorOverlay.Render();
+
+                EsuCursorTooltip.BeginFrame(
+                    Event.current.mousePosition,
+                    _resizingLeftPanel || _resizingRightPanel || _resizingEditor);
+                ApplyLayoutResetIfNeeded();
+                PrepareAutomationLayout();
+                HandleAutomationPanelResizes();
+
+                if (!_editorOpen)
+                {
+                    GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
+                    if (_showLeftPanel)
+                        _leftPanelRect = GUI.Window(
+                            _leftPanelWindowId,
+                            _leftPanelRect,
+                            DrawLeftPanel,
+                            GUIContent.none,
+                            GUIStyle.none);
+                    if (_showRightPanel)
+                        _rightPanelRect = GUI.Window(
+                            _rightPanelWindowId,
+                            _rightPanelRect,
+                            DrawRightPanel,
+                            GUIContent.none,
+                            GUIStyle.none);
+                    GUI.Window(_statusWindowId, _statusRect, DrawStatusStrip, GUIContent.none, GUIStyle.none);
+                }
+
+                if (_editorOpen)
+                    _editorRect = GUI.Window(
+                        _editorWindowId,
+                        _editorRect,
+                        DrawEditor,
+                        GUIContent.none,
+                        GUIStyle.none);
+
+                DrawAutomationResizeGrips();
+                EsuHudNotifications.DrawExpandedPopup();
+                EsuConsoleWindow.DrawForegroundWindow();
+                EsuCursorTooltip.Draw();
+                PersistLayoutState();
+
+                bool mouseOverUi = IsMouseOverAnyUi(Event.current.mousePosition);
+                AutomationInputScope.SetMouseOverUi(mouseOverUi);
+                if (mouseOverUi)
+                {
+                    AutomationInputScope.ClaimBuildInputForFrames();
+                    if (Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
+                        AutomationInputScope.ClaimMouseWheelInputForFrames();
+                }
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
             }
         }
 
@@ -293,14 +307,43 @@ namespace DecoLimitLifter.AutomationEditMode
             _targets = AutomationTargetCatalog.Capture(_build);
             if (_selectedController != null)
             {
+                string selectedKey = _selectedController.StableKey;
                 AutomationTarget refreshed = _targets.FirstOrDefault(
-                    target => target.StableKey == _selectedController.StableKey);
+                    target => target.StableKey == selectedKey);
                 if (refreshed != null)
+                {
                     _selectedController = refreshed;
+                }
+                else
+                {
+                    ClearStaleSelectedController(selectedKey);
+                }
             }
 
             RebindAutomationLinks();
             RehydrateSelectedControllerLinksFromNativeProxies();
+        }
+
+        private void ClearStaleSelectedController(string selectedKey)
+        {
+            string label = _selectedController?.Label ?? "Selected controller";
+            if (!string.IsNullOrWhiteSpace(selectedKey))
+                _links.RemoveAll(link => string.Equals(link.ControllerKey, selectedKey, StringComparison.Ordinal));
+            _selectedController = null;
+            _selectedLinkTargetKey = string.Empty;
+            _automationCodeOutputTargetKey = string.Empty;
+            _automationCodeControllerKey = string.Empty;
+            _lastCompileRevert = null;
+            _lastCompileBoundOutput = false;
+            _lastRuntimeDiagnostics = AutomationRuntimeDiagnosticResult.Empty;
+            _lastRuntimeDiagnosticsControllerKey = string.Empty;
+            _wireSourceComponentId = NoWireSourceComponentId;
+            _wireSourceOutputIndex = -1;
+            _selectedCanvasComponentId = NoWireSourceComponentId;
+            _canvasDragComponentId = NoWireSourceComponentId;
+            _canvasDragPreviewDelta = Vector2.zero;
+            CloseEditor();
+            _status = label + " is no longer available. Select a live Automation controller.";
         }
 
         private void RebindAutomationLinks()
@@ -417,10 +460,40 @@ namespace DecoLimitLifter.AutomationEditMode
             }
             else if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
-                _editorOpen = _selectedController != null || SelectedLinks.Count > 0;
                 if (_editorOpen)
-                    FitEditorToViewport();
+                    CloseEditor();
+                else
+                    TryOpenEditor();
             }
+        }
+
+        private bool TryOpenEditor(AutomationEditorPage? page = null)
+        {
+            if (_selectedController == null)
+            {
+                _status = "Select a live Breadboard/ACB controller before opening the Automation editor.";
+                return false;
+            }
+
+            if (!_targets.Any(target => string.Equals(target.StableKey, _selectedController.StableKey, StringComparison.Ordinal)))
+            {
+                ClearStaleSelectedController(_selectedController.StableKey);
+                return false;
+            }
+
+            if (page.HasValue)
+                _editorPage = page.Value;
+            _editorOpen = true;
+            FitEditorToViewport();
+            return true;
+        }
+
+        private void CloseEditor()
+        {
+            _editorOpen = false;
+            _resizingEditor = false;
+            _canvasDragComponentId = NoWireSourceComponentId;
+            _canvasDragPreviewDelta = Vector2.zero;
         }
 
         private void HandleMouse()
@@ -438,8 +511,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (TryToggleControllerTargetLink(projectedController))
                     return;
 
-                _selectedController = projectedController;
-                _status = "Selected " + projectedController.Label + " through screen-space controller pick.";
+                SelectAutomationController(
+                    projectedController,
+                    "Selected through screen-space controller pick: ");
                 return;
             }
 
@@ -463,8 +537,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (TryToggleControllerTargetLink(target))
                     return;
 
-                _selectedController = target;
-                _status = "Selected " + target.Label + ".";
+                SelectAutomationController(target, "Selected ");
                 return;
             }
 
@@ -532,7 +605,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 target => target.Construct == hit.Construct &&
                           target.LocalPosition.Equals(cell));
             if (placed != null && placed.IsController)
-                _selectedController = placed;
+                SelectAutomationController(placed, "Placed and selected ");
         }
 
         private static bool TryPlacementFromHit(
@@ -608,6 +681,28 @@ namespace DecoLimitLifter.AutomationEditMode
                 : IsAcbProxyTarget(target)
                     ? "Linked " + controller.Label + " to ACB rule proxy target."
                     : "Linked " + controller.Label + " to " + target.Label + ".";
+        }
+
+        private void SelectAutomationController(AutomationTarget target, string statusPrefix = "Selected controller: ")
+        {
+            if (target == null)
+                return;
+
+            bool changed = _selectedController == null ||
+                           !string.Equals(_selectedController.StableKey, target.StableKey, StringComparison.Ordinal);
+            _selectedController = target;
+            if (changed)
+            {
+                _selectedLinkTargetKey = string.Empty;
+                _automationCodeOutputTargetKey = string.Empty;
+                _wireSourceComponentId = NoWireSourceComponentId;
+                _wireSourceOutputIndex = -1;
+                _selectedCanvasComponentId = NoWireSourceComponentId;
+                _canvasDragComponentId = NoWireSourceComponentId;
+                _canvasDragPreviewDelta = Vector2.zero;
+            }
+
+            _status = statusPrefix + target.Label + ".";
         }
 
         private bool TryToggleControllerTargetLink(AutomationTarget target)
@@ -961,9 +1056,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
             if (ToolbarButton("Edit", "Open the ESU automation graph/code editor.", _editorOpen))
             {
-                _editorOpen = !_editorOpen;
-                if (_editorOpen)
-                    FitEditorToViewport();
+                TryOpenEditor();
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(budget.Gap);
@@ -976,10 +1069,10 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));
             if (ToolbarButton("Info", "Show or hide Automation details.", _showLeftPanel))
                 _showLeftPanel = !_showLeftPanel;
-            if (ToolbarButton("Blocks", "Show or hide Automation controller palette and filters.", _showRightPanel))
-                _showRightPanel = !_showRightPanel;
-            if (ToolbarButton("Filter", "Cycle target filter.", false))
-                CycleFilter();
+            if (ToolbarButton("Blocks", "Show or hide Automation controller blocks.", _showRightPanel && _showBlocksSection))
+                ToggleRightPanelSection(ref _showBlocksSection);
+            if (ToolbarButton("Filter", "Show or hide Automation target filters.", _showRightPanel && _showFilterSection))
+                ToggleRightPanelSection(ref _showFilterSection);
             if (ToolbarButton("Close", "Close Automation Editor.", false))
                 _closeRequested = true;
             GUILayout.EndHorizontal();
@@ -994,6 +1087,20 @@ namespace DecoLimitLifter.AutomationEditMode
                 DecorationEditorTheme.ToolButton(active),
                 GUILayout.Width(EsuHudLayout.Scale(58f)),
                 GUILayout.Height(EsuHudLayout.Scale(40f)));
+        }
+
+        private void ToggleRightPanelSection(ref bool sectionVisible)
+        {
+            if (!_showRightPanel)
+            {
+                _showRightPanel = true;
+                sectionVisible = true;
+                return;
+            }
+
+            sectionVisible = !sectionVisible;
+            if (!_showBlocksSection && !_showFilterSection)
+                _showRightPanel = false;
         }
 
         private void DrawStatusStrip(int id)
@@ -1057,9 +1164,10 @@ namespace DecoLimitLifter.AutomationEditMode
                     GUILayout.Width(EsuHudLayout.Scale(80f)),
                     GUILayout.Height(controlsHeight)))
             {
-                _editorOpen = !_editorOpen;
                 if (_editorOpen)
-                    FitEditorToViewport();
+                    CloseEditor();
+                else
+                    TryOpenEditor();
             }
 
             bool previous = GUI.enabled;
@@ -1199,7 +1307,14 @@ namespace DecoLimitLifter.AutomationEditMode
                 _showLeftPanel = false;
             GUILayout.EndHorizontal();
             DecorationEditorTheme.Separator();
-            _leftScroll = GUILayout.BeginScrollView(_leftScroll);
+            float scrollHeight = Mathf.Max(
+                EsuHudLayout.Scale(160f),
+                _leftPanelRect.height - inset * 2f - EsuHudLayout.Scale(82f));
+            _leftScroll = GUILayout.BeginScrollView(
+                _leftScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.Height(scrollHeight));
             LabelRow("Tool", ToolLabel(_tool));
             LabelRow("Filter", AutomationTargetCatalog.CategoryLabel(_filter));
             LabelRow("Targets", _targets.Count.ToString("N0", CultureInfo.InvariantCulture));
@@ -1217,8 +1332,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 LabelRow("Cell", FormatCell(_selectedController.LocalPosition));
                 if (GUILayout.Button("Open editor", DecorationEditorTheme.ToolButton(_editorOpen), GUILayout.Height(EsuHudLayout.Scale(28f))))
                 {
-                    _editorOpen = true;
-                    FitEditorToViewport();
+                    TryOpenEditor();
                 }
                 if (GUILayout.Button("Clear links", DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(28f))))
                     ClearSelectedLinks();
@@ -1300,9 +1414,7 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Open graph", DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                _editorOpen = true;
-                FitEditorToViewport();
-                _editorPage = AutomationEditorPage.Graph;
+                TryOpenEditor(AutomationEditorPage.Graph);
             }
             if (GUILayout.Button("Remove link", DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
@@ -1655,54 +1767,67 @@ namespace DecoLimitLifter.AutomationEditMode
                 _showRightPanel = false;
             GUILayout.EndHorizontal();
             DecorationEditorTheme.Separator();
-            _rightScroll = GUILayout.BeginScrollView(_rightScroll);
-            GUILayout.Label("Controllers", DecorationEditorTheme.SubHeader);
-            foreach (AutomationControllerDescriptor descriptor in AutomationControllerCatalog.All)
-                DrawControllerPaletteRow(descriptor);
+            float scrollHeight = Mathf.Max(
+                EsuHudLayout.Scale(180f),
+                _rightPanelRect.height - inset * 2f - EsuHudLayout.Scale(48f));
+            _rightScroll = GUILayout.BeginScrollView(
+                _rightScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.Height(scrollHeight));
+
+            if (DrawAutomationSectionHeader("Controllers", ref _showBlocksSection, "Show or hide the Automation controller palette and craft controller list."))
+            {
+                foreach (AutomationControllerDescriptor descriptor in AutomationControllerCatalog.All)
+                    DrawControllerPaletteRow(descriptor);
+
+                DecorationEditorTheme.Separator();
+                DrawControllerIndex();
+            }
 
             DecorationEditorTheme.Separator();
-            DrawControllerIndex();
-            DecorationEditorTheme.Separator();
-            DrawTargetSearchControls();
-            DecorationEditorTheme.Separator();
-            GUILayout.Label("Target filters", DecorationEditorTheme.SubHeader);
-            foreach (AutomationTargetCategory category in AutomationTargetCatalog.FilterOrder)
+            if (DrawAutomationSectionHeader("Target filters", ref _showFilterSection, "Show or hide Automation target search, filters, and world target list."))
             {
-                int count = CountTargets(category);
-                string label = AutomationTargetCatalog.CategoryLabel(category) +
-                               " (" +
-                               count.ToString("N0", CultureInfo.InvariantCulture) +
-                               ")";
-                if (GUILayout.Button(
-                        label,
-                        DecorationEditorTheme.ToolButton(_filter == category),
-                        GUILayout.Height(EsuHudLayout.Scale(25f))))
+                DrawTargetSearchControls(drawHeader: false);
+                DecorationEditorTheme.Separator();
+                foreach (AutomationTargetCategory category in AutomationTargetCatalog.FilterOrder)
                 {
-                    _filter = category;
+                    int count = CountTargets(category);
+                    string label = AutomationTargetCatalog.CategoryLabel(category) +
+                                   " (" +
+                                   count.ToString("N0", CultureInfo.InvariantCulture) +
+                                   ")";
+                    if (GUILayout.Button(
+                            label,
+                            DecorationEditorTheme.ToolButton(_filter == category),
+                            GUILayout.Height(EsuHudLayout.Scale(25f))))
+                    {
+                        _filter = category;
+                    }
                 }
-            }
 
-            DecorationEditorTheme.Separator();
-            IReadOnlyList<AutomationTarget> visibleTargets = FilteredWorldTargets();
-            GUILayout.Label(
-                "World targets (" +
-                Math.Min(visibleTargets.Count, 80).ToString("N0", CultureInfo.InvariantCulture) +
-                "/" +
-                visibleTargets.Count.ToString("N0", CultureInfo.InvariantCulture) +
-                ")",
-                DecorationEditorTheme.SubHeader);
-            if (visibleTargets.Count == 0)
-            {
+                DecorationEditorTheme.Separator();
+                IReadOnlyList<AutomationTarget> visibleTargets = FilteredWorldTargets();
                 GUILayout.Label(
-                    string.IsNullOrWhiteSpace(_targetSearchText)
-                        ? "No targets match the selected filter."
-                        : "No targets match the current search and filter.",
-                    DecorationEditorTheme.MiniWrap);
-            }
+                    "World targets (" +
+                    Math.Min(visibleTargets.Count, 80).ToString("N0", CultureInfo.InvariantCulture) +
+                    "/" +
+                    visibleTargets.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                    ")",
+                    DecorationEditorTheme.SubHeader);
+                if (visibleTargets.Count == 0)
+                {
+                    GUILayout.Label(
+                        string.IsNullOrWhiteSpace(_targetSearchText)
+                            ? "No targets match the selected filter."
+                            : "No targets match the current search and filter.",
+                        DecorationEditorTheme.MiniWrap);
+                }
 
-            foreach (AutomationTarget target in visibleTargets.Take(80))
-            {
-                DrawTargetListRow(target);
+                foreach (AutomationTarget target in visibleTargets.Take(80))
+                {
+                    DrawTargetListRow(target);
+                }
             }
 
             GUILayout.EndScrollView();
@@ -1710,9 +1835,27 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.EndArea();
         }
 
-        private void DrawTargetSearchControls()
+        private static bool DrawAutomationSectionHeader(string text, ref bool sectionVisible, string tooltip)
         {
-            GUILayout.Label("Target search", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(text, DecorationEditorTheme.SubHeader);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(
+                    new GUIContent(sectionVisible ? "x" : "+", tooltip),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                sectionVisible = !sectionVisible;
+            }
+            GUILayout.EndHorizontal();
+            return sectionVisible;
+        }
+
+        private void DrawTargetSearchControls(bool drawHeader = true)
+        {
+            if (drawHeader)
+                GUILayout.Label("Target search", DecorationEditorTheme.SubHeader);
             GUILayout.BeginHorizontal();
             string next = GUILayout.TextField(
                 _targetSearchText ?? string.Empty,
@@ -1742,30 +1885,27 @@ namespace DecoLimitLifter.AutomationEditMode
         private void DrawControllerPaletteRow(AutomationControllerDescriptor descriptor)
         {
             bool available = descriptor.ResolveItemDefinition() != null;
-            GUILayout.BeginVertical(
-                _selectedPlacement == descriptor
-                    ? DecorationEditorTheme.RowSelected
-                    : DecorationEditorTheme.Row);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(descriptor.Label, DecorationEditorTheme.Body);
-            GUILayout.FlexibleSpace();
+            bool armed = _selectedPlacement == descriptor && _tool == AutomationTool.Place;
+            string description = available ? descriptor.Description : "Unavailable in this FtD install.";
+            string label = descriptor.Label +
+                           (armed ? "  [armed]" : string.Empty) +
+                           "\n" +
+                           description;
             bool previous = GUI.enabled;
             GUI.enabled = previous && available;
             if (GUILayout.Button(
-                    _selectedPlacement == descriptor && _tool == AutomationTool.Place ? "placing" : "place",
-                    available ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
-                    GUILayout.Width(EsuHudLayout.Scale(78f))))
+                    new GUIContent(label, "Click to arm this Automation controller for placement."),
+                    _selectedPlacement == descriptor
+                        ? DecorationEditorTheme.RowSelected
+                        : DecorationEditorTheme.Row,
+                    GUILayout.MinHeight(EsuHudLayout.Scale(44f)),
+                    GUILayout.ExpandWidth(true)))
             {
                 _selectedPlacement = descriptor;
                 _tool = AutomationTool.Place;
                 _status = PlacementArmedStatus();
             }
             GUI.enabled = previous;
-            GUILayout.EndHorizontal();
-            GUILayout.Label(
-                available ? descriptor.Description : "Unavailable in this FtD install.",
-                available ? DecorationEditorTheme.MiniWrap : DecorationEditorTheme.Warning);
-            GUILayout.EndVertical();
         }
 
         private void DrawControllerIndex()
@@ -1823,37 +1963,19 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             bool selected = _selectedController != null &&
                             target.StableKey == _selectedController.StableKey;
-            GUILayout.BeginHorizontal(selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
-            GUILayout.Label(
-                target.Controller?.ShortLabel ?? target.Label,
-                DecorationEditorTheme.Mini,
-                GUILayout.Width(EsuHudLayout.Scale(72f)));
-            GUILayout.Label(
-                FormatCell(target.LocalPosition),
-                DecorationEditorTheme.Mini,
-                GUILayout.Width(EsuHudLayout.Scale(82f)));
-            GUILayout.FlexibleSpace();
+            string rowText =
+                (target.Controller?.ShortLabel ?? target.Label) +
+                "    " +
+                FormatCell(target.LocalPosition) +
+                (selected ? "    [selected]" : string.Empty);
             if (GUILayout.Button(
-                    "select",
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(54f))))
+                    new GUIContent(rowText, "Click to select this Automation controller."),
+                    selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row,
+                    GUILayout.Height(EsuHudLayout.Scale(26f)),
+                    GUILayout.ExpandWidth(true)))
             {
-                _selectedController = target;
-                _status = "Selected controller: " + target.Label + ".";
+                SelectAutomationController(target);
             }
-
-            if (GUILayout.Button(
-                    "edit",
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(42f))))
-            {
-                _selectedController = target;
-                _editorOpen = true;
-                FitEditorToViewport();
-                _status = "Editing controller: " + target.Label + ".";
-            }
-
-            GUILayout.EndHorizontal();
         }
 
         private void DrawTargetListRow(AutomationTarget target)
@@ -1863,51 +1985,52 @@ namespace DecoLimitLifter.AutomationEditMode
 
             bool selected = _selectedController != null &&
                             target.StableKey == _selectedController.StableKey;
-            GUILayout.BeginHorizontal(selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
-            GUILayout.Label(target.Label, DecorationEditorTheme.Mini);
-            GUILayout.FlexibleSpace();
             string roleSummary = AutomationTargetCatalog.RoleSummary(target);
+            bool linked = IsLinked(_selectedController, target);
+            string detail = AutomationTargetCatalog.CategoryLabel(target.Category);
             if (!string.IsNullOrWhiteSpace(roleSummary))
+                detail = roleSummary + " | " + detail;
+            if (linked)
+                detail += " | linked";
+            string rowText = target.Label + "\n" + detail;
+            if (GUILayout.Button(
+                    new GUIContent(rowText, TargetRowTooltip(target)),
+                    selected || linked ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row,
+                    GUILayout.MinHeight(EsuHudLayout.Scale(38f)),
+                    GUILayout.ExpandWidth(true)))
             {
-                GUILayout.Label(
-                    roleSummary,
-                    DecorationEditorTheme.Mini,
-                    GUILayout.Width(EsuHudLayout.Scale(66f)));
+                HandleTargetRowClick(target);
             }
-            GUILayout.Label(
-                AutomationTargetCatalog.CategoryLabel(target.Category),
-                DecorationEditorTheme.Mini,
-                GUILayout.Width(EsuHudLayout.Scale(104f)));
-            if (target.IsController)
-            {
-                if (GUILayout.Button(
-                        "select",
-                        DecorationEditorTheme.Button,
-                        GUILayout.Width(EsuHudLayout.Scale(58f))))
-                {
-                    _selectedController = target;
-                }
 
-                if (CanLinkControllerTarget(_selectedController, target) &&
-                    GUILayout.Button(
-                        IsLinked(_selectedController, target) ? "unlink" : "link",
-                        DecorationEditorTheme.Button,
-                        GUILayout.Width(EsuHudLayout.Scale(58f))))
-                {
-                    ToggleLink(_selectedController, target);
-                }
-            }
-            else if (GUILayout.Button(
-                         IsLinked(_selectedController, target) ? "unlink" : "link",
-                         DecorationEditorTheme.Button,
-                         GUILayout.Width(EsuHudLayout.Scale(58f))))
+        }
+
+        private static string TargetRowTooltip(AutomationTarget target)
+        {
+            if (target == null)
+                return string.Empty;
+            return target.IsController
+                ? "Click to select this controller, or link it when the selected controller can drive controller targets."
+                : "Click to link or unlink this target with the selected controller.";
+        }
+
+        private void HandleTargetRowClick(AutomationTarget target)
+        {
+            if (target == null)
+                return;
+
+            if (target.IsController && !CanLinkControllerTarget(_selectedController, target))
             {
-                if (_selectedController != null)
-                    ToggleLink(_selectedController, target);
-                else
-                    _status = "Select a controller before linking targets.";
+                SelectAutomationController(target);
+                return;
             }
-            GUILayout.EndHorizontal();
+
+            if (_selectedController == null)
+            {
+                _status = "Select a controller before linking targets.";
+                return;
+            }
+
+            ToggleLink(_selectedController, target);
         }
 
         private void DrawEditor(int id)
@@ -1923,7 +2046,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _status = "Automation editor fitted to the available viewport.";
             }
             if (GUILayout.Button("x", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
-                _editorOpen = false;
+                CloseEditor();
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Graph", DecorationEditorTheme.ToolButton(_editorPage == AutomationEditorPage.Graph)))
@@ -1932,7 +2055,14 @@ namespace DecoLimitLifter.AutomationEditMode
                 _editorPage = AutomationEditorPage.Code;
             GUILayout.EndHorizontal();
             DecorationEditorTheme.Separator();
-            _editorScroll = GUILayout.BeginScrollView(_editorScroll);
+            float scrollHeight = Mathf.Max(
+                EsuHudLayout.Scale(180f),
+                _editorRect.height - inset * 2f - EsuHudLayout.Scale(132f));
+            _editorScroll = GUILayout.BeginScrollView(
+                _editorScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.Height(scrollHeight));
             if (_editorPage == AutomationEditorPage.Graph)
                 DrawGraphEditor();
             else
@@ -5316,6 +5446,12 @@ namespace DecoLimitLifter.AutomationEditMode
                 _layoutInitialized = true;
             }
 
+            if (_editorOpen)
+            {
+                _editorRect = FullScreenEditorRect();
+                return;
+            }
+
             if (!ValidRect(_leftPanelRect))
                 _leftPanelRect = DefaultLeftPanelRect();
             if (!ValidRect(_rightPanelRect))
@@ -5330,6 +5466,14 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void HandleAutomationPanelResizes()
         {
+            if (_editorOpen)
+            {
+                _resizingLeftPanel = false;
+                _resizingRightPanel = false;
+                _resizingEditor = false;
+                return;
+            }
+
             if (_showLeftPanel)
             {
                 HandleAutomationPanelResize(
@@ -5362,21 +5506,6 @@ namespace DecoLimitLifter.AutomationEditMode
                     BottomPanelLimit());
             }
 
-            if (_editorOpen)
-            {
-                HandleAutomationPanelResize(
-                    ref _editorRect,
-                    ref _resizingEditor,
-                    ref _editorResizeStart,
-                    ref _editorResizeMouseStart,
-                    resizeFromLeft: false,
-                    MinEditorWidth(),
-                    MinEditorHeight(),
-                    MaxEditorWidth(),
-                    MaxEditorHeight(),
-                    ToolbarBottomLimit(),
-                    BottomPanelLimit());
-            }
         }
 
         private void HandleAutomationPanelResize(
@@ -5450,6 +5579,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void DrawAutomationResizeGrips()
         {
+            if (_editorOpen)
+                return;
+
             if (_showLeftPanel)
             {
                 EsuHudLayout.DrawResizeGrip(_leftPanelRect, leftEdge: false);
@@ -5466,26 +5598,19 @@ namespace DecoLimitLifter.AutomationEditMode
                     "Drag to resize the Automation block palette.");
             }
 
-            if (_editorOpen)
-            {
-                EsuHudLayout.DrawResizeGrip(_editorRect, leftEdge: false);
-                EsuCursorTooltip.Register(
-                    EsuHudLayout.ResizeGripRect(_editorRect, leftEdge: false),
-                    "Drag to resize the Automation graph/code editor.");
-            }
         }
 
         private void FitEditorToViewport()
         {
-            _editorRect = ClampEditorPanel(DefaultEditorRect());
-            s_editorRect = _editorRect;
+            _editorRect = FullScreenEditorRect();
         }
 
         private void PersistLayoutState()
         {
             s_leftPanelRect = _leftPanelRect;
             s_rightPanelRect = _rightPanelRect;
-            s_editorRect = _editorRect;
+            if (!_editorOpen)
+                s_editorRect = _editorRect;
             s_layoutGeneration = _layoutResetGeneration;
         }
 
@@ -5582,6 +5707,16 @@ namespace DecoLimitLifter.AutomationEditMode
                 MaxEditorHeight());
         }
 
+        private static Rect FullScreenEditorRect()
+        {
+            float margin = EsuHudLayout.Scale(8f);
+            return new Rect(
+                margin,
+                margin,
+                Mathf.Max(1f, Screen.width - margin * 2f),
+                Mathf.Max(1f, Screen.height - margin * 2f));
+        }
+
         private static Rect ClampLeftPanel(Rect rect) =>
             EsuHudLayout.ClampPanel(
                 rect,
@@ -5624,6 +5759,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private bool IsMouseOverAnyUi(Vector2 mouse)
         {
+            if (_editorOpen)
+                return true;
+
             if (_toolbarRect.Contains(mouse))
                 return true;
             if (_showLeftPanel && _leftPanelRect.Contains(mouse))
