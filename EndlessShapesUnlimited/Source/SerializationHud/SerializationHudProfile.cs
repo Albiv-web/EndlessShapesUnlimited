@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using BrilliantSkies.Localisation;
 using BrilliantSkies.PlayerProfiles;
 using InControl;
@@ -27,6 +28,17 @@ namespace DecoLimitLifter.SerializationHud
             public bool FastBlueprintLoadForceV2BlockData { get; set; }
             public bool FastBlueprintLoadBlockCountRouting { get; set; }
             public FastBlueprintLoadUnsafeProbeMode FastBlueprintLoadUnsafeProbeMode { get; set; }
+            public List<AutomationSystemBlockTemplateData> AutomationSystemBlockTemplates { get; set; } =
+                new List<AutomationSystemBlockTemplateData>();
+        }
+
+        public sealed class AutomationSystemBlockTemplateData
+        {
+            public string Name { get; set; }
+            public List<string> InputPorts { get; set; } = new List<string>();
+            public List<string> OutputPorts { get; set; } = new List<string>();
+            public string Comment { get; set; }
+            public string InternalGraph { get; set; }
         }
 
         internal static ProfileData Data =>

@@ -146,6 +146,9 @@ release pass.
   selected controller into the draft System Block, use `Suggest ports`, `Check`,
   `Apply template`, and `Revert draft`, and confirm the tab stores only ESU
   metadata for named ports/templates with no native controller mutation.
+- Close/reopen Automation Editor after applying a System Block template and
+  confirm the reusable template library reloads the template without requiring
+  the original controller/craft identity.
 - Return to the Graph page and confirm the saved System Block appears as a
   visible `System Block nodes` graph node with compact input/output port
   summaries and `Enter`, `Ports`, and `Code` actions.

@@ -1819,6 +1819,9 @@ f 0 2 3
                Math.Abs(EsuHudLayout.ScaleForScreen(1920, 1080, autoScale: false, manualScale: 2f) - 2f) < 0.001f &&
                Math.Abs(EsuHudLayout.ClampManualScale(float.NaN) - 1f) < 0.001f,
             "ESU editor HUD scaling defaults to automatic laptop-friendly sizing with a 10%-200% manual multiplier.");
+        Assert(data.AutomationSystemBlockTemplates != null &&
+               data.AutomationSystemBlockTemplates.Count == 0,
+            "Automation System Block reusable templates default to an empty profile library.");
 
         PropertyInfo filename = typeof(SerializationHudProfile).GetProperty(
             "FilenameAndExtension",
@@ -1857,6 +1860,11 @@ f 0 2 3
                profileSource.Contains("FastBlueprintLoadForceV2BlockData") &&
                profileSource.Contains("FastBlueprintLoadBlockCountRouting") &&
                profileSource.Contains("FastBlueprintLoadUnsafeProbeMode") &&
+               profileSource.Contains("AutomationSystemBlockTemplates") &&
+               profileSource.Contains("AutomationSystemBlockTemplateData") &&
+               profileSource.Contains("InputPorts") &&
+               profileSource.Contains("OutputPorts") &&
+               profileSource.Contains("InternalGraph") &&
                profileSource.Contains("SkipV3SyncRegistration") &&
                profileSource.Contains("SkipV3StatusRegistration") &&
                profileSource.Contains("SkipStage2ModuleExternalLinkup") &&
@@ -7175,6 +7183,11 @@ f 0 2 3
         string automationTryLeaveSystemBlockWorkspaceSource = ExtractMethodSource(automationSessionSource, "TryLeaveSystemBlockWorkspace");
         string automationValidateSystemBlockDraftSource = ExtractMethodSource(automationSessionSource, "ValidateSystemBlockDraft");
         string automationApplySystemBlockTemplateSource = ExtractMethodSource(automationSessionSource, "ApplySystemBlockTemplate");
+        string automationLoadSystemBlockTemplateLibrarySource = ExtractMethodSource(automationSessionSource, "LoadSystemBlockTemplateLibrary");
+        string automationPersistSystemBlockTemplateLibrarySource = ExtractMethodSource(automationSessionSource, "PersistSystemBlockTemplateLibrary");
+        string automationProfileTemplateToSystemBlockSource = ExtractMethodSource(automationSessionSource, "ProfileTemplateToSystemBlock");
+        string automationSystemBlockToProfileTemplateSource = ExtractMethodSource(automationSessionSource, "SystemBlockToProfileTemplate");
+        string automationTemplateLibraryKeySource = ExtractMethodSource(automationSessionSource, "TemplateLibraryKey");
         string automationParseSystemBlockPortsSource = ExtractMethodSource(automationSessionSource, "ParseSystemBlockPorts");
         string automationSystemBlockBreadcrumbSource = ExtractMethodSource(automationSessionSource, "SystemBlockBreadcrumb");
         string automationCompactHeaderSource = ExtractMethodSource(automationSessionSource, "DrawCompactIconHeader");
@@ -7624,6 +7637,7 @@ f 0 2 3
                automationDrawEditorSource.Contains("DrawEditorBottomStrip()") &&
                automationSessionSource.Contains("AutomationEditorPage.System") &&
                automationSessionSource.Contains("AutomationSystemBlockTemplate") &&
+               automationSessionSource.Contains("LoadSystemBlockTemplateLibrary()") &&
                automationDrawEditorSource.Contains("new GUIContent(\"System\"") &&
                automationDrawEditorSource.Contains("new GUIContent(\"Up\"") &&
                automationDrawEditorSource.Contains("DrawSystemBlockEditor()") &&
@@ -7678,6 +7692,7 @@ f 0 2 3
                automationWorkspaceSafetySource.Contains("deterministic and lower into native Breadboard nodes") &&
                automationDrawSystemBlockEditorSource.Contains("System Block signature") &&
                automationDrawSystemBlockEditorSource.Contains("ESU-only template metadata") &&
+               automationDrawSystemBlockEditorSource.Contains("reusable library") &&
                automationDrawSystemBlockEditorSource.Contains("Suggest ports") &&
                automationDrawSystemBlockEditorSource.Contains("Apply template") &&
                automationDrawSystemBlockEditorSource.Contains("Revert draft") &&
@@ -7697,12 +7712,24 @@ f 0 2 3
                automationValidateSystemBlockDraftSource.Contains("metadata only") &&
                automationValidateSystemBlockDraftSource.Contains("no native mutation") &&
                automationValidateSystemBlockDraftSource.Contains("is duplicated") &&
+               automationApplySystemBlockTemplateSource.Contains("PersistSystemBlockTemplateLibrary()") &&
                automationApplySystemBlockTemplateSource.Contains("mutates no native controller data") &&
+               automationLoadSystemBlockTemplateLibrarySource.Contains("AutomationSystemBlockTemplates") &&
+               automationLoadSystemBlockTemplateLibrarySource.Contains("ProfileTemplateToSystemBlock") &&
+               automationPersistSystemBlockTemplateLibrarySource.Contains("ProfileManager.Instance.Save") &&
+               automationPersistSystemBlockTemplateLibrarySource.Contains("SerializationHudProfile") &&
+               automationPersistSystemBlockTemplateLibrarySource.Contains("Take(64)") &&
+               automationProfileTemplateToSystemBlockSource.Contains("string.Empty") &&
+               automationProfileTemplateToSystemBlockSource.Contains("Reusable template") &&
+               automationSystemBlockToProfileTemplateSource.Contains("InputPorts") &&
+               automationSystemBlockToProfileTemplateSource.Contains("InternalGraph") &&
+               automationTemplateLibraryKeySource.Contains("NormalizeSystemBlockPortName") &&
                automationParseSystemBlockPortsSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
                automationSystemBlockBreadcrumbSource.Contains("Root >") &&
                automationSystemBlockBreadcrumbSource.Contains("Internal Graph") &&
                changeTestChecklistSource.Contains("System` tab") &&
                changeTestChecklistSource.Contains("Apply template") &&
+               changeTestChecklistSource.Contains("reusable template library reloads") &&
                changeTestChecklistSource.Contains("`System Block nodes`") &&
                changeTestChecklistSource.Contains("`Ports`") &&
                changeTestChecklistSource.Contains("`Check lowering`") &&

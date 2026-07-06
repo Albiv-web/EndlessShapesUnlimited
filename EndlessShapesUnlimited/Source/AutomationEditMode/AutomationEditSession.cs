@@ -6,7 +6,9 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.Ui.Special.InfoStore;
+using BrilliantSkies.PlayerProfiles;
 using DecoLimitLifter.DecorationEditMode;
+using DecoLimitLifter.SerializationHud;
 using DecoLimitLifter.SmartBuildMode;
 using UnityEngine;
 
@@ -256,6 +258,7 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             Active = true;
             AutomationInputScope.Begin();
+            LoadSystemBlockTemplateLibrary();
             RefreshTargets(force: true);
         }
 
@@ -4343,7 +4346,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             if (AutomationGUILayoutButton(
-                    new GUIContent("Apply template", DecorationEditorIconCatalog.Get("save"), "Save this ESU-only System Block template for the current session."),
+                    new GUIContent("Apply template", DecorationEditorIconCatalog.Get("save"), "Save this ESU-only System Block template to the reusable library."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(122f)),
                     GUILayout.Height(EsuHudLayout.Scale(26f))))
@@ -4381,10 +4384,10 @@ namespace DecoLimitLifter.AutomationEditMode
         private void DrawSystemBlockTemplateList()
         {
             GUILayout.Space(EsuHudLayout.Scale(8f));
-            GUILayout.Label("Session templates", DecorationEditorTheme.SubHeader);
+            GUILayout.Label("Reusable templates", DecorationEditorTheme.SubHeader);
             if (_systemBlockTemplates.Count == 0)
             {
-                GUILayout.Label("No System Block templates saved this session.", DecorationEditorTheme.MiniWrap);
+                GUILayout.Label("No reusable System Block templates saved.", DecorationEditorTheme.MiniWrap);
                 return;
             }
 
@@ -4418,7 +4421,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
 
                 if (AutomationGUILayoutButton(
-                        new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove this session template."),
+                        new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove this reusable template."),
                         DecorationEditorTheme.Button,
                         GUILayout.Width(EsuHudLayout.Scale(76f)),
                         GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -4426,7 +4429,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     RemoveSystemBlockTemplateAt(index);
                     if (_activeSystemBlockTemplateIndex >= _systemBlockTemplates.Count)
                         _activeSystemBlockTemplateIndex = -1;
-                    _status = "Removed System Block session template.";
+                    PersistSystemBlockTemplateLibrary();
+                    _status = "Removed reusable System Block template.";
                     GUILayout.EndHorizontal();
                     GUILayout.EndVertical();
                     return;
@@ -4565,6 +4569,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             _systemBlockDraftDirty = false;
+            PersistSystemBlockTemplateLibrary();
             _systemBlockValidationStatus =
                 "System Block check passed: template stores ESU-only metadata and mutates no native controller data.";
             _status =
@@ -4605,7 +4610,8 @@ namespace DecoLimitLifter.AutomationEditMode
             return string.Equals(
                 template.ControllerKey,
                 _selectedController.StableKey,
-                StringComparison.Ordinal);
+                StringComparison.Ordinal) ||
+                   string.IsNullOrWhiteSpace(template.ControllerKey);
         }
 
         private void CheckSystemBlockNativeLowering(AutomationSystemBlockTemplate template)
@@ -4907,6 +4913,136 @@ namespace DecoLimitLifter.AutomationEditMode
                 _activeSystemBlockTemplateIndex--;
         }
 
+        private void LoadSystemBlockTemplateLibrary()
+        {
+            try
+            {
+                List<SerializationHudProfile.AutomationSystemBlockTemplateData> stored =
+                    SerializationHudProfile.Data?.AutomationSystemBlockTemplates;
+                if (stored == null || stored.Count == 0)
+                    return;
+
+                int loaded = 0;
+                foreach (SerializationHudProfile.AutomationSystemBlockTemplateData data in stored)
+                {
+                    AutomationSystemBlockTemplate template = ProfileTemplateToSystemBlock(data);
+                    if (template == null || HasSystemBlockLibraryTemplate(template))
+                        continue;
+
+                    _systemBlockTemplates.Add(template);
+                    loaded++;
+                }
+
+                if (loaded > 0 && string.Equals(_status, "Select or place a Breadboard/ACB controller.", StringComparison.Ordinal))
+                    _status = "Loaded " + loaded.ToString(CultureInfo.InvariantCulture) + " reusable System Block template(s).";
+            }
+            catch (Exception exception)
+            {
+                AdvLogger.LogException(
+                    "[EndlessShapes Unlimited] Could not load Automation System Block templates",
+                    exception,
+                    LogOptions._AlertDevInGame);
+            }
+        }
+
+        private void PersistSystemBlockTemplateLibrary()
+        {
+            try
+            {
+                SerializationHudProfile.ProfileData profile = SerializationHudProfile.Data;
+                if (profile == null)
+                    return;
+
+                profile.AutomationSystemBlockTemplates = _systemBlockTemplates
+                    .Where(template => template != null)
+                    .GroupBy(TemplateLibraryKey, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => SystemBlockToProfileTemplate(group.Last()))
+                    .Where(template => template != null)
+                    .Take(64)
+                    .ToList();
+                ProfileManager.Instance.Save(module => module is SerializationHudProfile);
+            }
+            catch (Exception exception)
+            {
+                AdvLogger.LogException(
+                    "[EndlessShapes Unlimited] Could not persist Automation System Block templates",
+                    exception,
+                    LogOptions._AlertDevInGame);
+                _status = "Could not persist the reusable System Block template library.";
+            }
+        }
+
+        private bool HasSystemBlockLibraryTemplate(AutomationSystemBlockTemplate template)
+        {
+            string key = TemplateLibraryKey(template);
+            return _systemBlockTemplates.Any(existing =>
+                string.Equals(TemplateLibraryKey(existing), key, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static SerializationHudProfile.AutomationSystemBlockTemplateData SystemBlockToProfileTemplate(
+            AutomationSystemBlockTemplate template)
+        {
+            if (template == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationSystemBlockTemplateData
+            {
+                Name = template.Name,
+                InputPorts = template.InputPorts?.ToList() ?? new List<string>(),
+                OutputPorts = template.OutputPorts?.ToList() ?? new List<string>(),
+                Comment = template.Comment,
+                InternalGraph = template.InternalGraph
+            };
+        }
+
+        private static AutomationSystemBlockTemplate ProfileTemplateToSystemBlock(
+            SerializationHudProfile.AutomationSystemBlockTemplateData data)
+        {
+            if (data == null)
+                return null;
+
+            string name = NormalizeSystemBlockPortName(data.Name);
+            IReadOnlyList<string> inputs = (data.InputPorts ?? new List<string>())
+                .Select(NormalizeSystemBlockPortName)
+                .Where(port => !string.IsNullOrWhiteSpace(port))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            IReadOnlyList<string> outputs = (data.OutputPorts ?? new List<string>())
+                .Select(NormalizeSystemBlockPortName)
+                .Where(port => !string.IsNullOrWhiteSpace(port))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (string.IsNullOrWhiteSpace(name) || (inputs.Count == 0 && outputs.Count == 0))
+                return null;
+
+            return new AutomationSystemBlockTemplate(
+                name,
+                string.Empty,
+                "Reusable template",
+                inputs,
+                outputs,
+                data.Comment,
+                data.InternalGraph);
+        }
+
+        private static string TemplateLibraryKey(AutomationSystemBlockTemplate template)
+        {
+            if (template == null)
+                return string.Empty;
+
+            return NormalizeSystemBlockPortName(template.Name) +
+                   "|in:" +
+                   string.Join(",", (template.InputPorts ?? Array.Empty<string>())
+                       .Select(NormalizeSystemBlockPortName)
+                       .OrderBy(port => port, StringComparer.OrdinalIgnoreCase)
+                       .ToArray()) +
+                   "|out:" +
+                   string.Join(",", (template.OutputPorts ?? Array.Empty<string>())
+                       .Select(NormalizeSystemBlockPortName)
+                       .OrderBy(port => port, StringComparer.OrdinalIgnoreCase)
+                       .ToArray());
+        }
+
         private string ExistingSystemBlockInternalGraph(int index)
         {
             if (index >= 0 && index < _systemBlockTemplates.Count)
@@ -5004,6 +5140,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 template.WithInternalGraph(_systemBlockInternalDraft);
             _systemBlockInternalApplied = _systemBlockInternalDraft;
             _systemBlockInternalDirty = false;
+            PersistSystemBlockTemplateLibrary();
             _systemBlockInternalStatus =
                 "System Block internal check passed: ESU-only nested graph metadata saved, no native mutation.";
             _status =
