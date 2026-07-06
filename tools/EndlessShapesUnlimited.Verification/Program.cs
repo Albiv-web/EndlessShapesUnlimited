@@ -7161,6 +7161,11 @@ f 0 2 3
         string automationWorkspaceSafetySource = ExtractMethodSource(automationSessionSource, "WorkspaceSafetyLine");
         string automationDrawSystemBlockHostNodesSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNodes");
         string automationDrawSystemBlockHostNodeSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNode");
+        string automationCheckSystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "CheckSystemBlockNativeLowering");
+        string automationApplySystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "ApplySystemBlockNativeLowering");
+        string automationTryPlanSystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "TryPlanSystemBlockNativeLowering");
+        string automationRevertLastSystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "RevertLastSystemBlockNativeLowering");
+        string automationCanRevertLastSystemBlockLoweringSource = ExtractMethodSource(automationSessionSource, "CanRevertLastSystemBlockLowering");
         string automationDrawSystemBlockEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockEditor");
         string automationDrawSystemBlockInternalGraphEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockInternalGraphEditor");
         string automationEnterSystemBlockTemplateSource = ExtractMethodSource(automationSessionSource, "EnterSystemBlockTemplate");
@@ -7633,7 +7638,22 @@ f 0 2 3
                automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Enter\"") &&
                automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Ports\"") &&
                automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Code\"") &&
+               automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Check lowering\"") &&
+               automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Apply proxies\"") &&
+               automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Revert\"") &&
                automationDrawSystemBlockHostNodeSource.Contains("lowering through native Graph/Code") &&
+               automationCheckSystemBlockNativeLoweringSource.Contains("no native mutation during Check") &&
+               automationApplySystemBlockNativeLoweringSource.Contains("TryCreateTargetProxy") &&
+               automationApplySystemBlockNativeLoweringSource.Contains("Generic Getter/Setter node") &&
+               automationApplySystemBlockNativeLoweringSource.Contains("Revert is available") &&
+               automationApplySystemBlockNativeLoweringSource.Contains("created only") &&
+               automationTryPlanSystemBlockNativeLoweringSource.Contains("IsBreadboardController") &&
+               automationTryPlanSystemBlockNativeLoweringSource.Contains("TargetGettersFor") &&
+               automationTryPlanSystemBlockNativeLoweringSource.Contains("TargetSettersFor") &&
+               automationTryPlanSystemBlockNativeLoweringSource.Contains("IsBreadboardReadableTarget") &&
+               automationTryPlanSystemBlockNativeLoweringSource.Contains("IsBreadboardWritableTarget") &&
+               automationRevertLastSystemBlockNativeLoweringSource.Contains("System Block proxy node") &&
+               automationCanRevertLastSystemBlockLoweringSource.Contains("_lastSystemBlockLoweringRevert") &&
                automationIsSystemBlockTemplateForSelectedControllerSource.Contains("template.ControllerKey") &&
                automationIsSystemBlockTemplateForSelectedControllerSource.Contains("_selectedController.StableKey") &&
                automationDrawWorkspaceGuideSource.Contains("Workspace guide") &&
@@ -7652,6 +7672,7 @@ f 0 2 3
                automationWorkspaceStageSource.Contains("System graph") &&
                automationWorkspaceStageSource.Contains("Build graph") &&
                automationWorkspaceSafetySource.Contains("Revert compile") &&
+               automationWorkspaceSafetySource.Contains("System Block native proxy lowering has a Revert path") &&
                automationWorkspaceSafetySource.Contains("Nested System Blocks store ESU layout/group metadata") &&
                automationWorkspaceSafetySource.Contains("System Blocks store ESU-only names") &&
                automationWorkspaceSafetySource.Contains("deterministic and lower into native Breadboard nodes") &&
@@ -7684,6 +7705,8 @@ f 0 2 3
                changeTestChecklistSource.Contains("Apply template") &&
                changeTestChecklistSource.Contains("`System Block nodes`") &&
                changeTestChecklistSource.Contains("`Ports`") &&
+               changeTestChecklistSource.Contains("`Check lowering`") &&
+               changeTestChecklistSource.Contains("`Apply proxies`") &&
                changeTestChecklistSource.Contains("`Enter`") &&
                changeTestChecklistSource.Contains("`Check internals`") &&
                changeTestChecklistSource.Contains("`Up` control") &&

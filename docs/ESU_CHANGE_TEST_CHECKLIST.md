@@ -149,6 +149,10 @@ release pass.
 - Return to the Graph page and confirm the saved System Block appears as a
   visible `System Block nodes` graph node with compact input/output port
   summaries and `Enter`, `Ports`, and `Code` actions.
+- On the System Block graph node, use `Check lowering` and confirm it reports
+  the native Generic Getter/Setter proxies that can be created without mutation.
+  Use `Apply proxies`, confirm matching linked ports create native proxy nodes,
+  then use `Revert` to remove only the generated System Block proxy nodes.
 - After applying a System Block template, use `Enter` to open the nested
   workspace. Confirm the breadcrumb reads from `Root` through the controller and
   System Block into `Internal Graph`, edit the internal graph draft, use

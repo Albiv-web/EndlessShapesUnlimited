@@ -178,6 +178,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private string _automationCodeControllerKey = string.Empty;
         private int _automationCodeRecipeIndex;
         private AutomationCompileRevertSet _lastCompileRevert;
+        private AutomationCompileRevertSet _lastSystemBlockLoweringRevert;
         private readonly List<AutomationSystemBlockTemplate> _systemBlockTemplates =
             new List<AutomationSystemBlockTemplate>();
         private string _systemBlockDraftControllerKey = string.Empty;
@@ -432,6 +433,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _automationCodeOutputTargetKey = string.Empty;
             _automationCodeControllerKey = string.Empty;
             _lastCompileRevert = null;
+            _lastSystemBlockLoweringRevert = null;
             _lastCompileBoundOutput = false;
             _lastRuntimeDiagnostics = AutomationRuntimeDiagnosticResult.Empty;
             _lastRuntimeDiagnosticsControllerKey = string.Empty;
@@ -670,6 +672,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _automationCodeOutputTargetKey = string.Empty;
             _automationCodeControllerKey = string.Empty;
             _lastCompileRevert = null;
+            _lastSystemBlockLoweringRevert = null;
             _lastCompileBoundOutput = false;
             _lastRuntimeDiagnostics = AutomationRuntimeDiagnosticResult.Empty;
             _lastRuntimeDiagnosticsControllerKey = string.Empty;
@@ -1315,6 +1318,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _automationCodeControllerKey = string.Empty;
                 _wireSourceComponentId = NoWireSourceComponentId;
                 _wireSourceOutputIndex = -1;
+                _lastSystemBlockLoweringRevert = null;
                 _selectedCanvasComponentId = NoWireSourceComponentId;
                 _canvasDragComponentId = NoWireSourceComponentId;
                 _canvasDragPreviewDelta = Vector2.zero;
@@ -1637,6 +1641,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _automationCodeOutputTargetKey = string.Empty;
                 _wireSourceComponentId = NoWireSourceComponentId;
                 _wireSourceOutputIndex = -1;
+                _lastSystemBlockLoweringRevert = null;
                 _selectedCanvasComponentId = NoWireSourceComponentId;
                 _canvasDragComponentId = NoWireSourceComponentId;
                 _canvasDragPreviewDelta = Vector2.zero;
@@ -2525,7 +2530,12 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
 
                 if (IsBreadboardController(_selectedController.Controller))
+                {
+                    if (CanRevertLastSystemBlockLowering())
+                        return "Review generated System Block proxy nodes, or use Revert on the System Block graph node.";
+
                     return "Inspect native nodes, add Generic proxy nodes, switch to Code, or create/enter System Blocks.";
+                }
 
                 return "Inspect native ACB data; changes are written to FtD controller data.";
             }
@@ -2550,6 +2560,8 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             if (CanRevertLastAutomationCompile())
                 return "Generated recipe nodes have a Revert compile path.";
+            if (CanRevertLastSystemBlockLowering())
+                return "System Block native proxy lowering has a Revert path.";
             if (_editorOpen && IsSystemBlockWorkspaceOpen())
                 return "Nested System Blocks store ESU layout/group metadata only; Graph/Code lowering still writes native nodes.";
             if (_editorOpen && _editorPage == AutomationEditorPage.System)
@@ -3738,11 +3750,15 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label(
                 CanRevertLastAutomationCompile()
                     ? "Generated nodes: revert available"
+                    : CanRevertLastSystemBlockLowering()
+                        ? "System proxies: revert available"
                     : _editorPage == AutomationEditorPage.System
                         ? "System template: ESU metadata"
                     : "Native edits apply immediately",
                 CanRevertLastAutomationCompile()
                     ? DecorationEditorTheme.Warning
+                    : CanRevertLastSystemBlockLowering()
+                        ? DecorationEditorTheme.Warning
                     : _editorPage == AutomationEditorPage.System
                         ? DecorationEditorTheme.Body
                     : DecorationEditorTheme.Mini,
@@ -3917,6 +3933,36 @@ namespace DecoLimitLifter.AutomationEditMode
                 _editorPage = AutomationEditorPage.Code;
                 _status = "System Block Code page uses deterministic recipes and lowers into native Breadboard nodes.";
             }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Check lowering", DecorationEditorIconCatalog.Get("risk"), "Check which exposed ports can lower to native Generic Getter/Setter proxies."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(122f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                CheckSystemBlockNativeLowering(template);
+            }
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Apply proxies", DecorationEditorIconCatalog.Get("save"), "Create missing native Generic Getter/Setter proxy nodes for this System Block's linked ports."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(112f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                ApplySystemBlockNativeLowering(template);
+            }
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && CanRevertLastSystemBlockLowering();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Revert", DecorationEditorIconCatalog.Get("cancel"), "Remove the native proxy nodes created by the last System Block lowering apply."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(72f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                RevertLastSystemBlockNativeLowering();
+            }
+            GUI.enabled = previous;
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             GUILayout.EndVertical();
@@ -4560,6 +4606,231 @@ namespace DecoLimitLifter.AutomationEditMode
                 template.ControllerKey,
                 _selectedController.StableKey,
                 StringComparison.Ordinal);
+        }
+
+        private void CheckSystemBlockNativeLowering(AutomationSystemBlockTemplate template)
+        {
+            if (!TryPlanSystemBlockNativeLowering(
+                    template,
+                    out _,
+                    out IReadOnlyList<AutomationSystemBlockLoweringCandidate> candidates,
+                    out int alreadyLowered,
+                    out string message))
+            {
+                _status = message;
+                return;
+            }
+
+            int componentCount = SystemBlockLoweringComponentCount(candidates);
+            _status =
+                componentCount == 0
+                    ? "System Block lowering check passed: " +
+                      alreadyLowered.ToString(CultureInfo.InvariantCulture) +
+                      " matching native proxy path(s) already exist."
+                    : "System Block lowering check passed: Apply proxies can create " +
+                      componentCount.ToString(CultureInfo.InvariantCulture) +
+                      " native Generic Getter/Setter node(s); no native mutation during Check.";
+        }
+
+        private void ApplySystemBlockNativeLowering(AutomationSystemBlockTemplate template)
+        {
+            if (!TryPlanSystemBlockNativeLowering(
+                    template,
+                    out AutomationBreadboardInspector inspector,
+                    out IReadOnlyList<AutomationSystemBlockLoweringCandidate> candidates,
+                    out int alreadyLowered,
+                    out string message))
+            {
+                _status = message;
+                return;
+            }
+
+            if (candidates.Count == 0)
+            {
+                _status =
+                    "System Block native lowering already has " +
+                    alreadyLowered.ToString(CultureInfo.InvariantCulture) +
+                    " matching proxy path(s); no new native nodes were needed.";
+                return;
+            }
+
+            var createdComponentIds = new List<uint>();
+            var messages = new List<string>();
+            foreach (AutomationSystemBlockLoweringCandidate candidate in candidates)
+            {
+                if (!inspector.TryCreateTargetProxy(
+                        candidate.Target,
+                        candidate.Getter,
+                        candidate.Setter,
+                        out AutomationBreadboardCompileResult result,
+                        out string proxyMessage))
+                {
+                    DeleteBreadboardComponents(inspector, createdComponentIds, out _, out _);
+                    _status =
+                        "System Block lowering failed for " +
+                        candidate.TargetLabel +
+                        ": " +
+                        (proxyMessage ?? "FtD rejected the native proxy node.") +
+                        ". Rolled back created proxy nodes.";
+                    return;
+                }
+
+                int actualCreated = result?.ComponentIds?.Count ?? 0;
+                if (actualCreated < candidate.ComponentCount)
+                {
+                    if (result?.ComponentIds != null)
+                        createdComponentIds.AddRange(result.ComponentIds.Where(id => id != 0U));
+                    DeleteBreadboardComponents(inspector, createdComponentIds, out _, out _);
+                    _status =
+                        "System Block lowering created only " +
+                        actualCreated.ToString(CultureInfo.InvariantCulture) +
+                        " of " +
+                        candidate.ComponentCount.ToString(CultureInfo.InvariantCulture) +
+                        " required proxy node(s) for " +
+                        candidate.TargetLabel +
+                        ". Rolled back created proxy nodes.";
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(proxyMessage))
+                    messages.Add(proxyMessage);
+                if (result?.ComponentIds != null)
+                    createdComponentIds.AddRange(result.ComponentIds.Where(id => id != 0U));
+            }
+
+            uint[] created = createdComponentIds
+                .Distinct()
+                .ToArray();
+            _lastSystemBlockLoweringRevert = new AutomationCompileRevertSet(
+                _selectedController?.StableKey,
+                new AutomationBreadboardCompileResult("system block proxy lowering", created));
+            _editorPage = AutomationEditorPage.Graph;
+            _status =
+                "Applied System Block '" +
+                template.Name +
+                "' to native Breadboard proxies: created " +
+                created.Length.ToString(CultureInfo.InvariantCulture) +
+                " Generic Getter/Setter node(s). Revert is available." +
+                (messages.Count == 0 ? string.Empty : " " + messages[messages.Count - 1]);
+        }
+
+        private bool TryPlanSystemBlockNativeLowering(
+            AutomationSystemBlockTemplate template,
+            out AutomationBreadboardInspector inspector,
+            out IReadOnlyList<AutomationSystemBlockLoweringCandidate> candidates,
+            out int alreadyLowered,
+            out string message)
+        {
+            inspector = null;
+            candidates = Array.Empty<AutomationSystemBlockLoweringCandidate>();
+            alreadyLowered = 0;
+            message = null;
+            if (!IsSystemBlockTemplateForSelectedController(template))
+            {
+                message = "Select the controller that owns this System Block before lowering it.";
+                return false;
+            }
+
+            if (!IsBreadboardController(_selectedController.Controller))
+            {
+                message = "System Block native lowering currently targets Breadboard controllers through Generic Getter/Setter proxy nodes.";
+                return false;
+            }
+
+            if (!AutomationBreadboardInspector.TryCreate(
+                    _selectedController.Block,
+                    _selectedController.Controller,
+                    out inspector,
+                    out string reason))
+            {
+                message = reason ?? "Selected controller does not expose a native Breadboard.";
+                return false;
+            }
+
+            var inputPorts = new HashSet<string>(
+                template.InputPorts.Select(NormalizeSystemBlockPortName),
+                StringComparer.OrdinalIgnoreCase);
+            var outputPorts = new HashSet<string>(
+                template.OutputPorts.Select(NormalizeSystemBlockPortName),
+                StringComparer.OrdinalIgnoreCase);
+            if (inputPorts.Count == 0 && outputPorts.Count == 0)
+            {
+                message = "System Block needs at least one exposed port before native lowering.";
+                return false;
+            }
+
+            bool canGetter = inspector.CanAddComponent("GenericBlockGetter");
+            bool canSetter = inspector.CanAddComponent("GenericBlockSetter");
+            if (!canGetter && inputPorts.Count > 0)
+            {
+                message = "This native board does not advertise Generic Getter components for System Block inputs.";
+                return false;
+            }
+
+            if (!canSetter && outputPorts.Count > 0)
+            {
+                message = "This native board does not advertise Generic Setter components for System Block outputs.";
+                return false;
+            }
+
+            IReadOnlyList<AutomationBreadboardComponentSummary> components = inspector.Components;
+            var planned = new List<AutomationSystemBlockLoweringCandidate>();
+            int matchedPorts = 0;
+            foreach (AutomationLink link in SelectedLinks)
+            {
+                AutomationTarget target = link?.Target;
+                if (target == null)
+                    continue;
+
+                string portName = NormalizeSystemBlockPortName(AutomationCodeIdentifierForTarget(target));
+                bool inputMatch =
+                    inputPorts.Contains(portName) &&
+                    AutomationTargetCatalog.IsBreadboardReadableTarget(target);
+                bool outputMatch =
+                    outputPorts.Contains(portName) &&
+                    AutomationTargetCatalog.IsBreadboardWritableTarget(target);
+                if (!inputMatch && !outputMatch)
+                    continue;
+
+                matchedPorts++;
+                bool needsGetter =
+                    inputMatch &&
+                    !TargetGettersFor(components, target).Any();
+                bool needsSetter =
+                    outputMatch &&
+                    !TargetSettersFor(components, target).Any();
+                if (!needsGetter && !needsSetter)
+                {
+                    alreadyLowered++;
+                    continue;
+                }
+
+                planned.Add(new AutomationSystemBlockLoweringCandidate(
+                    link,
+                    portName,
+                    needsGetter,
+                    needsSetter));
+            }
+
+            if (matchedPorts == 0)
+            {
+                message = "No linked readable/writable targets match this System Block's exposed port names. Use Suggest ports or link matching targets first.";
+                return false;
+            }
+
+            candidates = planned;
+            return true;
+        }
+
+        private static int SystemBlockLoweringComponentCount(
+            IEnumerable<AutomationSystemBlockLoweringCandidate> candidates)
+        {
+            if (candidates == null)
+                return 0;
+
+            return candidates.Sum(candidate =>
+                (candidate?.Getter == true ? 1 : 0) +
+                (candidate?.Setter == true ? 1 : 0));
         }
 
         private void EnterSystemBlockTemplate(int index)
@@ -6968,6 +7239,37 @@ namespace DecoLimitLifter.AutomationEditMode
             }
         }
 
+        private sealed class AutomationSystemBlockLoweringCandidate
+        {
+            internal AutomationSystemBlockLoweringCandidate(
+                AutomationLink link,
+                string portName,
+                bool getter,
+                bool setter)
+            {
+                Link = link;
+                PortName = portName ?? string.Empty;
+                Getter = getter;
+                Setter = setter;
+            }
+
+            internal AutomationLink Link { get; }
+
+            internal string PortName { get; }
+
+            internal bool Getter { get; }
+
+            internal bool Setter { get; }
+
+            internal int ComponentCount =>
+                (Getter ? 1 : 0) +
+                (Setter ? 1 : 0);
+
+            internal AutomationTarget Target => Link?.Target;
+
+            internal string TargetLabel => Link?.TargetLabel ?? Target?.Label ?? "target";
+        }
+
         private sealed class AutomationCompileRevertSet
         {
             internal AutomationCompileRevertSet(
@@ -7363,12 +7665,35 @@ namespace DecoLimitLifter.AutomationEditMode
                 .ToArray();
         }
 
+        private static AutomationBreadboardComponentSummary[] TargetGettersFor(
+            IEnumerable<AutomationBreadboardComponentSummary> components,
+            AutomationTarget target)
+        {
+            if (components == null || target == null)
+                return Array.Empty<AutomationBreadboardComponentSummary>();
+
+            return components
+                .Where(component => GetterMatchesTarget(component, target))
+                .OrderBy(component => component.X)
+                .ThenBy(component => component.Y)
+                .ToArray();
+        }
+
         private static bool SetterMatchesTarget(
             AutomationBreadboardComponentSummary component,
             AutomationTarget target)
         {
             return component != null &&
                    component.IsGenericSetter &&
+                   ProxyComponentMatchesTarget(component, target);
+        }
+
+        private static bool GetterMatchesTarget(
+            AutomationBreadboardComponentSummary component,
+            AutomationTarget target)
+        {
+            return component != null &&
+                   component.IsGenericGetter &&
                    ProxyComponentMatchesTarget(component, target);
         }
 
@@ -7441,6 +7766,17 @@ namespace DecoLimitLifter.AutomationEditMode
                        StringComparison.Ordinal);
         }
 
+        private bool CanRevertLastSystemBlockLowering()
+        {
+            return _selectedController != null &&
+                   _lastSystemBlockLoweringRevert != null &&
+                   _lastSystemBlockLoweringRevert.ComponentIds.Count > 0 &&
+                   string.Equals(
+                       _lastSystemBlockLoweringRevert.ControllerKey,
+                       _selectedController.StableKey,
+                       StringComparison.Ordinal);
+        }
+
         private void RevertLastAutomationCompile()
         {
             if (!CanRevertLastAutomationCompile())
@@ -7459,13 +7795,76 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
             }
 
+            int deleted = DeleteBreadboardComponents(
+                inspector,
+                _lastCompileRevert.ComponentIds,
+                out int missing,
+                out int failed);
+
+            if (failed == 0)
+                _lastCompileRevert = null;
+
+            _status =
+                "Reverted " +
+                deleted.ToString(CultureInfo.InvariantCulture) +
+                " generated node(s)" +
+                (missing > 0 ? ", " + missing.ToString(CultureInfo.InvariantCulture) + " already missing" : string.Empty) +
+                (failed > 0 ? ", " + failed.ToString(CultureInfo.InvariantCulture) + " failed" : string.Empty) +
+                ".";
+        }
+
+        private void RevertLastSystemBlockNativeLowering()
+        {
+            if (!CanRevertLastSystemBlockLowering())
+            {
+                _status = "No System Block native lowering is available to revert for this controller.";
+                return;
+            }
+
+            if (!AutomationBreadboardInspector.TryCreate(
+                    _selectedController.Block,
+                    _selectedController.Controller,
+                    out AutomationBreadboardInspector inspector,
+                    out string reason))
+            {
+                _status = reason ?? "Selected controller does not expose a native Breadboard.";
+                return;
+            }
+
+            int deleted = DeleteBreadboardComponents(
+                inspector,
+                _lastSystemBlockLoweringRevert.ComponentIds,
+                out int missing,
+                out int failed);
+
+            if (failed == 0)
+                _lastSystemBlockLoweringRevert = null;
+
+            _status =
+                "Reverted " +
+                deleted.ToString(CultureInfo.InvariantCulture) +
+                " System Block proxy node(s)" +
+                (missing > 0 ? ", " + missing.ToString(CultureInfo.InvariantCulture) + " already missing" : string.Empty) +
+                (failed > 0 ? ", " + failed.ToString(CultureInfo.InvariantCulture) + " failed" : string.Empty) +
+                ".";
+        }
+
+        private int DeleteBreadboardComponents(
+            AutomationBreadboardInspector inspector,
+            IEnumerable<uint> componentIds,
+            out int missing,
+            out int failed)
+        {
+            missing = 0;
+            failed = 0;
+            if (inspector == null || componentIds == null)
+                return 0;
+
             Dictionary<uint, AutomationBreadboardComponentSummary> components = inspector.Components
                 .GroupBy(component => component.UniqueId)
                 .ToDictionary(group => group.Key, group => group.First());
             int deleted = 0;
-            int missing = 0;
-            int failed = 0;
-            foreach (uint componentId in _lastCompileRevert.ComponentIds.Reverse())
+            foreach (uint componentId in componentIds.Where(id => id != 0U).Distinct().Reverse())
             {
                 if (!components.TryGetValue(componentId, out AutomationBreadboardComponentSummary component))
                 {
@@ -7484,16 +7883,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
             }
 
-            if (failed == 0)
-                _lastCompileRevert = null;
-
-            _status =
-                "Reverted " +
-                deleted.ToString(CultureInfo.InvariantCulture) +
-                " generated node(s)" +
-                (missing > 0 ? ", " + missing.ToString(CultureInfo.InvariantCulture) + " already missing" : string.Empty) +
-                (failed > 0 ? ", " + failed.ToString(CultureInfo.InvariantCulture) + " failed" : string.Empty) +
-                ".";
+            return deleted;
         }
 
         private static bool TryExtractIfElseSwitch(
