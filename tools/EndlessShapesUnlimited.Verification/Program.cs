@@ -7106,6 +7106,8 @@ f 0 2 3
         string automationRefreshTargetsSource = ExtractMethodSource(automationSessionSource, "RefreshTargets");
         string automationClearStaleControllerSource = ExtractMethodSource(automationSessionSource, "ClearStaleSelectedController");
         string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
+        string automationDrawGuiSource = ExtractMethodSource(automationSessionSource, "DrawGui");
+        string automationSuspendHandoffSource = ExtractMethodSource(automationSessionSource, "SuspendForModeSwitchHandoff");
         string automationRefreshHoverTargetSource = ExtractMethodSource(automationSessionSource, "RefreshHoverTarget");
         string automationHandleMouseSource = ExtractMethodSource(automationSessionSource, "HandleMouse");
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
@@ -7180,9 +7182,20 @@ f 0 2 3
                automationRegistrationSource.Contains("CanOpenFromModeSwitch") &&
                automationBehaviourSource.Contains("TrySwitchToDecorationEdit") &&
                automationBehaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
+               automationBehaviourSource.Contains("EsuModeSwitchHandoff.Begin()") &&
+               automationBehaviourSource.Contains("preserveSharedHud: true") &&
+               automationBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
+               automationBehaviourSource.Contains("_handoffGuiSession.DrawModeSwitchHandoffGui()") &&
+               automationBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
+               automationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
                automationBehaviourSource.Contains("ConsumeAutomationEditToggleDown") &&
                automationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
                automationSessionSource.Contains("SwitchToDecorationEditRequested") &&
+               automationSessionSource.Contains("SuspendForModeSwitchHandoff") &&
+               automationSessionSource.Contains("DrawModeSwitchHandoffGui") &&
+               automationSessionSource.Contains("DrawGui(interactive: false)") &&
+               automationSuspendHandoffSource.Contains("AutomationInputScope.End()") &&
+               automationSuspendHandoffSource.Contains("CloseAutomationContextMenu()") &&
                automationInputScopeSource.Contains("AutomationInputScope") &&
                automationControllerCatalogSource.Contains("7fcfdaf0-2d2a-43be-842a-423e736ccdd0") &&
                automationControllerCatalogSource.Contains("a3d914e9-697d-425f-abda-a6b21b4de952") &&
@@ -7552,9 +7565,17 @@ f 0 2 3
                automationCategoryIconKeySource.Contains("AutomationTargetCategory.Missiles") &&
                automationCategoryIconKeySource.Contains("return \"cone\"") &&
                automationTargetIconKeySource.Contains("ControllerIconKey(target.Controller)") &&
-               automationOnGuiSource.Contains("GUI.depth = Math.Min(previousDepth, -10000)") &&
-               automationOnGuiSource.Contains("if (!_editorOpen)") &&
-               automationOnGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
+               automationDrawGuiSource.Contains("GUI.depth = Math.Min(previousDepth, -10000)") &&
+               automationOnGuiSource.Contains("DrawGui(interactive: true)") &&
+               automationDrawGuiSource.Contains("if (interactive)") &&
+               automationDrawGuiSource.Contains("HandleAutomationPanelResizes()") &&
+               automationDrawGuiSource.Contains("DrawAutomationResizeGrips()") &&
+               automationDrawGuiSource.Contains("EsuCursorTooltip.BeginFrame") &&
+               automationDrawGuiSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
+               automationDrawGuiSource.Contains("if (!interactive)") &&
+               automationDrawGuiSource.Contains("return;") &&
+               automationDrawGuiSource.Contains("if (!_editorOpen)") &&
+               automationDrawGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
                automationPrepareLayoutSource.Contains("FullScreenEditorRect()") &&
                automationMouseOverUiSource.Contains("if (_editorOpen)") &&
                automationMouseOverUiSource.Contains("return true;") &&
@@ -7570,9 +7591,9 @@ f 0 2 3
                automationSessionSource.Contains("Placement preview shows green") &&
                automationSessionSource.Contains("Automation controller placement rejected") &&
                automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()") &&
-               automationOnGuiSource.Contains("DrawAutomationContextMenu()") &&
-               automationOnGuiSource.Contains("mouseOverUi && ShouldConsumeGuiEvent(Event.current)") &&
-               automationOnGuiSource.Contains("Event.current.Use();") &&
+               automationDrawGuiSource.Contains("DrawAutomationContextMenu()") &&
+               automationDrawGuiSource.Contains("mouseOverUi && ShouldConsumeGuiEvent(Event.current)") &&
+               automationDrawGuiSource.Contains("Event.current.Use();") &&
                automationHandleMouseSource.Contains("AutomationInputScope.ClaimMouseWheelInputForFrames();") &&
                automationHandleMouseSource.Contains("Input.GetMouseButtonDown(1)") &&
                automationHandleMouseSource.Contains("TryCancelAutomationPlacementRightClick()") &&

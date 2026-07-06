@@ -11,6 +11,8 @@ namespace DecoLimitLifter.AutomationEditMode
     internal sealed class AutomationEditModeBehaviour : MonoBehaviour
     {
         private AutomationEditSession _session;
+        private AutomationEditSession _handoffGuiSession;
+        private int _handoffGuiFrame = -1;
 
         internal bool Active => _session != null && _session.Active;
 
@@ -69,11 +71,16 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             DecoLimitLifter.EsuModeSwitchHandoff.Begin();
-            Close(reason: null, notifyClose: false, preserveSharedHud: true);
+            Close(
+                reason: null,
+                notifyClose: false,
+                preserveSharedHud: true,
+                keepModeSwitchHandoffGui: true);
             if (DecorationEditModeRegistration.OpenFromModeSwitch())
                 InfoStore.Add("ESU mode: Decoration Edit.");
             else
             {
+                ClearModeSwitchHandoffGui();
                 Open(modeSwitch: true);
                 InfoStore.Add("Decoration Edit Mode failed to open; Automation Editor restored.");
             }
@@ -175,7 +182,21 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             try
             {
-                _session?.OnGUI();
+                if (_session != null)
+                {
+                    ClearModeSwitchHandoffGui();
+                    _session.OnGUI();
+                    return;
+                }
+
+                if (_handoffGuiSession != null &&
+                    Time.frameCount <= _handoffGuiFrame)
+                {
+                    _handoffGuiSession.DrawModeSwitchHandoffGui();
+                    return;
+                }
+
+                ClearModeSwitchHandoffGui();
             }
             catch (Exception exception)
             {
@@ -190,6 +211,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void Open(bool modeSwitch = false)
         {
+            ClearModeSwitchHandoffGui();
             cBuild build = cBuild.GetSingleton();
             _session = new AutomationEditSession(build);
             _session.Begin();
@@ -205,11 +227,23 @@ namespace DecoLimitLifter.AutomationEditMode
         private void Close(
             string reason = null,
             bool notifyClose = true,
-            bool preserveSharedHud = false)
+            bool preserveSharedHud = false,
+            bool keepModeSwitchHandoffGui = false)
         {
             AutomationEditSession session = _session;
             _session = null;
-            session?.End(preserveSharedHud);
+            if (keepModeSwitchHandoffGui && session != null)
+            {
+                ClearModeSwitchHandoffGui();
+                session.SuspendForModeSwitchHandoff();
+                _handoffGuiSession = session;
+                _handoffGuiFrame = Time.frameCount;
+            }
+            else
+            {
+                session?.End(preserveSharedHud);
+            }
+
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
@@ -223,6 +257,14 @@ namespace DecoLimitLifter.AutomationEditMode
                     ? "Automation Editor closed."
                     : "Automation Editor closed: " + reason + ".");
             }
+        }
+
+        private void ClearModeSwitchHandoffGui()
+        {
+            AutomationEditSession session = _handoffGuiSession;
+            _handoffGuiSession = null;
+            _handoffGuiFrame = -1;
+            session?.End(preserveSharedHud: true);
         }
     }
 }

@@ -256,6 +256,18 @@ namespace DecoLimitLifter.AutomationEditMode
             _links.Clear();
         }
 
+        internal void SuspendForModeSwitchHandoff()
+        {
+            AutomationInputScope.End();
+            Active = false;
+            _resizingLeftPanel = false;
+            _resizingRightPanel = false;
+            _resizingEditor = false;
+            _closeRequested = false;
+            SwitchToDecorationEditRequested = false;
+            CloseAutomationContextMenu();
+        }
+
         internal void Update()
         {
             if (!Active)
@@ -274,6 +286,16 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!Active)
                 return;
 
+            DrawGui(interactive: true);
+        }
+
+        internal void DrawModeSwitchHandoffGui()
+        {
+            DrawGui(interactive: false);
+        }
+
+        private void DrawGui(bool interactive)
+        {
             int previousDepth = GUI.depth;
             GUI.depth = Math.Min(previousDepth, -10000);
             try
@@ -282,12 +304,17 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (Event.current.type == EventType.Repaint)
                     DecorationEditorOverlay.Render();
 
-                EsuCursorTooltip.BeginFrame(
-                    Event.current.mousePosition,
-                    _resizingLeftPanel || _resizingRightPanel || _resizingEditor);
+                if (interactive)
+                {
+                    EsuCursorTooltip.BeginFrame(
+                        Event.current.mousePosition,
+                        _resizingLeftPanel || _resizingRightPanel || _resizingEditor);
+                }
+
                 ApplyLayoutResetIfNeeded();
                 PrepareAutomationLayout();
-                HandleAutomationPanelResizes();
+                if (interactive)
+                    HandleAutomationPanelResizes();
 
                 if (!_editorOpen)
                 {
@@ -317,12 +344,22 @@ namespace DecoLimitLifter.AutomationEditMode
                         GUIContent.none,
                         GUIStyle.none);
 
-                DrawAutomationResizeGrips();
-                DrawAutomationContextMenu();
-                EsuHudNotifications.DrawExpandedPopup();
-                EsuConsoleWindow.DrawForegroundWindow();
-                EsuCursorTooltip.Draw();
+                if (interactive)
+                {
+                    DrawAutomationResizeGrips();
+                    DrawAutomationContextMenu();
+                    EsuHudNotifications.DrawExpandedPopup();
+                    EsuConsoleWindow.DrawForegroundWindow();
+                    EsuCursorTooltip.Draw();
+                }
+                else
+                {
+                    EsuHudNotifications.DrawExpandedPopup();
+                }
+
                 PersistLayoutState();
+                if (!interactive)
+                    return;
 
                 bool mouseOverUi = IsMouseOverAnyUi(Event.current.mousePosition);
                 AutomationInputScope.SetMouseOverUi(mouseOverUi);
