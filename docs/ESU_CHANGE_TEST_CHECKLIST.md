@@ -87,6 +87,9 @@ release pass.
 - Confirm the Automation status panel, controller palette, and graph/code editor
   have Decoration/Smart-style resize grips, clamp to the screen, and leave a
   full-width bottom status strip visible.
+- Confirm the bottom strip and left `Workspace guide` report the current stage,
+  native data surface, next safe action, safety note, and planned System Block
+  vocabulary while selecting, placing, linking, and editing.
 - Open the graph/code editor from the toolbar, left panel, linked-target
   inspector, and `Controllers on craft` list. Confirm it fits the central
   viewport between the side panels and the bottom strip, and that `Fit` restores

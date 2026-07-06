@@ -606,6 +606,25 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        internal void SuspendForModeSwitchHandoff()
+        {
+            DecorationEditorInputScope.End();
+            Active = false;
+            CloseRequested = false;
+            SwitchToSmartBuildRequested = false;
+            RestoreFocusView();
+            _boxSelecting = false;
+            _draggingMeshPalette = false;
+            _resizingMeshPalette = false;
+            _resizingRightPanel = false;
+            _draggingStackDivider = StackDividerKind.None;
+            ClearMultiTransformState();
+            _viewModeMenuOpen = false;
+            _anchorMenuOpen = false;
+            CloseSurfacePointContextMenu();
+            CloseDecorationContextMenu();
+        }
+
         internal void Update()
         {
             if (!Active)
@@ -647,6 +666,16 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!Active)
                 return;
 
+            DrawGui(interactive: true);
+        }
+
+        internal void DrawModeSwitchHandoffGui()
+        {
+            DrawGui(interactive: false);
+        }
+
+        private void DrawGui(bool interactive)
+        {
             _hoveredMesh = null;
             _hoveredMeshHint = null;
             DecorationEditorTheme.Ensure();
@@ -657,26 +686,39 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             int previousDepth = GUI.depth;
+            bool previousEnabled = GUI.enabled;
             GUI.depth = -10000;
+            if (!interactive &&
+                Event.current.type != EventType.Repaint &&
+                Event.current.type != EventType.Layout)
+            {
+                GUI.enabled = false;
+            }
+
             try
             {
+                GUI.WindowFunction windowFunction = interactive
+                    ? DrawModalEditorWindow
+                    : DrawModeSwitchHandoffWindow;
                 GUI.ModalWindow(
                     _modalWindowId,
                     new Rect(0f, 0f, Screen.width, Screen.height),
-                    DrawModalEditorWindow,
+                    windowFunction,
                     GUIContent.none,
                     GUIStyle.none);
             }
             finally
             {
                 GUI.depth = previousDepth;
+                GUI.enabled = previousEnabled;
             }
-            _textInputFocused = GUIUtility.keyboardControl != 0;
+            if (interactive)
+                _textInputFocused = GUIUtility.keyboardControl != 0;
         }
 
         private void DrawModalEditorWindow(int id)
         {
-            DrawEditorShell();
+            DrawEditorShell(interactive: true);
             Event current = Event.current;
             if (ShouldConsumeGuiEvent(current))
             {
@@ -689,6 +731,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
                 current.Use();
             }
+        }
+
+        private void DrawModeSwitchHandoffWindow(int id)
+        {
+            DrawEditorShell(interactive: false);
         }
 
         private bool ShouldConsumeGuiEvent(Event current)
@@ -736,10 +783,11 @@ namespace DecoLimitLifter.DecorationEditMode
                     _tool == DecorationEditorTool.Paint);
         }
 
-        private void DrawEditorShell()
+        private void DrawEditorShell(bool interactive)
         {
             EsuHudNotifications.SetActiveSource(CurrentModeLogSource());
-            EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed());
+            if (interactive)
+                EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed());
             ApplyLayoutResetIfNeeded();
             Rect toolbarRect = ToolbarRect();
             Rect rightRect = RightPanelRect();
@@ -764,9 +812,10 @@ namespace DecoLimitLifter.DecorationEditMode
                                (rightStackVisible && rightRect.Contains(mouse)) ||
                                bottomRect.Contains(mouse) ||
                                (leftStackVisible && meshRect.Contains(mouse));
-            DecorationEditorInputScope.SetMouseOverEditorUi(_mouseOverWindow);
+            if (interactive)
+                DecorationEditorInputScope.SetMouseOverEditorUi(_mouseOverWindow);
 
-            if (leftStackVisible)
+            if (interactive && leftStackVisible)
             {
                 HandlePanelResize(
                     ref _meshPaletteRect,
@@ -784,7 +833,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 HandleMeshPaletteDrag(meshRect);
             }
 
-            if (rightStackVisible)
+            if (interactive && rightStackVisible)
             {
                 HandlePanelResize(
                     ref _rightPanelRect,
@@ -814,14 +863,16 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 DrawLeftPanelStack(meshRect);
                 EsuHudLayout.DrawResizeGrip(meshRect, leftEdge: false);
-                EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(meshRect, leftEdge: false), "Drag to resize the left panel stack.");
+                if (interactive)
+                    EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(meshRect, leftEdge: false), "Drag to resize the left panel stack.");
             }
 
             if (rightStackVisible)
             {
                 DrawRightPanel(rightRect);
                 EsuHudLayout.DrawResizeGrip(rightRect, leftEdge: true);
-                EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(rightRect, leftEdge: true), "Drag to resize the right panel stack.");
+                if (interactive)
+                    EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(rightRect, leftEdge: true), "Drag to resize the right panel stack.");
             }
 
             GUI.Box(bottomRect, GUIContent.none, DecorationEditorTheme.Panel);
@@ -829,16 +880,23 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginArea(bottomInner);
             DrawBottomPanel(bottomInner.width, bottomInner.height);
             GUILayout.EndArea();
-            DrawAnchorMenu();
+            if (interactive)
+                DrawAnchorMenu();
 
-            DrawMeshPreviewCard();
-            DrawSurfaceContextMenu();
-            DrawDecorationContextMenu();
-            DrawBoxSelectionMarquee();
+            if (interactive)
+            {
+                DrawMeshPreviewCard();
+                DrawSurfaceContextMenu();
+                DrawDecorationContextMenu();
+                DrawBoxSelectionMarquee();
+            }
             EsuConsoleWindow.Draw();
-            DrawViewModeMenu(toolbarRect);
-            EsuCursorTooltip.Draw();
-            PersistPanelState();
+            if (interactive)
+            {
+                DrawViewModeMenu(toolbarRect);
+                EsuCursorTooltip.Draw();
+                PersistPanelState();
+            }
         }
 
         private bool TooltipInputSuppressed() =>

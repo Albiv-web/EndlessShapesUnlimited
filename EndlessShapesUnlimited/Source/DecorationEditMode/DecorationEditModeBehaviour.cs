@@ -11,6 +11,8 @@ namespace DecoLimitLifter.DecorationEditMode
     internal sealed class DecorationEditModeBehaviour : MonoBehaviour
     {
         private DecorationEditSession _session;
+        private DecorationEditSession _handoffGuiSession;
+        private int _handoffGuiFrame = -1;
 
         internal bool Active => _session != null && _session.Active;
 
@@ -70,11 +72,17 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             DecoLimitLifter.EsuModeSwitchHandoff.Begin();
-            Close(apply: false, notifySession: false, notifyClose: false, preserveSharedHud: true);
+            Close(
+                apply: false,
+                notifySession: false,
+                notifyClose: false,
+                preserveSharedHud: true,
+                keepModeSwitchHandoffGui: true);
             if (SmartBuildModeRegistration.OpenFromModeSwitch())
                 InfoStore.Add("ESU mode: Smart Builder.");
             else
             {
+                ClearModeSwitchHandoffGui();
                 Open(modeSwitch: true);
                 InfoStore.Add("Smart Builder failed to open; Decoration Edit Mode restored.");
             }
@@ -202,7 +210,21 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             try
             {
-                _session?.OnGUI();
+                if (_session != null)
+                {
+                    ClearModeSwitchHandoffGui();
+                    _session.OnGUI();
+                    return;
+                }
+
+                if (_handoffGuiSession != null &&
+                    Time.frameCount <= _handoffGuiFrame)
+                {
+                    _handoffGuiSession.DrawModeSwitchHandoffGui();
+                    return;
+                }
+
+                ClearModeSwitchHandoffGui();
             }
             catch (Exception exception)
             {
@@ -217,6 +239,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void Open(bool modeSwitch = false)
         {
+            ClearModeSwitchHandoffGui();
             cBuild build = cBuild.GetSingleton();
             _session = new DecorationEditSession(build);
             _session.Begin();
@@ -229,11 +252,23 @@ namespace DecoLimitLifter.DecorationEditMode
             bool apply,
             bool notifySession = true,
             bool notifyClose = true,
-            bool preserveSharedHud = false)
+            bool preserveSharedHud = false,
+            bool keepModeSwitchHandoffGui = false)
         {
             DecorationEditSession session = _session;
             _session = null;
-            session?.End(apply, notifySession, preserveSharedHud);
+            if (keepModeSwitchHandoffGui && session != null)
+            {
+                ClearModeSwitchHandoffGui();
+                session.SuspendForModeSwitchHandoff();
+                _handoffGuiSession = session;
+                _handoffGuiFrame = Time.frameCount + 1;
+            }
+            else
+            {
+                session?.End(apply, notifySession, preserveSharedHud);
+            }
+
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
@@ -241,6 +276,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 EsuRuntimeLog.Info("Decoration Edit", "Decoration Edit Mode closed.");
                 InfoStore.Add("Decoration Edit Mode closed.");
             }
+        }
+
+        private void ClearModeSwitchHandoffGui()
+        {
+            DecorationEditSession session = _handoffGuiSession;
+            _handoffGuiSession = null;
+            _handoffGuiFrame = -1;
+            session?.End(apply: false, notify: false, preserveSharedHud: true);
         }
     }
 }

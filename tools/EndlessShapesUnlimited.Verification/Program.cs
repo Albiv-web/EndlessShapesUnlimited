@@ -2958,7 +2958,9 @@ f 0 2 3
         string sessionSourceNormalized = sessionSource.Replace("\r\n", "\n");
         string inputScopeSourceNormalized = inputScopeSource.Replace("\r\n", "\n");
         string inspectorSource = ExtractMethodSource(sessionSource, "DrawInspector");
+        string decorationDrawGuiSource = ExtractMethodSource(sessionSource, "DrawGui").Replace("\r\n", "\n");
         string drawEditorShellSource = ExtractMethodSource(sessionSource, "DrawEditorShell").Replace("\r\n", "\n");
+        string decorationSuspendHandoffSource = ExtractMethodSource(sessionSource, "SuspendForModeSwitchHandoff").Replace("\r\n", "\n");
         string handleSceneInputSource = ExtractMethodSource(sessionSource, "HandleSceneInput").Replace("\r\n", "\n");
         string drawMeshPreviewGridSource = ExtractMethodSource(sessionSource, "DrawMeshPreviewGrid").Replace("\r\n", "\n");
         string meshPreviewGridLayoutSource = ExtractMethodSource(sessionSource, "MeshPreviewGridLayoutFor").Replace("\r\n", "\n");
@@ -3914,24 +3916,45 @@ f 0 2 3
 
         Assert(modeSwitchHandoffSource.Contains("internal static class EsuModeSwitchHandoff") &&
                modeSwitchHandoffSource.Contains("ConsumeInactiveCleanupFrame") &&
-               modeSwitchHandoffSource.Contains("HandoffFrames") &&
+               modeSwitchHandoffSource.Contains("HandoffFrames = 3") &&
+               modeSwitchHandoffSource.Contains("s_lastConsumedFrame") &&
+               modeSwitchHandoffSource.Contains("s_lastConsumedFrame != Time.frameCount") &&
+               modeSwitchHandoffSource.Contains("s_lastConsumedFrame = Time.frameCount") &&
                decorationBehaviourSource.Contains("EsuModeSwitchHandoff.Begin()") &&
                decorationBehaviourSource.Contains("preserveSharedHud: true") &&
+               decorationBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
+               decorationBehaviourSource.Contains("_handoffGuiSession.DrawModeSwitchHandoffGui()") &&
+               decorationBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
+               decorationBehaviourSource.Contains("_handoffGuiFrame = Time.frameCount + 1") &&
                decorationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
                smartBuildBehaviourSource.Contains("EsuModeSwitchHandoff.Begin()") &&
                smartBuildBehaviourSource.Contains("preserveSharedHud: true") &&
                smartBuildBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
                smartBuildBehaviourSource.Contains("DrawModeSwitchHandoffGui()") &&
                smartBuildBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
+               smartBuildBehaviourSource.Contains("_handoffGuiFrame = Time.frameCount + 1") &&
                smartBuildBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
                sessionSource.Contains("End(bool apply, bool notify = true, bool preserveSharedHud = false)") &&
+               sessionSource.Contains("SuspendForModeSwitchHandoff") &&
+               sessionSource.Contains("DrawModeSwitchHandoffGui") &&
+               sessionSource.Contains("DrawGui(interactive: false)") &&
+               decorationDrawGuiSource.Contains("GUI.WindowFunction windowFunction = interactive") &&
+               decorationDrawGuiSource.Contains("? DrawModalEditorWindow") &&
+               decorationDrawGuiSource.Contains(": DrawModeSwitchHandoffWindow") &&
+               decorationDrawGuiSource.Contains("GUI.enabled = false") &&
+               drawEditorShellSource.Contains("DrawEditorShell(bool interactive)") &&
+               drawEditorShellSource.Contains("if (interactive)\n                EsuCursorTooltip.BeginFrame") &&
+               drawEditorShellSource.Contains("if (interactive)\n                DecorationEditorInputScope.SetMouseOverEditorUi") &&
+               decorationSuspendHandoffSource.Contains("DecorationEditorInputScope.End()") &&
+               decorationSuspendHandoffSource.Contains("CloseSurfacePointContextMenu()") &&
+               decorationSuspendHandoffSource.Contains("CloseDecorationContextMenu()") &&
                sessionSourceNormalized.Contains("if (!preserveSharedHud)\n                    DecorationEditorOverlay.Clear();") &&
                smartBuildSessionSource.Contains("End(bool preserveSharedHud = false)") &&
                smartBuildSessionSource.Contains("SuspendForModeSwitchHandoff") &&
                smartBuildSessionSource.Contains("DrawModeSwitchHandoffGui") &&
                smartBuildSessionSource.Contains("DrawGui(interactive: false)") &&
                smartBuildSessionSourceNormalized.Contains("if (!preserveSharedHud)\n                DecorationEditorOverlay.Clear();"),
-            "ESU Tab mode switching uses a short handoff guard, preserves shared HUD/overlay state, and draws a passive Smart Builder bridge frame during Decoration Edit <-> Smart Builder handoffs.");
+            "ESU Tab mode switching uses a real-frame handoff guard, preserves shared HUD/overlay state, and draws passive bridge frames during Decoration Edit, Smart Builder, and Automation handoffs.");
 
         Assert(escapeCloseGuardSource.Contains("internal static class EsuEscapeCloseGuard") &&
                escapeCloseGuardSource.Contains("s_suppressInputUntilFrame >= Time.frameCount") &&
@@ -7132,6 +7155,10 @@ f 0 2 3
         string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
         string automationTargetSearchControlsSource = ExtractMethodSource(automationSessionSource, "DrawTargetSearchControls");
         string automationDrawEditorSource = ExtractMethodSource(automationSessionSource, "DrawEditor");
+        string automationDrawWorkspaceGuideSource = ExtractMethodSource(automationSessionSource, "DrawWorkspaceGuide");
+        string automationNextSafeActionSource = ExtractMethodSource(automationSessionSource, "NextSafeActionLine");
+        string automationWorkspaceStageSource = ExtractMethodSource(automationSessionSource, "WorkspaceStageLabel");
+        string automationWorkspaceSafetySource = ExtractMethodSource(automationSessionSource, "WorkspaceSafetyLine");
         string automationCompactHeaderSource = ExtractMethodSource(automationSessionSource, "DrawCompactIconHeader");
         string automationCategoryIconKeySource = ExtractMethodSource(automationSessionSource, "CategoryIconKey");
         string automationTargetIconKeySource = ExtractMethodSource(automationSessionSource, "AutomationTargetIconKey");
@@ -7148,6 +7175,10 @@ f 0 2 3
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string changeTestChecklistSource = ReadDocumentationText(root, "docs", "ESU_CHANGE_TEST_CHECKLIST.md");
+        string automationNestedWorkspaceGoalSource = ReadDocumentationText(
+            root,
+            "docs",
+            "AUTOMATION_EDITOR_NESTED_WORKSPACE_GOAL.md");
         string smartBuilderHudDocSource = ReadDocumentationText(
             root,
             "SMART_BUILDER_HUD.md");
@@ -7187,9 +7218,20 @@ f 0 2 3
                automationBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
                automationBehaviourSource.Contains("_handoffGuiSession.DrawModeSwitchHandoffGui()") &&
                automationBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
+               automationBehaviourSource.Contains("_handoffGuiFrame = Time.frameCount + 1") &&
                automationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
                automationBehaviourSource.Contains("ConsumeAutomationEditToggleDown") &&
                automationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
+               automationNestedWorkspaceGoalSource.Contains("Blender-like nested automation workspace") &&
+               automationNestedWorkspaceGoalSource.Contains("Do not create a parallel automation runtime") &&
+               automationNestedWorkspaceGoalSource.Contains("nested System Blocks") &&
+               automationNestedWorkspaceGoalSource.Contains("Every HUD state must make the next safe user action obvious") &&
+               automationNestedWorkspaceGoalSource.Contains("Add live simulation/debugging values") &&
+               automationNestedWorkspaceGoalSource.Contains("Definition of done") &&
+               automationNestedWorkspaceGoalSource.Contains("docs/AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md") &&
+               inGameTestPlanSource.Contains("Automation Editor") &&
+               changeTestChecklistSource.Contains("Workspace guide") &&
+               changeTestChecklistSource.Contains("planned System Block") &&
                automationSessionSource.Contains("SwitchToDecorationEditRequested") &&
                automationSessionSource.Contains("SuspendForModeSwitchHandoff") &&
                automationSessionSource.Contains("DrawModeSwitchHandoffGui") &&
@@ -7552,6 +7594,8 @@ f 0 2 3
                automationToolbarButtonSource.Contains("new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip)") &&
                automationStatusStripSource.Contains("AutomationGUILayoutButton(") &&
                automationStatusStripSource.Contains("new GUIContent(\"Link\", DecorationEditorIconCatalog.Get(\"anchor\")") &&
+               automationStatusStripSource.Contains("\"Stage: \" + WorkspaceStageLabel()") &&
+               automationStatusStripSource.Contains("\"Next: \" + NextSafeActionLine()") &&
                automationPanelHeaderSource.Contains("AutomationGUILayoutButton(") &&
                automationPanelHeaderSource.Contains("DecorationEditorIconCatalog.Get(\"close\")") &&
                automationSectionHeaderSource.Contains("AutomationGUILayoutButton(") &&
@@ -7559,6 +7603,20 @@ f 0 2 3
                automationSectionHeaderSource.Contains("DecorationEditorIconCatalog.Get(sectionVisible ? \"close\" : iconKey)") &&
                automationTargetSearchControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("AutomationGUILayoutButton(") &&
+               automationDrawEditorSource.Contains("DrawEditorBottomStrip()") &&
+               automationDrawWorkspaceGuideSource.Contains("Workspace guide") &&
+               automationDrawWorkspaceGuideSource.Contains("WorkspaceStageLabel()") &&
+               automationDrawWorkspaceGuideSource.Contains("WorkspaceNativeSurfaceLine()") &&
+               automationDrawWorkspaceGuideSource.Contains("\"Next: \" + NextSafeActionLine()") &&
+               automationDrawWorkspaceGuideSource.Contains("\"Safety: \" + WorkspaceSafetyLine()") &&
+               automationDrawWorkspaceGuideSource.Contains("System Blocks: planned nested graphs") &&
+               automationNextSafeActionSource.Contains("Compile expression into native graph nodes") &&
+               automationNextSafeActionSource.Contains("Inspect native nodes, add Generic proxy nodes") &&
+               automationNextSafeActionSource.Contains("Point at an exposed craft face") &&
+               automationWorkspaceStageSource.Contains("Recipe compile") &&
+               automationWorkspaceStageSource.Contains("Build graph") &&
+               automationWorkspaceSafetySource.Contains("Revert compile") &&
+               automationWorkspaceSafetySource.Contains("deterministic and lower into native Breadboard nodes") &&
                automationBreadboardMoveControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationBreadboardWireControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationCompactHeaderSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&

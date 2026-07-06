@@ -235,7 +235,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 ClearModeSwitchHandoffGui();
                 session.SuspendForModeSwitchHandoff();
                 _handoffGuiSession = session;
-                _handoffGuiFrame = Time.frameCount;
+                _handoffGuiFrame = Time.frameCount + 1;
             }
             else
             {

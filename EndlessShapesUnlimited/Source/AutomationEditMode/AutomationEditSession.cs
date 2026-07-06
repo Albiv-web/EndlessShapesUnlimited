@@ -2286,7 +2286,10 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label("Mode: " + ToolLabel(_tool), DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(180f)));
             GUILayout.Label("Filter: " + AutomationTargetCatalog.CategoryLabel(_filter), DecorationEditorTheme.Body, GUILayout.Width(EsuHudLayout.Scale(170f)));
             GUILayout.FlexibleSpace();
-            GUILayout.Label(AutomationStateLabel(), AutomationStateStyle(), GUILayout.Width(EsuHudLayout.Scale(150f)));
+            GUILayout.Label(
+                "Stage: " + WorkspaceStageLabel(),
+                AutomationStateStyle(),
+                GUILayout.Width(EsuHudLayout.Scale(190f)));
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
             y += headerHeight;
@@ -2370,9 +2373,15 @@ namespace DecoLimitLifter.AutomationEditMode
 
             if (y < inner.yMax)
             {
+                string footer = "Next: " + NextSafeActionLine();
+                if (_tool == AutomationTool.Place)
+                {
+                    footer += " Placement preview shows green for empty target cells and amber for blocked cells.";
+                }
+
                 GUI.Label(
                     new Rect(inner.x, y, inner.width, Mathf.Min(footerHeight, inner.yMax - y)),
-                    BottomHintLine(),
+                    footer,
                     DecorationEditorTheme.Mini);
             }
         }
@@ -2424,15 +2433,6 @@ namespace DecoLimitLifter.AutomationEditMode
         private string SelectedPlacementSummary() =>
             _selectedPlacement == null ? "none" : _selectedPlacement.Label;
 
-        private string AutomationStateLabel()
-        {
-            if (_tool == AutomationTool.Place)
-                return _selectedPlacement == null ? "No block" : "Placing";
-            if (_selectedController == null)
-                return "No controller";
-            return SelectedLinks.Count == 0 ? "Controller selected" : "Linked";
-        }
-
         private GUIStyle AutomationStateStyle()
         {
             if (_tool == AutomationTool.Place && _selectedPlacement == null)
@@ -2443,12 +2443,83 @@ namespace DecoLimitLifter.AutomationEditMode
                 : DecorationEditorTheme.Body;
         }
 
-        private string BottomHintLine()
+        private string WorkspaceStageLabel()
         {
+            if (_editorOpen)
+                return _editorPage == AutomationEditorPage.Graph ? "Native graph" : "Recipe compile";
             if (_tool == AutomationTool.Place)
-                return "Placement preview shows green for an empty target cell and amber for blocked cells.";
+                return _selectedPlacement == null ? "Choose controller" : "Place controller";
+            if (_selectedController == null)
+                return "Select controller";
+            return SelectedLinks.Count == 0 ? "Link targets" : "Build graph";
+        }
 
-            return "Breadboards and ACB controllers stay pickable through screen-space controller selection while target filters light affected blocks.";
+        private string NextSafeActionLine()
+        {
+            if (_editorOpen)
+            {
+                if (_selectedController == null)
+                    return "Close the editor and select a live native controller.";
+
+                if (_editorPage == AutomationEditorPage.Code)
+                {
+                    if (!IsBreadboardController(_selectedController.Controller))
+                        return "Use Graph view for this controller; deterministic recipes compile into Breadboard nodes.";
+                    if (SelectedLinks.Count == 0)
+                        return "Link a writable world target before compiling recipe output.";
+                    if (CanRevertLastAutomationCompile())
+                        return "Review generated native nodes, then keep editing or use Revert compile.";
+                    return "Choose a recipe/output target, then Compile expression into native graph nodes.";
+                }
+
+                if (IsBreadboardController(_selectedController.Controller))
+                    return "Inspect native nodes, add Generic proxy nodes for linked targets, or switch to Code.";
+
+                return "Inspect native ACB data; changes are written to FtD controller data.";
+            }
+
+            if (_tool == AutomationTool.Place)
+            {
+                if (_selectedPlacement == null)
+                    return "Choose a native controller block from Automation Blocks.";
+                return "Point at an exposed craft face and left-click to place " + SelectedPlacementSummary() + ".";
+            }
+
+            if (_selectedController == null)
+                return "Click a controller on the craft, or choose a controller block to place one.";
+
+            if (SelectedLinks.Count == 0)
+                return "Click highlighted world targets to link them, or open Editor to inspect native data.";
+
+            return "Open Editor for graph/code work, or click linked targets to inspect or unlink them.";
+        }
+
+        private string WorkspaceSafetyLine()
+        {
+            if (CanRevertLastAutomationCompile())
+                return "Generated recipe nodes have a Revert compile path.";
+            if (_editorOpen && _editorPage == AutomationEditorPage.Code)
+                return "Recipes are deterministic and lower into native Breadboard nodes.";
+            if (_editorOpen)
+                return "Viewing existing native data does not mutate it; inspector edits apply directly.";
+            if (_selectedController == null)
+                return "Selection and target discovery are HUD-only until you place or edit a native controller.";
+            return "World links are ESU workspace state until proxy nodes are created in the native graph.";
+        }
+
+        private string WorkspaceNativeSurfaceLine()
+        {
+            if (_selectedController == null)
+                return "No native controller selected";
+            if (IsBreadboardController(_selectedController.Controller))
+                return "Native Breadboard graph";
+            if (IsAcbControllerBridgeTarget(_selectedController))
+                return "Native ACB Controller buttons";
+            if (IsAcbProxyTarget(_selectedController))
+                return "Native ACB rule data";
+            return _selectedController.Controller?.ClassName ??
+                   _selectedController.RuntimeType ??
+                   "Native controller data";
         }
 
         private static void DrawCyanLine(Rect rect)
@@ -2668,6 +2739,7 @@ namespace DecoLimitLifter.AutomationEditMode
             LabelRow("Filter", AutomationTargetCatalog.CategoryLabel(_filter));
             LabelRow("Targets", _targets.Count.ToString("N0", CultureInfo.InvariantCulture));
             LabelRow("Visible links", SelectedLinks.Count.ToString("N0", CultureInfo.InvariantCulture));
+            DrawWorkspaceGuide();
             if (_selectedController == null)
             {
                 DrawCompactIconHeader("No controller selected", "build", DecorationEditorTheme.SubHeader);
@@ -2711,6 +2783,17 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label(_status, DecorationEditorTheme.Status);
             GUI.DragWindow(new Rect(0f, 0f, _leftPanelRect.width, EsuHudLayout.Scale(34f)));
             GUILayout.EndArea();
+        }
+
+        private void DrawWorkspaceGuide()
+        {
+            GUILayout.Space(EsuHudLayout.Scale(4f));
+            DrawCompactIconHeader("Workspace guide", "focus", DecorationEditorTheme.SubHeader);
+            LabelRow("Stage", WorkspaceStageLabel());
+            LabelRow("Native data", WorkspaceNativeSurfaceLine());
+            GUILayout.Label("Next: " + NextSafeActionLine(), DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("Safety: " + WorkspaceSafetyLine(), DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("System Blocks: planned nested graphs with exposed ports and native lowering.", DecorationEditorTheme.MiniWrap);
         }
 
         private void DrawLinkedTargetListRow(AutomationLink link)
@@ -3548,7 +3631,7 @@ namespace DecoLimitLifter.AutomationEditMode
             DecorationEditorTheme.Separator();
             float scrollHeight = Mathf.Max(
                 EsuHudLayout.Scale(180f),
-                _editorRect.height - inset * 2f - EsuHudLayout.Scale(132f));
+                _editorRect.height - inset * 2f - EsuHudLayout.Scale(152f));
             _editorScroll = GUILayout.BeginScrollView(
                 _editorScroll,
                 alwaysShowHorizontal: false,
@@ -3590,6 +3673,7 @@ namespace DecoLimitLifter.AutomationEditMode
                     : DecorationEditorTheme.Mini,
                 GUILayout.Width(EsuHudLayout.Scale(190f)));
             GUILayout.EndHorizontal();
+            GUILayout.Label("Next: " + NextSafeActionLine(), DecorationEditorTheme.MiniWrap);
             GUILayout.Label("Status: " + (_status ?? string.Empty), DecorationEditorTheme.MiniWrap);
         }
 
