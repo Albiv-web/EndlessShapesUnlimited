@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Core.Widgets;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.Ftd.Avatar.Build.UndoRedo;
 using BrilliantSkies.Modding.Types;
+using DecoLimitLifter.DecorationEditMode;
 using NetInfrastructure;
 using UnityEngine;
 
@@ -49,29 +51,80 @@ namespace DecoLimitLifter.AutomationEditMode
                     return false;
                 }
 
-                var command = new PlaceBlockCommand(
-                    construct,
-                    position,
-                    rotation,
-                    item,
-                    0,
-                    MirrorInfo.none);
-                command.Apply();
-                if (!command.Success)
+                Quaternion[] candidateRotations = CandidatePlacementRotations(rotation);
+                using (EsuHudNotifications.BeginSilentInfoStoreCapture())
                 {
-                    message = "FtD rejected the automation controller placement.";
-                    return false;
+                    for (int index = 0; index < candidateRotations.Length; index++)
+                    {
+                        var command = new PlaceBlockCommand(
+                            construct,
+                            position,
+                            candidateRotations[index],
+                            item,
+                            0,
+                            MirrorInfo.none);
+                        command.Apply();
+                        if (!command.Success)
+                            continue;
+
+                        RegisterUndo(build, command);
+                        message = index == 0
+                            ? "Placed " + descriptor.Label + "."
+                            : "Placed " + descriptor.Label + " after rotating to a valid attach face.";
+                        return true;
+                    }
                 }
 
-                RegisterUndo(build, command);
-                message = "Placed " + descriptor.Label + ".";
-                return true;
+                message =
+                    "FtD rejected the automation controller placement after ESU tried valid attach-face rotations.";
+                return false;
             }
             catch (Exception exception)
             {
                 message = "Automation controller placement failed: " + exception.Message;
                 return false;
             }
+        }
+
+        private static Quaternion[] CandidatePlacementRotations(Quaternion preferred)
+        {
+            var rotations = new List<Quaternion>();
+            AddUniqueRotation(rotations, preferred);
+            foreach (Quaternion rotation in CubeRotations())
+                AddUniqueRotation(rotations, rotation);
+            return rotations.ToArray();
+        }
+
+        private static IEnumerable<Quaternion> CubeRotations()
+        {
+            Vector3[] directions =
+            {
+                Vector3.forward,
+                Vector3.back,
+                Vector3.right,
+                Vector3.left,
+                Vector3.up,
+                Vector3.down
+            };
+
+            foreach (Vector3 forward in directions)
+            {
+                foreach (Vector3 up in directions)
+                {
+                    if (Mathf.Abs(Vector3.Dot(forward, up)) > 0.001f)
+                        continue;
+
+                    yield return Quaternion.LookRotation(forward, up);
+                }
+            }
+        }
+
+        private static void AddUniqueRotation(ICollection<Quaternion> rotations, Quaternion candidate)
+        {
+            if (rotations.Any(existing => Mathf.Abs(Quaternion.Dot(existing, candidate)) > 0.9999f))
+                return;
+
+            rotations.Add(candidate);
         }
 
         private static void RegisterUndo(cBuild build, PlaceBlockCommand command)

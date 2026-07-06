@@ -1,4 +1,5 @@
 using System;
+using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.SmartBuildMode;
 using UnityEngine;
 
@@ -37,6 +38,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private static Rect _lastSlotScreenRect;
         private static Rect _expandedScreenRect;
         private static Vector2 _expandedScroll;
+        private static int _silentCaptureDepth;
 
         internal static bool HasMessage =>
             !string.IsNullOrWhiteSpace(_message) &&
@@ -89,7 +91,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static bool TryCaptureInfoStore(object[] arguments)
         {
             if (!DecorationEditorInputScope.Active &&
-                !SmartBuildInputScope.Active)
+                !SmartBuildInputScope.Active &&
+                !AutomationInputScope.Active)
             {
                 return false;
             }
@@ -98,10 +101,19 @@ namespace DecoLimitLifter.DecorationEditMode
             if (string.IsNullOrWhiteSpace(message))
                 return false;
 
+            if (_silentCaptureDepth > 0)
+                return true;
+
             EsuHudNotificationKind kind = Classify(message);
             Show(message, kind);
             EsuRuntimeLog.FromNotification(_activeSource, kind, message);
             return true;
+        }
+
+        internal static IDisposable BeginSilentInfoStoreCapture()
+        {
+            _silentCaptureDepth++;
+            return new SilentInfoStoreCaptureScope();
         }
 
         internal static float ToolbarHeightScaled(float baseHeight, float toolbarWidth)
@@ -483,6 +495,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     "cancel",
                     "skipped",
                     "blocked",
+                    "occupied",
                     "warning",
                     "dirty",
                     "restore"))
@@ -502,6 +515,20 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             return false;
+        }
+
+        private sealed class SilentInfoStoreCaptureScope : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                _silentCaptureDepth = Math.Max(0, _silentCaptureDepth - 1);
+            }
         }
 
         private static Color AccentColor(EsuHudNotificationKind kind)

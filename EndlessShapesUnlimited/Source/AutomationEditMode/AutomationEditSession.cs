@@ -567,9 +567,10 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!TryPlacementFromHit(hit, out Vector3i cell, out Quaternion rotation))
             {
                 _status = "Point at a block face to place the controller.";
-                EsuRuntimeLog.Warning(
+                EsuHudNotifications.ShowSystem(
                     "Automation Editor",
-                    "Automation placement had no valid face.",
+                    _status,
+                    EsuHudNotificationKind.Warning,
                     "Selected block=" + SelectedPlacementSummary());
                 return;
             }
@@ -583,22 +584,24 @@ namespace DecoLimitLifter.AutomationEditMode
                     out string message))
             {
                 _status = message;
-                InfoStore.Add(message);
-                EsuRuntimeLog.Warning(
+                EsuHudNotifications.ShowSystem(
                     "Automation Editor",
-                    "Automation controller placement rejected.",
-                    "Block=" + SelectedPlacementSummary() +
+                    message,
+                    PlacementFailureKind(message),
+                    "Automation controller placement rejected." +
+                    "\nBlock=" + SelectedPlacementSummary() +
                     " cell=" + FormatCell(cell) +
                     " reason=" + (message ?? string.Empty));
                 return;
             }
 
             _status = message;
-            InfoStore.Add(message);
-            EsuRuntimeLog.Info(
+            EsuHudNotifications.ShowSystem(
                 "Automation Editor",
-                "Automation controller placed.",
-                "Block=" + SelectedPlacementSummary() +
+                message,
+                EsuHudNotificationKind.Info,
+                "Automation controller placed." +
+                "\nBlock=" + SelectedPlacementSummary() +
                 " cell=" + FormatCell(cell));
             RefreshTargets(force: true);
             AutomationTarget placed = _targets.FirstOrDefault(
@@ -606,6 +609,13 @@ namespace DecoLimitLifter.AutomationEditMode
                           target.LocalPosition.Equals(cell));
             if (placed != null && placed.IsController)
                 SelectAutomationController(placed, "Placed and selected ");
+        }
+
+        private static EsuHudNotificationKind PlacementFailureKind(string message)
+        {
+            return (message ?? string.Empty).IndexOf("occupied", StringComparison.OrdinalIgnoreCase) >= 0
+                ? EsuHudNotificationKind.Warning
+                : EsuHudNotificationKind.Error;
         }
 
         private static bool TryPlacementFromHit(

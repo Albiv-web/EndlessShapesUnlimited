@@ -4208,10 +4208,12 @@ f 0 2 3
                notificationSource.Contains("fallbackMessage") &&
                notificationSource.Contains("hasTransientMessage") &&
                 notificationSource.Contains("Vector2 screenOrigin") &&
-                notificationSource.Contains("screenOrigin.x + rect.x") &&
-                notificationSource.Contains("screenOrigin.y + rect.y") &&
+               notificationSource.Contains("screenOrigin.x + rect.x") &&
+               notificationSource.Contains("screenOrigin.y + rect.y") &&
                notificationSource.Contains("DecorationEditorInputScope.Active") &&
                notificationSource.Contains("SmartBuildInputScope.Active") &&
+               notificationSource.Contains("AutomationInputScope.Active") &&
+               notificationSource.Contains("BeginSilentInfoStoreCapture") &&
                notificationSource.Contains("DisplaySeconds = 6f") &&
                notificationSource.Contains("ToolbarHeightScaled") &&
                notificationSource.Contains("EsuHudLayout.Scale(baseHeight)") &&
@@ -7063,6 +7065,12 @@ f 0 2 3
             "Source",
             "AutomationEditMode",
             "AutomationControllerCatalog.cs"));
+        string automationControllerCommitterSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationControllerCommitter.cs"));
         string automationTargetCatalogSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -7486,10 +7494,16 @@ f 0 2 3
                automationPrepareLayoutSource.Contains("FullScreenEditorRect()") &&
                automationMouseOverUiSource.Contains("if (_editorOpen)") &&
                automationMouseOverUiSource.Contains("return true;") &&
+               automationControllerCommitterSource.Contains("CandidatePlacementRotations") &&
+               automationControllerCommitterSource.Contains("CubeRotations") &&
+               automationControllerCommitterSource.Contains("Quaternion.LookRotation") &&
+               automationControllerCommitterSource.Contains("BeginSilentInfoStoreCapture") &&
+               automationControllerCommitterSource.Contains("valid attach-face rotations") &&
+               automationSessionSource.Contains("EsuHudNotifications.ShowSystem") &&
                automationSessionSource.Contains("Placement preview shows green") &&
                automationSessionSource.Contains("Automation controller placement rejected") &&
                automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()"),
-            "Automation Editor shares the resizable foreground ESU shell pattern, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, logs placement failures, and blocks panel clicks from world placement.");
+            "Automation Editor shares the resizable foreground ESU shell pattern, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, and blocks panel clicks from world placement.");
         Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
                automationExecuteBoardCommandSource.Contains("return false;") &&
                automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&
