@@ -118,7 +118,7 @@ Exclude:
    For the current release:
 
    ```text
-   [b]Mod latest version 1.0.6[/b]
+   [b]Mod latest version 1.0.7[/b]
    ```
 
    The in-game update notifier also tolerates the plain

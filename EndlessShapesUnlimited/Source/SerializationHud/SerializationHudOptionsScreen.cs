@@ -9,6 +9,7 @@ using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Choices;
 using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Numbers;
 using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Texts;
 using BrilliantSkies.Ui.Tips;
+using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SmartBuildMode;
 using Ui.Consoles.Examples;
@@ -155,7 +156,7 @@ namespace DecoLimitLifter.SerializationHud
             CreateHeader(
                 "ESU editor HUD",
                 new ToolTip(
-                    "Scale and reset the Decoration Edit, Surface Builder, and Smart Builder overlays."));
+                    "Scale and reset the Decoration Edit, Surface Builder, Smart Builder, and Automation overlays."));
             var editorHud = CreateTableSegment(2, 2);
             editorHud.AddInterpretter(
                 SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
@@ -214,6 +215,19 @@ namespace DecoLimitLifter.SerializationHud
                     new ToolTip(
                         "Can only open while building on a craft. The keybind defaults to Ctrl+Shift+B."),
                     _ => SmartBuildModeRegistration.ToggleFromUi()));
+
+            CreateHeader(
+                "Automation Editor",
+                new ToolTip(
+                    "Modal Breadboard/ACB editor for placing automation controllers, selecting targets, and preparing graph/code links."));
+            var automationEditor = CreateTableSegment(1, 1);
+            automationEditor.AddInterpretter(
+                BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Buttons.SubjectiveButton<byte>.Quick(
+                    0,
+                    "Toggle Automation Editor",
+                    new ToolTip(
+                        "Can only open while building on a craft. The keybind defaults to Ctrl+Shift+A."),
+                    _ => AutomationEditModeRegistration.ToggleFromUi()));
         }
 
         private static void CycleFastBlueprintLoadTier(

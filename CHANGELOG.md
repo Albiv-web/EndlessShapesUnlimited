@@ -18,9 +18,25 @@ GitHub history, but short enough that it can be copied into release notes.
 - Added mirrored Decoration Edit placement and anchor preview hints while
   symmetry planes are active, so the original and mirrored side can be checked
   before committing.
+- Added AMUI-style Decoration Edit mass transforms for box-selected
+  decorations, including group move, rotate, axis scale, uniform scale from a
+  center handle, and typed XYZ group-scale factors through the normal Scale
+  fields.
+- Added a Decoration Edit group pivot selector for mass transforms, with
+  Bounds, Average, Selected decoration, and Selected anchor origins.
+- Added Decoration Edit Shift-click additive selection in Single selection
+  mode, so decorations can be added to the current selection without box
+  dragging.
+- Added Ctrl-click toggle and Shift-click range selection to the Decoration
+  Edit Selected anchor list.
+- Added Decoration Edit multi-selection primary switching, so clicking an
+  already selected decoration promotes it without clearing the selected group.
 
 ### Changed
 
+- Smart Builder now switches the right panel between full `Shapes` and
+  `Generators` pages, so procedural generators get the full browser area
+  instead of being squeezed under the shape palette.
 - Surface Builder previews now draw the actual planned decoration meshes using
   the selected material and paint color before Apply, while keeping draft
   wireframes and points visible for editing.
@@ -33,9 +49,34 @@ GitHub history, but short enough that it can be copied into release notes.
 - Decoration Edit Mode scale fields now accept `0` on any axis and allow
   nonzero scale values down to `0.00001`; the scale snap minimum now matches
   that precision.
+- Decoration Edit mass-transform pivot selection now lives beside the
+  Single/Box/X-ray controls, and the separate group-scale field was folded into
+  the existing bottom Scale XYZ editor.
+- Decoration Edit now keeps the mass-transform pivot selector visible in the
+  selection strip and disables it until multiple decorations are selected.
+- Decoration Edit, Surface Builder, and Smart Builder toolbar icons now use
+  clearer tool-specific ESU artwork for rotate rings, paint, box select,
+  Surface Builder generators, symmetry axes, Cancel, Close, and undo/redo key
+  buttons.
+- ESU world overlays now cull fully off-screen wireframe lines and preview
+  quads before the expensive screen-space width conversion, reducing editor
+  wireframe cost across Decoration Edit, Surface Builder, and Smart Builder.
+- Updated the ESU change-test checklist with a focused v1.0.7 smoke course for
+  Decoration Edit, Surface Builder, Smart Builder generators, and packaging.
 
 ### Fixed
 
+- Fixed Decoration/Smart Builder toolbar icons regressing to generic boxed
+  glyphs or unsafe runtime texture matches; editor buttons now use
+  ESU-owned generated icons, including proper cube, axis, save, cancel, and
+  delete artwork.
+- Fixed Smart Builder generator resizing so circles, polygons, and spheres
+  scale from their stored generator dimensions instead of their current
+  rasterized cell hull; round-locked generators now resize once from the
+  dragged handle and keep the forced radii centered.
+- Fixed large Smart Builder generated previews causing heavy frame drops by
+  caching generated hull geometry, merging adjacent wireframe edge runs, and
+  budget-sampling very large wire/material overlays.
 - Fixed Decoration Edit symmetry deletion so deleting a decoration while
   symmetry is active also deletes its mirrored counterpart decorations in the
   same undoable operation.
@@ -59,6 +100,11 @@ GitHub history, but short enough that it can be copied into release notes.
 - Fixed Surface Builder normal-flipped split surfaces double-applying the
   normal reversal during ES2 polygon conversion, which could corrupt placed
   decorations on angled spin-block or subobject constructs.
+- Fixed Decoration Edit paint color changes after box selection so swatch,
+  typed color, and paint-brush clicks recolor the whole selected decoration
+  group in one undoable batch instead of only the primary decoration.
+- Fixed Decoration Edit box-selection overlays so selected decorations sharing
+  the same anchor also draw their anchor-to-decoration guide lines.
 
 ## 1.0.6 - 2026-07-04
 

@@ -18,11 +18,15 @@ namespace DecoLimitLifter.SmartBuildMode
         internal SmartBuildPatternResult(
             IEnumerable<Vector3i> cuboidCells,
             IEnumerable<SmartBuildPlacement> fixedPlacements,
-            string failureReason = null)
+            string failureReason = null,
+            IEnumerable<string> warnings = null)
         {
             CuboidCells = (cuboidCells ?? Array.Empty<Vector3i>()).ToArray();
             FixedPlacements = (fixedPlacements ?? Array.Empty<SmartBuildPlacement>()).ToArray();
             FailureReason = failureReason;
+            Warnings = (warnings ?? Array.Empty<string>())
+                .Where(warning => !string.IsNullOrWhiteSpace(warning))
+                .ToArray();
         }
 
         internal IReadOnlyList<Vector3i> CuboidCells { get; }
@@ -30,6 +34,8 @@ namespace DecoLimitLifter.SmartBuildMode
         internal IReadOnlyList<SmartBuildPlacement> FixedPlacements { get; }
 
         internal string FailureReason { get; }
+
+        internal IReadOnlyList<string> Warnings { get; }
 
         internal bool Success => string.IsNullOrWhiteSpace(FailureReason);
 
@@ -250,6 +256,7 @@ namespace DecoLimitLifter.SmartBuildMode
             var fixedPlacements = new List<SmartBuildPlacement>();
             var cuboidCells = new Dictionary<string, Vector3i>();
             var skipped = new List<Vector3i>();
+            var patternWarnings = new List<string>();
             var targetKeys = new HashSet<string>();
             var fixedSignatures = new HashSet<string>();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
@@ -260,6 +267,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     SmartBuildPatternResult result = PatternFor(piece).Build(piece, source);
                     if (!result.Success)
                         return Failed(result.FailureReason, preview);
+                    patternWarnings.AddRange(result.Warnings);
 
                     foreach (Vector3i cell in result.CuboidCells)
                     {
@@ -358,7 +366,10 @@ namespace DecoLimitLifter.SmartBuildMode
             if (placements.Count == 0)
                 return Failed("No empty cells are available in the preview.", preview, skipped);
 
-            var warnings = new List<string>();
+            var warnings = patternWarnings
+                .GroupBy(warning => warning, StringComparer.Ordinal)
+                .Select(group => group.Key)
+                .ToList();
             if (placements.Count > options.HardPlacementCap)
             {
                 return new SmartBuildPlan(
@@ -424,6 +435,10 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 case SmartBuildShapeKind.DownSlope:
                     return DownSlopePattern.Instance;
+                case SmartBuildShapeKind.GeneratedCircle:
+                case SmartBuildShapeKind.GeneratedPolygon:
+                case SmartBuildShapeKind.GeneratedSphere:
+                    return GeneratedPattern.Instance;
                 default:
                     if (piece.IsFixedGeometry)
                         return FixedGeometryPattern.Instance;
@@ -695,6 +710,37 @@ namespace DecoLimitLifter.SmartBuildMode
                 return new SmartBuildPatternResult(
                     Array.Empty<Vector3i>(),
                     placements);
+            }
+        }
+
+        private sealed class GeneratedPattern : ISmartBuildPattern
+        {
+            internal static readonly GeneratedPattern Instance = new GeneratedPattern();
+
+            public SmartBuildPatternResult Build(SmartBuildPiece piece, SmartBuildSource source)
+            {
+                Vector3i[] generatedCells = piece.EnumeratePreviewCells(source).ToArray();
+                IReadOnlyList<SmartBuildPlacement> smoothingPlacements =
+                    piece.BuildGeneratedSmoothingPlacements(
+                        source,
+                        out IReadOnlyList<Vector3i> replacedCells,
+                        out IReadOnlyList<string> warnings);
+                if (smoothingPlacements.Count == 0 || replacedCells.Count == 0)
+                {
+                    return new SmartBuildPatternResult(
+                        generatedCells,
+                        Array.Empty<SmartBuildPlacement>(),
+                        warnings: warnings);
+                }
+
+                var replaced = new HashSet<string>(replacedCells.Select(DecoLimitLifter.EsuSymmetry.CellKey));
+                Vector3i[] cuboidCells = generatedCells
+                    .Where(cell => !replaced.Contains(DecoLimitLifter.EsuSymmetry.CellKey(cell)))
+                    .ToArray();
+                return new SmartBuildPatternResult(
+                    cuboidCells,
+                    smoothingPlacements,
+                    warnings: warnings);
             }
         }
     }

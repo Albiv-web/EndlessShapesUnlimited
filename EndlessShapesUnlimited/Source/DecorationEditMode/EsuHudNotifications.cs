@@ -141,10 +141,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.Width(Mathf.Max(EsuHudLayout.Scale(SlotMinWidth), width)),
                 GUILayout.Height(height));
             Rect logButtonRect = LogButtonRect(rect);
-            Vector2 screenPoint = GUIUtility.GUIToScreenPoint(rect.position);
             _lastSlotScreenRect = new Rect(
-                screenPoint.x,
-                screenPoint.y,
+                screenOrigin.x + rect.x,
+                screenOrigin.y + rect.y,
                 rect.width,
                 rect.height);
             bool hasTransientMessage = HasMessage;

@@ -7,6 +7,7 @@ namespace DecoLimitLifter.DecorationEditMode
     internal static class DecorationEditorOverlay
     {
         private const float MinimumLineWidth = 1f;
+        private const float ScreenCullMarginPixels = 64f;
         private static readonly List<Segment> Segments = new List<Segment>(1024);
         private static readonly List<OverlayQuad> Quads = new List<OverlayQuad>(1024);
         private static Material _material;
@@ -151,6 +152,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (IsScreenQuadOutside(a, b, c, d))
+                return;
+
             GL.Color(quad.Color);
             GL.Vertex(quad.A);
             GL.Vertex(quad.B);
@@ -188,6 +192,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
             Vector2 screenStart = new Vector2(start.x, start.y);
             Vector2 screenEnd = new Vector2(end.x, end.y);
+            if (IsScreenSegmentOutside(screenStart, screenEnd))
+                return;
+
             Vector2 direction = screenEnd - screenStart;
             if (direction.sqrMagnitude <= 0.0001f)
                 return;
@@ -205,6 +212,30 @@ namespace DecoLimitLifter.DecorationEditMode
             GL.Vertex(c);
             GL.Vertex(d);
         }
+
+        private static bool IsScreenSegmentOutside(Vector2 start, Vector2 end) =>
+            (start.x < -ScreenCullMarginPixels && end.x < -ScreenCullMarginPixels) ||
+            (start.x > Screen.width + ScreenCullMarginPixels && end.x > Screen.width + ScreenCullMarginPixels) ||
+            (start.y < -ScreenCullMarginPixels && end.y < -ScreenCullMarginPixels) ||
+            (start.y > Screen.height + ScreenCullMarginPixels && end.y > Screen.height + ScreenCullMarginPixels);
+
+        private static bool IsScreenQuadOutside(Vector3 a, Vector3 b, Vector3 c, Vector3 d) =>
+            (a.x < -ScreenCullMarginPixels &&
+             b.x < -ScreenCullMarginPixels &&
+             c.x < -ScreenCullMarginPixels &&
+             d.x < -ScreenCullMarginPixels) ||
+            (a.x > Screen.width + ScreenCullMarginPixels &&
+             b.x > Screen.width + ScreenCullMarginPixels &&
+             c.x > Screen.width + ScreenCullMarginPixels &&
+             d.x > Screen.width + ScreenCullMarginPixels) ||
+            (a.y < -ScreenCullMarginPixels &&
+             b.y < -ScreenCullMarginPixels &&
+             c.y < -ScreenCullMarginPixels &&
+             d.y < -ScreenCullMarginPixels) ||
+            (a.y > Screen.height + ScreenCullMarginPixels &&
+             b.y > Screen.height + ScreenCullMarginPixels &&
+             c.y > Screen.height + ScreenCullMarginPixels &&
+             d.y > Screen.height + ScreenCullMarginPixels);
 
         private static bool IsFinite(Vector3 value) =>
             IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);

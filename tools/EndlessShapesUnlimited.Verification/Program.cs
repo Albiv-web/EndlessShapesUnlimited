@@ -1421,8 +1421,8 @@ f 0 2 3
         Assert(changelogSource.Contains("Steam Workshop update notifier") &&
                changelogSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
                releaseChannelsSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
-               releaseChannelsSource.Contains("[b]Mod latest version 1.0.6[/b]") &&
-               steamReadmeSource.Contains("[b]Mod latest version 1.0.6[/b]"),
+               releaseChannelsSource.Contains("[b]Mod latest version 1.0.7[/b]") &&
+               steamReadmeSource.Contains("[b]Mod latest version 1.0.7[/b]"),
             "Changelog and release-channel workflow document the Steam Workshop update version line.");
     }
 
@@ -2964,6 +2964,35 @@ f 0 2 3
         string meshPreviewGridLayoutSource = ExtractMethodSource(sessionSource, "MeshPreviewGridLayoutFor").Replace("\r\n", "\n");
         string handleEditorKeybindsSource = ExtractMethodSource(sessionSource, "HandleEditorKeybinds").Replace("\r\n", "\n");
         string readEditorKeyDownSource = ExtractMethodSource(sessionSource, "ReadEditorKeyDown").Replace("\r\n", "\n");
+        string setSelectedColorSource = ExtractMethodSource(sessionSource, "SetSelectedColor").Replace("\r\n", "\n");
+        string setSelectedDecorationsColorSource = ExtractMethodSource(sessionSource, "SetSelectedDecorationsColor").Replace("\r\n", "\n");
+        string addNearestToSelectionSource = ExtractMethodSource(sessionSource, "AddNearestToSelection").Replace("\r\n", "\n");
+        string tryApplySymmetryFollowSource = ExtractMethodSource(sessionSource, "TryApplySymmetryFollow").Replace("\r\n", "\n");
+        string tryApplyDecorationSymmetryTransformSource = ExtractMethodSource(sessionSource, "TryApplyDecorationSymmetryTransform").Replace("\r\n", "\n");
+        int boxSelectRightClickIndex = handleSceneInputSource.IndexOf(
+            "_tool == DecorationEditorTool.Select &&\n                _selectionMode == DecorationSelectionMode.Box",
+            StringComparison.Ordinal);
+        int decorationContextMenuIndex = handleSceneInputSource.IndexOf(
+            "TryOpenDecorationContextMenu()",
+            StringComparison.Ordinal);
+        string boxSelectRightClickPath = boxSelectRightClickIndex >= 0 &&
+                                         decorationContextMenuIndex > boxSelectRightClickIndex
+            ? handleSceneInputSource.Substring(
+                boxSelectRightClickIndex,
+                decorationContextMenuIndex - boxSelectRightClickIndex)
+            : string.Empty;
+        int previousSelectionIndex = addNearestToSelectionSource.IndexOf(
+            "var previousSelection = _selection.ToList()",
+            StringComparison.Ordinal);
+        int additiveSetPrimaryIndex = addNearestToSelectionSource.IndexOf(
+            "SetPrimarySelection(hit.Decoration, hit.Construct)",
+            StringComparison.Ordinal);
+        int restorePreviousSelectionIndex = addNearestToSelectionSource.IndexOf(
+            "previousSelection.Count",
+            StringComparison.Ordinal);
+        int addClickedSelectionIndex = addNearestToSelectionSource.LastIndexOf(
+            "_selection.Add(hit.Decoration)",
+            StringComparison.Ordinal);
         int toolButtonSignature = sessionSource.IndexOf(
             "private void ToolButton(",
             StringComparison.Ordinal);
@@ -3065,12 +3094,35 @@ f 0 2 3
             "Decoration Edit Mode treats the shared notification/log overlay as ESU-owned UI before camera zoom handles mouse wheel input.");
 
         var definitions = DecorationEditorIconCatalog.Definitions;
+        string iconCatalogSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorIconCatalog.cs"));
         Assert(definitions.Any(icon => icon.Key == "move" &&
                                        icon.Guid == new Guid("68419445-57e1-41ac-89c9-7683976ddcff")) &&
                definitions.Any(icon => icon.Key == "select" &&
                                        icon.Guid == new Guid("f417ee2c-2aa4-4fb2-ab9f-de4c59b94e45")) &&
-               definitions.Any(icon => icon.Key == "outliner" && icon.Guid == Guid.Empty),
-            "Decoration Edit Mode icon catalog records FTD runtime icon GUIDs and ESU-owned fallback concepts.");
+               definitions.Any(icon => icon.Key == "boxSelect" && icon.Guid == Guid.Empty) &&
+               definitions.Any(icon => icon.Key == "close" && icon.Guid == Guid.Empty) &&
+               definitions.Any(icon => icon.Key == "symmetryX" && icon.Guid == Guid.Empty) &&
+               definitions.Any(icon => icon.Key == "outliner" && icon.Guid == Guid.Empty) &&
+               definitions.Any(icon => icon.Key == "cube" && icon.Guid == Guid.Empty) &&
+               iconCatalogSource.Contains("Texture2D texture = CreateFallback(definition);") &&
+               iconCatalogSource.Contains("DrawIcon(texture, definition.Key, definition.FallbackGlyph, accent);") &&
+               iconCatalogSource.Contains("DrawAxes(texture);") &&
+               iconCatalogSource.Contains("DrawRotateGizmoIcon(texture);") &&
+               iconCatalogSource.Contains("DrawBoxSelect(texture, color);") &&
+               iconCatalogSource.Contains("DrawSymmetryPlaneIcon(texture, DecorationEditAxis.X);") &&
+               iconCatalogSource.Contains("DrawPaintBucket(texture, color);") &&
+               iconCatalogSource.Contains("DrawFloppy(texture, color);") &&
+               iconCatalogSource.Contains("DrawTrash(texture, color);") &&
+               !iconCatalogSource.Contains("DrawBoxLetter") &&
+               !iconCatalogSource.Contains("TryFindRuntimeTexture(definition) ??") &&
+               iconCatalogSource.Contains("internal static Texture2D GetRuntimeIcon(string key)") &&
+               iconCatalogSource.Contains("Texture2D texture = TryFindRuntimeTexture(definition);"),
+            "Decoration Edit Mode icon catalog records FTD runtime icon GUIDs and ESU-owned fallback concepts, while editor buttons use deterministic ESU icons instead of loose global texture matches.");
 
         string themeSource = File.ReadAllText(Path.Combine(
             root,
@@ -3627,6 +3679,12 @@ f 0 2 3
                sessionSource.Contains("PanelToggle(\"anchor\", \"Anch\", ref _showAnchorPanel") &&
                sessionSource.Contains("SelectedAnchorDecorations") &&
                sessionSource.Contains("DrawSelectedAnchorConnections") &&
+               sessionSource.Contains("_anchorRangeAnchor") &&
+               sessionSource.Contains("SelectAnchorDecorationRow(rows, index, decoration)") &&
+               sessionSource.Contains("TryFindAnchorDecorationIndex(rows, _anchorRangeAnchor, out int anchorIndex)") &&
+               sessionSource.Contains("SelectAnchorDecorationRange(rows, anchorIndex, clickedIndex, clicked, additive: control)") &&
+               sessionSource.Contains("ToggleAnchorDecorationSelection(clicked)") &&
+               sessionSource.Contains("Ctrl toggles one row; Shift selects a range.") &&
                sessionSource.Contains("_tool != DecorationEditorTool.Anchor"),
             "Decoration Edit Mode outliner defaults to construct-grouped decoration rows with optional tether pins, collapsible constructs, independent selected-anchor context, anchor connection lines, and anchor-mode click selection.");
 
@@ -3640,6 +3698,9 @@ f 0 2 3
                transactionSource.Contains("MarkCreated") &&
                transactionSource.Contains("TrackEdit") &&
                sessionSource.Contains("TryRestoreHistorySnapshots") &&
+               sessionSource.Contains("RollbackFailedDecorationDelete(deletedPlans)") &&
+               ExtractMethodSource(sessionSource, "RollbackFailedDecorationDelete").Contains("TryUndoDeletedDecoration(") &&
+               sessionSource.Contains("already deleted mirrors were restored") &&
                sessionSource.Contains("UndoEdit") &&
                sessionSource.Contains("RedoEdit") &&
                sessionSource.Contains("Ctrl+Shift+Z") &&
@@ -3697,6 +3758,16 @@ f 0 2 3
                decorationBehaviourSource.Contains("EsuSymmetry.Clear"),
             "Decoration Edit Mode exposes shared XYZ symmetry planes, validates mirrored placement batches, and live-follows matched existing mirrored decorations atomically.");
 
+        Assert(tryApplySymmetryFollowSource.Contains("targetScale,\n                    _selected.Color.Us)") &&
+               tryApplySymmetryFollowSource.Contains("application.Color") &&
+               tryApplyDecorationSymmetryTransformSource.Contains("int color") &&
+               tryApplyDecorationSymmetryTransformSource.Contains("decoration.Color.Us = color") &&
+               sessionSource.Contains("internal int Color { get; }") &&
+               setSelectedColorSource.Contains("BeginSymmetryFollow(before, reportSkipped: true)") &&
+               setSelectedColorSource.Contains("TryApplySymmetryFollow(symmetryFollow, reportInvalid: true)") &&
+               setSelectedColorSource.Contains("RecordSnapshotEdit(\"Set color\", before, symmetryFollow)"),
+            "Decoration Edit Mode symmetry follow carries selected color and applies it to mirrored counterparts.");
+
         Assert(sessionSource.Contains("HashSet<Decoration> _selection") &&
                 sessionSource.Contains("MaxOutlinerDrawRows") &&
                 sessionSource.Contains("DecorationOutlinerRowKind") &&
@@ -3718,12 +3789,22 @@ f 0 2 3
                sessionSource.Contains("CommitBoxSelectionDrag") &&
                sessionSource.Contains("BoxSelectionRect") &&
                sessionSource.Contains("DrawBoxSelectionMarquee") &&
-               sessionSource.Contains("ToolButton(DecorationEditorTool.Select, \"select\", SelectToolLabel()") &&
+               sessionSource.Contains("ToolButton(DecorationEditorTool.Select, SelectToolIcon(), SelectToolLabel()") &&
                sessionSource.Contains("private string SelectToolLabel()") &&
+               sessionSource.Contains("private string SelectToolIcon()") &&
                sessionSource.Contains("private void ToggleSelectionMode()") &&
                sessionSource.Contains("tool == DecorationEditorTool.Select && _tool == DecorationEditorTool.Select") &&
                sessionSource.Contains("rect.width < BoxSelectionClickThresholdPixels") &&
                sessionSource.Contains("SelectNearest(_boxSelectStartMouse)") &&
+               sessionSource.Contains("private void SelectNearest(Vector2 mouse, bool additive = false)") &&
+               sessionSource.Contains("TryPromoteSelectedDecorationInMultiSelection(best)") &&
+               ExtractMethodSource(sessionSource, "TryPromoteSelectedDecorationInMultiSelection").Contains("_selection.Contains(hit.Decoration)") &&
+               ExtractMethodSource(sessionSource, "TryPromoteSelectedDecorationInMultiSelection").Contains("SetPrimarySelection(hit.Decoration, hit.Construct)") &&
+               sessionSource.Contains("AddNearestToSelection(best)") &&
+               sessionSource.Contains("additive: _selectionMode == DecorationSelectionMode.Single && IsShiftHeld()") &&
+               sessionSource.Contains("private void AddNearestToSelection(DecorationHit hit)") &&
+               sessionSource.Contains("Selection moved to another construct.") &&
+               sessionSource.Contains("Hold Shift and click to add more decorations to the current selection.") &&
                sessionSource.Contains("EnumerateBoxSelectionHits(rect, xray, refresh: false)") &&
                sessionSource.Contains("EnumerateBoxSelectionHits(rect, xray, refresh: true)") &&
                sessionSource.Contains("BoxSelectionPrimaryConstruct") &&
@@ -3738,12 +3819,45 @@ f 0 2 3
                sessionSource.Contains("SetPrimarySelection(primary.Decoration, primary.Construct)") &&
                sessionSource.Contains("DrawSelectedSetHints") &&
                sessionSource.Contains("TryGetMultiSelectionPivot") &&
+               sessionSource.Contains("TryGetMultiSelectionBoundsPivot") &&
+               sessionSource.Contains("TryGetMultiSelectionBounds") &&
+               sessionSource.Contains("DecorationGroupPivotMode") &&
+               sessionSource.Contains("DecorationGroupPivotMode.BoundsCenter") &&
+               sessionSource.Contains("DecorationGroupPivotMode.AverageCenter") &&
+               sessionSource.Contains("DecorationGroupPivotMode.SelectedDecoration") &&
+               sessionSource.Contains("DecorationGroupPivotMode.SelectedAnchor") &&
+               sessionSource.Contains("CycleGroupPivotMode") &&
+               sessionSource.Contains("GroupPivotModeLabel") &&
+               sessionSource.Contains("\"Pivot: \" + GroupPivotModeLabel(_groupPivotMode)") &&
+               ExtractMethodSource(sessionSource, "TryGetMultiSelectionBoundsPivot").Contains("(min + max) * 0.5f") &&
+               ExtractMethodSource(sessionSource, "TryCaptureMultiTransformStart").Contains("ResolveGroupPivotFromCapturedSelection") &&
+               !ExtractMethodSource(sessionSource, "TryGetMultiSelectionBoundsPivot").Contains("sum / decorations.Count") &&
+               sessionSource.Contains("TryGetMultiSelectionAveragePivot") &&
+               sessionSource.Contains("TryResolveGroupPivotFromLiveSelection") &&
+               sessionSource.Contains("ResolveGroupPivotFromCapturedSelection") &&
+               sessionSource.Contains("TryGetSelectedDecorationIndex") &&
+               ExtractMethodSource(sessionSource, "ResolveGroupPivotFromCapturedSelection").Contains("sum / centers.Length") &&
+               ExtractMethodSource(sessionSource, "ResolveGroupPivotFromCapturedSelection").Contains("return centers[selectedIndex]") &&
+               ExtractMethodSource(sessionSource, "ResolveGroupPivotFromCapturedSelection").Contains("return ToVector3(before[selectedIndex].TetherPoint)") &&
                sessionSource.Contains("TryCaptureMultiTransformStart") &&
                sessionSource.Contains("TryPickGroupMoveHandle") &&
                sessionSource.Contains("TryPickGroupRotateRing") &&
+               sessionSource.Contains("TryPickGroupUniformScaleHandle") &&
                sessionSource.Contains("TryApplyMultiMove") &&
                sessionSource.Contains("TryApplyMultiRotate") &&
                sessionSource.Contains("TryApplyMultiScale") &&
+               sessionSource.Contains("TryApplyMultiUniformScale") &&
+               sessionSource.Contains("UniformGroupScaleFactorFromMouseDelta") &&
+               sessionSource.Contains("_scaleDragUniformGroup") &&
+               sessionSource.Contains("TryPickGroupUniformScaleHandle(multiScalePivot, _lastMouseGui)") &&
+               sessionSource.Contains("RecordMultiTransformEdit(_scaleDragUniformGroup ? \"Uniform scale decorations\" : \"Scale decorations\")") &&
+               ExtractMethodSource(sessionSource, "TryApplyMultiUniformScale").Contains("_multiTransformPivotStart + offset * factor") &&
+               ExtractMethodSource(sessionSource, "TryApplyMultiUniformScale").Contains("_multiTransformBefore[index].Scaling * factor") &&
+               sessionSource.Contains("DrawSelectedSetAnchorConnections()") &&
+               ExtractMethodSource(sessionSource, "DrawSelectedSetAnchorConnections").Contains("FormatTether(decoration.TetherPoint.Us)") &&
+               ExtractMethodSource(sessionSource, "DrawSelectedSetAnchorConnections").Contains("group.Count <= 1") &&
+               ExtractMethodSource(sessionSource, "DrawSelectedSetAnchorConnections").Contains("DecorationEditorOverlay.Line(anchorWorld, centerWorld, lineColor") &&
+               ExtractMethodSource(sessionSource, "DrawSelectedSetAnchorConnections").Contains("ReferenceEquals(decoration, _selected)") &&
                sessionSource.Contains("TryResolveMultiTransformPlacement") &&
                sessionSource.Contains("TryApplyMultiTransformPlacements") &&
                sessionSource.Contains("RestoreMultiTransformFrame") &&
@@ -3754,8 +3868,47 @@ f 0 2 3
                sessionSource.Contains("RecordMultiTransformEdit") &&
                sessionSource.Contains("ScaleVectorAlongAxis") &&
                sessionSource.Contains("TryPositioningFromCenter") &&
+               sessionSource.Contains("bool pivotEnabled = HasMultiSelectionForTransform();") &&
+               sessionSource.Contains("float pivotWidth = EsuHudLayout.Scale(112f);") &&
+               sessionSource.Contains("DrawGroupPivotButton(new Rect(x, y, pivotWidth, height), pivotEnabled)") &&
+               sessionSource.Contains("private void DrawGroupPivotButton(Rect rect, bool enabled)") &&
+               sessionSource.Contains("Select multiple decorations to choose the group transform pivot.") &&
+               !sessionSource.Contains("float pivotWidth = showPivot ?") &&
+               sessionSource.Contains("ApplyMultiScaleFromInspector") &&
+               sessionSource.Contains("TryApplyMultiScaleFactors") &&
+               sessionSource.Contains("SetVectorText(_scaleText, HasMultiSelectionForTransform() ? Vector3.one : _selected.Scaling.Us)") &&
+               ExtractMethodSource(sessionSource, "DrawBottomTransformEditors").Contains("liveApply: !multiSelection") &&
+               ExtractMethodSource(sessionSource, "ApplyMultiScaleFromInspector").Contains("TryApplyMultiUniformScale(factors.x)") &&
+               ExtractMethodSource(sessionSource, "ApplyMultiScaleFromInspector").Contains("TryApplyMultiScaleFactors(factors)") &&
+               !sessionSource.Contains("DrawGroupScaleControl") &&
+               !sessionSource.Contains("ApplyGroupScaleText") &&
+               !sessionSource.Contains("_groupScaleText") &&
+               sessionSource.Contains("Group scale applied: ") &&
+               sessionSource.Contains("DrawMultiSelectionBoundsGuide") &&
+               sessionSource.Contains("DrawLocalBoundsWireframe") &&
                sessionSource.Contains("DecorationSnapshotBatchCommand("),
-            "Decoration Edit Mode exposes fixed-width Select/Box/X-ray controls in the bottom header, primary-construct box occlusion, and averaged multi-selection move/rotate/scale with anchor-follow retether staging and batch history.");
+            "Decoration Edit Mode exposes fixed-width Select/Box/X-ray controls, selectable-origin AMUI-style multi-selection move/rotate/axis-scale/uniform-scale, anchor-follow retether staging, and batch history.");
+
+        Assert(handleSceneInputSource.Contains("if (Input.GetMouseButtonDown(1) &&\n                _tool == DecorationEditorTool.Select &&\n                _selectionMode == DecorationSelectionMode.Box)") &&
+               decorationContextMenuIndex > boxSelectRightClickIndex &&
+               boxSelectRightClickPath.Contains("DecorationEditorInputScope.ClaimBuildInputForFrames();") &&
+               boxSelectRightClickPath.Contains("DecorationEditorInputScope.ClaimCameraInputForFrames();") &&
+               boxSelectRightClickPath.Contains("CancelBoxSelection();") &&
+               boxSelectRightClickPath.Contains("_selectionMode = DecorationSelectionMode.Single;") &&
+               boxSelectRightClickPath.Contains("InfoStore.Add(\"Box select disabled.\");") &&
+               boxSelectRightClickPath.Contains("return;"),
+            "Decoration Edit Mode right-click exits Box selection before opening the decoration context menu.");
+
+        Assert(previousSelectionIndex >= 0 &&
+               additiveSetPrimaryIndex > previousSelectionIndex &&
+               restorePreviousSelectionIndex > additiveSetPrimaryIndex &&
+               addClickedSelectionIndex > restorePreviousSelectionIndex &&
+               addNearestToSelectionSource.Contains("_selection.Add(decoration)") &&
+               addNearestToSelectionSource.Contains("Selection moved to another construct."),
+            "Decoration Edit Mode additive Single selection preserves previous selections after primary promotion.");
+
+        Assert(handleSceneInputSource.Contains("SelectNearest(\n                _lastMouseGui,\n                additive: _selectionMode == DecorationSelectionMode.Single && IsShiftHeld());"),
+            "Decoration Edit Mode Shift-click Single selection routes through additive SelectNearest.");
 
         Assert(modeSwitchHandoffSource.Contains("internal static class EsuModeSwitchHandoff") &&
                modeSwitchHandoffSource.Contains("ConsumeInactiveCleanupFrame") &&
@@ -3890,6 +4043,9 @@ f 0 2 3
                sessionSource.Contains("private static bool IsValidScaleComponent(float value)") &&
                sessionSource.Contains("value == 0f || Mathf.Abs(value) >= MinimumNonZeroScale") &&
                sessionSource.Contains("Scale must be finite; each axis must be 0 or at least 0.00001.") &&
+               sessionSource.Contains("Group scale factors must be finite, non-negative, and each axis must be 0 or at least 0.00001.") &&
+               ExtractMethodSource(sessionSource, "ApplyMultiScaleFromInspector").Contains("RecordMultiTransformEdit(uniform ? \"Uniform scale decorations\" : \"Scale decorations\")") &&
+               ExtractMethodSource(sessionSource, "TryApplyMultiScaleFactors").Contains("sourceScale.x * factors.x") &&
                sessionSourceNormalized.Contains("Mathf.Max(\n                    0f,\n                    DecorationEditMath.Snap(1f + multiDelta, DecorationScaleSnap))") &&
                sessionSource.Contains("Mode: Deco | Tab to Surface when clean") &&
                sessionSource.Contains("Mode: Surface | Tab to Build when clean") &&
@@ -3927,6 +4083,10 @@ f 0 2 3
                sessionSource.Contains("_showInspectorColorPicker") &&
                sessionSource.Contains("new GUIContent(_showInspectorColorPicker ? \"Hide list\" : \"Show list\"") &&
                sessionSource.Contains("DrawPaintColorButton(") &&
+               ExtractMethodSource(sessionSource, "DrawColorEditor").Contains("SelectedColorMatches(color)") &&
+               ExtractMethodSource(sessionSource, "SetSelectedColor").Contains("SetSelectedDecorationsColor(decorations, color)") &&
+               ExtractMethodSource(sessionSource, "SetSelectedDecorationsColor").Contains("DecorationSnapshotBatchCommand") &&
+               ExtractMethodSource(sessionSource, "SetSelectedDecorationsColor").Contains("decoration.Color.Us = color") &&
                sessionSource.IndexOf("DrawColorEditor()", StringComparison.Ordinal) <
                sessionSource.IndexOf("LabelRow(\"Owner\"", StringComparison.Ordinal) &&
                sessionSource.IndexOf("DrawMaterialEditor()", StringComparison.Ordinal) <
@@ -3936,6 +4096,12 @@ f 0 2 3
                sessionSourceNormalized.IndexOf("\"Rotation\",\n                _orientationText", StringComparison.Ordinal) <
                sessionSourceNormalized.IndexOf("\"Scale\",\n                _scaleText", StringComparison.Ordinal),
             "Decoration Edit Mode inspector uses color/material controls, while the bottom panel hosts live Position/Rotation/Scale transform editing.");
+
+        Assert(setSelectedDecorationsColorSource.Contains("DecorationSnapshotBatchCommand") &&
+               setSelectedDecorationsColorSource.Contains("decoration.Color.Us = color") &&
+               setSelectedDecorationsColorSource.Contains("changedDecorations.ToArray()") &&
+               setSelectedDecorationsColorSource.Contains("primaryIndex"),
+            "Decoration Edit Mode batch color edits still record DecorationSnapshotBatchCommand.");
 
         Assert(sessionSource.Contains("DrawPaintPalette") &&
                sessionSource.Contains("DrawPaintColorRow") &&
@@ -3967,6 +4133,10 @@ f 0 2 3
                sessionSource.Contains("s_showMeshPalette = _tool == DecorationEditorTool.Paint") &&
                sessionSource.Contains("Pick a color, then click decoration centers or blocks in the viewport to paint them.") &&
                sessionSource.Contains("Painted decoration color #") &&
+               sessionSource.Contains("Painted \" + selectedCount.ToString(\"N0\", CultureInfo.InvariantCulture) + \" selected decorations color #") &&
+               ExtractMethodSource(sessionSource, "PaintNearest").Contains("paintSelection") &&
+               ExtractMethodSource(sessionSource, "PaintNearest").Contains("_selection.Contains(best.Decoration)") &&
+               sessionSource.Contains("CountSelectedDecorationsWithColor") &&
                sessionSource.Contains("Painted block color #") &&
                sessionSource.Contains("_tool != DecorationEditorTool.Paint") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Paint)") &&
@@ -4036,7 +4206,8 @@ f 0 2 3
                notificationSource.Contains("fallbackMessage") &&
                notificationSource.Contains("hasTransientMessage") &&
                 notificationSource.Contains("Vector2 screenOrigin") &&
-                notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
+                notificationSource.Contains("screenOrigin.x + rect.x") &&
+                notificationSource.Contains("screenOrigin.y + rect.y") &&
                notificationSource.Contains("DecorationEditorInputScope.Active") &&
                notificationSource.Contains("SmartBuildInputScope.Active") &&
                notificationSource.Contains("DisplaySeconds = 6f") &&
@@ -4316,7 +4487,8 @@ f 0 2 3
                notificationSource.Contains("EsuConsoleWindow.Toggle") &&
                notificationSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
                notificationSource.Contains("Vector2 screenOrigin") &&
-               notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
+               notificationSource.Contains("screenOrigin.x + rect.x") &&
+               notificationSource.Contains("screenOrigin.y + rect.y") &&
                overlaySource.Contains("EsuHudNotifications.DrawToolbarSlot") &&
                overlaySource.Contains("EsuHudNotifications.DrawExpandedPopup") &&
                overlaySource.Contains("EsuConsoleWindow.Draw") &&
@@ -4338,12 +4510,16 @@ f 0 2 3
             "ESU runtime console is shared by Deco/Surface/Smart Builder, captures notifications, owns input hover, and mirrors handled exceptions without replacing AdvLogger.");
 
         int smartConsoleDraw = smartBuildDrawGuiSource.IndexOf("EsuConsoleWindow.DrawForegroundWindow()", StringComparison.Ordinal);
+        int smartExpandedNotificationDraw = smartBuildDrawGuiSource.IndexOf("EsuHudNotifications.DrawExpandedPopup()", StringComparison.Ordinal);
         Assert(smartConsoleDraw > smartBuildDrawGuiSource.IndexOf("GUI.Window(_rightPanelWindowId", StringComparison.Ordinal) &&
                smartConsoleDraw > smartBuildDrawGuiSource.IndexOf("GUI.Window(_statusWindowId", StringComparison.Ordinal) &&
                smartConsoleDraw > smartBuildDrawGuiSource.IndexOf("DrawPreviewContextMenu()", StringComparison.Ordinal) &&
                smartConsoleDraw > smartBuildDrawGuiSource.IndexOf("DrawShapePreviewCard()", StringComparison.Ordinal) &&
+               smartExpandedNotificationDraw > smartBuildDrawGuiSource.IndexOf("GUI.Window(_rightPanelWindowId", StringComparison.Ordinal) &&
+               smartExpandedNotificationDraw > smartBuildDrawGuiSource.IndexOf("GUI.Window(_statusWindowId", StringComparison.Ordinal) &&
+               smartExpandedNotificationDraw < smartBuildDrawGuiSource.IndexOf("DrawPreviewContextMenu()", StringComparison.Ordinal) &&
                smartConsoleDraw < smartBuildDrawGuiSource.IndexOf("EsuCursorTooltip.Draw()", StringComparison.Ordinal),
-            "Smart Builder draws the ESU console as the foreground window above panels and preview overlays.");
+            "Smart Builder draws expanded notifications and the ESU console as foreground UI above panels and preview overlays.");
     }
 
     private static void VerifyPointerFlushPlacement()
@@ -5370,7 +5546,8 @@ f 0 2 3
                plannerSource.Contains("internal StructureBlockType StructureBlockType") &&
                plannerSource.Contains("draft.Settings.StructureBlockType") &&
                sessionSource.Contains("_surfacePreviewMaterials") &&
-               sessionSource.Contains("SurfaceMaterialPreviewColor") &&
+               sessionSource.Contains("ApplySurfacePreviewPaint") &&
+               sessionSource.Contains("SurfaceFallbackMaterialPreviewColor") &&
                sessionSource.Contains("SurfacePlacementMatrix") &&
                meshPreviewRendererSource.Contains("internal Material GetMaterial") &&
                meshPreviewRendererSource.Contains("definition.GetMaterial()") &&
@@ -5382,7 +5559,8 @@ f 0 2 3
                drawSurfaceOverlaySource.Contains("if (drawDraftFill)") &&
                surfacePreviewMaterialSource.Contains("_previewRenderer?.GetMaterial(entry)") &&
                surfacePreviewMaterialSource.Contains("new Material(sourceMaterial)") &&
-               surfacePreviewMaterialSource.Contains("SurfaceMaterialPreviewColor") &&
+               surfacePreviewMaterialSource.Contains("ApplySurfacePreviewPaint(material, placement.Color)") &&
+               !surfacePreviewMaterialSource.Contains("ConfigureTransparentMaterial(material)") &&
                historySource.Contains("SurfaceBuilderStyleHistoryCommand"),
             "Surface Builder shares paint color across Draw and Extra Tools, supports per-face surface colors, shows face colors in the draft list, and renders planned mesh/material previews from selected paint.");
 
@@ -6224,6 +6402,213 @@ f 0 2 3
             SmartBlockFamily.ForTests(1, 2, 3, 4),
             downSlopeFamily,
             fixedShapeFamilies);
+        SmartBuildShapeDescriptor circleDescriptor =
+            SmartBuildShapeDescriptors.ByKey("generated-circle");
+        SmartBuildShapeDescriptor polygonDescriptor =
+            SmartBuildShapeDescriptors.ByKey("generated-polygon");
+        SmartBuildShapeDescriptor sphereDescriptor =
+            SmartBuildShapeDescriptors.ByKey("generated-sphere");
+        SmartBuildPiece circleGenerator = SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(20, 0, 0),
+            circleDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 5,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        int circleShellCells = circleGenerator.EnumeratePreviewCells(smartSource).Count();
+        circleGenerator.SetGeneratorFillMode(SmartBuildGeneratorFillMode.Filled);
+        int circleFilledCells = circleGenerator.EnumeratePreviewCells(smartSource).Count();
+        Assert(circleDescriptor?.IsGenerator == true &&
+               circleShellCells > 0 &&
+               circleFilledCells > circleShellCells,
+            "Smart Builder generated circles support shell and filled cell footprints.");
+
+        SmartBuildPiece resizedCircleGenerator = SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(20, 0, 0),
+            circleDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 5,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        resizedCircleGenerator.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 4);
+        SmartBuildPiece resizedSphereGenerator = SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(40, 0, 0),
+            sphereDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 5,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        resizedSphereGenerator.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 4);
+        Assert(resizedCircleGenerator.FormatDimensions().Contains("9 x 9 x 1") &&
+               resizedCircleGenerator.Origin.Equals(new Vector3i(20, 0, -2)) &&
+               resizedSphereGenerator.FormatDimensions().Contains("9 x 9 x 9") &&
+               resizedSphereGenerator.Origin.Equals(new Vector3i(40, 2, -2)),
+            "Smart Builder round-locked generators scale once from the dragged handle and center forced radii on the other axes.");
+
+        bool polygonPresetsWork = true;
+        foreach (int sides in new[] { 1, 2, 3, 8, 10 })
+        {
+            var polygonScene = new SmartBuildPieceScene(null);
+            SmartBuildPiece polygon = SmartBuildPiece.CreateGeneratedShape(
+                null,
+                new Vector3i(30 + sides * 10, 0, 0),
+                polygonDescriptor,
+                SmartBuildAxis.Z,
+                1,
+                width: 5,
+                drawPlane: SmartBuildDrawPlane.Camera);
+            polygon.SetGeneratorSides(sides);
+            polygonScene.Add(polygon);
+            SmartBuildPlan polygonPlan = polygonScene.BuildPlan(
+                smartSource,
+                _ => false,
+                new SmartBuildPlannerOptions
+                {
+                    AllowNullConstructForVerification = true
+                },
+                out _);
+            polygonPresetsWork &= polygonPlan.CanCommit &&
+                                  polygonPlan.CoveredCellCount > 0 &&
+                                  polygon.GeneratorSides == sides;
+        }
+
+        Assert(polygonPresetsWork,
+            "Smart Builder generated polygons support 1, 2, 3, 8, and 10 sided footprints through the normal scene planner.");
+
+        SmartBuildPiece resizedTriangleGenerator = SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(80, 0, 0),
+            polygonDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 7,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        resizedTriangleGenerator.SetGeneratorSides(3);
+        resizedTriangleGenerator.ResizeFromHandle(DecorationEditAxis.Z, sign: 1, delta: 2);
+        Assert(resizedTriangleGenerator.FormatDimensions().Contains("9 x 7 x 1") &&
+               resizedTriangleGenerator.Origin.Equals(new Vector3i(80, 0, 0)),
+            "Smart Builder polygon generators resize from their stored generator dimensions rather than their rasterized cell hull.");
+
+        SmartBuildPiece sphereGenerator = SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(120, 0, 0),
+            sphereDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 5,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        Vector3i sphereCenterCell = new Vector3i(122, -2, 2);
+        Vector3i[] sphereShellCells = sphereGenerator.EnumeratePreviewCells(smartSource).ToArray();
+        sphereGenerator.SetGeneratorFillMode(SmartBuildGeneratorFillMode.Filled);
+        Vector3i[] sphereFilledCells = sphereGenerator.EnumeratePreviewCells(smartSource).ToArray();
+        Assert(sphereDescriptor?.IsGenerator == true &&
+               sphereShellCells.Length > 0 &&
+               sphereFilledCells.Length > sphereShellCells.Length &&
+               !sphereShellCells.Contains(sphereCenterCell) &&
+               sphereFilledCells.Contains(sphereCenterCell),
+            "Smart Builder generated spheres support hollow shells and filled solid interiors.");
+
+        var smoothScene = new SmartBuildPieceScene(null);
+        SmartBuildPiece smoothCircle = SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(150, 0, 0),
+            circleDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 5,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        smoothCircle.SetGeneratorSmoothingMode(SmartBuildGeneratorSmoothingMode.PerimeterDownSlope);
+        smoothScene.Add(smoothCircle);
+        SmartBuildPlan smoothPlan = smoothScene.BuildPlan(
+            smartSource,
+            _ => false,
+            new SmartBuildPlannerOptions
+            {
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        Assert(smoothPlan.CanCommit &&
+               smoothPlan.Placements.Any(placement => placement.Candidate.ShapeKind == SmartBuildShapeKind.DownSlope) &&
+               smoothPlan.Warnings.Count == 0,
+            "Smart Builder generated shape smoothing emits 1m down-slope placements when the material supports them.");
+
+        var noSlopeSource = new SmartBuildSource(
+            null,
+            Guid.Empty,
+            "test material without slopes",
+            new Vector3i(1, 1, 1),
+            SmartBlockFamily.ForTests(1, 2, 3, 4));
+        SmartBuildPlan smoothFallbackPlan = smoothScene.BuildPlan(
+            noSlopeSource,
+            _ => false,
+            new SmartBuildPlannerOptions
+            {
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        Assert(smoothFallbackPlan.CanCommit &&
+               smoothFallbackPlan.CoveredCellCount > 0 &&
+               smoothFallbackPlan.Warnings.Any(warning => warning.Contains("smoothing skipped")),
+            "Smart Builder generated shape smoothing falls back to normal blocks with a warning when down slopes are unavailable.");
+
+        var generatedMirrorScene = new SmartBuildPieceScene(null);
+        generatedMirrorScene.Add(SmartBuildPiece.CreateGeneratedShape(
+            null,
+            new Vector3i(8, 0, 0),
+            polygonDescriptor,
+            SmartBuildAxis.Z,
+            1,
+            width: 5,
+            drawPlane: SmartBuildDrawPlane.Camera));
+        EsuSymmetry.Clear();
+        EsuSymmetry.SetPlaneForTests(DecorationEditAxis.X, 0);
+        SmartBuildPlan generatedMirrorPlan = generatedMirrorScene.BuildPlan(
+            smartSource,
+            _ => false,
+            new SmartBuildPlannerOptions
+            {
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        EsuSymmetry.Clear();
+        Vector3i[] generatedMirrorCells = generatedMirrorPlan.Placements
+            .SelectMany(placement => placement.CoveredCells())
+            .ToArray();
+        Assert(generatedMirrorPlan.CanCommit &&
+               generatedMirrorCells.Length > 0 &&
+               generatedMirrorCells.Select(EsuSymmetry.CellKey).Distinct().Count() == generatedMirrorCells.Length,
+            "Smart Builder generated shapes mirror through the scene planner without duplicate placement cells.");
+
+        Vector3i occupiedGeneratedCell = circleGenerator.EnumeratePreviewCells(smartSource).First();
+        var occupiedGeneratedScene = new SmartBuildPieceScene(null);
+        occupiedGeneratedScene.Add(circleGenerator);
+        SmartBuildPlan generatedBlockedPlan = occupiedGeneratedScene.BuildPlan(
+            smartSource,
+            cell => cell.Equals(occupiedGeneratedCell),
+            new SmartBuildPlannerOptions
+            {
+                SkipOccupiedCells = false,
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        SmartBuildPlan generatedSkippedPlan = occupiedGeneratedScene.BuildPlan(
+            smartSource,
+            cell => cell.Equals(occupiedGeneratedCell),
+            new SmartBuildPlannerOptions
+            {
+                SkipOccupiedCells = true,
+                AllowNullConstructForVerification = true
+            },
+            out _);
+        Assert(!generatedBlockedPlan.CanCommit &&
+               generatedBlockedPlan.FailureReason.Contains("intersects") &&
+               generatedSkippedPlan.CanCommit &&
+               generatedSkippedPlan.SkippedCells.Count == 1,
+            "Smart Builder generated shapes respect Block-on-overlap and Skip-occupied occupancy modes.");
+
         SmartBuildPiece fixedTriangle = SmartBuildPiece.CreateFixedShape(
             null,
             new Vector3i(0, 0, 0),
@@ -6646,41 +7031,585 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
+        string automationRegistrationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationEditModeRegistration.cs"));
+        string automationBehaviourSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationEditModeBehaviour.cs"));
+        string automationSessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationEditSession.cs"));
+        string automationInputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationInputScope.cs"));
+        string automationControllerCatalogSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationControllerCatalog.cs"));
+        string automationTargetCatalogSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationTargetCatalog.cs"));
+        string automationAcbInspectorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationAcbInspector.cs"));
+        string automationAcbControllerInspectorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationAcbControllerInspector.cs"));
+        string automationBreadboardInspectorSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationBreadboardInspector.cs"));
+        string automationRuntimeDiagnosticsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationRuntimeDiagnostics.cs"));
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
+        string changeTestChecklistSource = ReadDocumentationText(root, "docs", "ESU_CHANGE_TEST_CHECKLIST.md");
         string smartBuilderHudDocSource = ReadDocumentationText(
             root,
             "SMART_BUILDER_HUD.md");
         string readFreezeDownSource = ExtractMethodSource(vanillaInputBridgeSource, "ReadFreezeDown").Replace("\r\n", "\n");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
+               profileSource.Contains("ToggleAutomationEditMode") &&
+               profileSource.Contains("Q(Key.Control, Key.Shift, Key.A)") &&
                profileSource.Contains("SwitchEsuBuildMode") &&
                profileSource.Contains("Q(Key.Tab)") &&
                pluginSource.Contains("SmartBuildModeRegistration.Register") &&
+               pluginSource.Contains("AutomationEditModeRegistration.Register") &&
                registrationSource.Contains("DecorationEditModeRegistration.Active") &&
+               registrationSource.Contains("AutomationEditModeRegistration.Active") &&
                registrationSource.Contains("CanOpenFromModeSwitch") &&
                registrationSource.Contains("ignoreDecorationEditMode") &&
+               registrationSource.Contains("ignoreAutomationEditMode") &&
                registrationSource.Contains("modeSwitch: true") &&
                registrationSource.Contains("CanSwitchEsuModes") &&
-               registrationSource.Contains("TrySwitchToDecorationEdit") &&
+               registrationSource.Contains("TrySwitchToAutomationEdit") &&
                behaviourSource.Contains("ReadSwitchModeKeyDown") &&
                behaviourSource.Contains("CanOpenFromModeSwitch") &&
                behaviourSource.Contains("EsuSymmetry.Clear") &&
-               behaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
+               behaviourSource.Contains("AutomationEditModeRegistration.CanOpenFromModeSwitch") &&
+               behaviourSource.Contains("AutomationEditModeRegistration.OpenFromModeSwitch") &&
                behaviourSource.Contains("ConsumeSmartBuildToggleDown") &&
                behaviourSource.Contains("ConsumeSwitchModeDown") &&
                decorationBehaviourSource.Contains("ConsumeDecorationEditToggleDown") &&
                decorationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
+               automationRegistrationSource.Contains("DecorationEditModeRegistration.Active") &&
+               automationRegistrationSource.Contains("SmartBuildModeRegistration.Active") &&
+               automationRegistrationSource.Contains("CanOpenFromModeSwitch") &&
+               automationBehaviourSource.Contains("TrySwitchToDecorationEdit") &&
+               automationBehaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
+               automationBehaviourSource.Contains("ConsumeAutomationEditToggleDown") &&
+               automationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
+               automationSessionSource.Contains("SwitchToDecorationEditRequested") &&
+               automationInputScopeSource.Contains("AutomationInputScope") &&
+               automationControllerCatalogSource.Contains("7fcfdaf0-2d2a-43be-842a-423e736ccdd0") &&
+               automationControllerCatalogSource.Contains("a3d914e9-697d-425f-abda-a6b21b4de952") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.Spinblocks") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.TurretsWeapons") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.Propulsion") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.AcbActions") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.BreadboardReadable") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.BreadboardWritable") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.Movement") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.Subobjects") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.Utility") &&
+               automationTargetCatalogSource.Contains("AutomationTargetCategory.Media") &&
+               automationTargetCatalogSource.Contains("IsAcbActionTarget") &&
+               automationTargetCatalogSource.Contains("IsBreadboardReadableTarget") &&
+               automationTargetCatalogSource.Contains("IsBreadboardWritableTarget") &&
+               automationTargetCatalogSource.Contains("RoleSearchTextFor") &&
+               automationTargetCatalogSource.Contains("RoleLabel") &&
+               automationTargetCatalogSource.Contains("RoleSummary") &&
+               automationSessionSource.Contains("AutomationTargetCatalog.RoleSummary(target)") &&
+               automationSessionSource.Contains("AutomationTargetCatalog.RoleLabel(link.Target)") &&
+               automationTargetCatalogSource.Contains("internal static bool MatchesSearch") &&
+               automationTargetCatalogSource.Contains("SearchTextFor") &&
+               automationTargetCatalogSource.Contains("ItemGuid.ToString(\"D\")") &&
+               automationTargetCatalogSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
+               automationAcbInspectorSource.Contains("ControlBlockData") &&
+               automationAcbInspectorSource.Contains("GetProperty(\"Us\"") &&
+               automationAcbInspectorSource.Contains("ForceChanged") &&
+               automationAcbInspectorSource.Contains("TriggerATestNow") &&
+               automationAcbInspectorSource.Contains("ACB_ActionValue") &&
+               automationAcbInspectorSource.Contains("ACB_ConditionValue") &&
+               automationAcbInspectorSource.Contains("ACB_ActionType, Ftd") &&
+               automationAcbInspectorSource.Contains("ACB_ConditionType, Ftd") &&
+               automationAcbInspectorSource.Contains("CycleActionType") &&
+               automationAcbInspectorSource.Contains("ConditionInverted") &&
+               automationAcbInspectorSource.Contains("ConditionMinVariable") &&
+               automationAcbControllerInspectorSource.Contains("AutomationAcbControllerInspector") &&
+               automationAcbControllerInspectorSource.Contains("AcbControllerButtonData") &&
+               automationAcbControllerInspectorSource.Contains("ButtonName") &&
+               automationAcbControllerInspectorSource.Contains("Keyword") &&
+               automationAcbControllerInspectorSource.Contains("ShapeId") &&
+               automationAcbControllerInspectorSource.Contains("ButtonColor") &&
+               automationAcbControllerInspectorSource.Contains("IsUsedForBreadboard") &&
+               automationAcbControllerInspectorSource.Contains("TrySetBreadboardOutput") &&
+               automationAcbControllerInspectorSource.Contains("TrySetButtonColor") &&
+               automationBreadboardInspectorSource.Contains("BrilliantSkies.Common.Circuits.IBoard") &&
+               automationBreadboardInspectorSource.Contains("AvailableComponentTypes") &&
+               automationBreadboardInspectorSource.Contains("CanAddComponentMatching") &&
+               automationBreadboardInspectorSource.Contains("TryAddFirstAvailableComponent") &&
+               automationBreadboardInspectorSource.Contains("TryAddFirstAvailableComponents") &&
+               automationBreadboardInspectorSource.Contains("FindAvailableComponentMatching") &&
+               automationBreadboardInspectorSource.Contains("ControllerName") &&
+               automationBreadboardInspectorSource.Contains("AddComponentCommand") &&
+               automationBreadboardInspectorSource.Contains("MakeSystem") &&
+               automationBreadboardInspectorSource.Contains("NewPackage") &&
+               automationBreadboardInspectorSource.Contains("GetProperty(\"Us\"") &&
+               automationBreadboardInspectorSource.Contains("TryCreateTargetProxy") &&
+               automationBreadboardInspectorSource.Contains("ConfigureGenericProxy") &&
+               automationBreadboardInspectorSource.Contains("TryAutoSelectAcbControllerGetter") &&
+               automationBreadboardInspectorSource.Contains("TryAutoSelectTargetProxyProperty") &&
+               automationBreadboardInspectorSource.Contains("FindGetterOption") &&
+               automationBreadboardInspectorSource.Contains("FindProxyOption") &&
+               automationBreadboardInspectorSource.Contains("TargetProxySearchTerms") &&
+               automationBreadboardInspectorSource.Contains("internal static IReadOnlyList<string> TargetProxySearchTerms") &&
+               automationBreadboardInspectorSource.Contains("AddTargetProxySearchTerms") &&
+               automationBreadboardInspectorSource.Contains("Auto-selected") &&
+               automationBreadboardInspectorSource.Contains("MatchesAnyTerm") &&
+               automationBreadboardInspectorSource.Contains("button getters try to select a matching keyword automatically") &&
+               automationBreadboardInspectorSource.Contains("TryCreateEvaluatorExpression") &&
+               automationBreadboardInspectorSource.Contains("TryCreateIfElseSwitch") &&
+               automationBreadboardInspectorSource.Contains("WriteValue(component, \"Expression\"") &&
+               automationBreadboardInspectorSource.Contains("WriteValue(switchComponent, \"Threshold\"") &&
+               automationBreadboardInspectorSource.Contains("WriteValue(switchComponent, \"FailValue\"") &&
+               automationBreadboardInspectorSource.Contains("string failExpression") &&
+               automationBreadboardInspectorSource.Contains("useFailExpression") &&
+               automationBreadboardInspectorSource.Contains("TryCreateEvaluatorNode(fail") &&
+               automationBreadboardInspectorSource.Contains("TryConnectNativePorts(failEvaluator, 0, switchComponent, 2") &&
+               automationBreadboardInspectorSource.Contains("AutomationBreadboardCompileResult") &&
+               automationBreadboardInspectorSource.Contains("TryCreateNativeComponentTracked") &&
+               automationBreadboardInspectorSource.Contains("DeleteCreatedComponents") &&
+               automationBreadboardInspectorSource.Contains("FromComponents") &&
+               automationBreadboardInspectorSource.Contains("TryConnectNativePorts") &&
+               automationBreadboardInspectorSource.Contains("LogicGate") &&
+               automationBreadboardInspectorSource.Contains("SelectedGate") &&
+               automationBreadboardInspectorSource.Contains("TrueLogic") &&
+               automationBreadboardInspectorSource.Contains("TryCreateEvaluatorNode") &&
+               automationBreadboardInspectorSource.Contains("WriteDirectMember") &&
+               automationBreadboardInspectorSource.Contains("BlockTypeName") &&
+               automationBreadboardInspectorSource.Contains("BlockFilter") &&
+               automationBreadboardInspectorSource.Contains("SetBlockType") &&
+               automationBreadboardInspectorSource.Contains("AutomationTargetCategory.Spinblocks") &&
+               automationBreadboardInspectorSource.Contains("AutomationTargetCategory.Propulsion") &&
+               automationBreadboardInspectorSource.Contains("AutomationTargetCategory.DoorsDocking") &&
+               automationBreadboardInspectorSource.Contains("AutomationTargetCategory.ResourcePower") &&
+               automationBreadboardInspectorSource.Contains("ProxyPropertyOptions") &&
+               automationBreadboardInspectorSource.Contains("TrySelectProxyProperty") &&
+               automationBreadboardInspectorSource.Contains("ExtractCorrectInputs") &&
+               automationBreadboardInspectorSource.Contains("PropertyPicker") &&
+               automationBreadboardInspectorSource.Contains("EnumerateItems") &&
+               automationBreadboardInspectorSource.Contains("ReadableAttributeId") &&
+               automationBreadboardInspectorSource.Contains("_computer") &&
+               automationBreadboardInspectorSource.Contains("_moduleAttributePair") &&
+               automationBreadboardInspectorSource.Contains("TryConnectPorts") &&
+               automationBreadboardInspectorSource.Contains("TryClearInput") &&
+               automationBreadboardInspectorSource.Contains("TryMoveComponent") &&
+               automationBreadboardInspectorSource.Contains("TryDeleteComponent") &&
+               automationBreadboardInspectorSource.Contains("CreateConnectionCommand") &&
+               automationBreadboardInspectorSource.Contains("DeleteConnectionCommand") &&
+               automationBreadboardInspectorSource.Contains("MoveComponentCommand") &&
+               automationBreadboardInspectorSource.Contains("DeleteComponentCommand") &&
+               automationBreadboardInspectorSource.Contains("AutomationBreadboardPortSummary") &&
+               automationBreadboardInspectorSource.Contains("ConnectedFromComponentId") &&
+               automationBreadboardInspectorSource.Contains("ConnectedFromOutputIndex") &&
+               automationBreadboardInspectorSource.Contains("AutomationBreadboardComponentSettings") &&
+               automationBreadboardInspectorSource.Contains("SettingsFor") &&
+               automationBreadboardInspectorSource.Contains("TryUpdateComponentSetting") &&
+               automationBreadboardInspectorSource.Contains("TryCycleComponentSetting") &&
+               automationBreadboardInspectorSource.Contains("InputValueLongAsString") &&
+               automationBreadboardInspectorSource.Contains("LogicGateLabels") &&
+               automationSessionSource.Contains("DrawAcbInspectorSection") &&
+               automationSessionSource.Contains("DrawAcbControllerInspectorSection") &&
+               automationSessionSource.Contains("DrawAcbControllerButtonEditor") &&
+               automationSessionSource.Contains("DrawAcbControllerColorEditor") &&
+               automationSessionSource.Contains("ACB Controller Inspector") &&
+               automationSessionSource.Contains("Breadboard output uses FtD's ACB Controller button keyword path") &&
+               automationSessionSource.Contains("TryToggleControllerTargetLink") &&
+               automationSessionSource.Contains("CanLinkControllerTarget") &&
+               automationSessionSource.Contains("RebindAutomationLinks") &&
+               automationSessionSource.Contains("RehydrateSelectedControllerLinksFromNativeProxies") &&
+               automationSessionSource.Contains("\"Rehydrated \" +") &&
+               automationSessionSource.Contains("from native Generic Getter/Setter proxies") &&
+               automationSessionSource.Contains("UniqueTargetForPersistedProxy") &&
+               automationSessionSource.Contains("ProxyComponentMatchesTarget") &&
+               automationSessionSource.Contains("ExpectedProxyBlockTypeName") &&
+               automationSessionSource.Contains("ExpectedProxyBlockFilter") &&
+               automationSessionSource.Contains(".GroupBy(target => target.StableKey)") &&
+               automationSessionSource.Contains("link.RebindTarget") &&
+               automationSessionSource.Contains("_selectedLinkTargetKey") &&
+               automationSessionSource.Contains("DrawLinkedTargetListRow") &&
+               automationSessionSource.Contains("DrawSelectedLinkedTargetInspector") &&
+               automationSessionSource.Contains("Selected linked target") &&
+               automationSessionSource.Contains("SelectedLink()") &&
+               automationSessionSource.Contains("LinkedTargetWarning") &&
+               automationSessionSource.Contains("Open graph") &&
+               automationSessionSource.Contains("Generic Getter/Setter properties are discovered") &&
+               automationSessionSource.Contains("internal bool IsStale => Target == null") &&
+               automationSessionSource.Contains("Target { get; private set; }") &&
+               automationSessionSource.Contains("\" (missing)\"") &&
+               automationSessionSource.Contains("not in the live target catalog after refresh") &&
+               automationSessionSource.Contains("IsAcbControllerBridgeTarget") &&
+               automationSessionSource.Contains("IsAcbProxyTarget") &&
+               automationSessionSource.Contains("ACB rule proxy target") &&
+               automationSessionSource.Contains("Rule getter") &&
+               automationSessionSource.Contains("Rule setter") &&
+               automationSessionSource.Contains("ACB condition/action rule proxy") &&
+               automationSessionSource.Contains("Button getter") &&
+               automationSessionSource.Contains("Matches a Breadboard-output keyword when FtD exposes one") &&
+               automationSessionSource.Contains("ACB Controller keyword/button output proxy") &&
+               automationSessionSource.Contains("DrawLinkedGenericTargetNode") &&
+               automationSessionSource.Contains("DrawLinkedTargetProxyShortcuts") &&
+               automationSessionSource.Contains("TryCreateSelectedBreadboardInspector") &&
+               automationSessionSource.Contains("Linked Generic target node") &&
+               automationSessionSource.Contains("Auto-pick terms") &&
+               automationSessionSource.Contains("TargetProxySearchTerms(target, getter: true)") &&
+               automationSessionSource.Contains("Linked \" + controller.Label + \" to ACB Controller button keyword output") &&
+               automationSessionSource.Contains("DrawBreadboardInspectorSection") &&
+               automationSessionSource.Contains("DrawBreadboardProxyActions") &&
+               automationSessionSource.Contains("Linked target proxies") &&
+               automationSessionSource.Contains("TryCreateTargetProxy") &&
+               automationSessionSource.Contains("DrawLinkedAutomationNode") &&
+               automationSessionSource.Contains("DrawLinkedAcbTargetNode") &&
+               automationSessionSource.Contains("DrawLinkedAcbControllerTargetNode") &&
+               automationSessionSource.Contains("Linked ACB target node") &&
+               automationSessionSource.Contains("Linked ACB Controller node") &&
+               automationSessionSource.Contains("DrawAcbInspectorBody") &&
+               automationSessionSource.Contains("DrawAcbControllerInspectorBody") &&
+               automationSessionSource.Contains("DrawAcbInspectorBody(inspector, \"Linked ACB\", allowTrigger: false)") &&
+               automationSessionSource.Contains("DrawAcbControllerInspectorBody(inspector, maxButtons: 3, statusPrefix: \"Linked ACB Controller\")") &&
+               automationSessionSource.Contains("PrefixStatus") &&
+               automationSessionSource.Contains("DrawBreadboardProxyPropertyPicker") &&
+               automationSessionSource.Contains("Proxy property filter") &&
+               automationSessionSource.Contains("TrySelectProxyProperty") &&
+               automationSessionSource.Contains("Code node compiler") &&
+               automationSessionSource.Contains("CompileAutomationCodeExpression") &&
+               automationSessionSource.Contains("AutomationCodeRecipe") &&
+               automationSessionSource.Contains("s_codeRecipes") &&
+               automationSessionSource.Contains("Validation proof") &&
+               automationSessionSource.Contains("proof_signal * 0") &&
+               automationSessionSource.Contains("DrawAutomationRecipePicker") &&
+               automationSessionSource.Contains("DrawAutomationLinkedIdentifierHints") &&
+               automationSessionSource.Contains("AutomationCodeLinkedIdentifiers") &&
+               automationSessionSource.Contains("AutomationCodeIdentifierForTarget") &&
+               automationSessionSource.Contains("InsertAutomationCodeIdentifier") &&
+               automationSessionSource.Contains("Linked identifiers") &&
+               automationSessionSource.Contains("button_signal") &&
+               automationSessionSource.Contains("control_surface") &&
+               automationSessionSource.Contains("SanitizeIdentifier") &&
+               automationSessionSource.Contains("AutomationCompileRevertSet") &&
+               automationSessionSource.Contains("RecordAutomationCompileResult") &&
+               automationSessionSource.Contains("TryBindCompiledOutputToLinkedSetter") &&
+               automationSessionSource.Contains("DrawAutomationCodeOutputTargetPicker") &&
+               automationSessionSource.Contains("Code output target") &&
+               automationSessionSource.Contains("_automationCodeOutputTargetKey") &&
+               automationSessionSource.Contains("AutomationCodeOutputLink") &&
+               automationSessionSource.Contains("TargetSettersFor") &&
+               automationSessionSource.Contains("SetterMatchesTarget") &&
+               automationSessionSource.Contains("_lastCompileBoundOutput") &&
+               automationSessionSource.Contains("out bool boundOutput") &&
+               automationSessionSource.Contains("boundOutput = true") &&
+               automationSessionSource.Contains("ExpectedProxyBlockTypeName") &&
+               automationSessionSource.Contains("ExpectedProxyBlockFilter") &&
+               automationSessionSource.Contains("out AutomationBreadboardCompileResult proxyResult") &&
+               automationSessionSource.Contains("auto-created target setter proxy") &&
+               automationSessionSource.Contains("Bound compiled output to") &&
+               automationSessionSource.Contains("target-specific Generic Setter") &&
+               automationSessionSource.Contains("component.IsGenericSetter") &&
+               automationSessionSource.Contains("inspector.TryConnectPorts(output, 0, setter") &&
+               automationBreadboardInspectorSource.Contains("out AutomationBreadboardCompileResult result") &&
+               automationBreadboardInspectorSource.Contains("CompileResultFromComponents(createdComponents, \"target proxy\")") &&
+               automationSessionSource.Contains("CanRevertLastAutomationCompile") &&
+               automationSessionSource.Contains("RevertLastAutomationCompile") &&
+               automationSessionSource.Contains("revert compile") &&
+               automationSessionSource.Contains("SuggestedAutomationCodeRecipeIndex") &&
+               automationSessionSource.Contains("Spinblock park") &&
+               automationSessionSource.Contains("Door sequence") &&
+               automationSessionSource.Contains("Propulsion trim") &&
+               automationSessionSource.Contains("ACB bridge") &&
+               automationSessionSource.Contains("Missile fuse") &&
+               automationSessionSource.Contains("reset recipe") &&
+               automationSessionSource.Contains("TryExtractEvaluatorExpression") &&
+               automationSessionSource.Contains("TryExtractIfElseSwitch") &&
+               automationSessionSource.Contains("TrySplitLogicCondition") &&
+               automationSessionSource.Contains("AutomationIfElseCompilePlan") &&
+               automationSessionSource.Contains("SecondaryConditionExpression") &&
+               automationSessionSource.Contains("FailExpression") &&
+               automationSessionSource.Contains("HasFailExpression") &&
+               automationSessionSource.Contains("number-or-expression") &&
+               automationSessionSource.Contains("use the supported if/else form for control flow") &&
+               !automationSessionSource.Contains("if/else lowering is not implemented yet") &&
+               automationSessionSource.Contains("LogicGate") &&
+               automationSessionSource.Contains("TryCreateIfElseSwitch") &&
+               automationSessionSource.Contains("TryCreateEvaluatorExpression") &&
+               automationSessionSource.Contains("IsSafeEvaluatorExpressionText") &&
+               automationSessionSource.Contains("DrawBreadboardGraphCanvas") &&
+               automationSessionSource.Contains("DrawEditorBottomStrip") &&
+               automationSessionSource.Contains("EditorGridStatus") &&
+               automationSessionSource.Contains("Page: ") &&
+               automationSessionSource.Contains("Links: ") &&
+               automationSessionSource.Contains("Grid: n/a") &&
+               automationSessionSource.Contains("Native edits apply immediately") &&
+               automationSessionSource.Contains("Generated nodes: revert available") &&
+               automationSessionSource.Contains("AutomationBreadboardCanvasNode") &&
+               automationSessionSource.Contains("DrawBreadboardCanvasWires") &&
+               automationSessionSource.Contains("HandleBreadboardCanvasInput") &&
+               automationSessionSource.Contains("CanvasPortRect") &&
+               automationSessionSource.Contains("_canvasDragComponentId") &&
+               automationSessionSource.Contains("_selectedCanvasComponentId") &&
+               automationSessionSource.Contains("DrawSelectedBreadboardCanvasInspector") &&
+               automationSessionSource.Contains("DeleteBreadboardComponent") &&
+               automationSessionSource.Contains("ClearBreadboardComponentTransientState") &&
+               automationSessionSource.Contains("DrawBreadboardWireControls") &&
+               automationSessionSource.Contains("_wireSourceComponentId") &&
+               automationSessionSource.Contains("TryConnectPorts") &&
+               automationSessionSource.Contains("TryClearInput") &&
+               automationSessionSource.Contains("DrawBreadboardMoveControls") &&
+               automationSessionSource.Contains("TryMoveComponent") &&
+               automationSessionSource.Contains("DrawBreadboardComponentSettings") &&
+               automationSessionSource.Contains("DrawNativeEnumCycler") &&
+               automationSessionSource.Contains("DrawNativeFloatSetting") &&
+               automationSessionSource.Contains("DrawNativeLongSetting") &&
+               automationSessionSource.Contains("Native settings") &&
+               automationSessionSource.Contains("TryPickProjectedController") &&
+               automationSessionSource.Contains("WorldToScreenPoint") &&
+               automationSessionSource.Contains("screen-space controller pick") &&
+               automationSessionSource.Contains("_targetSearchText") &&
+               automationSessionSource.Contains("DrawControllerIndex") &&
+               automationSessionSource.Contains("DrawControllerIndexRow") &&
+               automationSessionSource.Contains("Controllers on craft") &&
+               automationSessionSource.Contains("ConstructGroupLabel") &&
+               automationSessionSource.Contains("ConstructGroupSortKey") &&
+               automationSessionSource.Contains("Main construct") &&
+               automationSessionSource.Contains("Subconstruct ") &&
+               automationSessionSource.Contains("DrawTargetSearchControls") &&
+               automationSessionSource.Contains("FilteredWorldTargets") &&
+               automationSessionSource.Contains("Filter targets by label, class, category, cell, controller GUID") &&
+               automationSessionSource.Contains("No targets match the current search and filter") &&
+               automationSessionSource.Contains("DrawAcbRuleSection") &&
+               automationSessionSource.Contains("ACB Inspector") &&
+               automationSessionSource.Contains("ACB rule") &&
+               automationSessionSource.Contains("Action value") &&
+               automationSessionSource.Contains("Min value") &&
+               automationSessionSource.Contains("Breadboard Inspector") &&
+               automationSessionSource.Contains("Quick add native component") &&
+               automationSessionSource.Contains("DrawMissileBreadboardQuickAdds") &&
+               automationSessionSource.Contains("DrawBreadboardSearchAddButton") &&
+               automationSessionSource.Contains("DrawBreadboardSharedVariableBridge") &&
+               automationSessionSource.Contains("Shared variable bridge") &&
+               automationSessionSource.Contains("TryAddFirstAvailableComponents") &&
+               automationSessionSource.Contains("Use matching native variable names/settings") &&
+               automationSessionSource.Contains("\"PID\", \"pid\"") &&
+               automationSessionSource.Contains("\"Thresh\", \"threshold\"") &&
+               automationSessionSource.Contains("\"Clamp\", \"clamp\"") &&
+               automationSessionSource.Contains("\"Delay\", \"delay\"") &&
+               automationSessionSource.Contains("\"Sum\", \"sum\"") &&
+               automationSessionSource.Contains("\"Multiply\", \"multiply\"") &&
+               automationSessionSource.Contains("\"Var read\", \"variable\", \"reader\"") &&
+               automationSessionSource.Contains("\"Var write\", \"variable\", \"writer\"") &&
+               automationSessionSource.Contains("Missile output components") &&
+               automationSessionSource.Contains("Missile guidance") &&
+               automationSessionSource.Contains("Missile thrust gate") &&
+               automationSessionSource.Contains("Prox fuse") &&
+               automationSessionSource.Contains("Alt fuse") &&
+               automationSessionSource.Contains("GenericBlockGetter") &&
+               automationSessionSource.Contains("GenericBlockSetter") &&
+               automationSessionSource.Contains("Affect range") &&
+               automationSessionSource.Contains("Search pattern") &&
                buildModeInputGateSource.Contains("_switchModeRequiresRelease") &&
                buildModeInputGateSource.Contains("_decorationEditToggleRequiresRelease") &&
                buildModeInputGateSource.Contains("_smartBuildToggleRequiresRelease") &&
+               buildModeInputGateSource.Contains("_automationEditToggleRequiresRelease") &&
                buildModeInputGateSource.Contains("Time.frameCount") &&
                buildModeInputGateSource.Contains("ReadSwitchModeHeld") &&
                buildModeInputGateSource.Contains("ReadDecorationEditToggleHeld") &&
                buildModeInputGateSource.Contains("ReadSmartBuildToggleHeld") &&
+               buildModeInputGateSource.Contains("ReadAutomationEditToggleHeld") &&
                buildModeInputGateSource.Contains("ReadProfileKey(") &&
                buildModeInputGateSource.Contains("KeyInputEventType.Held"),
-            "Smart Block Builder registers at startup, defaults to Ctrl+Shift+B, rejects direct opens over Decoration Edit Mode, and shares one-press profiled input gates for Tab/Ctrl+D/Ctrl+Shift+B handoffs.");
+            "Smart Builder and Automation Editor register at startup, default to Ctrl+Shift+B/Ctrl+Shift+A, reject direct opens over other ESU modes, and share one-press profiled input gates for Tab/Ctrl+D/Ctrl+Shift+B/Ctrl+Shift+A handoffs.");
+        Assert(automationSessionSource.Contains("DrawStatusStrip") &&
+               automationSessionSource.Contains("PrepareAutomationLayout") &&
+               automationSessionSource.Contains("HandleAutomationPanelResize") &&
+               automationSessionSource.Contains("EsuHudLayout.DrawResizeGrip(_leftPanelRect") &&
+               automationSessionSource.Contains("EsuHudLayout.DrawResizeGrip(_rightPanelRect") &&
+               automationSessionSource.Contains("EsuHudLayout.DrawResizeGrip(_editorRect") &&
+               automationSessionSource.Contains("FitEditorToViewport") &&
+               automationSessionSource.Contains("DrawPlacementPreview") &&
+               automationSessionSource.Contains("\"placing\"") &&
+               automationSessionSource.Contains("Placement preview shows green") &&
+               automationSessionSource.Contains("Automation controller placement rejected") &&
+               automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()"),
+            "Automation Editor shares the resizable full-screen ESU shell pattern, fits the graph editor to the central viewport, arms palette placement explicitly, previews target cells, logs placement failures, and blocks panel clicks from world placement.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnostics") &&
+               automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnosticResult") &&
+               automationRuntimeDiagnosticsSource.Contains("AvailableComponentTypes is empty") &&
+               automationRuntimeDiagnosticsSource.Contains("GenericBlockGetter") &&
+               automationRuntimeDiagnosticsSource.Contains("GenericBlockSetter") &&
+               automationRuntimeDiagnosticsSource.Contains("ProbeExpandedBreadboardComponents") &&
+               automationRuntimeDiagnosticsSource.Contains("Extended Breadboard component palette") &&
+               automationRuntimeDiagnosticsSource.Contains("Variable Reader") &&
+               automationRuntimeDiagnosticsSource.Contains("\"variable\", \"reader\"") &&
+               automationRuntimeDiagnosticsSource.Contains("Variable Writer") &&
+               automationRuntimeDiagnosticsSource.Contains("\"variable\", \"writer\"") &&
+               automationRuntimeDiagnosticsSource.Contains("ProbeExistingProxyPropertyPickers") &&
+               automationRuntimeDiagnosticsSource.Contains("ProxyPropertyOptions") &&
+               automationRuntimeDiagnosticsSource.Contains("property-picker enumeration") &&
+               automationRuntimeDiagnosticsSource.Contains("ProbeSwitchFailExpressionReadiness") &&
+               automationRuntimeDiagnosticsSource.Contains("Switch node exposes input 2") &&
+               automationRuntimeDiagnosticsSource.Contains("ProbeNativeBreadboardPersistenceSnapshot") &&
+               automationRuntimeDiagnosticsSource.Contains("Native persistence fingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("Generic proxy fingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("NativePersistenceFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("GenericProxyFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("HasNativePersistenceFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("HasCompleteValidationEvidence") &&
+               automationRuntimeDiagnosticsSource.Contains("SetNativePersistenceFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("SetGenericProxyFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("SetSwitchFailExpressionReadiness") &&
+               automationRuntimeDiagnosticsSource.Contains("SwitchFailExpressionReady") &&
+               automationRuntimeDiagnosticsSource.Contains("SwitchMaxVisibleInputs") &&
+               automationRuntimeDiagnosticsSource.Contains("controller=\" + CleanSegment(controller.Label)") &&
+               automationRuntimeDiagnosticsSource.Contains("CleanSegment(target.Label)") &&
+               automationRuntimeDiagnosticsSource.Contains("StableHash64") &&
+               automationRuntimeDiagnosticsSource.Contains("ComponentFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("WireFingerprints") &&
+               automationRuntimeDiagnosticsSource.Contains("BreadboardComponentFamily") &&
+               automationRuntimeDiagnosticsSource.Contains("Missile Breadboard advertised") &&
+               automationRuntimeDiagnosticsSource.Contains("Linked ACB Controller") &&
+               automationRuntimeDiagnosticsSource.Contains("Linked ACB target exposes ControlBlockData") &&
+               automationRuntimeDiagnosticsSource.Contains("No linked world targets are present") &&
+               automationRuntimeDiagnosticsSource.Contains("Runtime check: ") &&
+               automationSessionSource.Contains("DrawRuntimeDiagnosticsPanel") &&
+               automationSessionSource.Contains("RunAutomationRuntimeDiagnostics") &&
+               automationSessionSource.Contains("Runtime checks") &&
+               automationSessionSource.Contains("DrawRuntimeValidationEvidenceRows") &&
+               automationSessionSource.Contains("DrawRuntimeEvidenceRow") &&
+               automationSessionSource.Contains("Live evidence gates") &&
+               automationSessionSource.Contains("Native graph fingerprint") &&
+               automationSessionSource.Contains("Generic proxy fingerprint") &&
+               automationSessionSource.Contains("Switch fail-expression readiness") &&
+               automationSessionSource.Contains("DrawRuntimeValidationControls") &&
+               automationSessionSource.Contains("Prepare validation graph") &&
+               automationSessionSource.Contains("PrepareAutomationValidationGraph") &&
+               automationSessionSource.Contains("ValidationOutputLink") &&
+               automationSessionSource.Contains("RecipeIndexForLabel(\"Validation proof\")") &&
+               automationSessionSource.Contains("Link a Breadboard-writable world target") &&
+               automationSessionSource.Contains("Validation graph preparation failed") &&
+               automationSessionSource.Contains("Validation graph prepared") &&
+               automationSessionSource.Contains("Requires a writable linked target") &&
+               automationSessionSource.Contains("creates expression-else Switch proof nodes") &&
+               automationSessionSource.Contains("Complete all live evidence gates before capturing or comparing") &&
+               automationSessionSource.Contains("Complete all live evidence gates before capturing a baseline") &&
+               automationSessionSource.Contains("until all live evidence gates are OK") &&
+               automationSessionSource.Contains("Capture baseline") &&
+               automationSessionSource.Contains("Compare baseline") &&
+               automationSessionSource.Contains("AutomationValidationBaseline") &&
+               automationSessionSource.Contains("CaptureRuntimeValidationBaseline") &&
+               automationSessionSource.Contains("CompareRuntimeValidationBaseline") &&
+               automationSessionSource.Contains("Automation validation baseline match") &&
+               automationSessionSource.Contains("same-value writes") &&
+               automationSessionSource.Contains("EsuRuntimeLog.Info(\"Automation Editor\"") &&
+               automationBreadboardInspectorSource.Contains("TryRewriteCurrentSettings") &&
+               automationBreadboardInspectorSource.Contains("same-value probes") &&
+               automationAcbInspectorSource.Contains("TryRewriteCurrentSettings") &&
+               automationAcbInspectorSource.Contains("same-value probes") &&
+               automationAcbControllerInspectorSource.Contains("TryRewriteCurrentButtonValues") &&
+               automationAcbControllerInspectorSource.Contains("same-value probes") &&
+               changeTestChecklistSource.Contains("## Automation Editor") &&
+               changeTestChecklistSource.Contains("`Run checks`") &&
+               changeTestChecklistSource.Contains("`Live evidence gates`") &&
+               changeTestChecklistSource.Contains("native graph fingerprint") &&
+               changeTestChecklistSource.Contains("Generic proxy fingerprint") &&
+               changeTestChecklistSource.Contains("Switch fail-expression readiness") &&
+               changeTestChecklistSource.Contains("`Controllers on craft`") &&
+               changeTestChecklistSource.Contains("main") &&
+               changeTestChecklistSource.Contains("subconstruct") &&
+               changeTestChecklistSource.Contains("`Target search`") &&
+               changeTestChecklistSource.Contains("role text") &&
+               changeTestChecklistSource.Contains("`ACB Actions`") &&
+               changeTestChecklistSource.Contains("`Breadboard Read`") &&
+               changeTestChecklistSource.Contains("`Breadboard Write`") &&
+               changeTestChecklistSource.Contains("matching role summaries") &&
+               changeTestChecklistSource.Contains("rebind to the live target") &&
+               changeTestChecklistSource.Contains("`(missing)`") &&
+               changeTestChecklistSource.Contains("linked-target list rehydrates from persisted") &&
+               changeTestChecklistSource.Contains("native proxies without manual relinking") &&
+               changeTestChecklistSource.Contains("Inspect a linked target in the left panel") &&
+               changeTestChecklistSource.Contains("category/roles/runtime") &&
+               changeTestChecklistSource.Contains("reflective warning text") &&
+               changeTestChecklistSource.Contains("`Open graph`") &&
+               changeTestChecklistSource.Contains("edit a linked ACB node") &&
+               changeTestChecklistSource.Contains("ACB Controller node's first buttons") &&
+               changeTestChecklistSource.Contains("bottom strip reports page") &&
+               changeTestChecklistSource.Contains("immediate native edit behavior") &&
+               changeTestChecklistSource.Contains("Rule getter/setter proxies") &&
+               changeTestChecklistSource.Contains("in-card proxy buttons") &&
+               changeTestChecklistSource.Contains("auto-pick terms") &&
+               changeTestChecklistSource.Contains("auto-select a likely FtD property") &&
+               changeTestChecklistSource.Contains("Variable Reader") &&
+               changeTestChecklistSource.Contains("Variable Writer") &&
+               changeTestChecklistSource.Contains("`Shared variable bridge`") &&
+               changeTestChecklistSource.Contains("Variable Reader/Writer bridge nodes") &&
+               changeTestChecklistSource.Contains("extended component palette coverage") &&
+               changeTestChecklistSource.Contains("property-picker enumeration") &&
+               changeTestChecklistSource.Contains("`Prepare validation graph`") &&
+               changeTestChecklistSource.Contains("unavailable or warns") &&
+               changeTestChecklistSource.Contains("writable linked target") &&
+               changeTestChecklistSource.Contains("`Validation proof`") &&
+               changeTestChecklistSource.Contains("expression-else Switch proof nodes") &&
+               changeTestChecklistSource.Contains("target-specific") &&
+               changeTestChecklistSource.Contains("immediately refreshes the live evidence rows") &&
+               changeTestChecklistSource.Contains("stay unavailable until all") &&
+               changeTestChecklistSource.Contains("live evidence gates are OK") &&
+               changeTestChecklistSource.Contains("`Capture baseline`") &&
+               changeTestChecklistSource.Contains("`Compare baseline`") &&
+               changeTestChecklistSource.Contains("Automation validation baseline") &&
+               changeTestChecklistSource.Contains("Native persistence fingerprint") &&
+               changeTestChecklistSource.Contains("Generic proxy fingerprint") &&
+               changeTestChecklistSource.Contains("Switch") &&
+               changeTestChecklistSource.Contains("fail-expression readiness") &&
+               changeTestChecklistSource.Contains("linked identifier") &&
+               changeTestChecklistSource.Contains("evaluator-safe names") &&
+               changeTestChecklistSource.Contains("expression-else if/else recipe") &&
+               changeTestChecklistSource.Contains("FtD exposes the needed Switch") &&
+               changeTestChecklistSource.Contains("Code output target") &&
+               changeTestChecklistSource.Contains("target's Generic Setter input") &&
+               changeTestChecklistSource.Contains("auto-created proxy") &&
+               changeTestChecklistSource.Contains("revert compile") &&
+               changeTestChecklistSource.Contains("Save, reload, and confirm placed controllers"),
+            "Automation Editor exposes in-game runtime diagnostics for live controller discovery, same-value native writes, proxy prerequisites, linked ACBs, and linked ACB Controllers.");
         Assert(selectionSource.Contains("build.BuildingWith?.Item") &&
                catalogSource.Contains("internal enum SmartBuildMaterial") &&
                catalogSource.Contains("BasicMaterials") &&
@@ -6700,6 +7629,7 @@ f 0 2 3
                catalogSource.Contains("ShapeFamilies") &&
                catalogSource.Contains("AvailableShapeDescriptors") &&
                catalogSource.Contains("FamilyForShape") &&
+               catalogSource.Contains("descriptor.IsGenerator") &&
                catalogSource.Contains("DiscoverStructuralFamilies") &&
                catalogSource.Contains("DownSlopeFromMaterial") &&
                catalogSource.Contains("AddItemDefinitions(container?.Components") &&
@@ -6721,6 +7651,11 @@ f 0 2 3
                descriptorSource.Contains("SquareBacked") &&
                descriptorSource.Contains("InverseTransition") &&
                descriptorSource.Contains("Offset") &&
+               descriptorSource.Contains("SmartBuildShapeCategory.Generated") &&
+               descriptorSource.Contains("generated-circle") &&
+               descriptorSource.Contains("generated-polygon") &&
+               descriptorSource.Contains("generated-sphere") &&
+               descriptorSource.Contains("generatorSidesPreset") &&
                committerSource.Contains("PlaceBlockCommand") &&
                committerSource.Contains("MirrorInfo.none") &&
                committerSource.Contains("plan.Construct"),
@@ -6749,6 +7684,16 @@ f 0 2 3
                sessionSource.Contains("ClampShapePaletteScroll") &&
                sessionSource.Contains("DrawShapePreviewCard") &&
                sessionSource.Contains("DrawShapePaletteToolbar") &&
+               !sessionSource.Contains("DrawShapeCategoryFilterButton(\"generated\", \"Generated\"") &&
+               sessionSource.Contains("AvailablePaletteShapeDescriptors") &&
+               sessionSource.Contains("AvailableGeneratorDescriptors") &&
+               sessionSource.Contains("SmartRightPanelPage") &&
+               sessionSource.Contains("DrawRightPanelPageTabs") &&
+               sessionSource.Contains("DrawGeneratorBrowserSection") &&
+               !sessionSource.Contains("DrawGeneratorPaletteSection") &&
+               !sessionSource.Contains("GeneratorSectionHeight") &&
+               !sessionSource.Contains("_showGeneratorSection") &&
+               sessionSource.Contains("DrawGeneratorToolGrid") &&
                sessionSource.Contains("_shapePreviewGrid") &&
                sessionSource.Contains("_shapeCategoryFilter") &&
                sessionSource.Contains("_shapeFilter") &&
@@ -6756,7 +7701,7 @@ f 0 2 3
                sessionSource.Contains("DrawShapePaletteEmptyRow") &&
                sessionSource.Contains("No shapes match the current palette filter.") &&
                sessionSource.Contains("Filter shapes by label, item name, or FtD geometry name."),
-            "Smart Builder shape palette is compact, searchable, categorized, scroll-clamped, and supports list/grid mesh previews instead of a long text-only structural list.");
+            "Smart Builder shape palette is compact, searchable, categorized, scroll-clamped, supports list/grid mesh previews, and routes generated tools to a full right-panel generator page.");
         string drawShapePaletteSource = ExtractMethodSource(sessionSource, "DrawShapePalette");
         string shapePaletteViewportHeightSource = ExtractMethodSource(sessionSource, "ShapePaletteViewportHeight");
         Assert(drawShapePaletteSource.Contains("GUILayout.BeginScrollView") &&
@@ -6784,6 +7729,7 @@ f 0 2 3
                drawShapePreviewGridSource.Contains("canRenderPreview") &&
                drawShapePreviewGridSource.Contains("GetPreview(entry.Candidate") &&
                drawShapePreviewGridSource.Contains("GetCachedPreview(entry.Candidate") &&
+               !drawShapePreviewGridSource.Contains("Descriptor?.IsGenerator") &&
                shapePreviewGridLayoutSource.Contains("viewportWidth - outerPadding * 2f") &&
                shapePreviewGridLayoutSource.Contains("(available + gap) / (minCardWidth + gap)") &&
                shapePreviewGridLayoutSource.Contains("cardWidth * ShapePreviewGridCardAspect") &&
@@ -6799,6 +7745,31 @@ f 0 2 3
                sessionSource.Contains("PaletteCandidateForLength(descriptor, 1)") &&
                !cycleShapeShortcutSource.Contains("_tool == SmartBuildTool.Draw"),
             "Smart Builder 1-key shape cycling is independent of the active tool, filters to 1m-capable shapes, and forces the selected size back to 1m.");
+        Assert(pieceSource.Contains("SmartBuildGeneratorFillMode") &&
+               pieceSource.Contains("SmartBuildGeneratorSmoothingMode") &&
+               pieceSource.Contains("CreateGeneratedShape") &&
+               pieceSource.Contains("CreateGeneratedShapeForPreview") &&
+               pieceSource.Contains("CreateGeneratedShapePreview") &&
+               pieceSource.Contains("EnumerateGeneratedCircleCells") &&
+               pieceSource.Contains("EnumerateGeneratedPolygonCells") &&
+               pieceSource.Contains("EnumerateGeneratedSphereCells") &&
+               pieceSource.Contains("BuildGeneratedSmoothingPlacements") &&
+               pieceSource.Contains("GeneratorRoundLock") &&
+               pieceSource.Contains("GeneratorControlBounds") &&
+               pieceSource.Contains("StartGeneratedComponent") &&
+               pieceSource.Contains("StartComponentCenteredOnBounds") &&
+               sceneSource.Contains("GeneratedPattern") &&
+               sceneSource.Contains("patternWarnings") &&
+               sessionSource.Contains("DrawGeneratedPieceSettings") &&
+               sessionSource.Contains("DrawGeneratorDescriptorPreview") &&
+               sessionSource.Contains("DrawGeneratorCellSilhouette") &&
+               sessionSource.Contains("DrawPolygonSideControls") &&
+               sessionSource.Contains("SetGeneratedFillMode") &&
+               sessionSource.Contains("ToggleGeneratedSmoothing") &&
+               sessionSource.Contains("ToggleGeneratedRoundLock") &&
+               sessionSource.Contains("SetGeneratedSides") &&
+               sessionSource.Contains("_draft.IsGeneratedShape && _draft.GeneratorRoundLock && _dragAxes.Length > 1"),
+            "Smart Builder generated block shapes are first-class pieces with palette wiring, selected-piece controls, planning warnings, and smoothing support.");
         Assert(sessionSource.Contains("ClearSmartPreviewRendererCache") &&
                sessionSource.Contains("_itemPreviewRenderer?.ClearCache()") &&
                ExtractMethodSource(sessionSource, "SetSelectedMaterial").Contains("ClearSmartPreviewRendererCache();") &&
@@ -6812,6 +7783,12 @@ f 0 2 3
                sessionSource.Contains("DrawSmartStackDividerGrip"),
             "Smart Builder material changes clear preview caches and the Shapes panel uses persisted Palette/Selected/Scene split dividers.");
         string drawPlacementPreviewSource = ExtractMethodSource(sessionSource, "DrawPlacementPreview");
+        string drawPlanPlacementPreviewSource = ExtractMethodSource(sessionSource, "DrawPlanPlacementPreview");
+        string drawPiecePreviewSource = ExtractMethodSource(sessionSource, "DrawPiecePreview");
+        string drawVoxelOuterHullSource = ExtractMethodSource(sessionSource, "DrawVoxelOuterHull");
+        string getGeneratedHullPreviewSource = ExtractMethodSource(sessionSource, "GetGeneratedHullPreview");
+        string drawGeneratedHullPreviewSource = ExtractMethodSource(sessionSource, "DrawGeneratedHullPreview");
+        string previewCellCountSource = ExtractMethodSource(sessionSource, "PreviewCellCount");
         string tryDrawFixedGeometryPiecePreviewSource = ExtractMethodSource(sessionSource, "TryDrawFixedGeometryPiecePreview");
         string drawSlopeStepHullSource = ExtractMethodSource(sessionSource, "DrawSlopeStepHull");
         string drawPlacementGhostSource = ExtractMethodSource(sessionSource, "DrawPlacementGhost");
@@ -6826,8 +7803,34 @@ f 0 2 3
                sessionSource.Contains("PreviewModeStripButton(new Rect(x, y, EsuHudLayout.Scale(96f), buttonHeight), SmartBuildPreviewMode.MaterialOnly, \"Mat only\"") &&
                sessionSource.Contains("ShouldDrawMaterialPreview") &&
                sessionSource.Contains("ShouldDrawPreviewWire") &&
+               drawPlanPlacementPreviewSource.Contains("plan.Placements.Count <= exact") &&
+               drawPlanPlacementPreviewSource.Contains("_scene?.Pieces.Any(piece => piece.IsGeneratedShape)") &&
+               drawPlanPlacementPreviewSource.Contains("DrawGeneratedPieceHull(") &&
+               drawPlanPlacementPreviewSource.Contains("DrawVolumeFaces(fallbackCorners, fallbackMaterial)") &&
+               drawPlanPlacementPreviewSource.Contains("if (drawWire && ShouldDrawPreviewWire())") &&
                drawPlacementPreviewSource.Contains("if (!drawWire || !ShouldDrawPreviewWire())") &&
                drawPlacementPreviewSource.Contains("ShouldDrawMaterialPreview()") &&
+               drawPiecePreviewSource.IndexOf("piece.IsGeneratedShape", StringComparison.Ordinal) <
+               drawPiecePreviewSource.IndexOf("piece.IsFixedGeometry", StringComparison.Ordinal) &&
+               drawPiecePreviewSource.Contains("DrawGeneratedPieceHull(") &&
+               drawVoxelOuterHullSource.Contains("GetGeneratedHullPreview(rawCells, null)") &&
+               sessionSource.Contains("_generatedHullPreviewCache") &&
+               sessionSource.Contains("GeneratedPreviewCacheLimit") &&
+               sessionSource.Contains("MaxGeneratedPreviewWireEdges") &&
+               sessionSource.Contains("MaxGeneratedPreviewMaterialFaces") &&
+               sessionSource.Contains("SmartGeneratedHullPreview") &&
+               sessionSource.Contains("BuildGeneratedHullPreview") &&
+               sessionSource.Contains("MergeGeneratedHullEdges(edges)") &&
+               sessionSource.Contains("GeneratedEdgeRunGroup") &&
+               sessionSource.Contains("AddGeneratedVoxelFaceIfExposed") &&
+               getGeneratedHullPreviewSource.Contains("_generatedHullPreviewCache.TryGetValue") &&
+               getGeneratedHullPreviewSource.Contains("GeneratedPreviewCacheLimit") &&
+               drawGeneratedHullPreviewSource.Contains("PreviewStride(preview.Faces.Count, MaxGeneratedPreviewMaterialFaces)") &&
+               drawGeneratedHullPreviewSource.Contains("PreviewStride(preview.Edges.Count, MaxGeneratedPreviewWireEdges)") &&
+               drawGeneratedHullPreviewSource.Contains("construct.SafeLocalToGlobal(edge.Start)") &&
+               previewCellCountSource.Contains("if (_previewCells.Count > 0)") &&
+               sessionSource.Contains("VoxelFaceEdgeSideOffsets") &&
+               sessionSource.Contains("sideCell + normalOffset") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("if (ShouldDrawPreviewWire())") &&
                drawSlopeStepHullSource.Contains("if (!ShouldDrawPreviewWire())") &&
                sessionSource.Contains("PlacementMatrix") &&
@@ -6839,16 +7842,19 @@ f 0 2 3
                sessionSource.Contains("PlacementLocalMatrix") &&
                sessionSource.Contains("SmartBuildPieceScene.MirrorPlacement") &&
                sceneSource.Contains("internal static SmartBuildPlacement MirrorPlacement") &&
-               ExtractMethodSource(sessionSource, "DrawPiecePreview").Contains("piece.IsFixedGeometry") &&
+               drawPiecePreviewSource.Contains("piece.IsFixedGeometry") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("BuildFixedPlacements") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("DrawPlacementWire(") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("ShouldDrawFixedGeometryPreviewEdge") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("MaxExactMeshPreviewPlacements") &&
+               drawPlacementGhostSource.Contains("selectedDescriptor.IsGenerator") &&
+               drawPlacementGhostSource.Contains("CreateGeneratedShapePreview") &&
+               drawPlacementGhostSource.Contains("DrawGeneratedPieceHull(") &&
                drawPlacementGhostSource.Contains("ghost.BuildFixedPlacements") &&
                drawPlacementGhostSource.Contains("slopeGhost.BuildFixedPlacements") &&
                drawPlacementGhostSource.Contains("ShouldDrawPreviewWire()") &&
                itemPreviewRendererSource.Contains("mesh.triangles"),
-            "Smart Builder mesh-accurate material previews and fixed-shape scene wires are derived from commit placements, with shared-face filtering and a material-only preview mode that suppresses wire overlays.");
+            "Smart Builder mesh-accurate material previews, fixed-shape scene wires, and cached/budgeted generated hull previews are derived from commit placements, with shared-face filtering and a material-only preview mode that suppresses wire overlays.");
         string handleMouseSource = ExtractMethodSource(sessionSource, "HandleMouse");
         Assert(handleMouseSource.Contains("EndDrag(resetDraft: true)") &&
                handleMouseSource.Contains("CancelAddMode()") &&
@@ -6941,6 +7947,7 @@ f 0 2 3
                 sessionSource.Contains("CategoryLabel") &&
                 sessionSource.Contains("SmartBuildShapeCategory.Basic") &&
                 sessionSource.Contains("SmartBuildShapeCategory.Transitions") &&
+                sessionSource.Contains("SmartBuildShapeCategory.Generated") &&
                 sessionSource.Contains("length.ToString(CultureInfo.InvariantCulture)") &&
                 sessionSource.Contains("length + \"m shape size.\"") &&
                 sessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", ref _showLeftPanel") &&
@@ -6959,6 +7966,8 @@ f 0 2 3
                 descriptorSource.Contains("Triangle corner L") &&
                 descriptorSource.Contains("slope-transition-1-2-left") &&
                 descriptorSource.Contains("Place slope transition blocks.") &&
+                descriptorSource.Contains("Generate a block circle or filled disk/cylinder.") &&
+                descriptorSource.Contains("Generate a block sphere shell or solid sphere.") &&
                 sessionSource.Contains("ArmAddMode") &&
                 sessionSource.Contains("Scale mode active") &&
                 sessionSource.Contains("DuplicateSelectedPiece") &&
@@ -6967,7 +7976,10 @@ f 0 2 3
                 pieceSource.Contains("CompactSceneLabel") &&
                 pieceSource.Contains("EnumeratePlacementCells") &&
                 pieceSource.Contains("CreateFixedShape") &&
+                pieceSource.Contains("CreateGeneratedShape") &&
                 pieceSource.Contains("BuildFixedGeometryPlacements") &&
+                pieceSource.Contains("ApplyGeneratedBounds") &&
+                pieceSource.Contains("RecenterGeneratedAround") &&
                 pieceSource.Contains("EnumerateFixedGeometryCells") &&
                 pieceSource.Contains("EnumerateSlopeLines") &&
                 pieceSource.Contains("SmartBuildSlopeSupportMode") &&
@@ -6996,7 +8008,7 @@ f 0 2 3
                sessionSource.Contains("rightControlsWidth >= EsuHudLayout.Scale") &&
                sessionSource.Contains("AttentionIconButton(\"save\", \"Apply\"") &&
                sessionSource.Contains("AttentionIconButton(\"cancel\", \"Cancel\"") &&
-               sessionSource.Contains("IconButton(\"delete\", \"Close\"") &&
+               sessionSource.Contains("IconButton(\"close\", \"Close\"") &&
                sessionSource.Contains("ToolButton(SmartBuildTool.Rotate") &&
                sessionSource.Contains("DrawRotateGizmo") &&
                sessionSource.Contains("DrawRotationRing") &&
@@ -7049,7 +8061,9 @@ f 0 2 3
                 !behaviourSource.Contains("AllGameControlsEnabled") &&
                 sessionSource.Contains("DecorationEditorTheme") &&
                 sessionSource.Contains("DrawSmartPanelHeader(\"Smart Block Builder\", \"build\", ref _showLeftPanel)") &&
-                sessionSource.Contains("DrawSmartPanelHeader(\"Shapes\", \"build\", ref _showRightPanel)") &&
+                sessionSource.Contains("DrawSmartPanelHeader(RightPanelTitle(), \"build\", ref _showRightPanel)") &&
+                sessionSource.Contains("RightPanelTitle()") &&
+                sessionSource.Contains("DrawRightPanelPageTabs(pageTabs)") &&
                !sessionSource.Contains("new GUIContent(\" Smart Block Builder\", DecorationEditorIconCatalog.Get(\"build\"))") &&
                 sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth))") &&
                 sessionSource.Contains("EsuHudLayout.LocalPanelInnerRect(_toolbarRect.width, _toolbarRect.height)") &&
@@ -7057,8 +8071,12 @@ f 0 2 3
                 !sessionSource.Contains("IconButton(\"open\", \"Deco\"") &&
                 sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
                 sessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
-               notificationSource.Contains("GUIUtility.GUIToScreenPoint(rect.position)") &&
+               notificationSource.Contains("screenOrigin.x + rect.x") &&
+               notificationSource.Contains("screenOrigin.y + rect.y") &&
                sessionSource.Contains("DecorationEditorOverlay.Quad") &&
+               overlaySource.Contains("ScreenCullMarginPixels") &&
+               overlaySource.Contains("IsScreenSegmentOutside") &&
+               overlaySource.Contains("IsScreenQuadOutside") &&
                overlaySource.Contains("OverlayQuad"),
             "Smart Block Builder uses a runtime multi-piece scene, arms Add from the palette, switches to Scale after placement, has readable bottom-handle controls, draws placement ghosts and outer slope/support hulls, avoids right-click scene clearing, commits connected placements first, tolerates middle-mouse cursor input, and shares the ESU toolbar notification slot.");
         string smartStatusStripSource = ExtractMethodSource(sessionSource, "DrawStatusStrip");
@@ -7080,7 +8098,7 @@ f 0 2 3
                smartStatusRightLabelSource.Contains("text = \"Blocked\"") &&
                !smartStatusRightLabelSource.Contains("_plan.FailureReason") &&
                sessionSource.Contains("\"Smart Block Builder\"") &&
-               sessionSource.Contains("\"Mode: Smart | Tab to Deco when clean\""),
+               sessionSource.Contains("\"Mode: Smart | Tab to Automation when clean\""),
             "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm, keeps plan warnings in the shared notification/log flow, and does not clip full failure reasons into the status label.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
@@ -7095,8 +8113,8 @@ f 0 2 3
                sessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(mouse)") &&
                sessionSource.Contains("SmartBuildInputScope.ClaimMouseWheelInputForFrames();") &&
                sessionSource.Contains("ShouldConsumeGuiEvent(Event.current)") &&
-               sessionSource.Contains("SwitchToDecorationEditRequested") &&
-               sessionSource.Contains("CanSwitchToDecorationEdit"),
+               sessionSource.Contains("SwitchToAutomationEditRequested") &&
+               sessionSource.Contains("CanSwitchToAutomationEdit"),
             "Smart Block Builder leaves camera/WASD live while idle and only suppresses camera input for handle drags or panel scrolls.");
         Assert(readmeDocumentationSource.Contains("SmartBuildDraft") &&
                readmeDocumentationSource.Contains("Middle mouse may") &&
@@ -7139,7 +8157,7 @@ f 0 2 3
         string package = Path.Combine(root, "EndlessShapesUnlimited");
         string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
-               manifest.Contains("\"version\": \"1.0.6\"") &&
+               manifest.Contains("\"version\": \"1.0.7\"") &&
                manifest.Contains("\"workshop_id\": 3755667314") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&

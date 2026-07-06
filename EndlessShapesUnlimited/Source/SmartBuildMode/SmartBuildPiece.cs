@@ -24,13 +24,28 @@ namespace DecoLimitLifter.SmartBuildMode
         SquareBackedCorner,
         SlopeTransition,
         SlopeInverseTransition,
-        OffsetSlope
+        OffsetSlope,
+        GeneratedCircle,
+        GeneratedPolygon,
+        GeneratedSphere
     }
 
     internal enum SmartBuildSlopeSupportMode
     {
         Full,
         Step
+    }
+
+    internal enum SmartBuildGeneratorFillMode
+    {
+        OutlineShell,
+        Filled
+    }
+
+    internal enum SmartBuildGeneratorSmoothingMode
+    {
+        None,
+        PerimeterDownSlope
     }
 
     internal readonly struct SmartBuildBounds
@@ -86,6 +101,10 @@ namespace DecoLimitLifter.SmartBuildMode
         private int _fixedForwardTiles;
         private int _fixedRightTiles;
         private int _fixedDropTiles;
+        private int _generatorSides;
+        private SmartBuildGeneratorFillMode _generatorFillMode;
+        private SmartBuildGeneratorSmoothingMode _generatorSmoothingMode;
+        private bool _generatorRoundLock;
 
         private SmartBuildPiece(
             int id,
@@ -104,7 +123,11 @@ namespace DecoLimitLifter.SmartBuildMode
             int fixedForwardTiles = 1,
             int fixedRightTiles = 1,
             int fixedDropTiles = 1,
-            SmartBuildSlopeSupportMode supportMode = SmartBuildSlopeSupportMode.Full)
+            SmartBuildSlopeSupportMode supportMode = SmartBuildSlopeSupportMode.Full,
+            int generatorSides = 0,
+            SmartBuildGeneratorFillMode generatorFillMode = SmartBuildGeneratorFillMode.OutlineShell,
+            SmartBuildGeneratorSmoothingMode generatorSmoothingMode = SmartBuildGeneratorSmoothingMode.None,
+            bool generatorRoundLock = true)
         {
             Id = id;
             Construct = construct;
@@ -123,6 +146,10 @@ namespace DecoLimitLifter.SmartBuildMode
             _fixedRightTiles = Math.Max(1, fixedRightTiles);
             _fixedDropTiles = Math.Max(1, fixedDropTiles);
             SupportMode = supportMode;
+            _generatorSides = ClampGeneratorSides(generatorSides > 0 ? generatorSides : DefaultGeneratorSides(shapeKind));
+            _generatorFillMode = generatorFillMode;
+            _generatorSmoothingMode = generatorSmoothingMode;
+            _generatorRoundLock = generatorRoundLock;
             SetForward(forwardAxis, forwardSign);
         }
 
@@ -153,6 +180,14 @@ namespace DecoLimitLifter.SmartBuildMode
         internal int FixedDropTiles => _fixedDropTiles;
 
         internal SmartBuildSlopeSupportMode SupportMode { get; private set; }
+
+        internal int GeneratorSides => _generatorSides;
+
+        internal SmartBuildGeneratorFillMode GeneratorFillMode => _generatorFillMode;
+
+        internal SmartBuildGeneratorSmoothingMode GeneratorSmoothingMode => _generatorSmoothingMode;
+
+        internal bool GeneratorRoundLock => _generatorRoundLock;
 
         internal SmartBuildAxis ForwardAxis { get; private set; }
 
@@ -190,6 +225,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool IsFixedGeometry =>
             Descriptor()?.IsFixedGeometry == true;
+
+        internal bool IsGeneratedShape =>
+            Descriptor()?.IsGenerator == true ||
+            IsGeneratedShapeKind(ShapeKind);
 
         internal SmartBuildShapeDescriptor Descriptor() =>
             SmartBuildShapeDescriptors.ByKey(ShapeDescriptorKey) ??
@@ -303,6 +342,100 @@ namespace DecoLimitLifter.SmartBuildMode
                 fixedRightTiles: Math.Max(1, width),
                 fixedDropTiles: 1);
 
+        internal static SmartBuildPiece CreateGeneratedShape(
+            AllConstruct construct,
+            Vector3i origin,
+            SmartBuildShapeDescriptor descriptor,
+            SmartBuildAxis forwardAxis,
+            int forwardSign,
+            int width,
+            SmartBuildDrawPlane drawPlane)
+        {
+            return CreateGeneratedShapeCore(
+                ++s_nextId,
+                construct,
+                origin,
+                descriptor,
+                forwardAxis,
+                forwardSign,
+                width,
+                drawPlane);
+        }
+
+        internal static SmartBuildPiece CreateGeneratedShapeForPreview(
+            SmartBuildShapeDescriptor descriptor,
+            int width)
+        {
+            return CreateGeneratedShapePreview(
+                null,
+                new Vector3i(0, 0, 0),
+                descriptor,
+                SmartBuildAxis.X,
+                1,
+                width,
+                SmartBuildDrawPlane.Camera);
+        }
+
+        internal static SmartBuildPiece CreateGeneratedShapePreview(
+            AllConstruct construct,
+            Vector3i origin,
+            SmartBuildShapeDescriptor descriptor,
+            SmartBuildAxis forwardAxis,
+            int forwardSign,
+            int width,
+            SmartBuildDrawPlane drawPlane)
+        {
+            return CreateGeneratedShapeCore(
+                0,
+                construct,
+                origin,
+                descriptor,
+                forwardAxis,
+                forwardSign,
+                width,
+                drawPlane);
+        }
+
+        private static SmartBuildPiece CreateGeneratedShapeCore(
+            int id,
+            AllConstruct construct,
+            Vector3i origin,
+            SmartBuildShapeDescriptor descriptor,
+            SmartBuildAxis forwardAxis,
+            int forwardSign,
+            int width,
+            SmartBuildDrawPlane drawPlane)
+        {
+            SmartBuildShapeKind kind = descriptor?.Kind ?? SmartBuildShapeKind.GeneratedCircle;
+            if (!IsGeneratedShapeKind(kind))
+                kind = SmartBuildShapeKind.GeneratedCircle;
+
+            int diameter = Math.Max(3, Math.Max(1, width));
+            if (diameter % 2 == 0)
+                diameter++;
+
+            Vector3i size = kind == SmartBuildShapeKind.GeneratedSphere
+                ? new Vector3i(diameter, diameter, diameter)
+                : new Vector3i(diameter, diameter, 1);
+            return new SmartBuildPiece(
+                id,
+                construct,
+                kind,
+                origin,
+                size,
+                drawPlane,
+                slopeLength: 1,
+                slopeSteps: 1,
+                slopeWidth: 1,
+                NormalizeForwardAxis(forwardAxis),
+                forwardSign,
+                shapeDescriptorKey: descriptor?.Key,
+                selectedLength: 1,
+                generatorSides: descriptor?.GeneratorSidesPreset ?? DefaultGeneratorSides(kind),
+                generatorRoundLock: kind == SmartBuildShapeKind.GeneratedCircle ||
+                                    kind == SmartBuildShapeKind.GeneratedSphere);
+        }
+
         internal SmartBuildPiece Clone()
         {
             SmartBuildPiece clone = new SmartBuildPiece(
@@ -322,7 +455,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 _fixedForwardTiles,
                 _fixedRightTiles,
                 _fixedDropTiles,
-                SupportMode);
+                SupportMode,
+                _generatorSides,
+                _generatorFillMode,
+                _generatorSmoothingMode,
+                _generatorRoundLock);
             clone.SetBasis(_forwardStep, _dropStep, _rightStep);
             return clone;
         }
@@ -346,7 +483,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 _fixedForwardTiles,
                 _fixedRightTiles,
                 _fixedDropTiles,
-                SupportMode);
+                SupportMode,
+                _generatorSides,
+                _generatorFillMode,
+                _generatorSmoothingMode,
+                _generatorRoundLock);
             duplicate.SetBasis(_forwardStep, _dropStep, _rightStep);
             return duplicate;
         }
@@ -369,6 +510,10 @@ namespace DecoLimitLifter.SmartBuildMode
             _fixedRightTiles = source._fixedRightTiles;
             _fixedDropTiles = source._fixedDropTiles;
             SupportMode = source.SupportMode;
+            _generatorSides = source._generatorSides;
+            _generatorFillMode = source._generatorFillMode;
+            _generatorSmoothingMode = source._generatorSmoothingMode;
+            _generatorRoundLock = source._generatorRoundLock;
             SetBasis(source._forwardStep, source._dropStep, source._rightStep);
         }
 
@@ -380,9 +525,49 @@ namespace DecoLimitLifter.SmartBuildMode
             SupportMode = mode;
         }
 
+        internal void SetGeneratorFillMode(SmartBuildGeneratorFillMode mode)
+        {
+            if (!IsGeneratedShape)
+                return;
+
+            _generatorFillMode = mode;
+        }
+
+        internal void SetGeneratorSmoothingMode(SmartBuildGeneratorSmoothingMode mode)
+        {
+            if (!IsGeneratedShape)
+                return;
+
+            _generatorSmoothingMode = mode;
+        }
+
+        internal void SetGeneratorRoundLock(bool enabled)
+        {
+            if (!IsGeneratedShape)
+                return;
+
+            _generatorRoundLock = enabled;
+            if (enabled &&
+                (ShapeKind == SmartBuildShapeKind.GeneratedCircle ||
+                 ShapeKind == SmartBuildShapeKind.GeneratedSphere))
+            {
+                ApplyRoundGeneratorSize();
+            }
+        }
+
+        internal void SetGeneratorSides(int sides)
+        {
+            if (ShapeKind != SmartBuildShapeKind.GeneratedPolygon)
+                return;
+
+            _generatorSides = ClampGeneratorSides(sides);
+        }
+
         internal string ShapeLabel()
         {
             SmartBuildShapeDescriptor descriptor = Descriptor();
+            if (IsGeneratedShape)
+                return GeneratedShapeLabel(descriptor);
             if (descriptor?.ProceduralDownSlope == true)
                 return SlopeLength.ToString(CultureInfo.InvariantCulture) + "m down slope";
             if (descriptor != null && descriptor.IsFixedGeometry)
@@ -402,6 +587,8 @@ namespace DecoLimitLifter.SmartBuildMode
         internal string ShapeCode()
         {
             SmartBuildShapeDescriptor descriptor = Descriptor();
+            if (IsGeneratedShape)
+                return descriptor?.Label ?? ShapeKind.ToString();
             if (descriptor?.ProceduralDownSlope == true)
                 return "S" + SlopeLength.ToString(CultureInfo.InvariantCulture);
             if (descriptor != null && descriptor.IsFixedGeometry)
@@ -427,6 +614,23 @@ namespace DecoLimitLifter.SmartBuildMode
                     SlopeSteps,
                     SlopeWidth,
                     SupportMode == SmartBuildSlopeSupportMode.Step ? " | step support" : string.Empty);
+            }
+
+            if (IsGeneratedShape)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} | {1} x {2} x {3}{4}{5}",
+                    _generatorFillMode == SmartBuildGeneratorFillMode.Filled ? "Filled" : "Shell",
+                    _cuboidSize.x,
+                    _cuboidSize.y,
+                    _cuboidSize.z,
+                    ShapeKind == SmartBuildShapeKind.GeneratedPolygon
+                        ? " | " + _generatorSides.ToString(CultureInfo.InvariantCulture) + " sides"
+                        : string.Empty,
+                    _generatorSmoothingMode == SmartBuildGeneratorSmoothingMode.PerimeterDownSlope
+                        ? " | smooth"
+                        : string.Empty);
             }
 
             if (IsFixedGeometry)
@@ -455,6 +659,18 @@ namespace DecoLimitLifter.SmartBuildMode
                     SlopeLength,
                     SlopeSteps,
                     SlopeWidth);
+            }
+
+            if (IsGeneratedShape)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "#{0} | {1} | {2} x {3} x {4}",
+                    Id,
+                    ShapeCode(),
+                    _cuboidSize.x,
+                    _cuboidSize.y,
+                    _cuboidSize.z);
             }
 
             if (IsFixedGeometry)
@@ -488,7 +704,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal SmartBuildVolume ToVolume(SmartBuildSource source)
         {
-            if (!IsFixedGeometry)
+            if (!IsFixedGeometry && !IsGeneratedShape)
                 return ToVolume();
 
             SmartBuildBounds bounds = BoundsFromCells(EnumeratePreviewCells(source));
@@ -522,6 +738,13 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 SmartBuildBounds fixedResized = ResizeBounds(Bounds, axis, sign, delta);
                 ApplyFixedGeometryBounds(fixedResized, axis, sign);
+                return;
+            }
+
+            if (IsGeneratedShape)
+            {
+                SmartBuildBounds generatedResized = ResizeBounds(GeneratorControlBounds(), axis, sign, delta);
+                ApplyGeneratedBounds(generatedResized, axis, sign);
                 return;
             }
 
@@ -559,13 +782,15 @@ namespace DecoLimitLifter.SmartBuildMode
                 RotateUnit(_rightStep, axis, turns));
             if (ShapeKind == SmartBuildShapeKind.DownSlope)
                 RecenterDownSlopeAround(pivot);
+            else if (IsGeneratedShape)
+                RecenterGeneratedAround(pivot);
             else
                 RecenterFixedGeometryAround(pivot);
         }
 
         internal void FlipForward()
         {
-            if (ShapeKind != SmartBuildShapeKind.DownSlope && !IsFixedGeometry)
+            if (ShapeKind != SmartBuildShapeKind.DownSlope && !IsFixedGeometry && !IsGeneratedShape)
                 return;
 
             Vector3 pivot = RotationPivotLocal;
@@ -573,6 +798,8 @@ namespace DecoLimitLifter.SmartBuildMode
             SetBasis(forward, _dropStep, Cross(forward, _dropStep));
             if (ShapeKind == SmartBuildShapeKind.DownSlope)
                 RecenterDownSlopeAround(pivot);
+            else if (IsGeneratedShape)
+                RecenterGeneratedAround(pivot);
             else
                 RecenterFixedGeometryAround(pivot);
         }
@@ -597,6 +824,9 @@ namespace DecoLimitLifter.SmartBuildMode
             if (IsFixedGeometry)
                 return EnumerateFixedGeometryCells(null);
 
+            if (IsGeneratedShape)
+                return EnumerateGeneratedCells();
+
             return EnumerateDownSlopeCells(includeSupport: true);
         }
 
@@ -608,6 +838,9 @@ namespace DecoLimitLifter.SmartBuildMode
             if (IsFixedGeometry)
                 return EnumerateFixedGeometryCells(source);
 
+            if (IsGeneratedShape)
+                return EnumerateGeneratedCells();
+
             return EnumerateDownSlopeCells(includeSupport: true);
         }
 
@@ -618,6 +851,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (IsFixedGeometry)
                 return EnumerateFixedGeometryCells(null);
+
+            if (IsGeneratedShape)
+                return EnumerateGeneratedCells();
 
             return EnumerateDownSlopeCells(includeSupport: false);
         }
@@ -730,6 +966,351 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             return placements;
+        }
+
+        internal IReadOnlyList<SmartBuildPlacement> BuildGeneratedSmoothingPlacements(
+            SmartBuildSource source,
+            out IReadOnlyList<Vector3i> replacedCells,
+            out IReadOnlyList<string> warnings)
+        {
+            replacedCells = Array.Empty<Vector3i>();
+            warnings = Array.Empty<string>();
+            if (!IsGeneratedShape ||
+                _generatorSmoothingMode != SmartBuildGeneratorSmoothingMode.PerimeterDownSlope)
+            {
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            var warningList = new List<string>();
+            SmartBlockFamily family = source?.DownSlopeFamily;
+            SmartBlockCandidate candidate = family?.CandidateForLength(1);
+            if (family == null || !family.IsSupported || candidate == null || candidate.Length != 1)
+            {
+                warningList.Add("Generator perimeter smoothing skipped; 1m down-slope blocks are unavailable for this material.");
+                warnings = warningList;
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            if (DecoLimitLifter.EsuSymmetry.ActivePlanes.Keys.Any(axis => axis == DecorationEditAxis.Y))
+            {
+                warningList.Add("Generator perimeter smoothing skipped while Y symmetry is active.");
+                warnings = warningList;
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            Vector3i[] perimeter = EnumerateGeneratedPerimeterCells().ToArray();
+            if (perimeter.Length == 0)
+            {
+                warnings = warningList;
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            var placements = new List<SmartBuildPlacement>();
+            var replaced = new List<Vector3i>();
+            var seen = new HashSet<string>();
+            foreach (Vector3i cell in perimeter)
+            {
+                if (!TryGeneratedOutwardAxis(cell, out SmartBuildAxis axis, out int sign))
+                    continue;
+
+                string key = DecoLimitLifter.EsuSymmetry.CellKey(cell);
+                if (!seen.Add(key))
+                    continue;
+
+                placements.Add(new SmartBuildPlacement(
+                    cell,
+                    candidate,
+                    axis,
+                    sign,
+                    GeneratedDownSlopeRotation(axis, sign),
+                    new[] { cell },
+                    candidate.DisplayName));
+                replaced.Add(cell);
+            }
+
+            if (placements.Count == 0)
+                warningList.Add("Generator perimeter smoothing found no outward horizontal perimeter cells.");
+
+            replacedCells = replaced;
+            warnings = warningList;
+            return placements;
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedCells()
+        {
+            if (!IsGeneratedShape)
+                return Array.Empty<Vector3i>();
+
+            switch (ShapeKind)
+            {
+                case SmartBuildShapeKind.GeneratedSphere:
+                    return EnumerateGeneratedSphereCells();
+                case SmartBuildShapeKind.GeneratedPolygon:
+                    return EnumerateGeneratedPolygonCells();
+                default:
+                    return EnumerateGeneratedCircleCells();
+            }
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedCellsFrom(Vector3i origin)
+        {
+            Vector3i current = Origin;
+            foreach (Vector3i cell in EnumerateGeneratedCells())
+                yield return origin + (cell - current);
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedCircleCells()
+        {
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+            {
+                for (int right = 0; right < _cuboidSize.y; right++)
+                {
+                    for (int forward = 0; forward < _cuboidSize.x; forward++)
+                    {
+                        if (!CircleInside(forward, right))
+                            continue;
+                        if (_generatorFillMode == SmartBuildGeneratorFillMode.OutlineShell &&
+                            !CircleBoundary(forward, right))
+                        {
+                            continue;
+                        }
+
+                        yield return GeneratedCell(forward, right, drop);
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedPolygonCells()
+        {
+            int sides = ClampGeneratorSides(_generatorSides);
+            if (sides <= 1)
+                return EnumerateGeneratedRayCells();
+            if (sides == 2)
+                return EnumerateGeneratedDiameterCells();
+
+            Vector2[] vertices = PolygonVertices(sides);
+            return EnumerateGeneratedPolygonCells(vertices);
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedRayCells()
+        {
+            int centerRight = Mathf.Clamp(Mathf.RoundToInt((_cuboidSize.y - 1) * 0.5f), 0, _cuboidSize.y - 1);
+            int start = Mathf.Clamp(Mathf.RoundToInt((_cuboidSize.x - 1) * 0.5f), 0, _cuboidSize.x - 1);
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+                for (int forward = start; forward < _cuboidSize.x; forward++)
+                    yield return GeneratedCell(forward, centerRight, drop);
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedDiameterCells()
+        {
+            int centerRight = Mathf.Clamp(Mathf.RoundToInt((_cuboidSize.y - 1) * 0.5f), 0, _cuboidSize.y - 1);
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+                for (int forward = 0; forward < _cuboidSize.x; forward++)
+                    yield return GeneratedCell(forward, centerRight, drop);
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedPolygonCells(Vector2[] vertices)
+        {
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+            {
+                for (int right = 0; right < _cuboidSize.y; right++)
+                {
+                    for (int forward = 0; forward < _cuboidSize.x; forward++)
+                    {
+                        if (!PolygonInside(vertices, forward, right))
+                            continue;
+                        if (_generatorFillMode == SmartBuildGeneratorFillMode.OutlineShell &&
+                            !PolygonBoundary(vertices, forward, right))
+                        {
+                            continue;
+                        }
+
+                        yield return GeneratedCell(forward, right, drop);
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedSphereCells()
+        {
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+            {
+                for (int right = 0; right < _cuboidSize.y; right++)
+                {
+                    for (int forward = 0; forward < _cuboidSize.x; forward++)
+                    {
+                        if (!SphereInside(forward, right, drop))
+                            continue;
+                        if (_generatorFillMode == SmartBuildGeneratorFillMode.OutlineShell &&
+                            !SphereBoundary(forward, right, drop))
+                        {
+                            continue;
+                        }
+
+                        yield return GeneratedCell(forward, right, drop);
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedPerimeterCells()
+        {
+            Vector3i[] cells = EnumerateGeneratedCells().ToArray();
+            if (cells.Length == 0)
+                return Array.Empty<Vector3i>();
+
+            var all = new HashSet<string>(cells.Select(DecoLimitLifter.EsuSymmetry.CellKey));
+            return cells.Where(cell =>
+            {
+                Vector3i delta = cell - Origin;
+                int forward = Dot(delta, _forwardStep);
+                int right = Dot(delta, _rightStep);
+                return !all.Contains(DecoLimitLifter.EsuSymmetry.CellKey(GeneratedCell(forward + 1, right, Dot(delta, _dropStep)))) ||
+                       !all.Contains(DecoLimitLifter.EsuSymmetry.CellKey(GeneratedCell(forward - 1, right, Dot(delta, _dropStep)))) ||
+                       !all.Contains(DecoLimitLifter.EsuSymmetry.CellKey(GeneratedCell(forward, right + 1, Dot(delta, _dropStep)))) ||
+                       !all.Contains(DecoLimitLifter.EsuSymmetry.CellKey(GeneratedCell(forward, right - 1, Dot(delta, _dropStep))));
+            });
+        }
+
+        private bool CircleInside(int forward, int right)
+        {
+            NormalizedEllipsePoint(forward, right, out float x, out float y);
+            return x * x + y * y <= 1.0001f;
+        }
+
+        private bool CircleBoundary(int forward, int right) =>
+            !CircleInside(forward + 1, right) ||
+            !CircleInside(forward - 1, right) ||
+            !CircleInside(forward, right + 1) ||
+            !CircleInside(forward, right - 1);
+
+        private void NormalizedEllipsePoint(int forward, int right, out float x, out float y)
+        {
+            float radiusForward = Math.Max(0.5f, (_cuboidSize.x - 1) * 0.5f);
+            float radiusRight = Math.Max(0.5f, (_cuboidSize.y - 1) * 0.5f);
+            x = (forward - (_cuboidSize.x - 1) * 0.5f) / radiusForward;
+            y = (right - (_cuboidSize.y - 1) * 0.5f) / radiusRight;
+        }
+
+        private Vector2[] PolygonVertices(int sides)
+        {
+            sides = ClampGeneratorSides(sides);
+            var vertices = new Vector2[sides];
+            float centerForward = (_cuboidSize.x - 1) * 0.5f;
+            float centerRight = (_cuboidSize.y - 1) * 0.5f;
+            float radiusForward = Math.Max(0.5f, (_cuboidSize.x - 1) * 0.5f);
+            float radiusRight = Math.Max(0.5f, (_cuboidSize.y - 1) * 0.5f);
+            for (int index = 0; index < sides; index++)
+            {
+                float angle = Mathf.PI * 2f * index / sides;
+                vertices[index] = new Vector2(
+                    centerForward + Mathf.Cos(angle) * radiusForward,
+                    centerRight + Mathf.Sin(angle) * radiusRight);
+            }
+
+            return vertices;
+        }
+
+        private static bool PolygonInside(Vector2[] vertices, int forward, int right)
+        {
+            if (vertices == null || vertices.Length < 3)
+                return false;
+
+            float x = forward;
+            float y = right;
+            bool inside = false;
+            for (int i = 0, j = vertices.Length - 1; i < vertices.Length; j = i++)
+            {
+                Vector2 vi = vertices[i];
+                Vector2 vj = vertices[j];
+                float denominator = vj.y - vi.y;
+                if (Math.Abs(denominator) <= 0.0001f)
+                    denominator = denominator >= 0f ? 0.0001f : -0.0001f;
+                if (((vi.y > y) != (vj.y > y)) &&
+                    x < (vj.x - vi.x) * (y - vi.y) / denominator + vi.x)
+                {
+                    inside = !inside;
+                }
+            }
+
+            return inside;
+        }
+
+        private static bool PolygonBoundary(Vector2[] vertices, int forward, int right) =>
+            !PolygonInside(vertices, forward + 1, right) ||
+            !PolygonInside(vertices, forward - 1, right) ||
+            !PolygonInside(vertices, forward, right + 1) ||
+            !PolygonInside(vertices, forward, right - 1);
+
+        private bool SphereInside(int forward, int right, int drop)
+        {
+            NormalizedSpherePoint(forward, right, drop, out float x, out float y, out float z);
+            return x * x + y * y + z * z <= 1.0001f;
+        }
+
+        private bool SphereBoundary(int forward, int right, int drop) =>
+            !SphereInside(forward + 1, right, drop) ||
+            !SphereInside(forward - 1, right, drop) ||
+            !SphereInside(forward, right + 1, drop) ||
+            !SphereInside(forward, right - 1, drop) ||
+            !SphereInside(forward, right, drop + 1) ||
+            !SphereInside(forward, right, drop - 1);
+
+        private void NormalizedSpherePoint(int forward, int right, int drop, out float x, out float y, out float z)
+        {
+            float radiusForward = Math.Max(0.5f, (_cuboidSize.x - 1) * 0.5f);
+            float radiusRight = Math.Max(0.5f, (_cuboidSize.y - 1) * 0.5f);
+            float radiusDrop = Math.Max(0.5f, (_cuboidSize.z - 1) * 0.5f);
+            x = (forward - (_cuboidSize.x - 1) * 0.5f) / radiusForward;
+            y = (right - (_cuboidSize.y - 1) * 0.5f) / radiusRight;
+            z = (drop - (_cuboidSize.z - 1) * 0.5f) / radiusDrop;
+        }
+
+        private Vector3i GeneratedCell(int forward, int right, int drop) =>
+            Origin +
+            Multiply(_forwardStep, forward) +
+            Multiply(_rightStep, right) +
+            Multiply(_dropStep, drop);
+
+        private bool TryGeneratedOutwardAxis(Vector3i cell, out SmartBuildAxis axis, out int sign)
+        {
+            Vector3i delta = cell - Origin;
+            int forward = Dot(delta, _forwardStep);
+            int right = Dot(delta, _rightStep);
+            float centerForward = (_cuboidSize.x - 1) * 0.5f;
+            float centerRight = (_cuboidSize.y - 1) * 0.5f;
+            float forwardOffset = forward - centerForward;
+            float rightOffset = right - centerRight;
+            if (Math.Abs(forwardOffset) <= 0.001f && Math.Abs(rightOffset) <= 0.001f)
+            {
+                axis = ForwardAxis;
+                sign = ForwardSign;
+                return false;
+            }
+
+            float forwardWeight = Math.Abs(forwardOffset) / Math.Max(1f, centerForward);
+            float rightWeight = Math.Abs(rightOffset) / Math.Max(1f, centerRight);
+            if (forwardWeight >= rightWeight)
+            {
+                axis = ForwardAxis;
+                sign = forwardOffset >= 0f ? ForwardSign : -ForwardSign;
+                return axis != SmartBuildAxis.Y;
+            }
+
+            axis = RightAxis;
+            sign = rightOffset >= 0f ? RightSign : -RightSign;
+            return axis != SmartBuildAxis.Y;
+        }
+
+        private static Quaternion GeneratedDownSlopeRotation(SmartBuildAxis axis, int sign)
+        {
+            Vector3i forward = SmartBuildAxisHelper.ToVector3i(
+                axis == SmartBuildAxis.X ? SmartBuildAxis.X : SmartBuildAxis.Z,
+                sign >= 0 ? 1 : -1);
+            Vector3i drop = new Vector3i(0, -1, 0);
+            Vector3i right = Cross(forward, drop);
+            return QuaternionFromBasis(right, Multiply(drop, -1), forward);
         }
 
         private void ResizeCuboid(
@@ -855,6 +1436,101 @@ namespace DecoLimitLifter.SmartBuildMode
             Origin = origin;
         }
 
+        private void ApplyGeneratedBounds(
+            SmartBuildBounds bounds,
+            DecorationEditAxis resizedAxis,
+            int resizedSign)
+        {
+            bool hasResizedAxis = resizedAxis != DecorationEditAxis.None &&
+                                  resizedAxis != DecorationEditAxis.Free;
+            SmartBuildAxis changed = SmartBuildDraft.ToSmartAxis(resizedAxis);
+            int forwardExtent = Math.Max(1, bounds.Extent(ForwardAxis));
+            int rightExtent = Math.Max(1, bounds.Extent(RightAxis));
+            int dropExtent = Math.Max(1, bounds.Extent(DropAxis));
+
+            if (_generatorRoundLock && ShapeKind == SmartBuildShapeKind.GeneratedCircle)
+            {
+                int diameter = Math.Max(forwardExtent, rightExtent);
+                forwardExtent = diameter;
+                rightExtent = diameter;
+            }
+            else if (_generatorRoundLock && ShapeKind == SmartBuildShapeKind.GeneratedSphere)
+            {
+                int diameter = Math.Max(forwardExtent, Math.Max(rightExtent, dropExtent));
+                forwardExtent = diameter;
+                rightExtent = diameter;
+                dropExtent = diameter;
+            }
+
+            int startForward = StartGeneratedComponent(
+                bounds,
+                ForwardAxis,
+                ForwardSign,
+                forwardExtent,
+                hasResizedAxis && changed == ForwardAxis,
+                resizedSign);
+            int startRight = StartGeneratedComponent(
+                bounds,
+                RightAxis,
+                RightSign,
+                rightExtent,
+                hasResizedAxis && changed == RightAxis,
+                resizedSign);
+            int startDrop = StartGeneratedComponent(
+                bounds,
+                DropAxis,
+                DropSign,
+                dropExtent,
+                hasResizedAxis && changed == DropAxis,
+                resizedSign);
+
+            Vector3i origin = new Vector3i(0, 0, 0);
+            origin = SmartBuildAxisHelper.Set(origin, ForwardAxis, startForward);
+            origin = SmartBuildAxisHelper.Set(origin, RightAxis, startRight);
+            origin = SmartBuildAxisHelper.Set(origin, DropAxis, startDrop);
+            Origin = origin;
+            _cuboidSize = new Vector3i(forwardExtent, rightExtent, dropExtent);
+        }
+
+        private SmartBuildBounds GeneratorControlBounds()
+        {
+            Vector3i forward = Multiply(_forwardStep, Math.Max(0, _cuboidSize.x - 1));
+            Vector3i right = Multiply(_rightStep, Math.Max(0, _cuboidSize.y - 1));
+            Vector3i drop = Multiply(_dropStep, Math.Max(0, _cuboidSize.z - 1));
+            return BoundsFromCells(new[]
+            {
+                Origin,
+                Origin + forward,
+                Origin + right,
+                Origin + drop,
+                Origin + forward + right,
+                Origin + forward + drop,
+                Origin + right + drop,
+                Origin + forward + right + drop
+            });
+        }
+
+        private static int StartGeneratedComponent(
+            SmartBuildBounds bounds,
+            SmartBuildAxis axis,
+            int directionSign,
+            int extent,
+            bool draggedAxis,
+            int resizedSign)
+        {
+            if (draggedAxis)
+            {
+                return StartComponentFromBounds(
+                    bounds,
+                    axis,
+                    directionSign,
+                    extent,
+                    resizedSign);
+            }
+
+            return StartComponentCenteredOnBounds(bounds, axis, directionSign, extent);
+        }
+
         private void RotateCuboidAroundPivot(
             DecorationEditAxis axis,
             int turns,
@@ -881,6 +1557,12 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildBounds relativeBounds = BoundsFromCells(
                 EnumerateFixedGeometryCellsFrom(new Vector3i(0, 0, 0), null));
             Vector3 origin = targetCenter - relativeBounds.Center;
+            Origin = RoundToCell(origin);
+        }
+
+        private void RecenterGeneratedAround(Vector3 targetCenter)
+        {
+            Vector3 origin = targetCenter - BoundsFromCells(EnumerateGeneratedCellsFrom(new Vector3i(0, 0, 0))).Center;
             Origin = RoundToCell(origin);
         }
 
@@ -939,6 +1621,20 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             return direction >= 0 ? min : max;
+        }
+
+        private static int StartComponentCenteredOnBounds(
+            SmartBuildBounds bounds,
+            SmartBuildAxis axis,
+            int directionSign,
+            int extent)
+        {
+            int min = SmartBuildAxisHelper.Get(bounds.Min, axis);
+            int max = SmartBuildAxisHelper.Get(bounds.Max, axis);
+            float center = (min + max) * 0.5f;
+            int direction = directionSign >= 0 ? 1 : -1;
+            float start = center - direction * (Math.Max(1, extent) - 1) * 0.5f;
+            return Mathf.RoundToInt(start);
         }
 
         private static SmartBuildBounds ResizeBounds(
@@ -1174,8 +1870,52 @@ namespace DecoLimitLifter.SmartBuildMode
                     return SmartBuildShapeDescriptors.DownSlopeKey;
                 case SmartBuildShapeKind.Cuboid:
                     return SmartBuildShapeDescriptors.CuboidKey;
+                case SmartBuildShapeKind.GeneratedCircle:
+                    return "generated-circle";
+                case SmartBuildShapeKind.GeneratedPolygon:
+                    return "generated-polygon";
+                case SmartBuildShapeKind.GeneratedSphere:
+                    return "generated-sphere";
                 default:
                     return kind.ToString();
+            }
+        }
+
+        private static bool IsGeneratedShapeKind(SmartBuildShapeKind kind) =>
+            kind == SmartBuildShapeKind.GeneratedCircle ||
+            kind == SmartBuildShapeKind.GeneratedPolygon ||
+            kind == SmartBuildShapeKind.GeneratedSphere;
+
+        private static int DefaultGeneratorSides(SmartBuildShapeKind kind) =>
+            kind == SmartBuildShapeKind.GeneratedPolygon ? 8 : 0;
+
+        private static int ClampGeneratorSides(int sides) =>
+            Mathf.Clamp(sides <= 0 ? 8 : sides, 1, 64);
+
+        private string GeneratedShapeLabel(SmartBuildShapeDescriptor descriptor)
+        {
+            if (ShapeKind == SmartBuildShapeKind.GeneratedPolygon)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}-sided polygon",
+                    _generatorSides);
+            }
+
+            return descriptor?.Label ?? ShapeKind.ToString();
+        }
+
+        private void ApplyRoundGeneratorSize()
+        {
+            if (ShapeKind == SmartBuildShapeKind.GeneratedCircle)
+            {
+                int diameter = Math.Max(_cuboidSize.x, _cuboidSize.y);
+                _cuboidSize = new Vector3i(diameter, diameter, Math.Max(1, _cuboidSize.z));
+            }
+            else if (ShapeKind == SmartBuildShapeKind.GeneratedSphere)
+            {
+                int diameter = Math.Max(_cuboidSize.x, Math.Max(_cuboidSize.y, _cuboidSize.z));
+                _cuboidSize = new Vector3i(diameter, diameter, diameter);
             }
         }
 

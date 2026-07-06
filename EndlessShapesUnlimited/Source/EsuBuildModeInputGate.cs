@@ -11,9 +11,11 @@ namespace DecoLimitLifter
         private static int _switchModeConsumedFrame = -1;
         private static int _decorationEditToggleConsumedFrame = -1;
         private static int _smartBuildToggleConsumedFrame = -1;
+        private static int _automationEditToggleConsumedFrame = -1;
         private static bool _switchModeRequiresRelease;
         private static bool _decorationEditToggleRequiresRelease;
         private static bool _smartBuildToggleRequiresRelease;
+        private static bool _automationEditToggleRequiresRelease;
 
         internal static bool ConsumeSwitchModeDown()
         {
@@ -69,6 +71,24 @@ namespace DecoLimitLifter
             return true;
         }
 
+        internal static bool ConsumeAutomationEditToggleDown()
+        {
+            bool down = ReadAutomationEditToggleDown();
+            if (!ReadAutomationEditToggleHeld())
+                _automationEditToggleRequiresRelease = false;
+
+            if (_automationEditToggleRequiresRelease ||
+                _automationEditToggleConsumedFrame == Time.frameCount ||
+                !down)
+            {
+                return false;
+            }
+
+            _automationEditToggleConsumedFrame = Time.frameCount;
+            _automationEditToggleRequiresRelease = true;
+            return true;
+        }
+
         private static bool ReadSwitchModeDown() =>
             ReadProfileKey(
                 SerializationHudKeyInput.SwitchEsuBuildMode,
@@ -105,6 +125,18 @@ namespace DecoLimitLifter
                 KeyInputEventType.Held,
                 IsSmartBuildToggleDefaultHeld);
 
+        private static bool ReadAutomationEditToggleDown() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.ToggleAutomationEditMode,
+                KeyInputEventType.Down,
+                IsAutomationEditToggleDefaultDown);
+
+        private static bool ReadAutomationEditToggleHeld() =>
+            ReadProfileKey(
+                SerializationHudKeyInput.ToggleAutomationEditMode,
+                KeyInputEventType.Held,
+                IsAutomationEditToggleDefaultHeld);
+
         private static bool ReadProfileKey(
             SerializationHudKeyInput input,
             KeyInputEventType eventType,
@@ -138,6 +170,16 @@ namespace DecoLimitLifter
             IsControlHeld() &&
             IsShiftHeld() &&
             Input.GetKey(KeyCode.B);
+
+        private static bool IsAutomationEditToggleDefaultDown() =>
+            IsControlHeld() &&
+            IsShiftHeld() &&
+            Input.GetKeyDown(KeyCode.A);
+
+        private static bool IsAutomationEditToggleDefaultHeld() =>
+            IsControlHeld() &&
+            IsShiftHeld() &&
+            Input.GetKey(KeyCode.A);
 
         private static bool IsControlHeld() =>
             Input.GetKey(KeyCode.LeftControl) ||

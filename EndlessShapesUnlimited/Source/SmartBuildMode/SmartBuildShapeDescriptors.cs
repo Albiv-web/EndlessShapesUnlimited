@@ -12,7 +12,8 @@ namespace DecoLimitLifter.SmartBuildMode
         Slopes,
         Corners,
         Wedges,
-        Transitions
+        Transitions,
+        Generated
     }
 
     internal enum SmartBuildShapeHandedness
@@ -35,7 +36,8 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildShapeHandedness handedness = SmartBuildShapeHandedness.None,
             string mirrorKey = null,
             int transitionFrom = 0,
-            int transitionTo = 0)
+            int transitionTo = 0,
+            int generatorSidesPreset = 0)
         {
             Key = key;
             Kind = kind;
@@ -48,6 +50,7 @@ namespace DecoLimitLifter.SmartBuildMode
             MirrorKey = mirrorKey;
             TransitionFrom = transitionFrom;
             TransitionTo = transitionTo;
+            GeneratorSidesPreset = generatorSidesPreset;
         }
 
         internal string Key { get; }
@@ -72,9 +75,16 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal int TransitionTo { get; }
 
+        internal int GeneratorSidesPreset { get; }
+
         internal bool IsCuboid => Kind == SmartBuildShapeKind.Cuboid;
 
-        internal bool IsFixedGeometry => !IsCuboid && !ProceduralDownSlope;
+        internal bool IsGenerator =>
+            Kind == SmartBuildShapeKind.GeneratedCircle ||
+            Kind == SmartBuildShapeKind.GeneratedPolygon ||
+            Kind == SmartBuildShapeKind.GeneratedSphere;
+
+        internal bool IsFixedGeometry => !IsCuboid && !ProceduralDownSlope && !IsGenerator;
 
         internal SmartBuildShapeDescriptor MirrorDescriptor() =>
             string.IsNullOrWhiteSpace(MirrorKey)
@@ -118,6 +128,14 @@ namespace DecoLimitLifter.SmartBuildMode
         private static readonly SmartBuildShapeDescriptor[] OrderedDescriptors =
         {
             CuboidDescriptor,
+            Descriptor("generated-circle", SmartBuildShapeKind.GeneratedCircle, SmartBuildShapeCategory.Generated, "Circle", "Generate a block circle or filled disk/cylinder.", false),
+            Descriptor("generated-polygon", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Polygon", "Generate a regular n-sided block polygon.", false, generatorSidesPreset: 8),
+            Descriptor("generated-triangle", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Triangle", "Generate a 3-sided block polygon preset.", false, generatorSidesPreset: 3),
+            Descriptor("generated-square", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Square", "Generate a 4-sided block polygon preset.", false, generatorSidesPreset: 4),
+            Descriptor("generated-hex", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Hex", "Generate a 6-sided block polygon preset.", false, generatorSidesPreset: 6),
+            Descriptor("generated-octagon", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Octagon", "Generate an 8-sided block polygon preset.", false, generatorSidesPreset: 8),
+            Descriptor("generated-decagon", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Decagon", "Generate a 10-sided block polygon preset.", false, generatorSidesPreset: 10),
+            Descriptor("generated-sphere", SmartBuildShapeKind.GeneratedSphere, SmartBuildShapeCategory.Generated, "Sphere", "Generate a block sphere shell or solid sphere.", false),
             Descriptor(DownSlopeKey, SmartBuildShapeKind.DownSlope, SmartBuildShapeCategory.Slopes, "Slope", "Place 1m to 4m down-slope ramp segments.", true, proceduralDownSlope: true),
             Descriptor("pole", SmartBuildShapeKind.Pole, SmartBuildShapeCategory.Basic, "Pole", "Place 1m to 4m rounded pole beams.", true),
             Descriptor("facing-down-slope-left", SmartBuildShapeKind.FacingDownSlope, SmartBuildShapeCategory.Slopes, "Beam slope L", "Place left-handed diagonal beam-slope blocks.", true, handedness: SmartBuildShapeHandedness.Left, mirrorKey: "facing-down-slope-right"),
@@ -264,7 +282,8 @@ namespace DecoLimitLifter.SmartBuildMode
             bool usesLengthSelector,
             bool proceduralDownSlope = false,
             SmartBuildShapeHandedness handedness = SmartBuildShapeHandedness.None,
-            string mirrorKey = null) =>
+            string mirrorKey = null,
+            int generatorSidesPreset = 0) =>
             new SmartBuildShapeDescriptor(
                 key,
                 kind,
@@ -274,7 +293,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 usesLengthSelector,
                 proceduralDownSlope,
                 handedness,
-                mirrorKey);
+                mirrorKey,
+                generatorSidesPreset: generatorSidesPreset);
 
         private static SmartBuildShapeDescriptor Transition(
             string key,

@@ -81,6 +81,9 @@ namespace DecoLimitLifter.SmartBuildMode
             if (descriptor == null)
                 return Family;
 
+            if (descriptor.IsGenerator)
+                return Family;
+
             if (ShapeFamilies != null &&
                 ShapeFamilies.TryGetValue(descriptor.Key, out SmartBlockFamily family))
             {

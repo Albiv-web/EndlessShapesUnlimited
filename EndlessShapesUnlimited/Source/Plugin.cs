@@ -19,6 +19,7 @@ using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Ftd.Constructs.UI;
 using BrilliantSkies.Modding;
+using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
 using DecoLimitLifter.SmartBuildMode;
@@ -32,7 +33,7 @@ namespace DecoLimitLifter
         private const string HarmonyId = "alb.endlessshapesunlimited";
 
         public string name => "EndlessShapes Unlimited";
-        public Version version => new Version(1, 0, 6, 0);
+        public Version version => new Version(1, 0, 7, 0);
 
         public void OnLoad()
         {
@@ -62,6 +63,8 @@ namespace DecoLimitLifter
                 DecorationEditModeRegistration.Register();
                 startup.TrackRollback(SmartBuildModeRegistration.Unregister);
                 SmartBuildModeRegistration.Register();
+                startup.TrackRollback(AutomationEditModeRegistration.Unregister);
+                AutomationEditModeRegistration.Register();
                 startup.TrackRollback(EsuHudNotificationOverlayRegistration.Unregister);
                 EsuHudNotificationOverlayRegistration.Register();
                 startup.Commit();

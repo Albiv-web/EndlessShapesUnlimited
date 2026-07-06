@@ -4,6 +4,7 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
+using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.SmartBuildMode;
 using DecoLimitLifter.SerializationHud;
 using UnityEngine;
@@ -124,14 +125,23 @@ namespace DecoLimitLifter.DecorationEditMode
         }
 
         internal static bool CanOpenFromModeSwitch(out string reason) =>
-            CanOpenNow(out reason, ignoreSmartBuildMode: true, modeSwitch: true);
+            CanOpenNow(
+                out reason,
+                ignoreSmartBuildMode: true,
+                ignoreAutomationEditMode: true,
+                modeSwitch: true);
 
         internal static bool CanOpenNow(out string reason) =>
-            CanOpenNow(out reason, ignoreSmartBuildMode: false, modeSwitch: false);
+            CanOpenNow(
+                out reason,
+                ignoreSmartBuildMode: false,
+                ignoreAutomationEditMode: false,
+                modeSwitch: false);
 
         private static bool CanOpenNow(
             out string reason,
             bool ignoreSmartBuildMode,
+            bool ignoreAutomationEditMode,
             bool modeSwitch)
         {
             reason = null;
@@ -139,6 +149,13 @@ namespace DecoLimitLifter.DecorationEditMode
                 SmartBuildModeRegistration.Active)
             {
                 reason = "Close Smart Block Builder before opening Decoration Edit Mode.";
+                return false;
+            }
+
+            if (!ignoreAutomationEditMode &&
+                AutomationEditModeRegistration.Active)
+            {
+                reason = "Close Automation Editor before opening Decoration Edit Mode.";
                 return false;
             }
 

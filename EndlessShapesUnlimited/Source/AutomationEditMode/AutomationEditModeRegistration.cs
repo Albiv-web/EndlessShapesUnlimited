@@ -4,18 +4,18 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
+using DecoLimitLifter.SmartBuildMode;
 using UnityEngine;
 
-namespace DecoLimitLifter.SmartBuildMode
+namespace DecoLimitLifter.AutomationEditMode
 {
-    internal static class SmartBuildModeRegistration
+    internal static class AutomationEditModeRegistration
     {
-        private const string BehaviourName = "EndlessShapesUnlimited.SmartBuildMode";
+        private const string BehaviourName = "EndlessShapesUnlimited.AutomationEditMode";
         private static GameObject _host;
-        private static SmartBuildModeBehaviour _behaviour;
+        private static AutomationEditModeBehaviour _behaviour;
         private static bool _registered;
 
         internal static bool Active => _behaviour != null && _behaviour.Active;
@@ -28,7 +28,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _ = SerializationHudKeyMap.Instance;
             _host = new GameObject(BehaviourName);
             UnityEngine.Object.DontDestroyOnLoad(_host);
-            _behaviour = _host.AddComponent<SmartBuildModeBehaviour>();
+            _behaviour = _host.AddComponent<AutomationEditModeBehaviour>();
             _registered = true;
         }
 
@@ -69,7 +69,7 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 if (_behaviour == null)
                 {
-                    InfoStore.Add("Smart Block Builder is not registered.");
+                    InfoStore.Add("Automation Editor is not registered.");
                     return;
                 }
 
@@ -78,7 +78,7 @@ namespace DecoLimitLifter.SmartBuildMode
             catch (Exception exception)
             {
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Smart Block Builder toggle failed",
+                    "[EndlessShapes Unlimited] Automation Editor toggle failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
             }
@@ -90,7 +90,7 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 if (_behaviour == null)
                 {
-                    InfoStore.Add("Smart Block Builder is not registered.");
+                    InfoStore.Add("Automation Editor is not registered.");
                     return false;
                 }
 
@@ -99,26 +99,26 @@ namespace DecoLimitLifter.SmartBuildMode
             catch (Exception exception)
             {
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Smart Block Builder switch-open failed",
+                    "[EndlessShapes Unlimited] Automation Editor switch-open failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
                 return false;
             }
         }
 
-        internal static bool TrySwitchToAutomationEdit()
+        internal static bool TrySwitchToDecorationEdit()
         {
             try
             {
                 if (_behaviour == null || !_behaviour.Active)
                     return false;
 
-                return _behaviour.TrySwitchToAutomationEdit();
+                return _behaviour.TrySwitchToDecorationEdit();
             }
             catch (Exception exception)
             {
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Smart Block Builder switch failed",
+                    "[EndlessShapes Unlimited] Automation Editor switch failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
                 return true;
@@ -129,34 +129,34 @@ namespace DecoLimitLifter.SmartBuildMode
             CanOpenNow(
                 out reason,
                 ignoreDecorationEditMode: true,
-                ignoreAutomationEditMode: true,
+                ignoreSmartBuildMode: true,
                 modeSwitch: true);
 
         internal static bool CanOpenNow(out string reason) =>
             CanOpenNow(
                 out reason,
                 ignoreDecorationEditMode: false,
-                ignoreAutomationEditMode: false,
+                ignoreSmartBuildMode: false,
                 modeSwitch: false);
 
         private static bool CanOpenNow(
             out string reason,
             bool ignoreDecorationEditMode,
-            bool ignoreAutomationEditMode,
+            bool ignoreSmartBuildMode,
             bool modeSwitch)
         {
             reason = null;
             if (!ignoreDecorationEditMode &&
                 DecorationEditModeRegistration.Active)
             {
-                reason = "Close Decoration Edit Mode before opening Smart Block Builder.";
+                reason = "Close Decoration Edit Mode before opening Automation Editor.";
                 return false;
             }
 
-            if (!ignoreAutomationEditMode &&
-                AutomationEditModeRegistration.Active)
+            if (!ignoreSmartBuildMode &&
+                SmartBuildModeRegistration.Active)
             {
-                reason = "Close Automation Editor before opening Smart Block Builder.";
+                reason = "Close Smart Block Builder before opening Automation Editor.";
                 return false;
             }
 
@@ -167,7 +167,7 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 reason = modeSwitch
                     ? "Close text input before switching ESU modes."
-                    : "Close text input or blocking UI before opening Smart Block Builder.";
+                    : "Close text input or blocking UI before opening Automation Editor.";
                 return false;
             }
 
@@ -178,7 +178,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 build.GetC() == null ||
                 build.GetCC() == null)
             {
-                reason = "Enter build mode on a craft before opening Smart Block Builder.";
+                reason = "Enter build mode on a craft before opening Automation Editor.";
                 return false;
             }
 

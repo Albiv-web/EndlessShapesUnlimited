@@ -66,6 +66,7 @@ namespace DecoLimitLifter.SerializationHud
         SwitchEsuBuildMode,
         UndoDecorationEdit,
         RedoDecorationEdit,
+        ToggleAutomationEditMode,
         MaxId
     }
 
@@ -114,7 +115,7 @@ namespace DecoLimitLifter.SerializationHud
             SetVolatile(
                 SerializationHudKeyInput.SwitchEsuBuildMode,
                 "Switch ESU build mode",
-                "Cycle EndlessShapes Unlimited modes: Decoration Edit, Surface Builder, Smart Builder.",
+                "Cycle EndlessShapes Unlimited modes: Decoration Edit, Surface Builder, Smart Builder, Automation.",
                 category,
                 Q(Key.Tab));
             SetVolatile(
@@ -129,6 +130,12 @@ namespace DecoLimitLifter.SerializationHud
                 "Redo the last undone EndlessShapes Unlimited decoration editor action.",
                 category,
                 Q(Key.Control, Key.Y));
+            SetVolatile(
+                SerializationHudKeyInput.ToggleAutomationEditMode,
+                "Toggle Automation Editor",
+                "Open or close the EndlessShapes Unlimited Automation Editor.",
+                category,
+                Q(Key.Control, Key.Shift, Key.A));
         }
 
         protected override int IdToInt(SerializationHudKeyInput id) => (int)id;

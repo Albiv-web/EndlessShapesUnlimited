@@ -1,4 +1,4 @@
-[b]Mod latest version 1.0.6[/b]
+[b]Mod latest version 1.0.7[/b]
 
 [h1]EndlessShapes Unlimited[/h1]
 
