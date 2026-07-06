@@ -146,6 +146,11 @@ release pass.
   selected controller into the draft System Block, use `Suggest ports`, `Check`,
   `Apply template`, and `Revert draft`, and confirm the tab stores only ESU
   metadata for named ports/templates with no native controller mutation.
+- After applying a System Block template, use `Enter` to open the nested
+  workspace. Confirm the breadcrumb reads from `Root` through the controller and
+  System Block into `Internal Graph`, edit the internal graph draft, use
+  `Check internals`, `Apply internal graph`, and `Revert internal`, and confirm
+  the `Up` control returns to the host workspace after clean internal metadata.
 - Use the proxy property picker on created Generic Getter/Setter nodes and
   confirm FtD exposes a sensible property list for the selected target type.
 - Run `Run checks` again after creating proxy nodes and confirm the runtime

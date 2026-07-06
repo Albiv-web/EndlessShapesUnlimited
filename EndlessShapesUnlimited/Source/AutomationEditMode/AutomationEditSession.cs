@@ -187,7 +187,12 @@ namespace DecoLimitLifter.AutomationEditMode
         private string _systemBlockDraftComment = string.Empty;
         private string _systemBlockValidationStatus = string.Empty;
         private int _activeSystemBlockTemplateIndex = -1;
+        private int _openSystemBlockTemplateIndex = -1;
+        private string _systemBlockInternalDraft = string.Empty;
+        private string _systemBlockInternalApplied = string.Empty;
+        private string _systemBlockInternalStatus = string.Empty;
         private bool _systemBlockDraftDirty;
+        private bool _systemBlockInternalDirty;
         private bool _showLeftPanel = true;
         private bool _showRightPanel = true;
         private bool _showBlocksSection = true;
@@ -265,6 +270,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedLinkTargetKey = string.Empty;
             CloseAutomationContextMenu();
             _links.Clear();
+            ClearSystemBlockWorkspace();
         }
 
         internal void SuspendForModeSwitchHandoff()
@@ -434,6 +440,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedCanvasComponentId = NoWireSourceComponentId;
             _canvasDragComponentId = NoWireSourceComponentId;
             _canvasDragPreviewDelta = Vector2.zero;
+            ClearSystemBlockWorkspace();
             CloseAutomationContextMenu();
             CloseEditor();
             _status = label + " is no longer available. Select a live Automation controller.";
@@ -671,6 +678,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedCanvasComponentId = NoWireSourceComponentId;
             _canvasDragComponentId = NoWireSourceComponentId;
             _canvasDragPreviewDelta = Vector2.zero;
+            ClearSystemBlockWorkspace();
             CloseEditor();
             _status = string.Equals(selected, "none", StringComparison.Ordinal)
                 ? "Automation selection cleared."
@@ -1310,6 +1318,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _selectedCanvasComponentId = NoWireSourceComponentId;
                 _canvasDragComponentId = NoWireSourceComponentId;
                 _canvasDragPreviewDelta = Vector2.zero;
+                ClearSystemBlockWorkspace();
                 CloseEditor();
             }
 
@@ -1631,6 +1640,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 _selectedCanvasComponentId = NoWireSourceComponentId;
                 _canvasDragComponentId = NoWireSourceComponentId;
                 _canvasDragPreviewDelta = Vector2.zero;
+                ClearSystemBlockWorkspace();
             }
 
             _status = statusPrefix + target.Label + ".";
@@ -2458,6 +2468,12 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             if (_editorOpen)
             {
+                if (IsSystemBlockWorkspaceOpen())
+                    return _editorPage == AutomationEditorPage.System
+                        ? "System ports"
+                        : _editorPage == AutomationEditorPage.Code
+                            ? "System lowering"
+                            : "System graph";
                 if (_editorPage == AutomationEditorPage.Graph)
                     return "Native graph";
                 if (_editorPage == AutomationEditorPage.System)
@@ -2478,6 +2494,17 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 if (_selectedController == null)
                     return "Close the editor and select a live native controller.";
+
+                if (IsSystemBlockWorkspaceOpen())
+                {
+                    if (_systemBlockInternalDirty)
+                        return "Check the System Block internals, then Apply internal graph or Revert internal draft.";
+                    if (_editorPage == AutomationEditorPage.System)
+                        return "Adjust named ports, Apply template, or use Graph/Code to edit the block internals.";
+                    if (_editorPage == AutomationEditorPage.Code)
+                        return "Compile deterministic code into native nodes, then return to System Graph to record the lowering plan.";
+                    return "Edit the internal graph plan, use Code for native lowering, or go Up to the host graph.";
+                }
 
                 if (_editorPage == AutomationEditorPage.System)
                 {
@@ -2523,6 +2550,8 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             if (CanRevertLastAutomationCompile())
                 return "Generated recipe nodes have a Revert compile path.";
+            if (_editorOpen && IsSystemBlockWorkspaceOpen())
+                return "Nested System Blocks store ESU layout/group metadata only; Graph/Code lowering still writes native nodes.";
             if (_editorOpen && _editorPage == AutomationEditorPage.System)
                 return "System Blocks store ESU-only names, ports, comments, breadcrumbs, and template metadata.";
             if (_editorOpen && _editorPage == AutomationEditorPage.Code)
@@ -3631,6 +3660,14 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginArea(new Rect(inset, inset, _editorRect.width - inset * 2f, _editorRect.height - inset * 2f));
             GUILayout.BeginHorizontal();
             DrawCompactIconHeader(EditorTitle(), "open", DecorationEditorTheme.Header);
+            if (IsSystemBlockWorkspaceOpen() &&
+                AutomationGUILayoutButton(
+                    new GUIContent("Up", DecorationEditorIconCatalog.Get("back"), "Return to the host controller workspace."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(56f))))
+            {
+                TryLeaveSystemBlockWorkspace();
+            }
             if (AutomationGUILayoutButton(
                     new GUIContent("Fit", DecorationEditorIconCatalog.Get("focus"), "Fit the graph/code editor to the viewport."),
                     DecorationEditorTheme.Button,
@@ -3718,14 +3755,15 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private string EditorPageLabel()
         {
+            string prefix = IsSystemBlockWorkspaceOpen() ? "System " : string.Empty;
             switch (_editorPage)
             {
                 case AutomationEditorPage.Code:
-                    return "Code";
+                    return prefix + "Code";
                 case AutomationEditorPage.System:
-                    return "System";
+                    return prefix + "Ports";
                 default:
-                    return "Graph";
+                    return prefix + "Graph";
             }
         }
 
@@ -3748,6 +3786,10 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private string EditorTitle()
         {
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template != null)
+                return "System Block - " + template.Name;
+
             return _selectedController == null
                 ? "Automation Graph"
                 : "Automation Graph - " + _selectedController.Label;
@@ -3755,6 +3797,12 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void DrawGraphEditor()
         {
+            if (IsSystemBlockWorkspaceOpen())
+            {
+                DrawSystemBlockInternalGraphEditor();
+                return;
+            }
+
             GUILayout.Label("Controller", DecorationEditorTheme.SubHeader);
             if (_selectedController == null)
             {
@@ -3930,6 +3978,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void DrawCodeEditor()
         {
+            if (IsSystemBlockWorkspaceOpen())
+                DrawSystemBlockCodeContextPanel();
+
             GUILayout.Label("Code node compiler", DecorationEditorTheme.SubHeader);
             if (_selectedController == null)
             {
@@ -3985,6 +4036,108 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label(
                 "Compiles one expression into a native Maths Evaluator, or if condition / out = expression / else / out = number-or-expression into native Evaluator + Switch nodes. Conditions with one and/or insert a native Logic Gate. ESU binds compiled output to the selected linked target's Generic Setter, creating one when needed.",
                 DecorationEditorTheme.MiniWrap);
+        }
+
+        private void DrawSystemBlockInternalGraphEditor()
+        {
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template == null)
+            {
+                GUILayout.Label("Open a saved System Block template before editing internals.", DecorationEditorTheme.Warning);
+                _openSystemBlockTemplateIndex = -1;
+                return;
+            }
+
+            EnsureSystemBlockInternalDraft(template);
+            GUILayout.Label("System Block internal graph", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            DrawCompactIconHeader(template.Name, "duplicate", DecorationEditorTheme.SubHeader);
+            GUILayout.Label(
+                "This nested workspace records the block's internal graph plan, exposed boundary ports, and native lowering notes. It is ESU metadata until you lower behavior through Graph/Code into native Breadboard/ACB data.",
+                DecorationEditorTheme.MiniWrap);
+            DrawSystemBlockPortSummary("Input ports", template.InputPorts, "filter");
+            DrawSystemBlockPortSummary("Output ports", template.OutputPorts, "anchor");
+            GUILayout.EndVertical();
+
+            GUILayout.BeginVertical(DecorationEditorTheme.Row);
+            GUILayout.Label("Internal graph draft", DecorationEditorTheme.Mini);
+            string draft = GUILayout.TextArea(
+                _systemBlockInternalDraft ?? string.Empty,
+                DecorationEditorTheme.TextField,
+                GUILayout.MinHeight(EsuHudLayout.Scale(180f)));
+            SetSystemBlockInternalDraftText(draft);
+            GUILayout.EndVertical();
+
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Check internals", DecorationEditorIconCatalog.Get("risk"), "Validate this nested System Block graph draft without mutating native data."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(126f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                CheckSystemBlockInternalGraph();
+            }
+
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Apply internal graph", DecorationEditorIconCatalog.Get("save"), "Save this nested graph plan as ESU-only template metadata."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(148f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                ApplySystemBlockInternalGraph();
+            }
+
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && _systemBlockInternalDirty;
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Revert internal", DecorationEditorIconCatalog.Get("cancel"), "Restore the nested graph plan from the applied template metadata."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(126f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                RevertSystemBlockInternalGraph();
+            }
+            GUI.enabled = previous;
+
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrWhiteSpace(_systemBlockInternalStatus))
+            {
+                GUILayout.Label(
+                    _systemBlockInternalStatus,
+                    _systemBlockInternalStatus.StartsWith("System Block internal check passed", StringComparison.Ordinal)
+                        ? DecorationEditorTheme.Body
+                        : DecorationEditorTheme.Warning);
+            }
+
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            DrawCompactIconHeader("Native lowering", "settings", DecorationEditorTheme.SubHeader);
+            GUILayout.Label(
+                "Use the Code page to compile deterministic expressions into the selected native Breadboard, or use the host Graph workflow to add Generic Getter/Setter proxy nodes. The nested block itself is not a separate runtime.",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.Label(
+                "Linked targets available to this System Block: " +
+                SelectedLinks.Count.ToString(CultureInfo.InvariantCulture),
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.EndVertical();
+        }
+
+        private void DrawSystemBlockCodeContextPanel()
+        {
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template == null)
+                return;
+
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            DrawCompactIconHeader("Nested System Block", "duplicate", DecorationEditorTheme.SubHeader);
+            GUILayout.Label(SystemBlockBreadcrumb(), DecorationEditorTheme.MiniWrap);
+            GUILayout.Label(
+                "Code compiled here still lowers into the selected native Breadboard. Return to System Graph afterward to record how those native nodes map to " +
+                template.Name +
+                ".",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.EndVertical();
         }
 
         private void DrawSystemBlockEditor()
@@ -4118,12 +4271,21 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
 
                 if (AutomationGUILayoutButton(
+                        new GUIContent("Enter", DecorationEditorIconCatalog.Get("duplicate"), "Enter this System Block's nested internal graph workspace."),
+                        DecorationEditorTheme.Button,
+                        GUILayout.Width(EsuHudLayout.Scale(68f)),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    EnterSystemBlockTemplate(index);
+                }
+
+                if (AutomationGUILayoutButton(
                         new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove this session template."),
                         DecorationEditorTheme.Button,
                         GUILayout.Width(EsuHudLayout.Scale(76f)),
                         GUILayout.Height(EsuHudLayout.Scale(24f))))
                 {
-                    _systemBlockTemplates.RemoveAt(index);
+                    RemoveSystemBlockTemplateAt(index);
                     if (_activeSystemBlockTemplateIndex >= _systemBlockTemplates.Count)
                         _activeSystemBlockTemplateIndex = -1;
                     _status = "Removed System Block session template.";
@@ -4249,11 +4411,14 @@ namespace DecoLimitLifter.AutomationEditMode
                 _selectedController?.Label ?? "Controller",
                 inputs,
                 outputs,
-                _systemBlockDraftComment);
+                _systemBlockDraftComment,
+                ExistingSystemBlockInternalGraph(_activeSystemBlockTemplateIndex));
             if (_activeSystemBlockTemplateIndex >= 0 &&
                 _activeSystemBlockTemplateIndex < _systemBlockTemplates.Count)
             {
                 _systemBlockTemplates[_activeSystemBlockTemplateIndex] = template;
+                if (_openSystemBlockTemplateIndex == _activeSystemBlockTemplateIndex)
+                    _systemBlockInternalApplied = template.InternalGraph;
             }
             else
             {
@@ -4292,6 +4457,230 @@ namespace DecoLimitLifter.AutomationEditMode
             _systemBlockValidationStatus = "System Block template opened at breadcrumb " + SystemBlockBreadcrumb() + ".";
             _systemBlockDraftDirty = false;
             _status = _systemBlockValidationStatus;
+        }
+
+        private void EnterSystemBlockTemplate(int index)
+        {
+            if (index < 0 || index >= _systemBlockTemplates.Count)
+                return;
+
+            LoadSystemBlockTemplate(index);
+            AutomationSystemBlockTemplate template = _systemBlockTemplates[index];
+            _openSystemBlockTemplateIndex = index;
+            EnsureSystemBlockInternalDraft(template, force: true);
+            _editorPage = AutomationEditorPage.Graph;
+            _systemBlockInternalStatus =
+                "System Block internal check passed: entered nested graph metadata workspace.";
+            _status =
+                "Entered System Block '" +
+                template.Name +
+                "'. Internal edits are ESU metadata until lowered through native Graph/Code.";
+        }
+
+        private bool TryLeaveSystemBlockWorkspace()
+        {
+            if (!IsSystemBlockWorkspaceOpen())
+                return true;
+
+            if (_systemBlockInternalDirty)
+            {
+                _status = "Check/apply or revert the System Block internal draft before going up.";
+                _systemBlockInternalStatus = _status;
+                return false;
+            }
+
+            string name = OpenSystemBlockTemplate()?.Name ?? "System Block";
+            ClearSystemBlockWorkspace();
+            _editorPage = AutomationEditorPage.System;
+            _status = "Returned to the host Automation workspace from " + name + ".";
+            return true;
+        }
+
+        private bool IsSystemBlockWorkspaceOpen() =>
+            _openSystemBlockTemplateIndex >= 0 &&
+            _openSystemBlockTemplateIndex < _systemBlockTemplates.Count;
+
+        private AutomationSystemBlockTemplate OpenSystemBlockTemplate()
+        {
+            return IsSystemBlockWorkspaceOpen()
+                ? _systemBlockTemplates[_openSystemBlockTemplateIndex]
+                : null;
+        }
+
+        private void ClearSystemBlockWorkspace()
+        {
+            _openSystemBlockTemplateIndex = -1;
+            _systemBlockInternalDraft = string.Empty;
+            _systemBlockInternalApplied = string.Empty;
+            _systemBlockInternalStatus = string.Empty;
+            _systemBlockInternalDirty = false;
+        }
+
+        private void RemoveSystemBlockTemplateAt(int index)
+        {
+            if (index < 0 || index >= _systemBlockTemplates.Count)
+                return;
+
+            _systemBlockTemplates.RemoveAt(index);
+            if (_openSystemBlockTemplateIndex == index)
+                ClearSystemBlockWorkspace();
+            else if (_openSystemBlockTemplateIndex > index)
+                _openSystemBlockTemplateIndex--;
+
+            if (_activeSystemBlockTemplateIndex == index)
+                _activeSystemBlockTemplateIndex = -1;
+            else if (_activeSystemBlockTemplateIndex > index)
+                _activeSystemBlockTemplateIndex--;
+        }
+
+        private string ExistingSystemBlockInternalGraph(int index)
+        {
+            if (index >= 0 && index < _systemBlockTemplates.Count)
+                return _systemBlockTemplates[index]?.InternalGraph ?? string.Empty;
+
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            return template?.InternalGraph ?? _systemBlockInternalApplied ?? string.Empty;
+        }
+
+        private void EnsureSystemBlockInternalDraft(
+            AutomationSystemBlockTemplate template,
+            bool force = false)
+        {
+            if (template == null)
+                return;
+
+            if (!force && !string.IsNullOrWhiteSpace(_systemBlockInternalDraft))
+                return;
+
+            _systemBlockInternalApplied = string.IsNullOrWhiteSpace(template.InternalGraph)
+                ? DefaultSystemBlockInternalGraph(template)
+                : template.InternalGraph;
+            _systemBlockInternalDraft = _systemBlockInternalApplied;
+            _systemBlockInternalDirty = false;
+            _systemBlockInternalStatus = string.Empty;
+        }
+
+        private static string DefaultSystemBlockInternalGraph(AutomationSystemBlockTemplate template)
+        {
+            string inputs = template == null || template.InputPorts.Count == 0
+                ? "none"
+                : string.Join(", ", template.InputPorts.ToArray());
+            string outputs = template == null || template.OutputPorts.Count == 0
+                ? "none"
+                : string.Join(", ", template.OutputPorts.ToArray());
+            string name = template?.Name ?? "system_block";
+            return "# System Block: " + name + "\n" +
+                   "inputs: " + inputs + "\n" +
+                   "outputs: " + outputs + "\n" +
+                   "internal graph:\n" +
+                   "- Add native proxy nodes for linked targets in the host Graph page.\n" +
+                   "- Compile deterministic expressions in Code when behavior should lower to Breadboard nodes.\n" +
+                   "- Keep this note as ESU layout/group metadata; it is not a separate runtime.\n";
+        }
+
+        private void DrawSystemBlockPortSummary(
+            string label,
+            IReadOnlyList<string> ports,
+            string iconKey)
+        {
+            GUILayout.BeginHorizontal(DecorationEditorTheme.Row);
+            Texture2D icon = DecorationEditorIconCatalog.Get(iconKey);
+            if (icon != null)
+                GUILayout.Label(icon, GUILayout.Width(EsuHudLayout.Scale(18f)), GUILayout.Height(EsuHudLayout.Scale(18f)));
+            GUILayout.Label(
+                label + ": " +
+                (ports == null || ports.Count == 0 ? "none" : string.Join(", ", ports.ToArray())),
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.EndHorizontal();
+        }
+
+        private void SetSystemBlockInternalDraftText(string value)
+        {
+            value = value ?? string.Empty;
+            if (string.Equals(_systemBlockInternalDraft ?? string.Empty, value, StringComparison.Ordinal))
+                return;
+
+            _systemBlockInternalDraft = value;
+            _systemBlockInternalDirty = true;
+            _systemBlockInternalStatus = string.Empty;
+        }
+
+        private void CheckSystemBlockInternalGraph()
+        {
+            _systemBlockInternalStatus = ValidateSystemBlockInternalGraph(out string message)
+                ? "System Block internal check passed: " + message
+                : message;
+            _status = _systemBlockInternalStatus;
+        }
+
+        private void ApplySystemBlockInternalGraph()
+        {
+            if (!ValidateSystemBlockInternalGraph(out string message))
+            {
+                _systemBlockInternalStatus = message;
+                _status = message;
+                return;
+            }
+
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template == null)
+                return;
+
+            _systemBlockTemplates[_openSystemBlockTemplateIndex] =
+                template.WithInternalGraph(_systemBlockInternalDraft);
+            _systemBlockInternalApplied = _systemBlockInternalDraft;
+            _systemBlockInternalDirty = false;
+            _systemBlockInternalStatus =
+                "System Block internal check passed: ESU-only nested graph metadata saved, no native mutation.";
+            _status =
+                "Applied internal graph metadata for System Block '" +
+                template.Name +
+                "'. Native behavior remains in Breadboard/ACB data.";
+        }
+
+        private void RevertSystemBlockInternalGraph()
+        {
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template == null)
+                return;
+
+            _systemBlockInternalDraft = string.IsNullOrWhiteSpace(_systemBlockInternalApplied)
+                ? DefaultSystemBlockInternalGraph(template)
+                : _systemBlockInternalApplied;
+            _systemBlockInternalDirty = false;
+            _systemBlockInternalStatus =
+                "System Block internal draft reverted to the applied template metadata.";
+            _status = _systemBlockInternalStatus;
+        }
+
+        private bool ValidateSystemBlockInternalGraph(out string message)
+        {
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template == null)
+            {
+                message = "Open a saved System Block template before editing internals.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(_systemBlockInternalDraft))
+            {
+                message = "System Block internal graph needs a draft plan before Apply.";
+                return false;
+            }
+
+            bool referencesDeclaredPort = template.InputPorts
+                .Concat(template.OutputPorts)
+                .Any(port => !string.IsNullOrWhiteSpace(port) &&
+                             _systemBlockInternalDraft.IndexOf(port, StringComparison.OrdinalIgnoreCase) >= 0);
+            if (!referencesDeclaredPort)
+            {
+                message = "System Block internal graph should reference at least one declared input or output port.";
+                return false;
+            }
+
+            message =
+                "nested graph metadata references declared ports and mutates no native data; use Graph/Code to lower behavior.";
+            return true;
         }
 
         private bool ValidateSystemBlockDraft(
@@ -4391,6 +4780,17 @@ namespace DecoLimitLifter.AutomationEditMode
             string root = _selectedController == null
                 ? "Root"
                 : "Root > " + _selectedController.Label;
+            AutomationSystemBlockTemplate template = OpenSystemBlockTemplate();
+            if (template != null)
+            {
+                string page = _editorPage == AutomationEditorPage.System
+                    ? "Ports"
+                    : _editorPage == AutomationEditorPage.Code
+                        ? "Code"
+                        : "Internal Graph";
+                return root + " > " + template.Name + " > " + page;
+            }
+
             if (_editorPage != AutomationEditorPage.System)
                 return root;
 
@@ -6416,6 +6816,18 @@ namespace DecoLimitLifter.AutomationEditMode
                 IReadOnlyList<string> inputPorts,
                 IReadOnlyList<string> outputPorts,
                 string comment)
+                : this(name, controllerKey, controllerLabel, inputPorts, outputPorts, comment, string.Empty)
+            {
+            }
+
+            internal AutomationSystemBlockTemplate(
+                string name,
+                string controllerKey,
+                string controllerLabel,
+                IReadOnlyList<string> inputPorts,
+                IReadOnlyList<string> outputPorts,
+                string comment,
+                string internalGraph)
             {
                 Name = string.IsNullOrWhiteSpace(name) ? "system_block" : name;
                 ControllerKey = controllerKey ?? string.Empty;
@@ -6423,6 +6835,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 InputPorts = inputPorts?.ToArray() ?? Array.Empty<string>();
                 OutputPorts = outputPorts?.ToArray() ?? Array.Empty<string>();
                 Comment = comment ?? string.Empty;
+                InternalGraph = internalGraph ?? string.Empty;
             }
 
             internal string Name { get; }
@@ -6436,6 +6849,20 @@ namespace DecoLimitLifter.AutomationEditMode
             internal IReadOnlyList<string> OutputPorts { get; }
 
             internal string Comment { get; }
+
+            internal string InternalGraph { get; }
+
+            internal AutomationSystemBlockTemplate WithInternalGraph(string internalGraph)
+            {
+                return new AutomationSystemBlockTemplate(
+                    Name,
+                    ControllerKey,
+                    ControllerLabel,
+                    InputPorts,
+                    OutputPorts,
+                    Comment,
+                    internalGraph);
+            }
         }
 
         private sealed class AutomationCompileRevertSet
