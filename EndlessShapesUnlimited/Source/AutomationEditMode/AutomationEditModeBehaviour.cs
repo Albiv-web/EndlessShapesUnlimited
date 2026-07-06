@@ -237,7 +237,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 ClearModeSwitchHandoffGui();
                 session.SuspendForModeSwitchHandoff();
                 _handoffGuiSession = session;
-                _handoffGuiFrame = Time.frameCount + 1;
+                _handoffGuiFrame = Time.frameCount + DecoLimitLifter.EsuModeSwitchHandoff.PassiveGuiFrames;
             }
             else
             {

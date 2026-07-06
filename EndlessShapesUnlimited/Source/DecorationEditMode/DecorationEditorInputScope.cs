@@ -133,6 +133,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool SuppressBuildHud() =>
             _active ||
+            DecoLimitLifter.EsuModeSwitchHandoff.Active ||
             SmartBuildInputScope.SuppressBuildHud() ||
             AutomationInputScope.SuppressBuildHud();
 

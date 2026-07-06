@@ -10,6 +10,8 @@ namespace DecoLimitLifter
 
         internal static bool Active => s_framesRemaining > 0;
 
+        internal static int PassiveGuiFrames => HandoffFrames;
+
         internal static void Begin()
         {
             s_framesRemaining = HandoffFrames;
