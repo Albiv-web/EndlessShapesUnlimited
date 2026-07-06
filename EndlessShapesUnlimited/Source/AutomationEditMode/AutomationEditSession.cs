@@ -1313,8 +1313,14 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginArea(new Rect(inset, inset, _leftPanelRect.width - inset * 2f, _leftPanelRect.height - inset * 2f));
             GUILayout.BeginHorizontal();
             GUILayout.Label("Automation Editor", DecorationEditorTheme.Header);
-            if (GUILayout.Button("x", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            if (GUILayout.Button(
+                    new GUIContent("Hide", "Hide the Automation Editor panel."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
                 _showLeftPanel = false;
+            }
             GUILayout.EndHorizontal();
             DecorationEditorTheme.Separator();
             float scrollHeight = Mathf.Max(
@@ -1773,8 +1779,14 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginArea(new Rect(inset, inset, _rightPanelRect.width - inset * 2f, _rightPanelRect.height - inset * 2f));
             GUILayout.BeginHorizontal();
             GUILayout.Label("Automation Blocks", DecorationEditorTheme.Header);
-            if (GUILayout.Button("x", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            if (GUILayout.Button(
+                    new GUIContent("Hide", "Hide the Automation Blocks panel."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(58f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
                 _showRightPanel = false;
+            }
             GUILayout.EndHorizontal();
             DecorationEditorTheme.Separator();
             float scrollHeight = Mathf.Max(
@@ -1851,10 +1863,10 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Label(text, DecorationEditorTheme.SubHeader);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(
-                    new GUIContent(sectionVisible ? "x" : "+", tooltip),
+                    new GUIContent(sectionVisible ? "Hide list" : "Show list", tooltip),
                     DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(28f)),
-                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+                    GUILayout.Width(EsuHudLayout.Scale(76f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 sectionVisible = !sectionVisible;
             }
@@ -2055,7 +2067,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 FitEditorToViewport();
                 _status = "Automation editor fitted to the available viewport.";
             }
-            if (GUILayout.Button("x", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(28f))))
+            if (GUILayout.Button("Close", DecorationEditorTheme.Button, GUILayout.Width(EsuHudLayout.Scale(58f))))
                 CloseEditor();
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();

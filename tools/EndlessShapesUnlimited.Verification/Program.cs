@@ -7106,6 +7106,7 @@ f 0 2 3
         string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
+        string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
         string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
         string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
         string automationTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawTargetListRow");
@@ -7488,6 +7489,9 @@ f 0 2 3
                automationSessionSource.Contains("DrawPlacementPreview") &&
                automationControllerPaletteRowSource.Contains("[armed]") &&
                automationSessionSource.Contains("DrawAutomationSectionHeader") &&
+               automationSessionSource.Contains("new GUIContent(\"Hide\", \"Hide the Automation Editor panel.\")") &&
+               automationSessionSource.Contains("new GUIContent(\"Hide\", \"Hide the Automation Blocks panel.\")") &&
+               automationSectionHeaderSource.Contains("new GUIContent(sectionVisible ? \"Hide list\" : \"Show list\"") &&
                automationOnGuiSource.Contains("GUI.depth = Math.Min(previousDepth, -10000)") &&
                automationOnGuiSource.Contains("if (!_editorOpen)") &&
                automationOnGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
