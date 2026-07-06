@@ -7122,6 +7122,8 @@ f 0 2 3
         string automationExecuteContextActionSource = ExtractMethodSource(automationSessionSource, "ExecuteAutomationContextAction");
         string automationRowContextMenuSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationRowContextMenu");
         string automationGUILayoutButtonSource = ExtractMethodSource(automationSessionSource, "AutomationGUILayoutButton");
+        string automationGUIButtonSource = ExtractMethodSource(automationSessionSource, "AutomationGUIButton");
+        string automationButtonContentSource = ExtractMethodSource(automationSessionSource, "DrawAutomationButtonContent");
         string automationToolbarButtonSource = ExtractMethodSource(automationSessionSource, "ToolbarButton");
         string automationStatusStripSource = ExtractMethodSource(automationSessionSource, "DrawStatusStrip");
         string automationPanelHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationPanelHeader");
@@ -7523,8 +7525,16 @@ f 0 2 3
                automationSessionSource.Contains("DrawAutomationSectionHeader") &&
                automationSessionSource.Contains("DrawAutomationPanelHeader(\"Automation Editor\", \"build\"") &&
                automationSessionSource.Contains("DrawAutomationPanelHeader(\"Automation Blocks\", \"cube\"") &&
-               automationGUILayoutButtonSource.Contains("GUILayout.Button(content, style, options)") &&
+               automationGUILayoutButtonSource.Contains("GUILayout.Button(content ?? GUIContent.none, style, options)") &&
                automationGUILayoutButtonSource.Contains("EsuCursorTooltip.RegisterLast(content?.tooltip)") &&
+               automationGUILayoutButtonSource.Contains("GUILayoutUtility.GetRect(layoutContent, style, options)") &&
+               automationGUILayoutButtonSource.Contains("AutomationGUIButton(rect, content, style)") &&
+               automationGUIButtonSource.Contains("GUI.Button(rect, GUIContent.none, style)") &&
+               automationGUIButtonSource.Contains("DrawAutomationButtonContent(rect, content, style)") &&
+               automationButtonContentSource.Contains("EsuHudLayout.Scale(16f)") &&
+               automationButtonContentSource.Contains("EsuHudLayout.Scale(14f)") &&
+               automationButtonContentSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&
+               automationSessionSource.Contains("ImagePosition.TextOnly") &&
                automationToolbarButtonSource.Contains("AutomationGUILayoutButton(") &&
                automationToolbarButtonSource.Contains("new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip)") &&
                automationStatusStripSource.Contains("AutomationGUILayoutButton(") &&
@@ -7607,6 +7617,11 @@ f 0 2 3
                automationControllerPaletteRowSource.Contains("OpenAutomationPlacementContextMenu") &&
                automationControllerIndexRowSource.Contains("OpenAutomationControllerContextMenu") &&
                automationTargetListRowSource.Contains("OpenAutomationTargetContextMenu") &&
+               automationLinkedTargetListRowSource.Contains("EsuHudLayout.Scale(28f)") &&
+               automationLinkedTargetListRowSource.Contains("DrawAutomationSingleLineIconRow") &&
+               automationLinkedTargetListRowSource.Contains("AutomationGUIButton(") &&
+               automationLinkedTargetListRowSource.Contains("DecorationEditorIconCatalog.Get(\"delete\")") &&
+               !automationLinkedTargetListRowSource.Contains("GUILayout.BeginHorizontal") &&
                automationLinkedTargetListRowSource.Contains("OpenAutomationLinkContextMenu") &&
                automationBreadboardCanvasInputSource.Contains("current.button == 1") &&
                automationBreadboardCanvasInputSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
@@ -7614,7 +7629,7 @@ f 0 2 3
                automationMouseOverUiSource.Contains("IsAutomationContextMenuAt(mouse)") &&
                automationCancelRightClickSource.Contains("_selectedController = null") &&
                automationCancelRightClickSource.Contains("CloseEditor()"),
-            "Automation Editor shares the resizable foreground ESU shell pattern, uses the same iconized toolbar/header/list treatment as the other ESU editor modes, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and routes right-click through active-placement cancel or a contextual Automation menu for controllers, targets, links, and breadboard nodes.");
+            "Automation Editor shares the resizable foreground ESU shell pattern, uses scaled Decoration-style icons in toolbar/header/list rows, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and routes right-click through active-placement cancel or a contextual Automation menu for controllers, targets, links, and breadboard nodes.");
         Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
                automationExecuteBoardCommandSource.Contains("return false;") &&
                automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&

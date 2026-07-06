@@ -2097,9 +2097,119 @@ namespace DecoLimitLifter.AutomationEditMode
             GUIStyle style,
             params GUILayoutOption[] options)
         {
-            bool clicked = GUILayout.Button(content, style, options);
-            EsuCursorTooltip.RegisterLast(content?.tooltip);
-            return clicked;
+            if (content?.image == null)
+            {
+                bool clicked = GUILayout.Button(content ?? GUIContent.none, style, options);
+                EsuCursorTooltip.RegisterLast(content?.tooltip);
+                return clicked;
+            }
+
+            var layoutContent = new GUIContent(content.text ?? string.Empty, content.tooltip);
+            Rect rect = GUILayoutUtility.GetRect(layoutContent, style, options);
+            return AutomationGUIButton(rect, content, style);
+        }
+
+        private static bool AutomationGUIButton(
+            Rect rect,
+            GUIContent content,
+            GUIStyle style)
+        {
+            if (content?.image == null)
+            {
+                bool clicked = GUI.Button(rect, content ?? GUIContent.none, style);
+                EsuCursorTooltip.Register(rect, content?.tooltip);
+                return clicked;
+            }
+
+            bool result = GUI.Button(rect, GUIContent.none, style);
+            DrawAutomationButtonContent(rect, content, style);
+            EsuCursorTooltip.Register(rect, content.tooltip);
+            return result;
+        }
+
+        private static void DrawAutomationButtonContent(
+            Rect rect,
+            GUIContent content,
+            GUIStyle baseStyle)
+        {
+            if (content == null || rect.width <= 1f || rect.height <= 1f)
+                return;
+
+            Texture icon = content.image;
+            string text = content.text ?? string.Empty;
+            bool hasText = !string.IsNullOrWhiteSpace(text);
+            bool stacked = hasText &&
+                           rect.height >= EsuHudLayout.Scale(34f) &&
+                           rect.width <= EsuHudLayout.Scale(92f);
+            Color previousColor = GUI.color;
+            if (!GUI.enabled)
+                GUI.color = new Color(previousColor.r, previousColor.g, previousColor.b, previousColor.a * 0.55f);
+
+            if (stacked)
+            {
+                float iconSize = Mathf.Min(EsuHudLayout.Scale(16f), Mathf.Max(1f, rect.height * 0.42f));
+                Rect iconRect = new Rect(
+                    rect.center.x - iconSize * 0.5f,
+                    rect.y + EsuHudLayout.Scale(4f),
+                    iconSize,
+                    iconSize);
+                if (icon != null)
+                    GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+                Rect textRect = new Rect(
+                    rect.x + EsuHudLayout.Scale(2f),
+                    iconRect.yMax - EsuHudLayout.Scale(1f),
+                    Mathf.Max(0f, rect.width - EsuHudLayout.Scale(4f)),
+                    Mathf.Max(0f, rect.yMax - iconRect.yMax + EsuHudLayout.Scale(1f)));
+                GUI.Label(textRect, text, AutomationButtonTextStyle(baseStyle, TextAnchor.MiddleCenter));
+            }
+            else if (hasText)
+            {
+                float iconSize = Mathf.Min(EsuHudLayout.Scale(14f), Mathf.Max(1f, rect.height - EsuHudLayout.Scale(8f)));
+                Rect iconRect = new Rect(
+                    rect.x + EsuHudLayout.Scale(6f),
+                    rect.y + (rect.height - iconSize) * 0.5f,
+                    iconSize,
+                    iconSize);
+                if (icon != null)
+                    GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+                Rect textRect = new Rect(
+                    iconRect.xMax + EsuHudLayout.Scale(4f),
+                    rect.y,
+                    Mathf.Max(0f, rect.xMax - iconRect.xMax - EsuHudLayout.Scale(8f)),
+                    rect.height);
+                GUI.Label(textRect, text, AutomationButtonTextStyle(baseStyle, TextAnchor.MiddleCenter));
+            }
+            else if (icon != null)
+            {
+                float iconSize = Mathf.Min(EsuHudLayout.Scale(16f), Mathf.Max(1f, rect.height - EsuHudLayout.Scale(8f)));
+                Rect iconRect = new Rect(
+                    rect.center.x - iconSize * 0.5f,
+                    rect.center.y - iconSize * 0.5f,
+                    iconSize,
+                    iconSize);
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+            }
+
+            GUI.color = previousColor;
+        }
+
+        private static GUIStyle AutomationButtonTextStyle(GUIStyle baseStyle, TextAnchor alignment)
+        {
+            var style = new GUIStyle(baseStyle)
+            {
+                alignment = alignment,
+                clipping = TextClipping.Clip,
+                imagePosition = ImagePosition.TextOnly,
+                padding = new RectOffset(0, 0, 0, 0),
+                wordWrap = false
+            };
+            style.normal.background = null;
+            style.hover.background = null;
+            style.active.background = null;
+            style.focused.background = null;
+            return style;
         }
 
         private void ToggleRightPanelSection(ref bool sectionVisible)
@@ -2572,31 +2682,71 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
 
             bool selected = string.Equals(_selectedLinkTargetKey, link.TargetKey, StringComparison.Ordinal);
-            GUILayout.BeginHorizontal(selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
-            GUILayout.Label(
-                new GUIContent(
-                    link.IsStale ? link.TargetLabel + " (missing)" : link.TargetLabel,
-                    DecorationEditorIconCatalog.Get(AutomationTargetIconKey(link.Target))),
+            float rowHeight = EsuHudLayout.Scale(28f);
+            float gap = EsuHudLayout.Scale(4f);
+            Rect row = GUILayoutUtility.GetRect(
+                1f,
+                rowHeight,
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(rowHeight));
+            GUI.Label(row, GUIContent.none, selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+
+            float buttonHeight = Mathf.Max(EsuHudLayout.Scale(22f), row.height - EsuHudLayout.Scale(4f));
+            float buttonY = row.y + (row.height - buttonHeight) * 0.5f;
+            float removeWidth = EsuHudLayout.Scale(78f);
+            float inspectWidth = EsuHudLayout.Scale(76f);
+            Rect removeRect = new Rect(
+                row.xMax - removeWidth - gap,
+                buttonY,
+                removeWidth,
+                buttonHeight);
+            Rect inspectRect = new Rect(
+                removeRect.x - inspectWidth - gap,
+                buttonY,
+                inspectWidth,
+                buttonHeight);
+            Rect labelRect = new Rect(
+                row.x,
+                row.y,
+                Mathf.Max(0f, inspectRect.x - row.x - gap),
+                row.height);
+
+            DrawAutomationSingleLineIconRow(
+                labelRect,
+                AutomationTargetIconKey(link.Target),
+                link.IsStale ? link.TargetLabel + " (missing)" : link.TargetLabel,
                 link.IsStale ? DecorationEditorTheme.Warning : DecorationEditorTheme.Mini);
-            GUILayout.FlexibleSpace();
-            if (AutomationGUILayoutButton(
-                    new GUIContent("Inspect", DecorationEditorIconCatalog.Get("focus"), "Inspect this linked target."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(82f))))
+            if (Event.current != null &&
+                Event.current.type == EventType.MouseDown &&
+                Event.current.button == 0 &&
+                labelRect.Contains(Event.current.mousePosition))
+            {
                 _selectedLinkTargetKey = link.TargetKey;
-            if (AutomationGUILayoutButton(
+                Event.current.Use();
+            }
+
+            EsuCursorTooltip.Register(labelRect, "Inspect this linked target.");
+            if (AutomationGUIButton(
+                    inspectRect,
+                    new GUIContent("Inspect", DecorationEditorIconCatalog.Get("focus"), "Inspect this linked target."),
+                    DecorationEditorTheme.Button))
+            {
+                _selectedLinkTargetKey = link.TargetKey;
+            }
+
+            if (AutomationGUIButton(
+                    removeRect,
                     new GUIContent("Remove", DecorationEditorIconCatalog.Get("delete"), "Remove this linked target."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(86f))))
+                    DecorationEditorTheme.Button))
             {
                 _links.Remove(link);
                 if (selected)
                     _selectedLinkTargetKey = string.Empty;
                 if (string.Equals(_automationCodeOutputTargetKey, link.TargetKey, StringComparison.Ordinal))
                     _automationCodeOutputTargetKey = string.Empty;
+                return;
             }
-            GUILayout.EndHorizontal();
-            Rect row = GUILayoutUtility.GetLastRect();
+
             TryOpenAutomationRowContextMenu(
                 row,
                 mouse => OpenAutomationLinkContextMenu(link, mouse));
