@@ -7104,8 +7104,10 @@ f 0 2 3
         string automationRefreshTargetsSource = ExtractMethodSource(automationSessionSource, "RefreshTargets");
         string automationClearStaleControllerSource = ExtractMethodSource(automationSessionSource, "ClearStaleSelectedController");
         string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
+        string automationHandleMouseSource = ExtractMethodSource(automationSessionSource, "HandleMouse");
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
+        string automationCancelRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationRightClick");
         string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
         string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
         string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
@@ -7506,8 +7508,17 @@ f 0 2 3
                automationSessionSource.Contains("EsuHudNotifications.ShowSystem") &&
                automationSessionSource.Contains("Placement preview shows green") &&
                automationSessionSource.Contains("Automation controller placement rejected") &&
-               automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()"),
-            "Automation Editor shares the resizable foreground ESU shell pattern, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, and blocks panel clicks from world placement.");
+               automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()") &&
+               automationOnGuiSource.Contains("mouseOverUi && ShouldConsumeGuiEvent(Event.current)") &&
+               automationOnGuiSource.Contains("Event.current.Use();") &&
+               automationHandleMouseSource.Contains("AutomationInputScope.ClaimMouseWheelInputForFrames();") &&
+               automationHandleMouseSource.Contains("Input.GetMouseButtonDown(1)") &&
+               automationHandleMouseSource.Contains("TryCancelAutomationRightClick()") &&
+               automationCancelRightClickSource.Contains("_selectedPlacement = null") &&
+               automationCancelRightClickSource.Contains("_tool = AutomationTool.Link") &&
+               automationCancelRightClickSource.Contains("_selectedController = null") &&
+               automationCancelRightClickSource.Contains("CloseEditor()"),
+            "Automation Editor shares the resizable foreground ESU shell pattern, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and lets right-click clear active placement/selection.");
         Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
                automationExecuteBoardCommandSource.Contains("return false;") &&
                automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&

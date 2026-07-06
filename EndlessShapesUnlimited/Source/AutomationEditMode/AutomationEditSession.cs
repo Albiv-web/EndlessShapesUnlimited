@@ -284,11 +284,13 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 bool mouseOverUi = IsMouseOverAnyUi(Event.current.mousePosition);
                 AutomationInputScope.SetMouseOverUi(mouseOverUi);
-                if (mouseOverUi)
+                if (mouseOverUi && ShouldConsumeGuiEvent(Event.current))
                 {
-                    AutomationInputScope.ClaimBuildInputForFrames();
-                    if (Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
+                    if (Event.current.type == EventType.ScrollWheel)
                         AutomationInputScope.ClaimMouseWheelInputForFrames();
+                    else
+                        AutomationInputScope.ClaimBuildInputForFrames();
+                    Event.current.Use();
                 }
             }
             finally
@@ -499,7 +501,19 @@ namespace DecoLimitLifter.AutomationEditMode
         private void HandleMouse()
         {
             if (AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi())
+            {
+                if (Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
+                    AutomationInputScope.ClaimMouseWheelInputForFrames();
                 return;
+            }
+
+            if (Input.GetMouseButtonDown(1))
+            {
+                AutomationInputScope.ClaimBuildInputForFrames();
+                if (!TryCancelAutomationRightClick())
+                    _status = "No Automation placement or selection to clear.";
+                return;
+            }
 
             if (!Input.GetMouseButtonDown(0))
                 return;
@@ -554,6 +568,48 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             ToggleLink(_selectedController, target);
+        }
+
+        private bool TryCancelAutomationRightClick()
+        {
+            if (_tool == AutomationTool.Place || _selectedPlacement != null)
+            {
+                string block = SelectedPlacementSummary();
+                _selectedPlacement = null;
+                _tool = AutomationTool.Link;
+                _status = string.Equals(block, "none", StringComparison.Ordinal)
+                    ? "Automation placement cancelled."
+                    : "Automation placement cancelled: " + block + ".";
+                return true;
+            }
+
+            if (_selectedController == null &&
+                string.IsNullOrEmpty(_selectedLinkTargetKey) &&
+                _selectedCanvasComponentId == NoWireSourceComponentId &&
+                _wireSourceComponentId == NoWireSourceComponentId)
+            {
+                return false;
+            }
+
+            string selected = SelectedControllerSummary();
+            _selectedController = null;
+            _selectedLinkTargetKey = string.Empty;
+            _automationCodeOutputTargetKey = string.Empty;
+            _automationCodeControllerKey = string.Empty;
+            _lastCompileRevert = null;
+            _lastCompileBoundOutput = false;
+            _lastRuntimeDiagnostics = AutomationRuntimeDiagnosticResult.Empty;
+            _lastRuntimeDiagnosticsControllerKey = string.Empty;
+            _wireSourceComponentId = NoWireSourceComponentId;
+            _wireSourceOutputIndex = -1;
+            _selectedCanvasComponentId = NoWireSourceComponentId;
+            _canvasDragComponentId = NoWireSourceComponentId;
+            _canvasDragPreviewDelta = Vector2.zero;
+            CloseEditor();
+            _status = string.Equals(selected, "none", StringComparison.Ordinal)
+                ? "Automation selection cleared."
+                : "Automation selection cleared: " + selected + ".";
+            return true;
         }
 
         private void TryPlaceSelectedController(DecorationPointerHit hit)
@@ -5793,6 +5849,17 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_editorOpen && _editorRect.Contains(mouse))
                 return true;
             return _statusRect.Contains(mouse);
+        }
+
+        private static bool ShouldConsumeGuiEvent(Event current)
+        {
+            if (current == null)
+                return false;
+
+            return current.type == EventType.MouseDown ||
+                   current.type == EventType.MouseUp ||
+                   current.type == EventType.MouseDrag ||
+                   current.type == EventType.ScrollWheel;
         }
 
         private sealed class AutomationValidationBaseline
