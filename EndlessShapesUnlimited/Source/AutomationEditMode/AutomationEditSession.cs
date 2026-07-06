@@ -471,9 +471,10 @@ namespace DecoLimitLifter.AutomationEditMode
             if (AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi())
                 return;
 
-            if (TryPickProjectedController(out AutomationTarget projectedController))
+            if (_tool != AutomationTool.Place &&
+                TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget))
             {
-                _hoverTarget = projectedController;
+                _hoverTarget = projectedTarget;
                 return;
             }
 
@@ -569,14 +570,11 @@ namespace DecoLimitLifter.AutomationEditMode
 
             AutomationInputScope.ClaimBuildInputForFrames(3);
             if (_tool != AutomationTool.Place &&
-                TryPickProjectedController(out AutomationTarget projectedController))
+                TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget))
             {
-                if (TryToggleControllerTargetLink(projectedController))
-                    return;
-
-                SelectAutomationController(
-                    projectedController,
-                    "Selected through screen-space controller pick: ");
+                TryHandleAutomationTargetClick(
+                    projectedTarget,
+                    "Selected through x-ray Automation pick: ");
                 return;
             }
 
@@ -595,28 +593,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!AutomationTargetCatalog.TryTargetFromHit(hit, out AutomationTarget target))
                 return;
 
-            if (target.IsController)
-            {
-                if (TryToggleControllerTargetLink(target))
-                    return;
-
-                SelectAutomationController(target, "Selected ");
-                return;
-            }
-
-            if (_selectedController == null)
-            {
-                _status = "Select a Breadboard/ACB before linking targets.";
-                return;
-            }
-
-            if (!AutomationTargetCatalog.PassesFilter(target, _filter))
-            {
-                _status = target.Label + " does not match the active filter.";
-                return;
-            }
-
-            ToggleLink(_selectedController, target);
+            TryHandleAutomationTargetClick(target, "Selected ");
         }
 
         private bool TryCancelAutomationRightClick()
@@ -671,9 +648,9 @@ namespace DecoLimitLifter.AutomationEditMode
         private bool TryOpenAutomationWorldContextMenu()
         {
             Vector2 mouse = MouseGuiPosition();
-            if (TryPickProjectedController(out AutomationTarget projectedController))
+            if (TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget))
             {
-                OpenAutomationTargetContextMenu(projectedController, mouse);
+                OpenAutomationTargetContextMenu(projectedTarget, mouse);
                 return true;
             }
 
@@ -685,6 +662,39 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             return false;
+        }
+
+        private bool TryHandleAutomationTargetClick(
+            AutomationTarget target,
+            string controllerStatusPrefix)
+        {
+            if (target == null)
+                return false;
+
+            if (target.IsController)
+            {
+                if (TryToggleControllerTargetLink(target))
+                    return true;
+
+                SelectAutomationController(target, controllerStatusPrefix);
+                return true;
+            }
+
+            if (_selectedController == null)
+            {
+                _status = "Select a Breadboard/ACB before linking targets.";
+                return true;
+            }
+
+            if (!AutomationTargetCatalog.PassesFilter(target, _filter) &&
+                !IsLinked(_selectedController, target))
+            {
+                _status = target.Label + " does not match the active filter.";
+                return true;
+            }
+
+            ToggleLink(_selectedController, target);
+            return true;
         }
 
         private bool TryOpenAutomationSelectionContextMenu(Vector2 mouse)
@@ -1628,7 +1638,26 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private bool TryPickProjectedController(out AutomationTarget controller)
         {
-            controller = null;
+            return TryPickProjectedAutomationTarget(
+                out controller,
+                candidate => candidate?.IsController == true,
+                EsuHudLayout.Scale(26f));
+        }
+
+        private bool TryPickProjectedAutomationTarget(out AutomationTarget target)
+        {
+            return TryPickProjectedAutomationTarget(
+                out target,
+                IsProjectedAutomationTargetPickable,
+                EsuHudLayout.Scale(24f));
+        }
+
+        private bool TryPickProjectedAutomationTarget(
+            out AutomationTarget target,
+            Func<AutomationTarget, bool> predicate,
+            float baseRadius)
+        {
+            target = null;
             if (_targets == null || _targets.Count == 0)
                 return false;
 
@@ -1636,8 +1665,8 @@ namespace DecoLimitLifter.AutomationEditMode
             if (camera == null)
                 return false;
 
-            Vector2 mouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-            float radius = EsuHudLayout.Scale(26f);
+            Vector2 mouse = MouseGuiPosition();
+            float radius = Mathf.Max(EsuHudLayout.Scale(10f), baseRadius);
             float radiusSquared = radius * radius;
             AllConstruct preferredConstruct = null;
             try
@@ -1652,29 +1681,130 @@ namespace DecoLimitLifter.AutomationEditMode
             float bestScore = float.PositiveInfinity;
             foreach (AutomationTarget candidate in _targets)
             {
-                if (candidate == null || !candidate.IsController)
+                if (candidate == null ||
+                    predicate == null ||
+                    !predicate(candidate) ||
+                    !TryProjectedAutomationTargetScreenRect(
+                        camera,
+                        candidate,
+                        out Rect screenRect,
+                        out Vector2 screenCenter,
+                        out float depth))
+                {
                     continue;
+                }
 
-                Vector3 screen = camera.WorldToScreenPoint(candidate.WorldCenter);
-                if (screen.z <= 0.01f)
-                    continue;
-
-                Vector2 guiPoint = new Vector2(screen.x, Screen.height - screen.y);
-                float distanceSquared = (guiPoint - mouse).sqrMagnitude;
-                if (distanceSquared > radiusSquared)
+                Rect pickRect = ExpandRect(screenRect, candidate.IsController ? radius * 0.45f : radius * 0.35f);
+                float distanceSquared = (screenCenter - mouse).sqrMagnitude;
+                if (!pickRect.Contains(mouse) && distanceSquared > radiusSquared)
                     continue;
 
                 float constructPenalty = ReferenceEquals(candidate.Construct, preferredConstruct) ? 0f : radiusSquared * 0.35f;
-                float depthPenalty = Mathf.Clamp(screen.z, 0f, 10000f) * 0.001f;
-                float score = distanceSquared + constructPenalty + depthPenalty;
+                float depthPenalty = Mathf.Clamp(depth, 0f, 10000f) * 0.001f;
+                float linkedBonus = IsLinked(_selectedController, candidate) ? -radiusSquared * 0.25f : 0f;
+                float filterPenalty =
+                    candidate.IsController || AutomationTargetCatalog.PassesFilter(candidate, _filter)
+                        ? 0f
+                        : radiusSquared * 0.5f;
+                float rectPenalty = pickRect.Contains(mouse) ? 0f : radiusSquared * 0.1f;
+                float score = distanceSquared + rectPenalty + constructPenalty + depthPenalty + filterPenalty + linkedBonus;
                 if (score >= bestScore)
                     continue;
 
                 bestScore = score;
-                controller = candidate;
+                target = candidate;
             }
 
-            return controller != null;
+            return target != null;
+        }
+
+        private bool IsProjectedAutomationTargetPickable(AutomationTarget candidate)
+        {
+            if (candidate == null)
+                return false;
+
+            if (_selectedController != null &&
+                string.Equals(candidate.StableKey, _selectedController.StableKey, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (candidate.IsController)
+                return true;
+
+            if (_selectedController == null)
+                return false;
+
+            return AutomationTargetCatalog.PassesFilter(candidate, _filter) ||
+                   IsLinked(_selectedController, candidate);
+        }
+
+        private static bool TryProjectedAutomationTargetScreenRect(
+            Camera camera,
+            AutomationTarget target,
+            out Rect rect,
+            out Vector2 center,
+            out float depth)
+        {
+            rect = Rect.zero;
+            center = Vector2.zero;
+            depth = float.PositiveInfinity;
+            if (camera == null || target?.Construct == null)
+                return false;
+
+            Vector3[] corners = CellCorners(target.Construct, target.LocalPosition);
+            if (corners == null || corners.Length == 0)
+                return false;
+
+            float minX = float.PositiveInfinity;
+            float minY = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity;
+            float maxY = float.NegativeInfinity;
+            float nearestDepth = float.PositiveInfinity;
+            int projected = 0;
+            for (int index = 0; index < corners.Length; index++)
+            {
+                Vector3 screen = camera.WorldToScreenPoint(corners[index]);
+                if (screen.z <= 0.01f)
+                    continue;
+
+                projected++;
+                nearestDepth = Mathf.Min(nearestDepth, screen.z);
+                float x = screen.x;
+                float y = Screen.height - screen.y;
+                minX = Mathf.Min(minX, x);
+                minY = Mathf.Min(minY, y);
+                maxX = Mathf.Max(maxX, x);
+                maxY = Mathf.Max(maxY, y);
+            }
+
+            if (projected == 0)
+                return false;
+
+            rect = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            Vector3 centerScreen = camera.WorldToScreenPoint(target.WorldCenter);
+            if (centerScreen.z > 0.01f)
+            {
+                center = new Vector2(centerScreen.x, Screen.height - centerScreen.y);
+                depth = centerScreen.z;
+            }
+            else
+            {
+                center = rect.center;
+                depth = nearestDepth;
+            }
+
+            return true;
+        }
+
+        private static Rect ExpandRect(Rect rect, float amount)
+        {
+            float pad = Mathf.Max(0f, amount);
+            return new Rect(
+                rect.x - pad,
+                rect.y - pad,
+                rect.width + pad * 2f,
+                rect.height + pad * 2f);
         }
 
         private void DrawWorldOverlay()

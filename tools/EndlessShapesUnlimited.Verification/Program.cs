@@ -7106,12 +7106,16 @@ f 0 2 3
         string automationRefreshTargetsSource = ExtractMethodSource(automationSessionSource, "RefreshTargets");
         string automationClearStaleControllerSource = ExtractMethodSource(automationSessionSource, "ClearStaleSelectedController");
         string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
+        string automationRefreshHoverTargetSource = ExtractMethodSource(automationSessionSource, "RefreshHoverTarget");
         string automationHandleMouseSource = ExtractMethodSource(automationSessionSource, "HandleMouse");
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
         string automationMouseOverUiSource = ExtractMethodSource(automationSessionSource, "IsMouseOverAnyUi");
         string automationCancelRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationRightClick");
         string automationCancelPlacementRightClickSource = ExtractMethodSource(automationSessionSource, "TryCancelAutomationPlacementRightClick");
         string automationTryOpenWorldContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationWorldContextMenu");
+        string automationHandleTargetClickSource = ExtractMethodSource(automationSessionSource, "TryHandleAutomationTargetClick");
+        string automationProjectedTargetPickableSource = ExtractMethodSource(automationSessionSource, "IsProjectedAutomationTargetPickable");
+        string automationProjectedTargetRectSource = ExtractMethodSource(automationSessionSource, "TryProjectedAutomationTargetScreenRect");
         string automationTryOpenSelectionContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationSelectionContextMenu");
         string automationDrawContextMenuSource = ExtractMethodSource(automationSessionSource, "DrawAutomationContextMenu");
         string automationContextMenuItemsSource = ExtractMethodSource(automationSessionSource, "AutomationContextMenuItems");
@@ -7449,8 +7453,11 @@ f 0 2 3
                automationSessionSource.Contains("DrawNativeLongSetting") &&
                automationSessionSource.Contains("Native settings") &&
                automationSessionSource.Contains("TryPickProjectedController") &&
+               automationSessionSource.Contains("TryPickProjectedAutomationTarget") &&
+               automationSessionSource.Contains("IsProjectedAutomationTargetPickable") &&
+               automationSessionSource.Contains("TryProjectedAutomationTargetScreenRect") &&
                automationSessionSource.Contains("WorldToScreenPoint") &&
-               automationSessionSource.Contains("screen-space controller pick") &&
+               automationSessionSource.Contains("x-ray Automation pick") &&
                automationSessionSource.Contains("_targetSearchText") &&
                automationSessionSource.Contains("DrawControllerIndex") &&
                automationSessionSource.Contains("DrawControllerIndexRow") &&
@@ -7562,10 +7569,23 @@ f 0 2 3
                automationHandleMouseSource.Contains("TryOpenAutomationWorldContextMenu()") &&
                automationHandleMouseSource.Contains("TryOpenAutomationSelectionContextMenu(MouseGuiPosition())") &&
                automationHandleMouseSource.Contains("TryCancelAutomationRightClick()") &&
+               automationRefreshHoverTargetSource.Contains("TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget)") &&
+               automationHandleMouseSource.Contains("TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget)") &&
+               automationHandleMouseSource.Contains("TryHandleAutomationTargetClick(") &&
+               automationHandleMouseSource.Contains("Selected through x-ray Automation pick") &&
+               automationHandleTargetClickSource.Contains("ToggleLink(_selectedController, target)") &&
+               automationHandleTargetClickSource.Contains("AutomationTargetCatalog.PassesFilter(target, _filter)") &&
+               automationProjectedTargetPickableSource.Contains("AutomationTargetCatalog.PassesFilter(candidate, _filter)") &&
+               automationProjectedTargetPickableSource.Contains("IsLinked(_selectedController, candidate)") &&
+               automationProjectedTargetRectSource.Contains("CellCorners(target.Construct, target.LocalPosition)") &&
+               automationProjectedTargetRectSource.Contains("camera.WorldToScreenPoint(corners[index])") &&
+               automationProjectedTargetRectSource.Contains("Rect.MinMaxRect") &&
+               automationSessionSource.Contains("ExpandRect(screenRect") &&
+               automationSessionSource.Contains("linkedBonus") &&
                automationCancelPlacementRightClickSource.Contains("if (_tool != AutomationTool.Place)") &&
                automationCancelPlacementRightClickSource.Contains("_selectedPlacement = null") &&
                automationCancelPlacementRightClickSource.Contains("_tool = AutomationTool.Link") &&
-               automationTryOpenWorldContextSource.Contains("TryPickProjectedController") &&
+               automationTryOpenWorldContextSource.Contains("TryPickProjectedAutomationTarget") &&
                automationTryOpenWorldContextSource.Contains("OpenAutomationTargetContextMenu") &&
                automationTryOpenSelectionContextSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
                automationTryOpenSelectionContextSource.Contains("OpenAutomationControllerContextMenu") &&
