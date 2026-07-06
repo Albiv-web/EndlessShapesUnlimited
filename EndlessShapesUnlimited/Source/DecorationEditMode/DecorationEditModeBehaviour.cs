@@ -218,7 +218,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
 
                 if (_handoffGuiSession != null &&
-                    Time.frameCount <= _handoffGuiFrame)
+                    Time.frameCount <= _handoffGuiFrame &&
+                    DecoLimitLifter.EsuModeSwitchHandoff.ShouldDrawPassiveGui())
                 {
                     _handoffGuiSession.DrawModeSwitchHandoffGui();
                     return;

@@ -3926,6 +3926,10 @@ f 0 2 3
                modeSwitchHandoffSource.Contains("ConsumeInactiveCleanupFrame") &&
                modeSwitchHandoffSource.Contains("HandoffFrames = 3") &&
                modeSwitchHandoffSource.Contains("PassiveGuiFrames => HandoffFrames") &&
+               modeSwitchHandoffSource.Contains("ShouldDrawPassiveGui") &&
+               modeSwitchHandoffSource.Contains("!DecorationEditMode.DecorationEditModeRegistration.Active") &&
+               modeSwitchHandoffSource.Contains("!SmartBuildMode.SmartBuildModeRegistration.Active") &&
+               modeSwitchHandoffSource.Contains("!AutomationEditMode.AutomationEditModeRegistration.Active") &&
                modeSwitchHandoffSource.Contains("s_lastConsumedFrame") &&
                modeSwitchHandoffSource.Contains("s_lastConsumedFrame != Time.frameCount") &&
                modeSwitchHandoffSource.Contains("s_lastConsumedFrame = Time.frameCount") &&
@@ -3934,6 +3938,7 @@ f 0 2 3
                decorationBehaviourSource.Contains("preserveSharedHud: true") &&
                decorationBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
                decorationBehaviourSource.Contains("_handoffGuiSession.DrawModeSwitchHandoffGui()") &&
+               decorationBehaviourSource.Contains("EsuModeSwitchHandoff.ShouldDrawPassiveGui()") &&
                decorationBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
                decorationBehaviourSource.Contains("_handoffGuiFrame = Time.frameCount + DecoLimitLifter.EsuModeSwitchHandoff.PassiveGuiFrames") &&
                decorationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
@@ -3941,6 +3946,7 @@ f 0 2 3
                smartBuildBehaviourSource.Contains("preserveSharedHud: true") &&
                smartBuildBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
                smartBuildBehaviourSource.Contains("DrawModeSwitchHandoffGui()") &&
+               smartBuildBehaviourSource.Contains("EsuModeSwitchHandoff.ShouldDrawPassiveGui()") &&
                smartBuildBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
                smartBuildBehaviourSource.Contains("_handoffGuiFrame = Time.frameCount + DecoLimitLifter.EsuModeSwitchHandoff.PassiveGuiFrames") &&
                smartBuildBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
@@ -7250,6 +7256,7 @@ f 0 2 3
                automationBehaviourSource.Contains("preserveSharedHud: true") &&
                automationBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
                automationBehaviourSource.Contains("_handoffGuiSession.DrawModeSwitchHandoffGui()") &&
+               automationBehaviourSource.Contains("EsuModeSwitchHandoff.ShouldDrawPassiveGui()") &&
                automationBehaviourSource.Contains("ClearModeSwitchHandoffGui()") &&
                automationBehaviourSource.Contains("_handoffGuiFrame = Time.frameCount + DecoLimitLifter.EsuModeSwitchHandoff.PassiveGuiFrames") &&
                automationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&

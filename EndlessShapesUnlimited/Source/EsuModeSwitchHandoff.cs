@@ -12,6 +12,12 @@ namespace DecoLimitLifter
 
         internal static int PassiveGuiFrames => HandoffFrames;
 
+        internal static bool ShouldDrawPassiveGui() =>
+            Active &&
+            !DecorationEditMode.DecorationEditModeRegistration.Active &&
+            !SmartBuildMode.SmartBuildModeRegistration.Active &&
+            !AutomationEditMode.AutomationEditModeRegistration.Active;
+
         internal static void Begin()
         {
             s_framesRemaining = HandoffFrames;
