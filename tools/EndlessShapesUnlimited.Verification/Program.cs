@@ -7159,9 +7159,12 @@ f 0 2 3
         string automationNextSafeActionSource = ExtractMethodSource(automationSessionSource, "NextSafeActionLine");
         string automationWorkspaceStageSource = ExtractMethodSource(automationSessionSource, "WorkspaceStageLabel");
         string automationWorkspaceSafetySource = ExtractMethodSource(automationSessionSource, "WorkspaceSafetyLine");
+        string automationDrawSystemBlockHostNodesSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNodes");
+        string automationDrawSystemBlockHostNodeSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNode");
         string automationDrawSystemBlockEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockEditor");
         string automationDrawSystemBlockInternalGraphEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockInternalGraphEditor");
         string automationEnterSystemBlockTemplateSource = ExtractMethodSource(automationSessionSource, "EnterSystemBlockTemplate");
+        string automationIsSystemBlockTemplateForSelectedControllerSource = ExtractMethodSource(automationSessionSource, "IsSystemBlockTemplateForSelectedController");
         string automationValidateSystemBlockInternalGraphSource = ExtractMethodSource(automationSessionSource, "ValidateSystemBlockInternalGraph");
         string automationApplySystemBlockInternalGraphSource = ExtractMethodSource(automationSessionSource, "ApplySystemBlockInternalGraph");
         string automationTryLeaveSystemBlockWorkspaceSource = ExtractMethodSource(automationSessionSource, "TryLeaveSystemBlockWorkspace");
@@ -7623,6 +7626,16 @@ f 0 2 3
                automationSessionSource.Contains("_openSystemBlockTemplateIndex") &&
                automationSessionSource.Contains("WithInternalGraph") &&
                automationSessionSource.Contains("new GUIContent(\"Enter\"") &&
+               automationSessionSource.Contains("DrawSystemBlockHostNodes()") &&
+               automationDrawSystemBlockHostNodesSource.Contains("System Block nodes") &&
+               automationDrawSystemBlockHostNodesSource.Contains("Create System Block") &&
+               automationDrawSystemBlockHostNodesSource.Contains("visible nested node") &&
+               automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Enter\"") &&
+               automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Ports\"") &&
+               automationDrawSystemBlockHostNodeSource.Contains("new GUIContent(\"Code\"") &&
+               automationDrawSystemBlockHostNodeSource.Contains("lowering through native Graph/Code") &&
+               automationIsSystemBlockTemplateForSelectedControllerSource.Contains("template.ControllerKey") &&
+               automationIsSystemBlockTemplateForSelectedControllerSource.Contains("_selectedController.StableKey") &&
                automationDrawWorkspaceGuideSource.Contains("Workspace guide") &&
                automationDrawWorkspaceGuideSource.Contains("WorkspaceStageLabel()") &&
                automationDrawWorkspaceGuideSource.Contains("WorkspaceNativeSurfaceLine()") &&
@@ -7630,7 +7643,7 @@ f 0 2 3
                automationDrawWorkspaceGuideSource.Contains("\"Safety: \" + WorkspaceSafetyLine()") &&
                automationDrawWorkspaceGuideSource.Contains("System Blocks: planned nested graphs") &&
                automationNextSafeActionSource.Contains("Compile expression into native graph nodes") &&
-               automationNextSafeActionSource.Contains("Inspect native nodes, add Generic proxy nodes") &&
+               automationNextSafeActionSource.Contains("create/enter System Blocks") &&
                automationNextSafeActionSource.Contains("Check the System Block ports") &&
                automationNextSafeActionSource.Contains("Apply internal graph") &&
                automationNextSafeActionSource.Contains("Point at an exposed craft face") &&
@@ -7669,6 +7682,8 @@ f 0 2 3
                automationSystemBlockBreadcrumbSource.Contains("Internal Graph") &&
                changeTestChecklistSource.Contains("System` tab") &&
                changeTestChecklistSource.Contains("Apply template") &&
+               changeTestChecklistSource.Contains("`System Block nodes`") &&
+               changeTestChecklistSource.Contains("`Ports`") &&
                changeTestChecklistSource.Contains("`Enter`") &&
                changeTestChecklistSource.Contains("`Check internals`") &&
                changeTestChecklistSource.Contains("`Up` control") &&

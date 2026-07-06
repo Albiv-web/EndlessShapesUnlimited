@@ -2525,7 +2525,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
 
                 if (IsBreadboardController(_selectedController.Controller))
-                    return "Inspect native nodes, add Generic proxy nodes for linked targets, or switch to Code.";
+                    return "Inspect native nodes, add Generic proxy nodes, switch to Code, or create/enter System Blocks.";
 
                 return "Inspect native ACB data; changes are written to FtD controller data.";
             }
@@ -3818,6 +3818,8 @@ namespace DecoLimitLifter.AutomationEditMode
             DrawAcbInspectorSection();
             DrawAcbControllerInspectorSection();
             GUILayout.Space(EsuHudLayout.Scale(8f));
+            DrawSystemBlockHostNodes();
+            GUILayout.Space(EsuHudLayout.Scale(8f));
             GUILayout.Label("World proxy nodes", DecorationEditorTheme.SubHeader);
             IReadOnlyList<AutomationLink> links = SelectedLinks;
             if (links.Count == 0)
@@ -3828,6 +3830,96 @@ namespace DecoLimitLifter.AutomationEditMode
 
             foreach (AutomationLink link in links)
                 DrawLinkedAutomationNode(link);
+        }
+
+        private void DrawSystemBlockHostNodes()
+        {
+            GUILayout.Label("System Block nodes", DecorationEditorTheme.SubHeader);
+            int visible = 0;
+            for (int index = 0; index < _systemBlockTemplates.Count; index++)
+            {
+                AutomationSystemBlockTemplate template = _systemBlockTemplates[index];
+                if (!IsSystemBlockTemplateForSelectedController(template))
+                    continue;
+
+                visible++;
+                DrawSystemBlockHostNode(index, template);
+            }
+
+            if (visible > 0)
+                return;
+
+            GUILayout.BeginVertical(DecorationEditorTheme.Panel);
+            DrawCompactIconHeader("No System Blocks yet", "duplicate", DecorationEditorTheme.SubHeader);
+            GUILayout.Label(
+                "Create a System Block to collapse linked targets and native graph work into one visible nested node with named boundary ports.",
+                DecorationEditorTheme.MiniWrap);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Create System Block", DecorationEditorIconCatalog.Get("duplicate"), "Open the System page and define a reusable nested block signature."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(154f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+            {
+                EnsureSystemBlockDraft();
+                _editorPage = AutomationEditorPage.System;
+                _status = "Define named ports, Check, then Apply template to create a visible System Block node.";
+            }
+            GUILayout.EndVertical();
+        }
+
+        private void DrawSystemBlockHostNode(int index, AutomationSystemBlockTemplate template)
+        {
+            if (template == null)
+                return;
+
+            bool active = index == _openSystemBlockTemplateIndex;
+            GUILayout.BeginVertical(active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Panel);
+            DrawCompactIconHeader(template.Name, "duplicate", DecorationEditorTheme.SubHeader);
+            GUILayout.Label(
+                "Nested visible node | inputs " +
+                template.InputPorts.Count.ToString(CultureInfo.InvariantCulture) +
+                " | outputs " +
+                template.OutputPorts.Count.ToString(CultureInfo.InvariantCulture) +
+                " | lowering through native Graph/Code",
+                DecorationEditorTheme.MiniWrap);
+            DrawSystemBlockPortSummary("Inputs", template.InputPorts, "filter");
+            DrawSystemBlockPortSummary("Outputs", template.OutputPorts, "anchor");
+            GUILayout.Label(
+                string.IsNullOrWhiteSpace(template.InternalGraph)
+                    ? "Internal graph: default draft only. Enter the block to describe the nested plan."
+                    : "Internal graph: saved ESU metadata. Enter the block to edit or lower behavior through Graph/Code.",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Enter", DecorationEditorIconCatalog.Get("open"), "Open this System Block's internal graph workspace."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(68f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                EnterSystemBlockTemplate(index);
+            }
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Ports", DecorationEditorIconCatalog.Get("filter"), "Edit this System Block's exposed input/output ports."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(66f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                LoadSystemBlockTemplate(index);
+                _editorPage = AutomationEditorPage.System;
+            }
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Code", DecorationEditorIconCatalog.Get("settings"), "Enter this System Block and use deterministic code lowering for native Breadboard nodes."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(66f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                EnterSystemBlockTemplate(index);
+                _editorPage = AutomationEditorPage.Code;
+                _status = "System Block Code page uses deterministic recipes and lowers into native Breadboard nodes.";
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
         }
 
         private void DrawLinkedAutomationNode(AutomationLink link)
@@ -4457,6 +4549,17 @@ namespace DecoLimitLifter.AutomationEditMode
             _systemBlockValidationStatus = "System Block template opened at breadcrumb " + SystemBlockBreadcrumb() + ".";
             _systemBlockDraftDirty = false;
             _status = _systemBlockValidationStatus;
+        }
+
+        private bool IsSystemBlockTemplateForSelectedController(AutomationSystemBlockTemplate template)
+        {
+            if (template == null || _selectedController == null)
+                return false;
+
+            return string.Equals(
+                template.ControllerKey,
+                _selectedController.StableKey,
+                StringComparison.Ordinal);
         }
 
         private void EnterSystemBlockTemplate(int index)
