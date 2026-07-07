@@ -29,6 +29,9 @@ namespace DecoLimitLifter.AutomationEditMode
         internal static bool ControlHeldWhileActive =>
             _active && DecoLimitLifter.EsuInputState.IsControlHeld();
 
+        internal static bool EscapeDownWhileActive =>
+            _active && Input.GetKeyDown(KeyCode.Escape);
+
         internal static void Begin()
         {
             _active = true;
@@ -120,6 +123,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal static bool SuppressBuildInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
+            EscapeDownWhileActive ||
             ControlHeldWhileActive ||
             OwnsBuildInputThisFrame ||
             (_active && DecoLimitLifter.EsuInputState.AnyEsuNumberShortcutDown()) ||
@@ -127,6 +131,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal static bool SuppressCameraInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
+            EscapeDownWhileActive ||
             OwnsCameraInputThisFrame ||
             ScrollWheelOverUi;
     }

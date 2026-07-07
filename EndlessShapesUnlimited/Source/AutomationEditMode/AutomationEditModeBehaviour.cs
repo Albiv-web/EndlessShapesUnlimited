@@ -127,11 +127,15 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 if (Active && Input.GetKeyDown(KeyCode.Escape))
                 {
-                    if (_session != null && _session.DismissOpenPrompt())
-                        return;
-
                     DecoLimitLifter.EsuEscapeCloseGuard.Arm();
-                    RequestActiveSessionClose("Escape pressed");
+                    if (_session != null && _session.HandleEscapeKeyDown())
+                    {
+                        if (_session.CloseRequested)
+                            Close("Escape pressed");
+                        return;
+                    }
+
+                    Close("Escape pressed");
                     return;
                 }
 

@@ -1874,6 +1874,9 @@ f 0 2 3
                profileSource.Contains("AutomationBlockNodeData") &&
                profileSource.Contains("AutomationBlockLinkData") &&
                profileSource.Contains("NativeComponentId") &&
+               profileSource.Contains("NativeDisplayScale") &&
+               profileSource.Contains("NativeBlockTypeName") &&
+               profileSource.Contains("NativeBlockFilter") &&
                profileSource.Contains("NativeInputPortLabels") &&
                profileSource.Contains("NativeOutputPortLabels") &&
                profileSource.Contains("AutomationProxyPropertySelectionData") &&
@@ -3292,6 +3295,12 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildInputScope.cs"));
+        string automationInputScopeEarlySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationInputScope.cs"));
         string optionsSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -4131,7 +4140,10 @@ f 0 2 3
                smartBuildBehaviourSource.Contains("Close(\"Escape pressed\")") &&
                !smartBuildSessionSource.Contains("Input.GetKeyDown(KeyCode.Escape)") &&
                inputScopeSource.Contains("EsuEscapeCloseGuard.Active") &&
-               smartInputScopeSource.Contains("EsuEscapeCloseGuard.Active"),
+               smartInputScopeSource.Contains("EsuEscapeCloseGuard.Active") &&
+               automationInputScopeEarlySource.Contains("EscapeDownWhileActive") &&
+               automationInputScopeEarlySource.Contains("_active && Input.GetKeyDown(KeyCode.Escape)") &&
+               automationInputScopeEarlySource.Contains("EscapeDownWhileActive ||"),
             "Escape closes the active ESU editor mode directly and arms a short input guard so vanilla does not open the main menu on the same keypress.");
 
         Assert(inputScopeSource.Contains("_active && DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()") &&
@@ -7414,10 +7426,13 @@ f 0 2 3
         string automationDrawForegroundPopupsSource = ExtractMethodSource(automationSessionSource, "DrawAutomationForegroundPopups");
         string automationShouldSuppressBackgroundInputSource = ExtractMethodSource(automationSessionSource, "ShouldSuppressAutomationBackgroundInput");
         string automationRequestHotkeyCloseSource = ExtractMethodSource(automationSessionSource, "RequestHotkeyClose");
+        string automationHandleEscapeKeyDownSource = ExtractMethodSource(automationSessionSource, "HandleEscapeKeyDown");
         string automationRequestSwitchToDecorationEditSource = ExtractMethodSource(automationSessionSource, "RequestSwitchToDecorationEdit");
         string automationDismissOpenPromptSource = ExtractMethodSource(automationSessionSource, "DismissOpenPrompt");
+        string automationConsumeAutomationGuiEscapeEventSource = ExtractMethodSource(automationSessionSource, "ConsumeAutomationGuiEscapeEvent");
         string automationDrawAutomationClosePromptSource = ExtractMethodSource(automationSessionSource, "DrawAutomationClosePrompt");
         string automationDrawAutomationClosePromptActionsSource = ExtractMethodSource(automationSessionSource, "DrawAutomationClosePromptActions");
+        string automationConsumeAutomationClosePromptInputSource = ExtractMethodSource(automationSessionSource, "ConsumeAutomationClosePromptInput");
         string automationSuspendHandoffSource = ExtractMethodSource(automationSessionSource, "SuspendForModeSwitchHandoff");
         string automationRefreshHoverTargetSource = ExtractMethodSource(automationSessionSource, "RefreshHoverTarget");
         string automationDrawWorldOverlaySource = ExtractMethodSource(automationSessionSource, "DrawWorldOverlay");
@@ -7520,6 +7535,8 @@ f 0 2 3
         string automationDrawLinkedTargetListSearchSource = ExtractMethodSource(automationSessionSource, "DrawLinkedTargetListSearch");
         string automationLinkedTargetListMatchesSearchSource = ExtractMethodSource(automationSessionSource, "LinkedTargetListMatchesSearch");
         string automationDrawLinkedSignalSearchSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadLinkedSignalSearch");
+        string automationDrawFixedLinkedSignalFlyoutSource = ExtractMethodSource(automationSessionSource, "DrawFixedTinkercadLinkedSignalFlyout");
+        string automationDrawFixedLinkedSignalSectionSource = ExtractMethodSource(automationSessionSource, "DrawFixedTinkercadLinkedSignalSection");
         string automationDrawLinkedSignalSectionSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadLinkedSignalSection");
         string automationDrawAvailableSignalTargetsSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadAvailableSignalTargets");
         string automationAvailableSignalTargetsSource = ExtractMethodSource(automationSessionSource, "AvailableSignalTargets");
@@ -7538,10 +7555,16 @@ f 0 2 3
         string automationDrawCanvasFlyoutToggleSource = ExtractMethodSource(automationSessionSource, "DrawCanvasFlyoutToggle");
         string automationDrawBlocksCanvasFlyoutSource = ExtractMethodSource(automationSessionSource, "DrawBlocksCanvasFlyout");
         string automationDrawTinkercadProgramSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadProgram");
+        string automationDrawNativeExactProgramSource = ExtractMethodSource(automationSessionSource, "DrawNativeExactProgram");
+        string automationDrawNativeExactWorkspaceBlockSource = ExtractMethodSource(automationSessionSource, "DrawNativeExactWorkspaceBlock");
+        string automationNativeExactNodeWidthSource = ExtractMethodSource(automationSessionSource, "NativeExactNodeWidth");
+        string automationNativeExactNodeHeightSource = ExtractMethodSource(automationSessionSource, "NativeExactNodeHeight");
+        string automationNativeExactDrawingScaleSource = ExtractMethodSource(automationSessionSource, "NativeExactDrawingScale");
         string automationLocalBlocksCanvasFlyoutRectSource = ExtractMethodSource(automationSessionSource, "LocalBlocksCanvasFlyoutRect");
         string automationClampBlockCanvasPanSource = ExtractMethodSource(automationSessionSource, "ClampBlockCanvasPan");
         string automationHandleBlockCanvasDropSource = ExtractMethodSource(automationSessionSource, "HandleBlockCanvasDrop");
         string automationHandleWorkspaceBlockInputSource = ExtractMethodSource(automationSessionSource, "HandleWorkspaceBlockInput");
+        string automationPrimaryMouseDownInSource = ExtractMethodSource(automationSessionSource, "PrimaryMouseDownIn");
         string automationDrawTinkercadWorkspaceBlockSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadWorkspaceBlock");
         string automationDrawTinkercadInspectorSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockInspector");
         string automationDrawTinkercadShapeSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockShape");
@@ -7580,6 +7603,8 @@ f 0 2 3
         string automationNativeComponentMatchesSearchSource = ExtractMethodSource(automationSessionSource, "NativeComponentMatchesSearch");
         string automationDrawNativeBreadboardTemplateSource = ExtractMethodSource(automationSessionSource, "DrawNativeBreadboardBlockTemplate");
         string automationTryApplyNativeComponentBlocksSource = ExtractMethodSource(automationSessionSource, "TryApplyNativeComponentBlocks");
+        string automationTryApplyDirectReadSetBlocksSource = ExtractMethodSource(automationSessionSource, "TryApplyDirectReadSetBlocks");
+        string automationTryEnsureDirectFlowProxySource = ExtractMethodSource(automationSessionSource, "TryEnsureDirectFlowProxy");
         string automationEnsureBlockWorkspaceSource = ExtractMethodSource(automationSessionSource, "EnsureBlockWorkspace");
         string automationTryCreateNativeExactWorkspaceSource = ExtractMethodSource(automationSessionSource, "TryCreateNativeExactWorkspaceFromSelectedController");
         string automationRefreshBlocksFromNativeSource = ExtractMethodSource(automationSessionSource, "RefreshBlocksFromNative");
@@ -7592,9 +7617,13 @@ f 0 2 3
         string automationBlockWorkspaceFromNativeGraphSource = ExtractMethodSource(automationBlockWorkspaceSource, "FromNativeGraphSnapshot");
         string automationBlockWorkspaceCreateDefaultSource = ExtractMethodSource(automationBlockWorkspaceSource, "CreateDefault");
         string automationBlockWorkspaceAddBlockSource = ExtractMethodSource(automationBlockWorkspaceSource, "AddBlock");
+        string automationBlockWorkspaceNativePortsForNodeSource = ExtractMethodSource(automationBlockWorkspaceSource, "NativePortsForNode");
         string automationBlockWorkspaceRebuildLinksSource = ExtractMethodSource(automationBlockWorkspaceSource, "RebuildPortsAndLinks");
         string automationBlockWorkspaceAddExplicitLinksSource = ExtractMethodSource(automationBlockWorkspaceSource, "AddExplicitNativeLinks");
+        string automationBlockWorkspaceHasLinkSource = ExtractMethodSource(automationBlockWorkspaceSource, "HasLink");
         string automationBlockWorkspaceNativePortIdSource = ExtractMethodSource(automationBlockWorkspaceSource, "NativePortId");
+        string automationBlockWorkspaceNativeExactLayoutScaleSource = ExtractMethodSource(automationBlockWorkspaceSource, "NativeExactLayoutScale");
+        string automationBlockWorkspaceNativeExactDisplayPositionSource = ExtractMethodSource(automationBlockWorkspaceSource, "NativeExactDisplayPosition");
         string automationBlockWorkspaceAmmoTemplateSource = ExtractMethodSource(automationBlockWorkspaceSource, "TryApplyAmmoThresholdStarterTemplate");
         string automationBlockWorkspaceCollapseSource = ExtractMethodSource(automationBlockWorkspaceSource, "CollapseSelectionToSystemBlock");
         string automationBlockNodeSetTargetSource = ExtractMethodSource(automationBlockWorkspaceSource, "SetTarget");
@@ -7607,6 +7636,7 @@ f 0 2 3
         string automationCheckEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CheckEsuBlocks");
         string automationApplyEsuBlocksSource = ExtractMethodSource(automationSessionSource, "ApplyEsuBlocks");
         string automationTryBindEsuBlockInputGetterSource = ExtractMethodSource(automationSessionSource, "TryBindEsuBlockInputGetter");
+        string automationSuppressBackgroundDirectInputSource = ExtractMethodSource(automationSessionSource, "ShouldSuppressAutomationBackgroundDirectInput");
         string automationRevertEsuBlocksSource = ExtractMethodSource(automationSessionSource, "RevertEsuBlocks");
         string automationCollapseEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CollapseEsuBlocksToSystemBlock");
         string automationNextSafeActionSource = ExtractMethodSource(automationSessionSource, "NextSafeActionLine");
@@ -8114,8 +8144,17 @@ f 0 2 3
         Assert(automationSessionSource.Contains("private enum AutomationClosePromptAction") &&
                automationSessionSource.Contains("internal bool HasOpenPrompt => _automationClosePromptOpen;") &&
                automationRequestHotkeyCloseSource.Contains("RequestAutomationClose(AutomationClosePromptAction.CloseMode)") &&
+               automationHandleEscapeKeyDownSource.Contains("ClaimAutomationModalInput(frames: 4)") &&
+               automationHandleEscapeKeyDownSource.Contains("DecoLimitLifter.EsuEscapeCloseGuard.Arm(frames: 4)") &&
+               automationHandleEscapeKeyDownSource.Contains("if (_automationClosePromptOpen)") &&
+               automationHandleEscapeKeyDownSource.Contains("if (_editorOpen)") &&
+               automationHandleEscapeKeyDownSource.Contains("RequestCloseEditor()") &&
+               automationHandleEscapeKeyDownSource.Contains("RequestHotkeyClose()") &&
                automationRequestSwitchToDecorationEditSource.Contains("RequestAutomationClose(AutomationClosePromptAction.SwitchToDecorationEdit)") &&
                automationDismissOpenPromptSource.Contains("CloseAutomationClosePrompt()") &&
+               automationConsumeAutomationGuiEscapeEventSource.Contains("current.keyCode != KeyCode.Escape") &&
+               automationConsumeAutomationGuiEscapeEventSource.Contains("HandleEscapeKeyDown()") &&
+               automationConsumeAutomationGuiEscapeEventSource.Contains("current.Use()") &&
                automationRequestCloseEditorSource.Contains("AutomationClosePromptAction.CloseEditor") &&
                automationRequestAutomationCloseSource.Contains("HasAutomationExitWarningChanges()") &&
                automationRequestAutomationCloseSource.Contains("OpenAutomationClosePrompt(action)") &&
@@ -8124,14 +8163,24 @@ f 0 2 3
                automationDrawEditorSource.Contains("SaveSelectedAutomationWorkspace()") &&
                automationDrawEditorSource.Contains("RequestCloseEditor()") &&
                automationDrawGuiSource.Contains("!_automationClosePromptOpen") &&
+               automationDrawGuiSource.Contains("ConsumeAutomationGuiEscapeEvent(interactive)") &&
                automationDrawGuiSource.Contains("DrawAutomationClosePrompt()") &&
-               automationDrawGuiSource.Contains("foregroundOpenBeforeBackground") &&
-               automationShouldSuppressBackgroundInputSource.Contains("bool foregroundOpenBeforeBackground") &&
+               automationDrawGuiSource.IndexOf("EsuConsoleWindow.DrawForegroundWindow()", StringComparison.Ordinal) <
+               automationDrawGuiSource.IndexOf("DrawAutomationClosePrompt()", StringComparison.Ordinal) &&
+               automationDrawGuiSource.Contains("bool foregroundOpen =") &&
+               automationDrawGuiSource.Contains("_suppressAutomationBackgroundDirectInput = suppressBackgroundInput") &&
+               automationDrawGuiSource.IndexOf("if (!_editorOpen)", StringComparison.Ordinal) <
+               automationDrawGuiSource.IndexOf("DrawAutomationForegroundPopups()", StringComparison.Ordinal) &&
+               automationShouldSuppressBackgroundInputSource.Contains("bool foregroundOpen") &&
                automationShouldSuppressBackgroundInputSource.Contains("_automationClosePromptOpen ||") &&
-               automationShouldSuppressBackgroundInputSource.Contains("foregroundOpenBeforeBackground && ShouldConsumeGuiEvent(current)") &&
+               automationShouldSuppressBackgroundInputSource.Contains("foregroundOpen && ShouldConsumeGuiEvent(current)") &&
                automationMouseOverUiSource.Contains("if (_automationClosePromptOpen)") &&
                automationDrawAutomationClosePromptSource.Contains("DecorationEditorTheme.DimTexture") &&
+               automationDrawAutomationClosePromptSource.Contains("GUI.depth = Math.Min(previousDepth, -30000)") &&
+               automationDrawAutomationClosePromptSource.Contains("ClaimAutomationModalInput(frames: 4)") &&
                automationDrawAutomationClosePromptSource.Contains("AutomationClosePromptWarning()") &&
+               automationConsumeAutomationClosePromptInputSource.Contains("ClaimAutomationModalInput(frames: 4)") &&
+               automationConsumeAutomationClosePromptInputSource.Contains("current.Use()") &&
                automationDrawAutomationClosePromptActionsSource.Contains("Save and close") &&
                automationDrawAutomationClosePromptActionsSource.Contains("Close without saving") &&
                automationDrawAutomationClosePromptActionsSource.Contains("Keep editing") &&
@@ -8151,7 +8200,8 @@ f 0 2 3
                automationStateStyleSource.Contains("HasAutomationExitWarningChanges()") &&
                automationBehaviourSource.Contains("RequestActiveSessionClose(\"toggle pressed\")") &&
                automationBehaviourSource.Contains("_session?.RequestSwitchToDecorationEdit()") &&
-               automationBehaviourSource.Contains("_session.DismissOpenPrompt()") &&
+               automationBehaviourSource.Contains("_session.HandleEscapeKeyDown()") &&
+               automationBehaviourSource.Contains("if (_session.CloseRequested)") &&
                automationBehaviourSource.Contains("_session?.RequestHotkeyClose()"),
             "Automation Editor exposes explicit Save and warns on close/toggle/mode-switch when workspace or native changes are unsaved.");
         Assert(automationSessionSource.Contains("AutomationEditorPage.System") &&
@@ -8209,22 +8259,39 @@ f 0 2 3
                automationNativeGraphSnapshotSource.Contains("internal sealed class AutomationNativeComponentSnapshot") &&
                automationNativeGraphSnapshotSource.Contains("internal sealed class AutomationNativePortSnapshot") &&
                automationNativeGraphSnapshotSource.Contains("internal sealed class AutomationNativeWireSnapshot") &&
+               automationNativeGraphSnapshotSource.Contains("BlockTypeName") &&
+               automationNativeGraphSnapshotSource.Contains("BlockFilter") &&
                automationTryCaptureNativeGraphSnapshotSource.Contains("NativeGraphImportComponentLimit") &&
                automationTryCaptureNativeGraphSnapshotSource.Contains("NativeGraphImportPortLimit") &&
                automationTryCaptureNativeGraphSnapshotSource.Contains("Native exact import stopped") &&
+               automationTryCaptureNativeGraphSnapshotSource.Contains("component.UniqueId == 0U") &&
+               automationTryCaptureNativeGraphSnapshotSource.Contains("importedIds.Add(component.UniqueId)") &&
+               automationTryCaptureNativeGraphSnapshotSource.Contains("IsFinite(component.X)") &&
+               automationTryCaptureNativeGraphSnapshotSource.Contains("component.BlockTypeName") &&
+               automationTryCaptureNativeGraphSnapshotSource.Contains("component.BlockFilter") &&
                automationTryCaptureNativeGraphSnapshotSource.Contains("ConnectedFromComponentId") &&
                automationBlockWorkspaceFromNativeGraphSource.Contains("AutomationBlockWorkspaceMode.NativeExact") &&
                automationBlockWorkspaceFromNativeGraphSource.Contains("NativeNodeId(component)") &&
+               automationBlockWorkspaceFromNativeGraphSource.Contains("NativeDisplayScale = NativeExactLayoutScale") &&
+               automationBlockWorkspaceFromNativeGraphSource.Contains("NativeExactDisplayPosition(component") &&
+               automationBlockWorkspaceFromNativeGraphSource.Contains("component.BlockTypeName") &&
+               automationBlockWorkspaceFromNativeGraphSource.Contains("component.BlockFilter") &&
                automationBlockWorkspaceFromNativeGraphSource.Contains("NativePortId(fromNode.Id, AutomationBlockPortDirection.Output") &&
+               automationBlockWorkspaceNativePortsForNodeSource.Contains("node?.NativeImported == true") &&
+               automationBlockWorkspaceNativePortsForNodeSource.Contains("Array.Empty<AutomationBlockPortDefinition>()") &&
                automationBlockWorkspaceRebuildLinksSource.Contains("Mode == AutomationBlockWorkspaceMode.NativeExact") &&
                automationBlockWorkspaceRebuildLinksSource.Contains("AddExplicitNativeLinks()") &&
                automationBlockWorkspaceAddExplicitLinksSource.Contains("_explicitLinks") &&
+               automationBlockWorkspaceAddExplicitLinksSource.Contains("link.FromNativeComponentId") &&
+               automationBlockWorkspaceNativeExactLayoutScaleSource.Contains("NativeExactLayoutCanvasWidth") &&
+               automationBlockWorkspaceNativeExactDisplayPositionSource.Contains("NativeExactLayoutPadding") &&
                automationBlockWorkspaceNativePortIdSource.Contains("\"out\"") &&
                automationEnsureBlockWorkspaceSource.Contains("TryCreateNativeExactWorkspaceFromSelectedController") &&
                automationTryCreateNativeExactWorkspaceSource.Contains("TryCaptureNativeGraphSnapshot") &&
                automationTryCreateNativeExactWorkspaceSource.Contains("snapshot.HasNativeGraph") &&
                automationRefreshBlocksFromNativeSource.Contains("Click Refresh from native again to confirm") &&
                automationRefreshBlocksFromNativeSource.Contains("DiscardUnsavedAutomationWorkspaceStaging()") &&
+               automationTryMoveNativeExactWorkspaceBlockSource.Contains("/ displayScale") &&
                automationTryMoveNativeExactWorkspaceBlockSource.Contains("TryMoveComponent(component, deltaX, deltaY") &&
                automationTryDeleteNativeExactWorkspaceBlockSource.Contains("TryDeleteComponent(component") &&
                automationTryFindNativeExactComponentSource.Contains("FindComponentById(inspector.Components, node.NativeComponentId)") &&
@@ -8265,10 +8332,22 @@ f 0 2 3
                automationDrawCanvasFlyoutToggleSource.Contains("scroll = Vector2.zero") &&
                automationDrawBlocksCanvasFlyoutSource.Contains("_blocksCanvasSignalsScroll") &&
                automationDrawBlocksCanvasFlyoutSource.Contains("_blocksCanvasSystemsScroll") &&
-               automationDrawBlocksCanvasFlyoutSource.Contains("GUI.BeginGroup(body)") &&
-               automationDrawBlocksCanvasFlyoutSource.Contains("GUILayout.BeginArea(localBody)") &&
-               automationDrawBlocksCanvasFlyoutSource.Contains("GUILayout.Width(Mathf.Max(1f, body.width))") &&
+               automationDrawBlocksCanvasFlyoutSource.Contains("DrawFixedTinkercadLinkedSignalFlyout(body)") &&
+               !automationDrawBlocksCanvasFlyoutSource.Contains("GUI.BeginGroup(body)") &&
+               !automationDrawBlocksCanvasFlyoutSource.Contains("GUILayout.BeginArea(localBody)") &&
+               automationDrawFixedLinkedSignalFlyoutSource.Contains("GUI.BeginScrollView(") &&
+               automationDrawFixedLinkedSignalFlyoutSource.Contains("DrawFixedTinkercadLinkedSignalTab(inputTab") &&
+               automationDrawFixedLinkedSignalFlyoutSource.Contains("DrawFixedTinkercadLinkedSignalSection(contentWidth") &&
+               automationDrawFixedLinkedSignalSectionSource.Contains("DrawFixedTinkercadAvailableSignalTargets(width") &&
                automationDrawTinkercadProgramSource.Contains("LocalBlocksCanvasFlyoutRect(canvas)") &&
+               automationDrawTinkercadProgramSource.Contains("DrawNativeExactProgram(canvas)") &&
+               automationDrawNativeExactProgramSource.Contains("DrawBreadboardCanvasGrid(localCanvas)") &&
+               automationDrawNativeExactProgramSource.Contains("DrawNativeExactWorkspaceBlock") &&
+               !automationDrawNativeExactProgramSource.Contains("\"forever\"") &&
+               automationDrawNativeExactWorkspaceBlockSource.Contains("\"native exact\"") &&
+               automationNativeExactNodeWidthSource.Contains("node.NativeWidth") &&
+               automationNativeExactNodeHeightSource.Contains("definition.InputPorts") &&
+               automationNativeExactDrawingScaleSource.Contains("NativeDisplayScale") &&
                automationDrawTinkercadWorkspaceBlockSource.Contains("Rect inputBlocker") &&
                automationDrawTinkercadWorkspaceBlockSource.Contains("inputBlocker.Contains(current.mousePosition)") &&
                automationLocalBlocksCanvasFlyoutRectSource.Contains("BlocksCanvasFlyoutRect(canvas)") &&
@@ -8282,6 +8361,7 @@ f 0 2 3
                automationHandleBlockCanvasDropSource.Contains("IsMouseNearExecutableStack") &&
                automationHandleBlockCanvasDropSource.Contains("AddAutomationBlockAt") &&
                automationHandleBlockCanvasDropSource.Contains("AddNativeAutomationBlockAt") &&
+               automationHandleBlockCanvasDropSource.Contains("canSnapToStack") &&
                automationHandleBlockCanvasDropSource.Contains("MoveNodeToCanvas") &&
                automationHandleBlockCanvasDropSource.Contains("MoveNodeToIndex") &&
                automationHandleBlockCanvasDropSource.Contains("AutomationUiSound.PlaySnap") &&
@@ -8340,9 +8420,19 @@ f 0 2 3
                automationCheckEsuBlocksSource.Contains("CheckBlocksToNative") &&
                automationCheckEsuBlocksSource.Contains("_blockLoweringPlan") &&
                automationApplyEsuBlocksSource.Contains("ToNativeCode()") &&
+               automationApplyEsuBlocksSource.Contains("HasDirectValueFlow") &&
+               automationApplyEsuBlocksSource.Contains("TryApplyDirectReadSetBlocks(_blockLoweringPlan, out inputBindingMessage)") &&
                automationApplyEsuBlocksSource.Contains("CompileAutomationCodeExpression(returnToGraph: false)") &&
                automationApplyEsuBlocksSource.Contains("TryBindEsuBlockInputGetter(_blockLoweringPlan, out inputBindingMessage)") &&
                automationApplyEsuBlocksSource.Contains("TryApplyNativeComponentBlocks(_blockLoweringPlan, out string nativeComponentMessage)") &&
+               automationTryApplyDirectReadSetBlocksSource.Contains("PlanLinkedTarget(plan.ReadTargetKey, AutomationLinkDirection.Input)") &&
+               automationTryApplyDirectReadSetBlocksSource.Contains("TryEnsureDirectFlowProxy(") &&
+               automationTryApplyDirectReadSetBlocksSource.Contains("inspector.TryConnectPorts(") &&
+               automationTryApplyDirectReadSetBlocksSource.Contains("direct read-to-set proxy flow") &&
+               automationTryEnsureDirectFlowProxySource.Contains("TryCreateTargetProxy(") &&
+               automationTryEnsureDirectFlowProxySource.Contains("TryApplyProxyPropertySelection(inspector, created, selection") &&
+               automationTryEnsureDirectFlowProxySource.Contains("inspector.OutputPorts(created, 1)") &&
+               automationTryEnsureDirectFlowProxySource.Contains("inspector.InputPorts(created, 4)") &&
                automationTryApplyNativeComponentBlocksSource.Contains("TryAddComponentTracked") &&
                automationTryApplyNativeComponentBlocksSource.Contains("AddGeneratedComponentIdsToLastCompileRevert") &&
                automationTryApplyNativeComponentBlocksSource.Contains("partialIds.Length") &&
@@ -8531,11 +8621,22 @@ f 0 2 3
                automationSessionSource.Contains("Automation controller placement rejected") &&
                automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()"),
             "Automation controller placement previews target cells, tries valid attach-face rotations, logs failures, and blocks panel clicks from world placement.");
-        Assert(automationDrawGuiSource.Contains("foregroundOpenBeforeBackground") &&
+        Assert(automationDrawGuiSource.Contains("bool foregroundOpen =") &&
                automationDrawGuiSource.Contains("IsAutomationForegroundPopupOpen()") &&
                automationDrawGuiSource.Contains("DrawAutomationForegroundPopups()") &&
                automationDrawGuiSource.Contains("ShouldSuppressAutomationBackgroundInput(") &&
-               automationDrawGuiSource.Contains("foregroundOpenBeforeBackground);") &&
+               automationDrawGuiSource.Contains("foregroundOpen);") &&
+               automationDrawGuiSource.Contains("_suppressAutomationBackgroundDirectInput = suppressBackgroundInput") &&
+               automationDrawGuiSource.Contains("_suppressAutomationBackgroundDirectInput = previousSuppressBackgroundDirectInput") &&
+               automationDrawGuiSource.IndexOf("if (!_editorOpen)", StringComparison.Ordinal) <
+               automationDrawGuiSource.IndexOf("DrawAutomationForegroundPopups()", StringComparison.Ordinal) &&
+               automationSuppressBackgroundDirectInputSource.Contains("_suppressAutomationBackgroundDirectInput") &&
+               automationSuppressBackgroundDirectInputSource.Contains("ShouldConsumeGuiEvent(current)") &&
+               automationHandleWorkspaceBlockInputSource.Contains("ShouldSuppressAutomationBackgroundDirectInput(current)") &&
+               automationHandleBlockCanvasDropSource.Contains("ShouldSuppressAutomationBackgroundDirectInput(current)") &&
+               automationHandleBlockCanvasNavigationSource.Contains("ShouldSuppressAutomationBackgroundDirectInput(current)") &&
+               automationRowContextMenuSource.Contains("ShouldSuppressAutomationBackgroundDirectInput(current)") &&
+               automationPrimaryMouseDownInSource.Contains("ShouldSuppressAutomationBackgroundDirectInput(current)") &&
                automationDrawForegroundPopupsSource.Contains("DrawAutomationContextMenu()") &&
                automationDrawForegroundPopupsSource.Contains("DrawAutomationTargetPicker()") &&
                automationDrawForegroundPopupsSource.Contains("DrawAutomationPropertyPicker()") &&
@@ -8599,12 +8700,15 @@ f 0 2 3
                automationTryOpenSelectionContextSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
                automationTryOpenSelectionContextSource.Contains("OpenAutomationControllerContextMenu") &&
                automationDrawContextMenuSource.Contains("AutomationContextRect(_contextMenuAnchor, items.Length)") &&
-               automationDrawContextMenuSource.Contains("GUI.Window(") &&
+               !automationDrawContextMenuSource.Contains("GUI.Window(") &&
                automationDrawContextMenuSource.Contains("DrawAutomationContextMenuWindow(items)") &&
-               automationDrawContextMenuSource.Contains("GUI.depth = Math.Min(previousDepth, -10950)") &&
-               automationDrawContextMenuSource.Contains("GUI.BringWindowToFront(_contextMenuWindowId)") &&
-               automationDrawContextMenuWindowSource.Contains("GUI.Box(localRect") &&
-               automationDrawContextMenuWindowSource.Contains("AutomationGUILayoutButton(") &&
+               automationDrawContextMenuSource.Contains("GUI.depth = Math.Min(previousDepth, -25000)") &&
+               automationDrawContextMenuSource.Contains("AutomationInputScope.ClaimBuildInputForFrames(3)") &&
+               automationDrawContextMenuSource.Contains("current?.Use()") &&
+               automationDrawContextMenuWindowSource.Contains("GUI.Box(_contextMenuRect") &&
+               automationDrawContextMenuWindowSource.Contains("current.type == EventType.MouseDown") &&
+               automationDrawContextMenuWindowSource.Contains("GUI.Button(itemRect") &&
+               automationDrawContextMenuWindowSource.Contains("item.Enabled && (pressed || clicked)") &&
                automationDrawContextMenuSource.Contains("ShouldConsumeAutomationContextEvent(current)") &&
                automationDrawContextMenuSource.Contains("ExecuteAutomationContextAction(action)") &&
                automationContextMenuItemsSource.Contains("AutomationContextMenuKind.Controller") &&
@@ -9136,6 +9240,15 @@ f 0 2 3
                automationCheckEsuBlocksSource.Contains("CheckBlocksToNative") &&
                automationCheckEsuBlocksSource.Contains("_blockLoweringPlan = ok ? plan : null") &&
                automationBlockLoweringCheckSource.Contains("ValidateBlockSupportForCheck") &&
+               automationBlockWorkspaceSource.Contains("HasConfiguredDirectReadSetFlow") &&
+               automationBlockWorkspaceSource.Contains("HasLink(read, \"value\", set, \"value\")") &&
+               automationBlockWorkspaceHasLinkSource.Contains("AutomationBlockPortDirection.Output") &&
+               automationBlockWorkspaceHasLinkSource.Contains("AutomationBlockPortDirection.Input") &&
+               automationBlockLoweringCheckSource.Contains("workspace.HasConfiguredDirectReadSetFlow") &&
+               automationBlockLoweringCheckSource.Contains("directValueFlow: true") &&
+               automationBlockLoweringCheckSource.Contains("Wire the Generic Getter output directly to the Generic Setter value input.") &&
+               automationBlockLoweringCheckSource.IndexOf("workspace.HasConfiguredDirectReadSetFlow", StringComparison.Ordinal) <
+               automationBlockLoweringCheckSource.IndexOf("Compare needs a left input", StringComparison.Ordinal) &&
                automationBlockLoweringCheckSource.Contains("Compare needs a left input") &&
                automationBlockLoweringCheckSource.Contains("Set Target needs a target and value") &&
                automationBlockWorkspaceSource.Contains("Delay is not lowerable yet") &&

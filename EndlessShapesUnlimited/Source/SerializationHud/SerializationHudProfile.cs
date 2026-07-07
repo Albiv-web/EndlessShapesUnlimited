@@ -68,6 +68,7 @@ namespace DecoLimitLifter.SerializationHud
             public float CanvasPanX { get; set; }
             public float CanvasPanY { get; set; }
             public float CanvasZoom { get; set; } = 1f;
+            public float NativeDisplayScale { get; set; } = 1f;
             public string NativeImportStatus { get; set; }
             public string SelectedNodeId { get; set; }
             public List<AutomationBlockNodeData> Nodes { get; set; } =
@@ -102,6 +103,8 @@ namespace DecoLimitLifter.SerializationHud
             public string NativeComponentTypeName { get; set; }
             public string NativeComponentLabel { get; set; }
             public string NativeComponentDescription { get; set; }
+            public string NativeBlockTypeName { get; set; }
+            public string NativeBlockFilter { get; set; }
             public uint NativeComponentId { get; set; }
             public string NativeComponentTypeId { get; set; }
             public string NativeComponentFingerprint { get; set; }

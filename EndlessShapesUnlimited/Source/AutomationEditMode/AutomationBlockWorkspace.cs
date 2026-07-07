@@ -401,6 +401,9 @@ namespace DecoLimitLifter.AutomationEditMode
                     .ToArray();
             }
 
+            if (node?.NativeImported == true)
+                return Array.Empty<AutomationBlockPortDefinition>();
+
             return direction == AutomationBlockPortDirection.Input
                 ? s_nativeInputPorts
                 : s_nativeOutputPorts;
@@ -466,6 +469,12 @@ namespace DecoLimitLifter.AutomationEditMode
 
     internal sealed class AutomationBlockWorkspace
     {
+        private const float NativeExactLayoutCanvasWidth = 900f;
+        private const float NativeExactLayoutCanvasHeight = 520f;
+        private const float NativeExactLayoutPadding = 26f;
+        private const float NativeExactMinimumExtentX = 220f;
+        private const float NativeExactMinimumExtentY = 140f;
+
         private readonly List<AutomationBlockNode> _nodes = new List<AutomationBlockNode>();
         private readonly List<AutomationBlockPort> _ports = new List<AutomationBlockPort>();
         private readonly List<AutomationBlockLink> _links = new List<AutomationBlockLink>();
@@ -509,6 +518,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal float CanvasZoom { get; private set; } = 1f;
 
+        internal float NativeDisplayScale { get; private set; } = 1f;
+
         internal static AutomationBlockWorkspace CreateDefault(
             string controllerKey,
             string controllerLabel,
@@ -527,6 +538,8 @@ namespace DecoLimitLifter.AutomationEditMode
             var workspace = new AutomationBlockWorkspace(controllerKey, controllerLabel)
             {
                 Mode = AutomationBlockWorkspaceMode.NativeExact,
+                CanvasPan = new AutomationBlockCanvasPosition(0f, 0f),
+                CanvasZoom = 1f,
                 NativeImportStatus = snapshot == null
                     ? "Native exact import found no Breadboard graph."
                     : "Imported from vanilla Breadboard: " +
@@ -539,6 +552,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (snapshot == null)
                 return workspace;
 
+            workspace.NativeDisplayScale = NativeExactLayoutScale(snapshot.Components);
             int order = 0;
             foreach (AutomationNativeComponentSnapshot component in snapshot.Components)
             {
@@ -555,7 +569,7 @@ namespace DecoLimitLifter.AutomationEditMode
                     "native-imported-" + AutomationBlockLowering.IdentifierForLabel(component.Label));
                 node.SnappedToStack = false;
                 node.CanvasOrder = order++;
-                node.CanvasPosition = new AutomationBlockCanvasPosition(component.X, component.Y);
+                node.CanvasPosition = NativeExactDisplayPosition(component, snapshot.Components, workspace.NativeDisplayScale);
                 node.SetNativeComponent(
                     component.TypeName,
                     component.Label,
@@ -572,7 +586,9 @@ namespace DecoLimitLifter.AutomationEditMode
                     component.Height,
                     component.SettingsSummary,
                     component.Inputs.Select(port => port.Label).ToArray(),
-                    component.Outputs.Select(port => port.Label).ToArray());
+                    component.Outputs.Select(port => port.Label).ToArray(),
+                    component.BlockTypeName,
+                    component.BlockFilter);
                 workspace._nodes.Add(node);
             }
 
@@ -625,6 +641,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 : linkedTargets.Where(target => target != null).ToArray();
             workspace.CanvasPan = new AutomationBlockCanvasPosition(data.CanvasPanX, data.CanvasPanY);
             workspace.CanvasZoom = Math.Max(0.45f, Math.Min(1.85f, data.CanvasZoom <= 0f ? 1f : data.CanvasZoom));
+            workspace.NativeDisplayScale = Math.Max(0.05f, Math.Min(4f, data.NativeDisplayScale <= 0f ? 1f : data.NativeDisplayScale));
 
             int maxNodeIndex = 0;
             foreach (SerializationHudProfile.AutomationBlockNodeData nodeData in data.Nodes ?? new List<SerializationHudProfile.AutomationBlockNodeData>())
@@ -702,7 +719,9 @@ namespace DecoLimitLifter.AutomationEditMode
                         nodeData.NativeHeight,
                         nodeData.NativeSettingsSummary,
                         nodeData.NativeInputPortLabels ?? new List<string>(),
-                        nodeData.NativeOutputPortLabels ?? new List<string>());
+                        nodeData.NativeOutputPortLabels ?? new List<string>(),
+                        nodeData.NativeBlockTypeName,
+                        nodeData.NativeBlockFilter);
                 }
 
                 workspace._nodes.Add(node);
@@ -740,6 +759,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 CanvasPanX = CanvasPan.X,
                 CanvasPanY = CanvasPan.Y,
                 CanvasZoom = CanvasZoom,
+                NativeDisplayScale = NativeDisplayScale,
                 NativeImportStatus = NativeImportStatus,
                 SelectedNodeId = SelectedNodeId,
                 Nodes = _nodes
@@ -782,6 +802,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 NativeComponentTypeName = node.NativeComponentTypeName,
                 NativeComponentLabel = node.NativeComponentLabel,
                 NativeComponentDescription = node.NativeComponentDescription,
+                NativeBlockTypeName = node.NativeBlockTypeName,
+                NativeBlockFilter = node.NativeBlockFilter,
                 NativeComponentId = node.NativeComponentId,
                 NativeComponentTypeId = node.NativeComponentTypeId,
                 NativeComponentFingerprint = node.NativeComponentFingerprint,
@@ -910,6 +932,106 @@ namespace DecoLimitLifter.AutomationEditMode
                    "." +
                    Math.Max(0, index).ToString(CultureInfo.InvariantCulture);
         }
+
+        private static AutomationBlockCanvasPosition NativeExactDisplayPosition(
+            AutomationNativeComponentSnapshot component,
+            IReadOnlyList<AutomationNativeComponentSnapshot> components,
+            float scale)
+        {
+            if (component == null)
+                return new AutomationBlockCanvasPosition(NativeExactLayoutPadding, NativeExactLayoutPadding);
+
+            NativeExactLayoutBounds(
+                components,
+                out float minX,
+                out float minY,
+                out float extentX,
+                out float extentY);
+            scale = Math.Max(0.05f, scale <= 0f ? 1f : scale);
+            float contentWidth = extentX * scale;
+            float contentHeight = extentY * scale;
+            float originX =
+                NativeExactLayoutPadding +
+                Math.Max(0f, NativeExactLayoutCanvasWidth - NativeExactLayoutPadding * 2f - contentWidth) * 0.5f -
+                minX * scale;
+            float originY =
+                NativeExactLayoutPadding +
+                Math.Max(0f, NativeExactLayoutCanvasHeight - NativeExactLayoutPadding * 2f - contentHeight) * 0.5f -
+                minY * scale;
+            return new AutomationBlockCanvasPosition(
+                originX + component.X * scale,
+                originY + component.Y * scale);
+        }
+
+        private static float NativeExactLayoutScale(
+            IReadOnlyList<AutomationNativeComponentSnapshot> components)
+        {
+            NativeExactLayoutBounds(
+                components,
+                out float unusedMinX,
+                out float unusedMinY,
+                out float extentX,
+                out float extentY);
+            float scaleX = (NativeExactLayoutCanvasWidth - NativeExactLayoutPadding * 2f) / Math.Max(1f, extentX);
+            float scaleY = (NativeExactLayoutCanvasHeight - NativeExactLayoutPadding * 2f) / Math.Max(1f, extentY);
+            float scale = Math.Min(scaleX, scaleY);
+            if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0.01f)
+                scale = 1f;
+
+            return Math.Max(0.55f, Math.Min(1.25f, scale));
+        }
+
+        private static void NativeExactLayoutBounds(
+            IReadOnlyList<AutomationNativeComponentSnapshot> components,
+            out float minX,
+            out float minY,
+            out float extentX,
+            out float extentY)
+        {
+            minX = float.MaxValue;
+            minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+            foreach (AutomationNativeComponentSnapshot component in components ?? Array.Empty<AutomationNativeComponentSnapshot>())
+            {
+                if (component == null)
+                    continue;
+
+                float width = NativeExactDisplayWidth(component.Width);
+                float height = NativeExactDisplayHeight(component.Height, component.Inputs.Count, component.Outputs.Count);
+                minX = Math.Min(minX, component.X);
+                minY = Math.Min(minY, component.Y);
+                maxX = Math.Max(maxX, component.X + width);
+                maxY = Math.Max(maxY, component.Y + height);
+            }
+
+            if (minX == float.MaxValue)
+            {
+                minX = 0f;
+                minY = 0f;
+                maxX = NativeExactMinimumExtentX;
+                maxY = NativeExactMinimumExtentY;
+            }
+
+            extentX = Math.Max(NativeExactMinimumExtentX, maxX - minX);
+            extentY = Math.Max(NativeExactMinimumExtentY, maxY - minY);
+        }
+
+        private static float NativeExactDisplayWidth(float nativeWidth) =>
+            ClampFloat(nativeWidth > 20f ? nativeWidth : 150f, 130f, 260f);
+
+        private static float NativeExactDisplayHeight(
+            float nativeHeight,
+            int inputCount,
+            int outputCount)
+        {
+            float portRows = Math.Max(inputCount, outputCount);
+            float fallback = Math.Max(78f, 48f + portRows * 13f);
+            return ClampFloat(nativeHeight > 20f ? nativeHeight : fallback, 62f, 180f);
+        }
+
+        private static float ClampFloat(float value, float min, float max) =>
+            Math.Max(min, Math.Min(max, value));
 
         internal bool TryApplyAmmoThresholdStarterTemplate(
             AutomationTarget inputTarget,
@@ -1267,6 +1389,26 @@ namespace DecoLimitLifter.AutomationEditMode
             }
         }
 
+        internal bool HasConfiguredDirectReadSetFlow
+        {
+            get
+            {
+                AutomationBlockNode read = FirstExecutableNode(AutomationBlockKind.ReadTarget);
+                AutomationBlockNode set = FirstExecutableNode(AutomationBlockKind.SetTarget);
+                return read != null &&
+                       set != null &&
+                       FirstExecutableNode(AutomationBlockKind.Compare) == null &&
+                       FirstExecutableNode(AutomationBlockKind.WhenIf) == null &&
+                       FirstExecutableNode(AutomationBlockKind.Switch) == null &&
+                       FirstExecutableNode(AutomationBlockKind.MathScale) == null &&
+                       FirstExecutableNode(AutomationBlockKind.MathEvaluator) == null &&
+                       FirstExecutableNode(AutomationBlockKind.Constant) == null &&
+                       !string.IsNullOrWhiteSpace(read.TargetKey) &&
+                       !string.IsNullOrWhiteSpace(set.TargetKey) &&
+                       HasLink(read, "value", set, "value");
+            }
+        }
+
         internal AutomationSystemBlockDefinition CollapseSelectionToSystemBlock(string name)
         {
             AutomationBlockNode[] executable = ExecutableNodes.ToArray();
@@ -1411,7 +1553,30 @@ namespace DecoLimitLifter.AutomationEditMode
                     string.Equals(port.Id, link.FromPortId, StringComparison.Ordinal));
                 AutomationBlockPort to = _ports.FirstOrDefault(port =>
                     string.Equals(port.Id, link.ToPortId, StringComparison.Ordinal));
-                AddLink(from, to);
+                if (from == null ||
+                    to == null ||
+                    from.Direction != AutomationBlockPortDirection.Output ||
+                    to.Direction != AutomationBlockPortDirection.Input)
+                {
+                    continue;
+                }
+
+                if (_links.Any(item =>
+                        string.Equals(item.FromPortId, from.Id, StringComparison.Ordinal) &&
+                        string.Equals(item.ToPortId, to.Id, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                _links.Add(new AutomationBlockLink(
+                    from.NodeId,
+                    from.Id,
+                    to.NodeId,
+                    to.Id,
+                    link.FromNativeComponentId,
+                    link.FromNativePortIndex,
+                    link.ToNativeComponentId,
+                    link.ToNativePortIndex));
             }
         }
 
@@ -1466,6 +1631,21 @@ namespace DecoLimitLifter.AutomationEditMode
             AutomationBlockPort port = FindPort(node, AutomationBlockPortDirection.Output, portName);
             return port != null && _links.Any(link =>
                 string.Equals(link.FromPortId, port.Id, StringComparison.Ordinal));
+        }
+
+        internal bool HasLink(
+            AutomationBlockNode fromNode,
+            string fromPortName,
+            AutomationBlockNode toNode,
+            string toPortName)
+        {
+            AutomationBlockPort from = FindPort(fromNode, AutomationBlockPortDirection.Output, fromPortName);
+            AutomationBlockPort to = FindPort(toNode, AutomationBlockPortDirection.Input, toPortName);
+            return from != null &&
+                   to != null &&
+                   _links.Any(link =>
+                       string.Equals(link.FromPortId, from.Id, StringComparison.Ordinal) &&
+                       string.Equals(link.ToPortId, to.Id, StringComparison.Ordinal));
         }
 
         private bool AddLink(
@@ -1789,6 +1969,10 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal string NativeComponentDescription { get; private set; } = string.Empty;
 
+        internal string NativeBlockTypeName { get; private set; } = string.Empty;
+
+        internal string NativeBlockFilter { get; private set; } = string.Empty;
+
         internal uint NativeComponentId { get; private set; }
 
         internal string NativeComponentTypeId { get; private set; } = string.Empty;
@@ -1884,13 +2068,17 @@ namespace DecoLimitLifter.AutomationEditMode
             float height,
             string settingsSummary,
             IReadOnlyList<string> inputPortLabels,
-            IReadOnlyList<string> outputPortLabels)
+            IReadOnlyList<string> outputPortLabels,
+            string blockTypeName = null,
+            string blockFilter = null)
         {
             NativeComponentId = componentId;
             NativeComponentTypeId = componentTypeId ?? string.Empty;
             NativeComponentFingerprint = fingerprint ?? string.Empty;
             NativeImported = imported;
             NativeEsuOwned = esuOwned;
+            NativeBlockTypeName = blockTypeName ?? string.Empty;
+            NativeBlockFilter = blockFilter ?? string.Empty;
             NativeX = x;
             NativeY = y;
             NativeWidth = width;
@@ -2117,6 +2305,7 @@ namespace DecoLimitLifter.AutomationEditMode
             string conditionExpression,
             string passExpression,
             float failValue,
+            bool directValueFlow,
             IReadOnlyList<AutomationNativeComponentRequest> nativeComponentRequests,
             IReadOnlyList<string> steps)
         {
@@ -2132,6 +2321,7 @@ namespace DecoLimitLifter.AutomationEditMode
             ConditionExpression = conditionExpression ?? string.Empty;
             PassExpression = passExpression ?? string.Empty;
             FailValue = failValue;
+            DirectValueFlow = directValueFlow;
             NativeComponentRequests = nativeComponentRequests ?? Array.Empty<AutomationNativeComponentRequest>();
             Steps = steps ?? Array.Empty<string>();
         }
@@ -2160,6 +2350,14 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal float FailValue { get; }
 
+        internal bool DirectValueFlow { get; }
+
+        internal bool HasDirectValueFlow =>
+            DirectValueFlow &&
+            !string.IsNullOrWhiteSpace(ReadTargetKey) &&
+            !string.IsNullOrWhiteSpace(OutputTargetKey) &&
+            !string.IsNullOrWhiteSpace(PassExpression);
+
         internal IReadOnlyList<AutomationNativeComponentRequest> NativeComponentRequests { get; }
 
         internal bool HasSemanticFlow =>
@@ -2174,6 +2372,9 @@ namespace DecoLimitLifter.AutomationEditMode
         internal IReadOnlyList<string> Steps { get; }
 
         internal string Summary =>
+            HasDirectValueFlow
+                ? "Copy " + ReadTargetLabel + " " + ReadIdentifier + " directly into " + OutputTargetLabel + "."
+                :
             HasSemanticFlow
                 ? "If " + ConditionExpression + " then set " + OutputTargetLabel + " to " +
                   PassExpression + " else " + FailValue.ToString("0.###", CultureInfo.InvariantCulture) + "."
@@ -2182,6 +2383,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal string ToNativeCode()
         {
+            if (HasDirectValueFlow)
+                return "out = " + PassExpression + "\n";
+
             if (!HasSemanticFlow)
                 return "out = 0\n";
 
@@ -2278,6 +2482,7 @@ namespace DecoLimitLifter.AutomationEditMode
                     string.Empty,
                     string.Empty,
                     0f,
+                    directValueFlow: false,
                     nativeRequests,
                     nativeRequests
                         .Select(request => "Create native Breadboard component " + request.Label + ".")
@@ -2286,6 +2491,82 @@ namespace DecoLimitLifter.AutomationEditMode
                     "ESU Blocks check passed: " +
                     nativeRequests.Length.ToString(CultureInfo.InvariantCulture) +
                     " native Breadboard component block(s) will be created on Apply. No native data changed.";
+                return true;
+            }
+
+            if (workspace.HasConfiguredDirectReadSetFlow)
+            {
+                AutomationTarget directReadTarget = workspace.TargetForNode(readNode);
+                AutomationTarget directSetTarget = workspace.TargetForNode(setNode);
+                if (directReadTarget == null)
+                {
+                    message = "Read Target needs a live linked Input target.";
+                    return false;
+                }
+
+                if (directSetTarget == null)
+                {
+                    message = "Set Target needs a live linked Output target and value.";
+                    return false;
+                }
+
+                if (!AutomationTargetCatalog.IsBreadboardReadableTarget(directReadTarget))
+                {
+                    message = directReadTarget.Label + " is not available as a readable Breadboard target.";
+                    return false;
+                }
+
+                if (!AutomationTargetCatalog.IsBreadboardWritableTarget(directSetTarget))
+                {
+                    message = directSetTarget.Label + " is not available as a writable Breadboard target.";
+                    return false;
+                }
+
+                if (!HasExplicitPropertySelection(readNode))
+                {
+                    message = "Read Target needs an explicit Getter property. Choose a property before checking ESU Blocks.";
+                    return false;
+                }
+
+                if (!HasExplicitPropertySelection(setNode))
+                {
+                    message = "Set Target needs an explicit Setter property. Choose a property before checking ESU Blocks.";
+                    return false;
+                }
+
+                string directIdentifier = IdentifierForReadSignal(directReadTarget, readNode.PropertySelection);
+                string directReadProperty = PropertyPreview(readNode, "Choose Getter property");
+                string directSetProperty = PropertyPreview(setNode, "Choose Setter property");
+                var directSteps = new List<string>
+                {
+                    "Read " + directReadTarget.Label + " property: " + directReadProperty + ".",
+                    "Create or reuse Generic Getter for " + directReadTarget.Label + ".",
+                    "Write " + directSetTarget.Label + " property: " + directSetProperty + ".",
+                    "Create or reuse Generic Setter for " + directSetTarget.Label + ".",
+                    "Wire the Generic Getter output directly to the Generic Setter value input.",
+                    "Track generated native proxy ids for Revert."
+                };
+                foreach (AutomationNativeComponentRequest request in nativeRequests)
+                    directSteps.Add("Create native Breadboard component " + request.Label + ".");
+                AddMetadataOnlyStep(workspace, directSteps);
+
+                plan = new AutomationLoweringPlan(
+                    workspace.ControllerKey,
+                    workspace.ControllerLabel,
+                    directReadTarget.StableKey,
+                    directReadTarget.Label,
+                    directSetTarget.StableKey,
+                    directSetTarget.Label,
+                    readNode.PropertySelection,
+                    setNode.PropertySelection,
+                    directIdentifier,
+                    string.Empty,
+                    directIdentifier,
+                    0f,
+                    directValueFlow: true,
+                    nativeRequests,
+                    directSteps);
+                message = "ESU Blocks check passed: " + plan.Summary + " No native data changed.";
                 return true;
             }
 
@@ -2403,6 +2684,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 condition,
                 pass,
                 failValue,
+                directValueFlow: false,
                 nativeRequests,
                 steps);
             message = "ESU Blocks check passed: " + plan.Summary + " No native data changed.";

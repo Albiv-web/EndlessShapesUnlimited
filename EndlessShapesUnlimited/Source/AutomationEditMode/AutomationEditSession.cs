@@ -116,6 +116,15 @@ namespace DecoLimitLifter.AutomationEditMode
             RightInspector
         }
 
+        private enum NativeExactDrawer
+        {
+            None,
+            Inspector,
+            AddNative,
+            Refresh,
+            Status
+        }
+
         private delegate bool AcbControllerTextApply(
             AutomationAcbControllerButtonSummary button,
             string value,
@@ -334,6 +343,9 @@ namespace DecoLimitLifter.AutomationEditMode
         private float _blocksRightColumnRatio = 0.26f;
         private float _blocksLowerPanelRatio = 0.18f;
         private float _blocksRightPaletteRatio = 0.50f;
+        private NativeExactDrawer _nativeExactDrawer = NativeExactDrawer.None;
+        private bool _nativeExactInspectorClosedForSelection;
+        private string _nativeExactLastSelectedNodeId = string.Empty;
         private AutomationContextMenuKind _contextMenuKind = AutomationContextMenuKind.None;
         private Rect _contextMenuRect;
         private Vector2 _contextMenuAnchor;
@@ -372,6 +384,8 @@ namespace DecoLimitLifter.AutomationEditMode
         private string _lastRuntimeDiagnosticsControllerKey = string.Empty;
         private string _validationCompareStatus = string.Empty;
         private int _layoutResetGeneration = s_layoutGeneration;
+        private int _lastEscapeHandledFrame = -1;
+        private bool _suppressAutomationBackgroundDirectInput;
         private bool _confirmNativeRefreshFromNative;
 
         internal AutomationEditSession(cBuild build)
@@ -394,6 +408,31 @@ namespace DecoLimitLifter.AutomationEditMode
         internal void RequestHotkeyClose()
         {
             RequestAutomationClose(AutomationClosePromptAction.CloseMode);
+        }
+
+        internal bool HandleEscapeKeyDown()
+        {
+            ClaimAutomationModalInput(frames: 4);
+            DecoLimitLifter.EsuEscapeCloseGuard.Arm(frames: 4);
+            if (_lastEscapeHandledFrame == Time.frameCount)
+                return true;
+
+            _lastEscapeHandledFrame = Time.frameCount;
+            if (_automationClosePromptOpen)
+            {
+                CloseAutomationClosePrompt();
+                InfoStore.Add("Automation Editor close cancelled.");
+                return true;
+            }
+
+            if (_editorOpen)
+            {
+                RequestCloseEditor();
+                return true;
+            }
+
+            RequestHotkeyClose();
+            return true;
         }
 
         internal void RequestSwitchToDecorationEdit()
@@ -469,6 +508,12 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
 
             EsuHudNotifications.SetActiveSource("Automation");
+            if (_editorOpen ||
+                _automationClosePromptOpen ||
+                IsAutomationForegroundPopupOpen())
+            {
+                ClaimAutomationModalInput();
+            }
             _targetPreviewSpin += Time.unscaledDeltaTime * 70f;
             RefreshTargets(force: false);
             RefreshHoverTarget();
@@ -490,6 +535,12 @@ namespace DecoLimitLifter.AutomationEditMode
             DrawGui(interactive: false);
         }
 
+        private static void ClaimAutomationModalInput(int frames = 2)
+        {
+            AutomationInputScope.ClaimBuildInputForFrames(frames);
+            AutomationInputScope.ClaimCameraInputForFrames(frames);
+        }
+
         private void DrawGui(bool interactive)
         {
             int previousDepth = GUI.depth;
@@ -499,6 +550,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 DecorationEditorTheme.Ensure();
                 if (Event.current.type == EventType.Repaint)
                     DecorationEditorOverlay.Render();
+
+                ConsumeAutomationGuiEscapeEvent(interactive);
 
                 if (interactive)
                 {
@@ -512,22 +565,26 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 ApplyLayoutResetIfNeeded();
                 PrepareAutomationLayout();
-                if (interactive)
+                if (interactive &&
+                    !_automationClosePromptOpen &&
+                    !IsAutomationForegroundPopupOpen())
+                {
                     HandleAutomationPanelResizes();
+                }
 
-                bool foregroundOpenBeforeBackground =
+                bool foregroundOpen =
                     interactive &&
                     !_automationClosePromptOpen &&
                     IsAutomationForegroundPopupOpen();
-                if (foregroundOpenBeforeBackground)
-                    DrawAutomationForegroundPopups();
 
                 bool suppressBackgroundInput = ShouldSuppressAutomationBackgroundInput(
                     Event.current,
-                    foregroundOpenBeforeBackground);
+                    foregroundOpen);
                 bool previousEnabled = GUI.enabled;
+                bool previousSuppressBackgroundDirectInput = _suppressAutomationBackgroundDirectInput;
                 if (suppressBackgroundInput)
                     GUI.enabled = false;
+                _suppressAutomationBackgroundDirectInput = suppressBackgroundInput;
                 try
                 {
                     if (!_editorOpen)
@@ -560,19 +617,22 @@ namespace DecoLimitLifter.AutomationEditMode
                 }
                 finally
                 {
+                    _suppressAutomationBackgroundDirectInput = previousSuppressBackgroundDirectInput;
                     GUI.enabled = previousEnabled;
                 }
 
                 if (interactive)
                 {
                     RegisterAutomationWorldHoverTooltip();
-                    DrawAutomationResizeGrips();
-                    if (!foregroundOpenBeforeBackground)
+                    if (!_automationClosePromptOpen)
+                        DrawAutomationResizeGrips();
+                    if (!_automationClosePromptOpen)
                         DrawAutomationForegroundPopups();
-                    DrawAutomationTargetPreviewCard();
-                    DrawAutomationClosePrompt();
+                    if (!_automationClosePromptOpen)
+                        DrawAutomationTargetPreviewCard();
                     EsuHudNotifications.DrawExpandedPopup();
                     EsuConsoleWindow.DrawForegroundWindow();
+                    DrawAutomationClosePrompt();
                     EsuCursorTooltip.Draw();
                 }
                 else
@@ -608,6 +668,25 @@ namespace DecoLimitLifter.AutomationEditMode
             DrawAutomationPropertyPicker();
         }
 
+        private void ConsumeAutomationGuiEscapeEvent(bool interactive)
+        {
+            Event current = Event.current;
+            if (!interactive ||
+                current == null ||
+                current.type != EventType.KeyDown ||
+                current.keyCode != KeyCode.Escape)
+            {
+                return;
+            }
+
+            if (_lastEscapeHandledFrame != Time.frameCount)
+                HandleEscapeKeyDown();
+            else
+                ClaimAutomationModalInput(frames: 4);
+
+            current.Use();
+        }
+
         private Rect AutomationClosePromptRect()
         {
             float width = Mathf.Min(EsuHudLayout.Scale(560f), Screen.width - EsuHudLayout.Scale(32f));
@@ -625,9 +704,10 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
 
             int previousDepth = GUI.depth;
-            GUI.depth = Math.Min(previousDepth, -13000);
+            GUI.depth = Math.Min(previousDepth, -30000);
             try
             {
+                ClaimAutomationModalInput(frames: 4);
                 GUI.DrawTexture(
                     new Rect(0f, 0f, Screen.width, Screen.height),
                     DecorationEditorTheme.DimTexture);
@@ -743,6 +823,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (current == null || current.type != EventType.KeyDown)
                 return;
 
+            ClaimAutomationModalInput(frames: 4);
             if (current.keyCode == KeyCode.Return ||
                 current.keyCode == KeyCode.KeypadEnter)
             {
@@ -762,11 +843,14 @@ namespace DecoLimitLifter.AutomationEditMode
             current.Use();
         }
 
-        private static void ConsumeAutomationClosePromptInput()
+        private void ConsumeAutomationClosePromptInput()
         {
             Event current = Event.current;
             if (current != null && ShouldConsumeGuiEvent(current))
+            {
+                ClaimAutomationModalInput(frames: 4);
                 current.Use();
+            }
         }
 
         private void RefreshTargets(bool force)
@@ -1500,6 +1584,14 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_contextMenuKind == AutomationContextMenuKind.None)
                 return;
 
+            AutomationContextMenuItem[] items = AutomationContextMenuItems().ToArray();
+            if (items.Length == 0)
+            {
+                CloseAutomationContextMenu();
+                return;
+            }
+
+            _contextMenuRect = AutomationContextRect(_contextMenuAnchor, items.Length);
             Event current = Event.current;
             if (current != null &&
                 current.type == EventType.MouseDown &&
@@ -1511,60 +1603,63 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
             }
 
-            AutomationContextMenuItem[] items = AutomationContextMenuItems().ToArray();
-            if (items.Length == 0)
-            {
-                CloseAutomationContextMenu();
-                return;
-            }
-
-            _contextMenuRect = AutomationContextRect(_contextMenuAnchor, items.Length);
             bool shouldConsume = ShouldConsumeAutomationContextEvent(current);
-            AutomationContextAction action = AutomationContextAction.None;
             int previousDepth = GUI.depth;
-            GUI.depth = Math.Min(previousDepth, -10950);
+            GUI.depth = Math.Min(previousDepth, -25000);
+            AutomationContextAction action;
             try
             {
-                GUI.Window(
-                    _contextMenuWindowId,
-                    _contextMenuRect,
-                    _ => action = DrawAutomationContextMenuWindow(items),
-                    GUIContent.none,
-                    GUIStyle.none);
-                GUI.BringWindowToFront(_contextMenuWindowId);
+                action = DrawAutomationContextMenuWindow(items);
             }
             finally
             {
                 GUI.depth = previousDepth;
             }
 
-            if (shouldConsume)
-                current.Use();
+            if (action != AutomationContextAction.None)
+            {
+                AutomationInputScope.ClaimBuildInputForFrames(3);
+                current?.Use();
+                ExecuteAutomationContextAction(action);
+                return;
+            }
 
-            ExecuteAutomationContextAction(action);
+            if (shouldConsume && current != null)
+            {
+                AutomationInputScope.ClaimBuildInputForFrames();
+                current.Use();
+            }
         }
 
         private AutomationContextAction DrawAutomationContextMenuWindow(AutomationContextMenuItem[] items)
         {
-            Rect localRect = new Rect(0f, 0f, _contextMenuRect.width, _contextMenuRect.height);
             AutomationContextAction action = AutomationContextAction.None;
-            GUI.Box(localRect, GUIContent.none, DecorationEditorTheme.Panel);
-            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(localRect, 5f));
-            GUILayout.Label(AutomationContextTitle(), DecorationEditorTheme.SubHeader);
-            foreach (AutomationContextMenuItem item in items)
+            GUI.Box(_contextMenuRect, GUIContent.none, DecorationEditorTheme.Panel);
+            Rect inner = EsuHudLayout.PanelInnerRect(_contextMenuRect, 5f);
+            Rect titleRect = new Rect(inner.x, inner.y, inner.width, EsuHudLayout.Scale(24f));
+            GUI.Label(titleRect, AutomationContextTitle(), DecorationEditorTheme.SubHeader);
+            float y = titleRect.yMax + EsuHudLayout.Scale(3f);
+            Event current = Event.current;
+            for (int index = 0; index < items.Length; index++)
             {
-                bool previous = GUI.enabled;
-                GUI.enabled = previous && item.Enabled;
-                if (AutomationGUILayoutButton(
-                        new GUIContent(item.Label, item.Tooltip),
-                        item.Enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
-                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                AutomationContextMenuItem item = items[index];
+                Rect itemRect = new Rect(inner.x, y, inner.width, EsuHudLayout.Scale(24f));
+                GUIStyle style = item.Enabled
+                    ? DecorationEditorTheme.Button
+                    : DecorationEditorTheme.DisabledButton;
+                bool pressed = current != null &&
+                               current.type == EventType.MouseDown &&
+                               current.button == 0 &&
+                               itemRect.Contains(current.mousePosition);
+                bool clicked = GUI.Button(itemRect, new GUIContent(item.Label, item.Tooltip), style);
+                EsuCursorTooltip.Register(itemRect, item.Tooltip);
+                if (item.Enabled && (pressed || clicked))
                 {
                     action = item.Action;
+                    break;
                 }
-                GUI.enabled = previous;
+                y = itemRect.yMax + EsuHudLayout.Scale(2f);
             }
-            GUILayout.EndArea();
             return action;
         }
 
@@ -2210,6 +2305,9 @@ namespace DecoLimitLifter.AutomationEditMode
         private bool TryOpenAutomationRowContextMenu(Rect row, Action<Vector2> open)
         {
             Event current = Event.current;
+            if (ShouldSuppressAutomationBackgroundDirectInput(current))
+                return false;
+
             if (current == null ||
                 current.type != EventType.MouseDown ||
                 current.button != 1 ||
@@ -3775,6 +3873,37 @@ namespace DecoLimitLifter.AutomationEditMode
                 1f,
                 EsuHudLayout.Scale(EsuHudLayout.CompactHeaderHeightBase),
                 GUILayout.ExpandWidth(true));
+            GUI.Label(rect, GUIContent.none, baseStyle);
+
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            Rect iconRect = new Rect(
+                rect.x + EsuHudLayout.Scale(5f),
+                rect.y + EsuHudLayout.Scale(3f),
+                EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(16f));
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            Rect textRect = new Rect(
+                iconRect.xMax + EsuHudLayout.Scale(6f),
+                rect.y,
+                Mathf.Max(0f, rect.xMax - iconRect.xMax - EsuHudLayout.Scale(8f)),
+                rect.height);
+            if (textRect.width > 1f)
+                DrawFittedSingleLineLabel(
+                    textRect,
+                    text,
+                    IconHeaderTextStyle(baseStyle),
+                    TextAnchor.MiddleLeft,
+                    EsuHudLayout.FontSize(9));
+        }
+
+        private static void DrawFixedCompactIconHeader(
+            Rect rect,
+            string text,
+            string iconKey,
+            GUIStyle baseStyle)
+        {
             GUI.Label(rect, GUIContent.none, baseStyle);
 
             Texture icon = DecorationEditorIconCatalog.Get(iconKey);
@@ -5515,6 +5644,12 @@ namespace DecoLimitLifter.AutomationEditMode
             if (viewport.width <= 1f || viewport.height <= 1f)
                 return;
 
+            if (_blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact)
+            {
+                DrawNativeExactBlocksEditorViewport(viewport);
+                return;
+            }
+
             float divider = EsuHudLayout.Scale(8f);
             float minLeft = Mathf.Min(EsuHudLayout.Scale(360f), Mathf.Max(1f, viewport.width * 0.48f));
             float minRight = Mathf.Min(EsuHudLayout.Scale(260f), Mathf.Max(1f, viewport.width * 0.38f));
@@ -5528,6 +5663,551 @@ namespace DecoLimitLifter.AutomationEditMode
             DrawBlocksSplitterGrip(splitRect, AutomationBlocksSplitter.MainRight, vertical: true, "Drag to resize the ESU Blocks canvas and side panels.");
             DrawBlocksRightColumn(rightRect, divider);
             HandleBlocksMainRightSplitter(viewport, splitRect);
+        }
+
+        private void DrawNativeExactBlocksEditorViewport(Rect viewport)
+        {
+            EnsureNativeExactDefaultDrawer();
+            float toolbarHeight = EsuHudLayout.Scale(30f);
+            float gap = EsuHudLayout.Scale(6f);
+            Rect toolbarRect = new Rect(viewport.x, viewport.y, viewport.width, toolbarHeight);
+            Rect canvasRect = new Rect(
+                viewport.x,
+                toolbarRect.yMax + gap,
+                viewport.width,
+                Mathf.Max(1f, viewport.yMax - toolbarRect.yMax - gap));
+
+            DrawNativeExactToolbar(toolbarRect, canvasRect);
+            DrawNativeExactBlockCanvas(canvasRect);
+            DrawNativeExactDrawerOverlay(canvasRect);
+        }
+
+        private void DrawNativeExactToolbar(Rect rect, Rect canvasRect)
+        {
+            GUILayout.BeginArea(rect);
+            GUILayout.BeginHorizontal();
+            DrawCompactIconHeader("Native graph", "outliner", DecorationEditorTheme.SubHeader);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Fit graph", DecorationEditorIconCatalog.Get("focus"), "Fit the imported native graph to the visible canvas."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(86f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                FitNativeExactGraph(canvasRect);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Fit selected", DecorationEditorIconCatalog.Get("visibility"), "Fit the selected native component to the visible canvas."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(104f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                FitNativeExactSelection(canvasRect);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Reset view", DecorationEditorIconCatalog.Get("reload"), "Reset NativeExact pan and zoom."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(92f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                ResetNativeExactView();
+            GUILayout.Space(EsuHudLayout.Scale(10f));
+            DrawNativeExactDrawerButton(NativeExactDrawer.Inspector, "Inspector", "focus");
+            DrawNativeExactDrawerButton(NativeExactDrawer.AddNative, "Add Native", "duplicate");
+            DrawNativeExactDrawerButton(NativeExactDrawer.Refresh, "Refresh", "reload");
+            DrawNativeExactDrawerButton(NativeExactDrawer.Status, "Status", "info");
+            GUILayout.FlexibleSpace();
+            GUILayout.Label(
+                "Zoom: " + (_blockWorkspace?.CanvasZoom ?? 1f).ToString("0.00", CultureInfo.InvariantCulture) + "x",
+                DecorationEditorTheme.Mini,
+                GUILayout.Width(EsuHudLayout.Scale(86f)));
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
+        }
+
+        private void DrawNativeExactDrawerButton(
+            NativeExactDrawer drawer,
+            string label,
+            string iconKey)
+        {
+            bool active = _nativeExactDrawer == drawer;
+            if (AutomationGUILayoutButton(
+                    new GUIContent(label, DecorationEditorIconCatalog.Get(iconKey), "Open " + label + " drawer for NativeExact graph editing."),
+                    DecorationEditorTheme.ToolButton(active),
+                    GUILayout.Width(EsuHudLayout.Scale(drawer == NativeExactDrawer.AddNative ? 96f : 84f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                if (active)
+                {
+                    _nativeExactDrawer = NativeExactDrawer.None;
+                    if (drawer == NativeExactDrawer.Inspector)
+                        _nativeExactInspectorClosedForSelection = true;
+                }
+                else
+                {
+                    _nativeExactDrawer = drawer;
+                    if (drawer == NativeExactDrawer.Inspector)
+                        _nativeExactInspectorClosedForSelection = false;
+                }
+            }
+        }
+
+        private void DrawNativeExactBlockCanvas(Rect viewport)
+        {
+            if (viewport.width <= 1f || viewport.height <= 1f)
+                return;
+
+            GUI.Box(viewport, GUIContent.none, DecorationEditorTheme.Panel);
+            _lastBlockCanvasRect = GuiToScreenRect(viewport);
+            ClampBlockCanvasPan(viewport);
+            List<Rect> nodeRects = DrawTinkercadProgram(viewport);
+            Rect drawerBlocker = NativeExactDrawerRect(viewport);
+            Event current = Event.current;
+            bool drawerHasMouse = _nativeExactDrawer != NativeExactDrawer.None &&
+                                  current != null &&
+                                  drawerBlocker.Contains(current.mousePosition);
+            if (!drawerHasMouse)
+            {
+                HandleBlockCanvasNavigation(viewport, nodeRects);
+                HandleBlockCanvasDrop(viewport, nodeRects);
+            }
+        }
+
+        private void DrawNativeExactDrawerOverlay(Rect canvasRect)
+        {
+            if (_nativeExactDrawer == NativeExactDrawer.None ||
+                canvasRect.width <= 1f ||
+                canvasRect.height <= 1f)
+            {
+                return;
+            }
+
+            Rect drawer = NativeExactDrawerRect(canvasRect);
+            GUI.Box(drawer, GUIContent.none, DecorationEditorTheme.Panel);
+            DrawFilledRect(drawer, new Color(0f, 0.08f, 0.1f, 0.72f));
+            Rect header = new Rect(
+                drawer.x + EsuHudLayout.Scale(8f),
+                drawer.y + EsuHudLayout.Scale(8f),
+                drawer.width - EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(28f));
+            if (DrawNativeExactDrawerHeader(header, NativeExactDrawerTitle(_nativeExactDrawer), NativeExactDrawerIcon(_nativeExactDrawer)))
+            {
+                if (_nativeExactDrawer == NativeExactDrawer.Inspector)
+                    _nativeExactInspectorClosedForSelection = true;
+                _nativeExactDrawer = NativeExactDrawer.None;
+                return;
+            }
+
+            Rect body = new Rect(
+                drawer.x + EsuHudLayout.Scale(10f),
+                header.yMax + EsuHudLayout.Scale(8f),
+                drawer.width - EsuHudLayout.Scale(20f),
+                Mathf.Max(1f, drawer.yMax - header.yMax - EsuHudLayout.Scale(18f)));
+            GUILayout.BeginArea(body);
+            switch (_nativeExactDrawer)
+            {
+                case NativeExactDrawer.AddNative:
+                    DrawNativeExactAddNativeDrawer(body.height);
+                    break;
+                case NativeExactDrawer.Refresh:
+                    DrawNativeExactRefreshDrawer();
+                    break;
+                case NativeExactDrawer.Status:
+                    DrawNativeExactStatusDrawer();
+                    break;
+                default:
+                    _blocksInspectorScroll = GUILayout.BeginScrollView(
+                        _blocksInspectorScroll,
+                        alwaysShowHorizontal: false,
+                        alwaysShowVertical: true,
+                        GUILayout.Width(body.width),
+                        GUILayout.Height(body.height));
+                    DrawNativeExactInspectorDrawer();
+                    GUILayout.EndScrollView();
+                    break;
+            }
+            GUILayout.EndArea();
+        }
+
+        private Rect NativeExactDrawerRect(Rect canvasRect)
+        {
+            float width = Mathf.Min(EsuHudLayout.Scale(390f), Mathf.Max(EsuHudLayout.Scale(280f), canvasRect.width * 0.34f));
+            return new Rect(
+                canvasRect.xMax - width - EsuHudLayout.Scale(8f),
+                canvasRect.y + EsuHudLayout.Scale(8f),
+                width,
+                Mathf.Max(1f, canvasRect.height - EsuHudLayout.Scale(16f)));
+        }
+
+        private bool DrawNativeExactDrawerHeader(
+            Rect header,
+            string title,
+            string iconKey)
+        {
+            GUI.Label(header, GUIContent.none, DecorationEditorTheme.SubHeader);
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            Rect iconRect = new Rect(
+                header.x + EsuHudLayout.Scale(7f),
+                header.y + EsuHudLayout.Scale(6f),
+                EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(16f));
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            Rect closeRect = new Rect(
+                header.xMax - EsuHudLayout.Scale(64f),
+                header.y + EsuHudLayout.Scale(3f),
+                EsuHudLayout.Scale(60f),
+                header.height - EsuHudLayout.Scale(6f));
+            DrawFittedSingleLineLabel(
+                new Rect(
+                    iconRect.xMax + EsuHudLayout.Scale(8f),
+                    header.y,
+                    Mathf.Max(1f, closeRect.x - iconRect.xMax - EsuHudLayout.Scale(12f)),
+                    header.height),
+                title,
+                IconHeaderTextStyle(DecorationEditorTheme.SubHeader),
+                TextAnchor.MiddleLeft,
+                EsuHudLayout.FontSize(9));
+
+            return AutomationGUIButton(
+                closeRect,
+                new GUIContent("Close", "Close this NativeExact drawer."),
+                DecorationEditorTheme.Button);
+        }
+
+        private static string NativeExactDrawerTitle(NativeExactDrawer drawer)
+        {
+            switch (drawer)
+            {
+                case NativeExactDrawer.AddNative:
+                    return "Add Native";
+                case NativeExactDrawer.Refresh:
+                    return "Refresh";
+                case NativeExactDrawer.Status:
+                    return "Status";
+                default:
+                    return "Inspector";
+            }
+        }
+
+        private static string NativeExactDrawerIcon(NativeExactDrawer drawer)
+        {
+            switch (drawer)
+            {
+                case NativeExactDrawer.AddNative:
+                    return "duplicate";
+                case NativeExactDrawer.Refresh:
+                    return "reload";
+                case NativeExactDrawer.Status:
+                    return "info";
+                default:
+                    return "focus";
+            }
+        }
+
+        private void EnsureNativeExactDefaultDrawer()
+        {
+            string selectedId = _blockWorkspace?.SelectedNodeId ?? string.Empty;
+            if (!string.Equals(selectedId, _nativeExactLastSelectedNodeId, StringComparison.Ordinal))
+            {
+                _nativeExactLastSelectedNodeId = selectedId;
+                _nativeExactInspectorClosedForSelection = false;
+                if (!string.IsNullOrWhiteSpace(selectedId))
+                    _nativeExactDrawer = NativeExactDrawer.Inspector;
+            }
+
+            if (string.IsNullOrWhiteSpace(selectedId) && _nativeExactDrawer == NativeExactDrawer.Inspector)
+                _nativeExactDrawer = NativeExactDrawer.None;
+            if (!string.IsNullOrWhiteSpace(selectedId) &&
+                _nativeExactDrawer == NativeExactDrawer.None &&
+                !_nativeExactInspectorClosedForSelection)
+            {
+                _nativeExactDrawer = NativeExactDrawer.Inspector;
+            }
+        }
+
+        private void DrawNativeExactInspectorDrawer()
+        {
+            AutomationBlockNode node = _blockWorkspace?.SelectedNode();
+            if (node == null)
+            {
+                GUILayout.Label("Select a native Breadboard component on the graph.", DecorationEditorTheme.MiniWrap);
+                return;
+            }
+
+            AutomationBlockDefinition definition = AutomationBlockCatalog.DefinitionForNode(node);
+            LabelRow("Component", node.NativeComponentId.ToString(CultureInfo.InvariantCulture));
+            LabelRow("Label", string.IsNullOrWhiteSpace(node.NativeComponentLabel) ? node.Label : node.NativeComponentLabel);
+            if (!string.IsNullOrWhiteSpace(node.NativeBlockTypeName))
+                LabelRow("Block type", node.NativeBlockTypeName);
+            if (!string.IsNullOrWhiteSpace(node.NativeBlockFilter))
+                LabelRow("Block filter", node.NativeBlockFilter);
+            LabelRow("Ports", AutomationBlockPortSummary(definition));
+            if (!string.IsNullOrWhiteSpace(node.NativeSettingsSummary))
+                LabelRow("Settings", node.NativeSettingsSummary);
+            LabelRow("Native type", string.IsNullOrWhiteSpace(node.NativeComponentTypeName)
+                ? "unknown"
+                : node.NativeComponentTypeName);
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+            GUILayout.Label("Inputs", DecorationEditorTheme.Mini);
+            DrawNativeExactPortList(node, AutomationBlockPortDirection.Input);
+            GUILayout.Label("Outputs", DecorationEditorTheme.Mini);
+            DrawNativeExactPortList(node, AutomationBlockPortDirection.Output);
+            DecorationEditorTheme.Separator();
+            GUILayout.Label("Move selected native component", DecorationEditorTheme.Mini);
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Left", DecorationEditorIconCatalog.Get("back"), "Move selected native component left."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                NudgeSelectedNativeExact(-10f, 0f);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Right", DecorationEditorIconCatalog.Get("open"), "Move selected native component right."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                NudgeSelectedNativeExact(10f, 0f);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Up", DecorationEditorIconCatalog.Get("up"), "Move selected native component up."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                NudgeSelectedNativeExact(0f, -10f);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Down", DecorationEditorIconCatalog.Get("down"), "Move selected native component down."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                NudgeSelectedNativeExact(0f, 10f);
+            GUILayout.EndHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Delete native component", DecorationEditorIconCatalog.Get("delete"), "Delete this exact native Breadboard component."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(26f))))
+                RemoveSelectedEsuBlock();
+        }
+
+        private void DrawNativeExactPortList(
+            AutomationBlockNode node,
+            AutomationBlockPortDirection direction)
+        {
+            AutomationBlockPort[] ports = _blockWorkspace.Ports
+                .Where(port =>
+                    string.Equals(port.NodeId, node.Id, StringComparison.Ordinal) &&
+                    port.Direction == direction)
+                .ToArray();
+            if (ports.Length == 0)
+            {
+                GUILayout.Label(direction == AutomationBlockPortDirection.Input ? "No inputs." : "No outputs.", DecorationEditorTheme.MiniWrap);
+                return;
+            }
+
+            foreach (AutomationBlockPort port in ports)
+                GUILayout.Label(port.Name, DecorationEditorTheme.MiniWrap);
+        }
+
+        private void DrawNativeExactAddNativeDrawer(float availableHeight)
+        {
+            if (!TryCreateSelectedBreadboardInspector(
+                    out AutomationBreadboardInspector inspector,
+                    out string reason))
+            {
+                GUILayout.Label(reason ?? "Select a Breadboard controller before adding native components.", DecorationEditorTheme.Warning);
+                return;
+            }
+
+            DrawNativeBreadboardPaletteSearch();
+            AutomationBreadboardAvailableComponent[] matchingComponents = inspector.AvailableComponents
+                .Where(component => component != null &&
+                                    !string.IsNullOrWhiteSpace(component.TypeName) &&
+                                    NativeComponentMatchesSearch(component, _nativeComponentPaletteSearch))
+                .OrderBy(component => component.Label, StringComparer.OrdinalIgnoreCase)
+                .Take(NativePaletteVisibleLimit)
+                .ToArray();
+            GUILayout.Label(
+                "Advertised native components: " + matchingComponents.Length.ToString(CultureInfo.InvariantCulture) + " shown.",
+                DecorationEditorTheme.MiniWrap);
+            float scrollHeight = Mathf.Max(EsuHudLayout.Scale(90f), availableHeight - EsuHudLayout.Scale(58f));
+            _blockPaletteScroll = GUILayout.BeginScrollView(
+                _blockPaletteScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.Height(scrollHeight));
+            for (int index = 0; index < matchingComponents.Length; index += 2)
+            {
+                GUILayout.BeginHorizontal();
+                DrawNativeExactAddComponentButton(inspector, matchingComponents[index]);
+                if (index + 1 < matchingComponents.Length)
+                    DrawNativeExactAddComponentButton(inspector, matchingComponents[index + 1]);
+                else
+                    GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndScrollView();
+        }
+
+        private void DrawNativeExactAddComponentButton(
+            AutomationBreadboardInspector inspector,
+            AutomationBreadboardAvailableComponent component)
+        {
+            if (component == null)
+                return;
+
+            if (AutomationGUILayoutButton(
+                    new GUIContent(
+                        component.Label,
+                        string.IsNullOrWhiteSpace(component.Description)
+                            ? "Add native Breadboard component: " + component.TypeName + "."
+                            : component.Description),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+            {
+                if (inspector.TryAddComponent(component.TypeName, out string message))
+                {
+                    RefreshNativeExactWorkspaceAfterNativeCommand(message);
+                    _nativeExactDrawer = NativeExactDrawer.Inspector;
+                }
+                else
+                {
+                    _status = message ?? "Could not add native Breadboard component.";
+                }
+            }
+        }
+
+        private void DrawNativeExactRefreshDrawer()
+        {
+            GUILayout.Label("Reimport the selected controller's live vanilla Breadboard graph.", DecorationEditorTheme.MiniWrap);
+            if (HasUnsavedAutomationWorkspaceChanges())
+                GUILayout.Label("Unsaved ESU layout changes will be discarded after confirmation.", DecorationEditorTheme.Warning);
+            if (!string.IsNullOrWhiteSpace(_blockWorkspace?.NativeImportStatus))
+                GUILayout.Label(_blockWorkspace.NativeImportStatus, DecorationEditorTheme.Body);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Refresh from native", DecorationEditorIconCatalog.Get("reload"), "Rebuild the NativeExact graph from the live Breadboard."),
+                    _confirmNativeRefreshFromNative ? DecorationEditorTheme.Warning : DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                RefreshBlocksFromNative();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Save ESU layout", DecorationEditorIconCatalog.Get("save"), "Save current ESU NativeExact layout metadata."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                SaveSelectedAutomationWorkspace();
+        }
+
+        private void DrawNativeExactStatusDrawer()
+        {
+            LabelRow("Mode", "Native exact import");
+            if (!string.IsNullOrWhiteSpace(_blockWorkspace?.NativeImportStatus))
+                GUILayout.Label(_blockWorkspace.NativeImportStatus, DecorationEditorTheme.Body);
+            if (!string.IsNullOrWhiteSpace(_status))
+                GUILayout.Label(_status, DecorationEditorTheme.MiniWrap);
+            if (!string.IsNullOrWhiteSpace(_blockLoweringStatus))
+                GUILayout.Label(_blockLoweringStatus, DecorationEditorTheme.MiniWrap);
+            GUILayout.Label("Native graph behavior lives in the vanilla Breadboard. ESU stores view/layout metadata only.", DecorationEditorTheme.MiniWrap);
+        }
+
+        private void NudgeSelectedNativeExact(float nativeDeltaX, float nativeDeltaY)
+        {
+            AutomationBlockNode node = _blockWorkspace?.SelectedNode();
+            if (node == null)
+                return;
+
+            float displayScale = _blockWorkspace?.NativeDisplayScale ?? 1f;
+            if (float.IsNaN(displayScale) || float.IsInfinity(displayScale) || displayScale <= 0.05f)
+                displayScale = 1f;
+            var drop = new AutomationBlockCanvasPosition(
+                node.CanvasPosition.X + nativeDeltaX * displayScale,
+                node.CanvasPosition.Y + nativeDeltaY * displayScale);
+            if (TryMoveNativeExactWorkspaceBlock(
+                    node,
+                    drop,
+                    out bool handled,
+                    out string message))
+            {
+                RefreshNativeExactWorkspaceAfterNativeCommand(message);
+            }
+            else if (handled)
+            {
+                _status = message ?? "Could not move native Breadboard component.";
+            }
+        }
+
+        private void FitNativeExactGraph(Rect canvasRect)
+        {
+            if (!TryGetNativeExactBounds(
+                    _blockWorkspace?.Nodes.Where(node => node != null).ToArray(),
+                    out Rect bounds))
+            {
+                _status = "Native graph has no nodes to fit.";
+                return;
+            }
+
+            FitNativeExactBounds(canvasRect, bounds);
+            _status = "Fitted native graph to view.";
+        }
+
+        private void FitNativeExactSelection(Rect canvasRect)
+        {
+            AutomationBlockNode node = _blockWorkspace?.SelectedNode();
+            if (node == null ||
+                !TryGetNativeExactBounds(new[] { node }, out Rect bounds))
+            {
+                _status = "Select a native component before fitting selection.";
+                return;
+            }
+
+            FitNativeExactBounds(canvasRect, bounds);
+            _status = "Fitted selected native component to view.";
+        }
+
+        private void ResetNativeExactView()
+        {
+            if (_blockWorkspace == null)
+                return;
+
+            _blockWorkspace.SetCanvasZoom(1f);
+            _blockWorkspace.SetCanvasPan(0f, 0f);
+            _status = "Reset NativeExact graph view.";
+        }
+
+        private void FitNativeExactBounds(Rect canvasRect, Rect bounds)
+        {
+            if (_blockWorkspace == null || bounds.width <= 0f || bounds.height <= 0f)
+                return;
+
+            float padding = EsuHudLayout.Scale(48f);
+            float zoomX = (canvasRect.width - padding * 2f) / Mathf.Max(1f, bounds.width);
+            float zoomY = (canvasRect.height - padding * 2f) / Mathf.Max(1f, bounds.height);
+            float zoom = Mathf.Clamp(Mathf.Min(zoomX, zoomY), 0.45f, 1.85f);
+            _blockWorkspace.SetCanvasZoom(zoom);
+            _blockWorkspace.SetCanvasPan(
+                canvasRect.width * 0.5f - bounds.center.x * zoom,
+                canvasRect.height * 0.5f - bounds.center.y * zoom);
+        }
+
+        private bool TryGetNativeExactBounds(
+            IReadOnlyList<AutomationBlockNode> nodes,
+            out Rect bounds)
+        {
+            bounds = Rect.zero;
+            if (nodes == null || nodes.Count == 0)
+                return false;
+
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+            foreach (AutomationBlockNode node in nodes)
+            {
+                if (node == null)
+                    continue;
+
+                float width = NativeExactNodeWidth(node);
+                float height = NativeExactNodeHeight(node);
+                minX = Mathf.Min(minX, node.CanvasPosition.X);
+                minY = Mathf.Min(minY, node.CanvasPosition.Y);
+                maxX = Mathf.Max(maxX, node.CanvasPosition.X + width);
+                maxY = Mathf.Max(maxY, node.CanvasPosition.Y + height);
+            }
+
+            if (minX == float.MaxValue)
+                return false;
+
+            bounds = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            return true;
         }
 
         private void DrawBlocksLeftColumn(Rect rect, float divider)
@@ -6143,6 +6823,402 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Space(EsuHudLayout.Scale(4f));
         }
 
+        private void DrawFixedTinkercadLinkedSignalFlyout(Rect body)
+        {
+            if (body.width <= 1f || body.height <= 1f)
+                return;
+
+            float gap = EsuHudLayout.Scale(6f);
+            float tabHeight = EsuHudLayout.Scale(28f);
+            float y = body.y;
+            Rect inputTab = new Rect(body.x, y, Mathf.Min(EsuHudLayout.Scale(96f), body.width * 0.5f - gap * 0.5f), tabHeight);
+            Rect outputTab = new Rect(inputTab.xMax + gap, y, inputTab.width, tabHeight);
+            DrawFixedTinkercadLinkedSignalTab(inputTab, AutomationLinkDirection.Input, "Inputs", "visibility");
+            DrawFixedTinkercadLinkedSignalTab(outputTab, AutomationLinkDirection.Output, "Outputs", "anchor");
+            y += tabHeight + gap;
+
+            Rect guideRect = new Rect(body.x, y, body.width, EsuHudLayout.Scale(30f));
+            GUI.Label(guideRect, AutomationLinkIdentityGuideLine, DecorationEditorTheme.MiniWrap);
+            y += guideRect.height + gap;
+
+            float searchHeight = EsuHudLayout.Scale(24f);
+            Rect iconRect = new Rect(body.x, y + EsuHudLayout.Scale(2f), EsuHudLayout.Scale(20f), EsuHudLayout.Scale(20f));
+            Texture filterIcon = DecorationEditorIconCatalog.Get("filter");
+            if (filterIcon != null)
+                GUI.DrawTexture(iconRect, filterIcon, ScaleMode.ScaleToFit, alphaBlend: true);
+            Rect clearRect = new Rect(body.xMax - EsuHudLayout.Scale(56f), y, EsuHudLayout.Scale(56f), searchHeight);
+            Rect fieldRect = new Rect(
+                iconRect.xMax + EsuHudLayout.Scale(6f),
+                y,
+                Mathf.Max(1f, clearRect.x - iconRect.xMax - EsuHudLayout.Scale(12f)),
+                searchHeight);
+            string nextSearch = GUI.TextField(fieldRect, _linkedSignalSearch ?? string.Empty, DecorationEditorTheme.TextField);
+            if (!string.Equals(nextSearch, _linkedSignalSearch, StringComparison.Ordinal))
+            {
+                _linkedSignalSearch = nextSearch ?? string.Empty;
+                _blocksCanvasSignalsScroll = Vector2.zero;
+            }
+
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && !string.IsNullOrWhiteSpace(_linkedSignalSearch);
+            if (AutomationGUIButton(
+                    clearRect,
+                    new GUIContent("clear", "Clear linked signal search."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton))
+            {
+                _linkedSignalSearch = string.Empty;
+                _blocksCanvasSignalsScroll = Vector2.zero;
+            }
+            GUI.enabled = previous;
+            y += searchHeight + EsuHudLayout.Scale(4f);
+
+            Rect searchHelp = new Rect(body.x, y, body.width, EsuHudLayout.Scale(28f));
+            GUI.Label(searchHelp, "Search linked Inputs/Outputs by direction, target label, category, role, runtime type, cell, or target key.", DecorationEditorTheme.MiniWrap);
+            y += searchHelp.height + gap;
+
+            Rect viewport = new Rect(body.x, y, body.width, Mathf.Max(1f, body.yMax - y));
+            float contentWidth = Mathf.Max(1f, body.width - EsuHudLayout.Scale(18f));
+            float contentHeight = MeasureFixedTinkercadLinkedSignalContentHeight(_blocksCanvasSignalsTab);
+            Rect content = new Rect(0f, 0f, contentWidth, contentHeight);
+            _blocksCanvasSignalsScroll = GUI.BeginScrollView(
+                viewport,
+                _blocksCanvasSignalsScroll,
+                content,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true);
+            try
+            {
+                float contentY = 0f;
+                DrawFixedTinkercadLinkedSignalSection(contentWidth, ref contentY, _blocksCanvasSignalsTab);
+            }
+            finally
+            {
+                GUI.EndScrollView();
+            }
+        }
+
+        private void DrawFixedTinkercadLinkedSignalTab(
+            Rect rect,
+            AutomationLinkDirection direction,
+            string label,
+            string icon)
+        {
+            bool active = _blocksCanvasSignalsTab == direction;
+            if (AutomationGUIButton(
+                    rect,
+                    new GUIContent(label, DecorationEditorIconCatalog.Get(icon), "Show linked and available " + label.ToLowerInvariant() + "."),
+                    DecorationEditorTheme.ToolButton(active)) &&
+                !active)
+            {
+                _blocksCanvasSignalsTab = direction;
+                _blocksCanvasSignalsScroll = Vector2.zero;
+            }
+        }
+
+        private float MeasureFixedTinkercadLinkedSignalContentHeight(AutomationLinkDirection direction)
+        {
+            AutomationLink[] links = SelectedLinks
+                .Where(link => link.Direction == direction && link.Target != null)
+                .ToArray();
+            AutomationLink[] matchingLinks = links
+                .Where(link => TinkercadLinkedSignalMatchesSearch(link, _linkedSignalSearch))
+                .ToArray();
+            AutomationTarget[] available = AvailableSignalTargets(direction);
+            AutomationTarget[] matching = available
+                .Where(target => TinkercadAvailableSignalMatchesSearch(target, direction, _linkedSignalSearch))
+                .Take(SignalFlyoutAvailableTargetLimit)
+                .ToArray();
+
+            float height =
+                EsuHudLayout.Scale(24f) +
+                EsuHudLayout.Scale(42f) +
+                EsuHudLayout.Scale(22f) +
+                EsuHudLayout.Scale(6f);
+            height += links.Length == 0 || matchingLinks.Length == 0
+                ? EsuHudLayout.Scale(42f)
+                : matchingLinks.Length * EsuHudLayout.Scale(42f);
+            height +=
+                EsuHudLayout.Scale(8f) +
+                EsuHudLayout.Scale(24f) +
+                EsuHudLayout.Scale(46f);
+            if (available.Length > SignalFlyoutAvailableTargetLimit)
+                height += EsuHudLayout.Scale(34f);
+            height += available.Length == 0 || matching.Length == 0
+                ? EsuHudLayout.Scale(42f)
+                : matching.Length * EsuHudLayout.Scale(42f);
+            return Mathf.Max(height + EsuHudLayout.Scale(10f), EsuHudLayout.Scale(160f));
+        }
+
+        private void DrawFixedTinkercadLinkedSignalSection(
+            float width,
+            ref float y,
+            AutomationLinkDirection direction)
+        {
+            bool input = direction == AutomationLinkDirection.Input;
+            string title = input ? "Inputs" : "Outputs";
+            DrawFixedCompactIconHeader(
+                new Rect(0f, y, width, EsuHudLayout.Scale(24f)),
+                title,
+                input ? "visibility" : "anchor",
+                DecorationEditorTheme.SubHeader);
+            y += EsuHudLayout.Scale(28f);
+
+            GUI.Label(
+                new Rect(0f, y, width, EsuHudLayout.Scale(40f)),
+                input
+                    ? "Input links become Read Target blocks and native Generic Block Getter proxy nodes on Apply."
+                    : "Output links become Set Target blocks and native Generic Block Setter proxy nodes on Apply.",
+                DecorationEditorTheme.MiniWrap);
+            y += EsuHudLayout.Scale(42f);
+
+            AutomationLink[] links = SelectedLinks
+                .Where(link => link.Direction == direction && link.Target != null)
+                .ToArray();
+            AutomationLink[] matchingLinks = links
+                .Where(link => TinkercadLinkedSignalMatchesSearch(link, _linkedSignalSearch))
+                .ToArray();
+            GUI.Label(
+                new Rect(0f, y, width, EsuHudLayout.Scale(18f)),
+                title + ": " +
+                matchingLinks.Length.ToString(CultureInfo.InvariantCulture) +
+                "/" +
+                links.Length.ToString(CultureInfo.InvariantCulture) +
+                " linked signal(s) shown.",
+                DecorationEditorTheme.MiniWrap);
+            y += EsuHudLayout.Scale(22f);
+
+            if (links.Length == 0)
+            {
+                GUI.Label(
+                    new Rect(0f, y, width, EsuHudLayout.Scale(38f)),
+                    input
+                        ? "No input links yet. Close the editor or use Link mode: click a target first, then this Breadboard/controller. Then use Add read."
+                        : "No output links yet. Close the editor or use Link mode: click this Breadboard/controller first, then the target it should affect. Then use Add set.",
+                    DecorationEditorTheme.MiniWrap);
+                y += EsuHudLayout.Scale(42f);
+            }
+            else if (matchingLinks.Length == 0)
+            {
+                GUI.Label(
+                    new Rect(0f, y, width, EsuHudLayout.Scale(38f)),
+                    input
+                        ? "No input links match the current linked signal search. Clear it to show Read/GBG options."
+                        : "No output links match the current linked signal search. Clear it to show Set/GBS options.",
+                    DecorationEditorTheme.Warning);
+                y += EsuHudLayout.Scale(42f);
+            }
+            else
+            {
+                AutomationBlockKind addKind = input
+                    ? AutomationBlockKind.ReadTarget
+                    : AutomationBlockKind.SetTarget;
+                foreach (AutomationLink link in matchingLinks)
+                {
+                    DrawFixedTinkercadLinkedSignalRow(
+                        new Rect(0f, y, width, EsuHudLayout.Scale(38f)),
+                        link,
+                        addKind);
+                    y += EsuHudLayout.Scale(42f);
+                }
+            }
+
+            DrawFixedTinkercadAvailableSignalTargets(width, ref y, direction);
+        }
+
+        private void DrawFixedTinkercadAvailableSignalTargets(
+            float width,
+            ref float y,
+            AutomationLinkDirection direction)
+        {
+            bool input = direction == AutomationLinkDirection.Input;
+            y += EsuHudLayout.Scale(4f);
+            DrawFixedCompactIconHeader(
+                new Rect(0f, y, width, EsuHudLayout.Scale(24f)),
+                input ? "Available inputs" : "Available outputs",
+                input ? "visibility" : "anchor",
+                DecorationEditorTheme.SubHeader);
+            y += EsuHudLayout.Scale(28f);
+
+            AutomationTarget[] available = AvailableSignalTargets(direction);
+            AutomationTarget[] matching = available
+                .Where(target => TinkercadAvailableSignalMatchesSearch(target, direction, _linkedSignalSearch))
+                .Take(SignalFlyoutAvailableTargetLimit)
+                .ToArray();
+            GUI.Label(
+                new Rect(0f, y, width, EsuHudLayout.Scale(42f)),
+                matching.Length.ToString(CultureInfo.InvariantCulture) +
+                "/" +
+                available.Length.ToString(CultureInfo.InvariantCulture) +
+                " available target(s) shown. " +
+                (input
+                    ? "Add read links this target as an input and drops a Read block."
+                    : "Add set links this target as an output and drops a Set block."),
+                DecorationEditorTheme.MiniWrap);
+            y += EsuHudLayout.Scale(46f);
+
+            if (available.Length > SignalFlyoutAvailableTargetLimit)
+            {
+                GUI.Label(
+                    new Rect(0f, y, width, EsuHudLayout.Scale(30f)),
+                    "Showing first " +
+                    SignalFlyoutAvailableTargetLimit.ToString(CultureInfo.InvariantCulture) +
+                    " available target(s). Use search to narrow the list.",
+                    DecorationEditorTheme.Warning);
+                y += EsuHudLayout.Scale(34f);
+            }
+
+            if (available.Length == 0)
+            {
+                GUI.Label(
+                    new Rect(0f, y, width, EsuHudLayout.Scale(38f)),
+                    input
+                        ? "No readable input targets are available for the selected controller."
+                        : "No writable output targets are available for the selected controller.",
+                    DecorationEditorTheme.MiniWrap);
+                y += EsuHudLayout.Scale(42f);
+                return;
+            }
+
+            if (matching.Length == 0)
+            {
+                GUI.Label(
+                    new Rect(0f, y, width, EsuHudLayout.Scale(38f)),
+                    input
+                        ? "No available input targets match the current linked signal search."
+                        : "No available output targets match the current linked signal search.",
+                    DecorationEditorTheme.Warning);
+                y += EsuHudLayout.Scale(42f);
+                return;
+            }
+
+            foreach (AutomationTarget target in matching)
+            {
+                DrawFixedTinkercadAvailableSignalRow(
+                    new Rect(0f, y, width, EsuHudLayout.Scale(38f)),
+                    target,
+                    direction);
+                y += EsuHudLayout.Scale(42f);
+            }
+        }
+
+        private void DrawFixedTinkercadLinkedSignalRow(
+            Rect row,
+            AutomationLink link,
+            AutomationBlockKind addKind)
+        {
+            if (link?.Target == null)
+                return;
+
+            bool selected = IsSelectedAutomationLink(link);
+            GUI.Box(row, GUIContent.none, selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+            Rect actionRect = FixedSignalActionRect(row);
+            Rect textRect = new Rect(
+                row.x,
+                row.y,
+                Mathf.Max(1f, actionRect.x - row.x - EsuHudLayout.Scale(4f)),
+                row.height);
+            DrawAutomationIconRow(
+                textRect,
+                AutomationTargetIconKey(link.Target),
+                link.TargetLabel,
+                link.DirectionLabel,
+                DecorationEditorTheme.Body,
+                DecorationEditorTheme.Mini);
+
+            if (AutomationGUIButton(
+                    actionRect,
+                    new GUIContent(
+                        addKind == AutomationBlockKind.ReadTarget ? "Add read" : "Add set",
+                        DecorationEditorIconCatalog.Get(addKind == AutomationBlockKind.ReadTarget ? "visibility" : "anchor"),
+                        "Add a " + (addKind == AutomationBlockKind.ReadTarget ? "Read" : "Set") + " block for " + link.TargetLabel + "."),
+                    DecorationEditorTheme.Button))
+            {
+                AddAutomationBlockForLink(addKind, link);
+                Event.current?.Use();
+            }
+
+            Event current = Event.current;
+            if (current != null &&
+                current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                row.Contains(current.mousePosition) &&
+                !actionRect.Contains(current.mousePosition))
+            {
+                SelectAutomationLink(link);
+                RegisterAutomationTargetPreview(row, link.Target, link.DirectionLabel + " link");
+                _status = "Selected " + link.DirectionLabel.ToLowerInvariant() + " link: " + link.TargetLabel + ".";
+                current.Use();
+            }
+
+            RegisterAutomationTargetPreview(row, link.Target, link.DirectionLabel + " link");
+            TryOpenAutomationRowContextMenu(row, mouse => OpenAutomationLinkContextMenu(link, mouse));
+        }
+
+        private void DrawFixedTinkercadAvailableSignalRow(
+            Rect row,
+            AutomationTarget target,
+            AutomationLinkDirection direction)
+        {
+            if (target == null)
+                return;
+
+            GUI.Box(row, GUIContent.none, DecorationEditorTheme.Row);
+            Rect actionRect = FixedSignalActionRect(row);
+            Rect textRect = new Rect(
+                row.x,
+                row.y,
+                Mathf.Max(1f, actionRect.x - row.x - EsuHudLayout.Scale(4f)),
+                row.height);
+            DrawAutomationIconRow(
+                textRect,
+                AutomationTargetIconKey(target),
+                target.Label,
+                AutomationTargetCatalog.CategoryLabel(target.Category) + " | " + AutomationTargetCatalog.RoleLabel(target),
+                DecorationEditorTheme.Mini,
+                DecorationEditorTheme.MiniWrap);
+
+            AutomationBlockKind addKind = direction == AutomationLinkDirection.Input
+                ? AutomationBlockKind.ReadTarget
+                : AutomationBlockKind.SetTarget;
+            if (AutomationGUIButton(
+                    actionRect,
+                    new GUIContent(
+                        addKind == AutomationBlockKind.ReadTarget ? "Add read" : "Add set",
+                        DecorationEditorIconCatalog.Get(addKind == AutomationBlockKind.ReadTarget ? "visibility" : "anchor"),
+                        "Link " + target.Label + " as an " + LinkDirectionLabel(direction).ToLowerInvariant() + " and add its ESU block."),
+                    DecorationEditorTheme.Button))
+            {
+                AutomationLink link = EnsureAutomationSignalLink(target, direction);
+                AddAutomationBlockForLink(addKind, link);
+                Event.current?.Use();
+            }
+
+            Event current = Event.current;
+            if (current != null &&
+                current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                row.Contains(current.mousePosition) &&
+                !actionRect.Contains(current.mousePosition))
+            {
+                EnsureAutomationSignalLink(target, direction);
+                RegisterAutomationTargetPreview(row, target, LinkDirectionLabel(direction) + " target");
+                current.Use();
+            }
+
+            RegisterAutomationTargetPreview(row, target, LinkDirectionLabel(direction) + " target");
+            EsuCursorTooltip.Register(row, "Click to link this target, or use Add to link it and create a block.");
+        }
+
+        private static Rect FixedSignalActionRect(Rect row)
+        {
+            float actionWidth = Mathf.Clamp(row.width * 0.33f, EsuHudLayout.Scale(58f), EsuHudLayout.Scale(92f));
+            return new Rect(
+                row.xMax - actionWidth - EsuHudLayout.Scale(4f),
+                row.y + EsuHudLayout.Scale(5f),
+                actionWidth,
+                row.height - EsuHudLayout.Scale(10f));
+        }
+
         private void DrawTinkercadLinkedSignalTabs()
         {
             GUILayout.BeginHorizontal();
@@ -6756,42 +7832,29 @@ namespace DecoLimitLifter.AutomationEditMode
                 header.yMax + EsuHudLayout.Scale(8f),
                 flyout.width - EsuHudLayout.Scale(24f),
                 flyout.yMax - header.yMax - EsuHudLayout.Scale(18f));
-            GUI.BeginGroup(body);
+            if (_blocksCanvasSignalsOpen)
+            {
+                DrawFixedTinkercadLinkedSignalFlyout(body);
+                return;
+            }
+
+            GUILayout.BeginArea(body);
             try
             {
-                Rect localBody = new Rect(0f, 0f, body.width, body.height);
-                GUILayout.BeginArea(localBody);
-                if (_blocksCanvasSignalsOpen)
-                {
-                    _blocksCanvasSignalsScroll = GUILayout.BeginScrollView(
-                        _blocksCanvasSignalsScroll,
-                        alwaysShowHorizontal: false,
-                        alwaysShowVertical: true,
-                        GUILayout.Width(Mathf.Max(1f, body.width)),
-                        GUILayout.Height(Mathf.Max(1f, body.height)));
-                    GUILayout.BeginVertical(GUILayout.Width(Mathf.Max(1f, body.width - EsuHudLayout.Scale(18f))));
-                    DrawTinkercadLinkedSignalFlyout();
-                    GUILayout.EndVertical();
-                    GUILayout.EndScrollView();
-                }
-                else
-                {
-                    _blocksCanvasSystemsScroll = GUILayout.BeginScrollView(
-                        _blocksCanvasSystemsScroll,
-                        alwaysShowHorizontal: false,
-                        alwaysShowVertical: true,
-                        GUILayout.Width(Mathf.Max(1f, body.width)),
-                        GUILayout.Height(Mathf.Max(1f, body.height)));
-                    GUILayout.BeginVertical(GUILayout.Width(Mathf.Max(1f, body.width - EsuHudLayout.Scale(18f))));
-                    DrawBlocksSystemBlockFlyout();
-                    GUILayout.EndVertical();
-                    GUILayout.EndScrollView();
-                }
-                GUILayout.EndArea();
+                _blocksCanvasSystemsScroll = GUILayout.BeginScrollView(
+                    _blocksCanvasSystemsScroll,
+                    alwaysShowHorizontal: false,
+                    alwaysShowVertical: true,
+                    GUILayout.Width(Mathf.Max(1f, body.width)),
+                    GUILayout.Height(Mathf.Max(1f, body.height)));
+                GUILayout.BeginVertical(GUILayout.Width(Mathf.Max(1f, body.width - EsuHudLayout.Scale(18f))));
+                DrawBlocksSystemBlockFlyout();
+                GUILayout.EndVertical();
+                GUILayout.EndScrollView();
             }
             finally
             {
-                GUI.EndGroup();
+                GUILayout.EndArea();
             }
         }
 
@@ -6862,6 +7925,12 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_blockWorkspace == null || canvas.width <= 1f || canvas.height <= 1f)
                 return;
 
+            if (_blockWorkspace.Mode == AutomationBlockWorkspaceMode.NativeExact)
+            {
+                ClampNativeExactCanvasPan(canvas);
+                return;
+            }
+
             float zoom = Mathf.Clamp(_blockWorkspace.CanvasZoom, 0.45f, 1.85f);
             float blockWidth = Mathf.Clamp(
                 canvas.width - EsuHudLayout.Scale(140f),
@@ -6900,8 +7969,54 @@ namespace DecoLimitLifter.AutomationEditMode
             return Mathf.Clamp(value, min, max);
         }
 
+        private void ClampNativeExactCanvasPan(Rect canvas)
+        {
+            AutomationBlockNode[] nodes = _blockWorkspace.Nodes
+                .Where(node => node != null)
+                .ToArray();
+            if (nodes.Length == 0)
+                return;
+
+            float zoom = Mathf.Clamp(_blockWorkspace.CanvasZoom, 0.45f, 1.85f);
+            float layoutScale = NativeExactDrawingScale();
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+            foreach (AutomationBlockNode node in nodes)
+            {
+                float x = node.CanvasPosition.X * zoom;
+                float y = node.CanvasPosition.Y * zoom;
+                float width = NativeExactNodeWidth(node) * layoutScale * zoom;
+                float height = NativeExactNodeHeight(node) * layoutScale * zoom;
+                minX = Mathf.Min(minX, x);
+                minY = Mathf.Min(minY, y);
+                maxX = Mathf.Max(maxX, x + width);
+                maxY = Mathf.Max(maxY, y + height);
+            }
+
+            if (minX == float.MaxValue)
+                return;
+
+            float padding = EsuHudLayout.Scale(18f);
+            float minPanX = canvas.width - maxX - padding;
+            float maxPanX = padding - minX;
+            float minPanY = canvas.height - maxY - padding;
+            float maxPanY = padding - minY;
+            float clampedX = ClampBetween(_blockWorkspace.CanvasPan.X, minPanX, maxPanX);
+            float clampedY = ClampBetween(_blockWorkspace.CanvasPan.Y, minPanY, maxPanY);
+            if (Math.Abs(clampedX - _blockWorkspace.CanvasPan.X) > 0.01f ||
+                Math.Abs(clampedY - _blockWorkspace.CanvasPan.Y) > 0.01f)
+            {
+                _blockWorkspace.SetCanvasPan(clampedX, clampedY);
+            }
+        }
+
         private List<Rect> DrawTinkercadProgram(Rect canvas)
         {
+            if (_blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact)
+                return DrawNativeExactProgram(canvas);
+
             var screenNodeRects = new List<Rect>(_blockWorkspace.Nodes.Count);
             var localStackNodeRects = new List<Rect>(_blockWorkspace.ExecutableNodes.Count);
             _lastBlockStackNodeRects.Clear();
@@ -7008,6 +8123,135 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             return screenNodeRects;
+        }
+
+        private List<Rect> DrawNativeExactProgram(Rect canvas)
+        {
+            var screenNodeRects = new List<Rect>(_blockWorkspace?.Nodes.Count ?? 0);
+            _lastBlockStackNodeRects.Clear();
+            _lastBlockStackRect = Rect.zero;
+            if (_blockWorkspace == null)
+                return screenNodeRects;
+
+            float zoom = Mathf.Clamp(_blockWorkspace.CanvasZoom, 0.45f, 1.85f);
+            float layoutScale = NativeExactDrawingScale();
+            AutomationBlockCanvasPosition pan = _blockWorkspace.CanvasPan;
+            AutomationBlockNode[] nodes = _blockWorkspace.Nodes
+                .Where(node => node != null)
+                .OrderBy(node => node.CanvasOrder)
+                .ToArray();
+            var blockRectsByNodeId = new Dictionary<string, Rect>();
+
+            GUI.BeginGroup(canvas);
+            try
+            {
+                Rect localCanvas = new Rect(0f, 0f, canvas.width, canvas.height);
+                DrawBreadboardCanvasGrid(localCanvas);
+                foreach (AutomationBlockNode node in nodes)
+                {
+                    Rect rect = new Rect(
+                        pan.X + node.CanvasPosition.X * zoom,
+                        pan.Y + node.CanvasPosition.Y * zoom,
+                        NativeExactNodeWidth(node) * layoutScale * zoom,
+                        NativeExactNodeHeight(node) * layoutScale * zoom);
+                    blockRectsByNodeId[node.Id] = rect;
+                    screenNodeRects.Add(OffsetRect(rect, canvas.x, canvas.y));
+                }
+
+                DrawTinkercadWorkspaceLinks(blockRectsByNodeId);
+                foreach (AutomationBlockNode node in nodes)
+                {
+                    if (blockRectsByNodeId.TryGetValue(node.Id, out Rect rect))
+                        DrawNativeExactWorkspaceBlock(rect, node, LocalBlocksCanvasFlyoutRect(canvas));
+                }
+
+                if (nodes.Length == 0)
+                {
+                    GUI.Label(
+                        new Rect(
+                            EsuHudLayout.Scale(18f),
+                            EsuHudLayout.Scale(18f),
+                            Mathf.Max(1f, canvas.width - EsuHudLayout.Scale(36f)),
+                            EsuHudLayout.Scale(48f)),
+                        "Native exact import found an empty Breadboard graph. Use Advanced Graph or Refresh from native after adding vanilla components.",
+                        DecorationEditorTheme.MiniWrap);
+                }
+            }
+            finally
+            {
+                GUI.EndGroup();
+            }
+
+            return screenNodeRects;
+        }
+
+        private void DrawNativeExactWorkspaceBlock(
+            Rect rect,
+            AutomationBlockNode node,
+            Rect inputBlocker)
+        {
+            if (node == null)
+                return;
+
+            Event current = Event.current;
+            bool inputBlocked = inputBlocker.width > 1f &&
+                                current != null &&
+                                inputBlocker.Contains(current.mousePosition);
+            bool selected = string.Equals(_blockWorkspace.SelectedNodeId, node.Id, StringComparison.Ordinal);
+            float uiScale = NativeExactBlockUiScale(rect, node);
+            DrawTinkercadBlockShape(
+                rect,
+                BlockCategoryColor(node.Category),
+                NativeExactBlockTitle(node),
+                node.IconKey,
+                selected,
+                hat: false,
+                badge: node.NativeImported ? "native exact" : "native wrapper",
+                uiScale: uiScale);
+            if (!inputBlocked)
+                DrawNativeExactBlockDetails(rect, node, uiScale);
+            DrawTinkercadBlockPorts(rect, node, uiScale);
+            if (!inputBlocked)
+                HandleWorkspaceBlockInput(rect, node);
+        }
+
+        private void DrawNativeExactBlockDetails(
+            Rect rect,
+            AutomationBlockNode node,
+            float uiScale)
+        {
+            float pad = EsuHudLayout.Scale(8f) * uiScale;
+            float rowHeight = Mathf.Max(EsuHudLayout.Scale(12f), EsuHudLayout.Scale(18f) * uiScale);
+            Rect row = new Rect(
+                rect.x + pad,
+                rect.y + EsuHudLayout.Scale(28f) * uiScale,
+                Mathf.Max(1f, rect.width - pad * 2f),
+                rowHeight);
+            string target = NativeExactTargetLine(node);
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                DrawFilledRect(row, new Color(0f, 0f, 0f, 0.17f));
+                DrawFittedSingleLineLabel(
+                    new Rect(row.x + pad, row.y, Mathf.Max(1f, row.width - pad * 2f), row.height),
+                    target,
+                    TinkercadBlockTextStyle(TextAnchor.MiddleLeft),
+                    TextAnchor.MiddleLeft,
+                    EsuHudLayout.FontSize(7));
+            }
+
+            string settings = string.IsNullOrWhiteSpace(node.NativeSettingsSummary)
+                ? node.NativeComponentTypeName
+                : node.NativeSettingsSummary;
+            if (string.IsNullOrWhiteSpace(settings))
+                return;
+
+            Rect settingsRow = new Rect(row.x, row.yMax + EsuHudLayout.Scale(4f) * uiScale, row.width, rowHeight);
+            DrawFittedSingleLineLabel(
+                settingsRow,
+                settings,
+                SingleLineRowStyle(DecorationEditorTheme.Mini),
+                TextAnchor.MiddleLeft,
+                EsuHudLayout.FontSize(7));
         }
 
         private static Rect OffsetRect(Rect rect, float x, float y) =>
@@ -7510,9 +8754,12 @@ namespace DecoLimitLifter.AutomationEditMode
             EsuCursorTooltip.Register(rect, content?.tooltip);
         }
 
-        private static bool PrimaryMouseDownIn(Rect rect)
+        private bool PrimaryMouseDownIn(Rect rect)
         {
             Event current = Event.current;
+            if (ShouldSuppressAutomationBackgroundDirectInput(current))
+                return false;
+
             return current != null &&
                    current.type == EventType.MouseDown &&
                    current.button == 0 &&
@@ -7542,6 +8789,8 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             Event current = Event.current;
             if (current == null || node == null)
+                return;
+            if (ShouldSuppressAutomationBackgroundDirectInput(current))
                 return;
 
             if (current.type == EventType.MouseDown &&
@@ -7582,6 +8831,8 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 return;
             }
+            if (ShouldSuppressAutomationBackgroundDirectInput(current))
+                return;
 
             Rect flyout = BlocksCanvasFlyoutRect(canvas);
             if (flyout.width > 1f && flyout.Contains(current.mousePosition))
@@ -7595,7 +8846,8 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             bool overCanvas = canvas.Contains(current.mousePosition);
-            bool snapToStack = overCanvas && IsMouseNearExecutableStack(current.mousePosition);
+            bool canSnapToStack = _blockWorkspace?.Mode != AutomationBlockWorkspaceMode.NativeExact;
+            bool snapToStack = canSnapToStack && overCanvas && IsMouseNearExecutableStack(current.mousePosition);
             if (snapToStack)
             {
                 _blockDropIndex = BlockDropIndexForMouse(_lastBlockStackNodeRects, current.mousePosition);
@@ -7702,6 +8954,8 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             Event current = Event.current;
             if (current == null || _blockWorkspace == null)
+                return;
+            if (ShouldSuppressAutomationBackgroundDirectInput(current))
                 return;
 
             Rect flyout = BlocksCanvasFlyoutRect(canvas);
@@ -7824,6 +9078,10 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (node.Kind == AutomationBlockKind.NativeComponent && node.NativeImported)
                 {
                     LabelRow("Native exact", "Imported component " + node.NativeComponentId.ToString(CultureInfo.InvariantCulture));
+                    if (!string.IsNullOrWhiteSpace(node.NativeBlockTypeName))
+                        LabelRow("Block type", node.NativeBlockTypeName);
+                    if (!string.IsNullOrWhiteSpace(node.NativeBlockFilter))
+                        LabelRow("Block filter", node.NativeBlockFilter);
                     if (!string.IsNullOrWhiteSpace(node.NativeSettingsSummary))
                         LabelRow("Settings", node.NativeSettingsSummary);
                 }
@@ -8249,6 +9507,45 @@ namespace DecoLimitLifter.AutomationEditMode
             return EsuHudLayout.Scale(76f) + portExtra;
         }
 
+        private float NativeExactDrawingScale()
+        {
+            float scale = _blockWorkspace == null || _blockWorkspace.NativeDisplayScale <= 0f
+                ? 1f
+                : _blockWorkspace.NativeDisplayScale;
+            if (float.IsNaN(scale) || float.IsInfinity(scale))
+                scale = 1f;
+            return Mathf.Clamp(scale, 0.55f, 1.25f);
+        }
+
+        private static float NativeExactNodeWidth(AutomationBlockNode node)
+        {
+            if (node == null)
+                return EsuHudLayout.Scale(150f);
+
+            float nativeWidth = node.NativeWidth > 20f ? node.NativeWidth : 150f;
+            return EsuHudLayout.Scale(Mathf.Clamp(nativeWidth, 130f, 260f));
+        }
+
+        private static float NativeExactNodeHeight(AutomationBlockNode node)
+        {
+            if (node == null)
+                return EsuHudLayout.Scale(78f);
+
+            AutomationBlockDefinition definition = AutomationBlockCatalog.DefinitionForNode(node);
+            int portRows = Math.Max(
+                definition.InputPorts?.Count ?? 0,
+                definition.OutputPorts?.Count ?? 0);
+            float fallback = Mathf.Max(78f, 48f + portRows * 13f);
+            float nativeHeight = node.NativeHeight > 20f ? node.NativeHeight : fallback;
+            return EsuHudLayout.Scale(Mathf.Clamp(nativeHeight, 62f, 180f));
+        }
+
+        private static float NativeExactBlockUiScale(Rect rect, AutomationBlockNode node)
+        {
+            float baseHeight = Mathf.Max(1f, NativeExactNodeHeight(node));
+            return Mathf.Clamp(rect.height / baseHeight, 0.45f, 1.85f);
+        }
+
         private static float TinkercadBlockUiScale(Rect rect, AutomationBlockNode node)
         {
             float baseHeight = Mathf.Max(1f, TinkercadBlockHeight(node));
@@ -8508,6 +9805,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 case AutomationBlockKind.Delay:
                     return node.Label + ": " + node.NumericValue.ToString("0.###", CultureInfo.InvariantCulture) + "s";
                 case AutomationBlockKind.NativeComponent:
+                    if (node.NativeImported)
+                        return NativeExactBlockTitle(node);
+
                     return string.IsNullOrWhiteSpace(node.NativeComponentLabel)
                         ? "Native component"
                         : "Native: " + node.NativeComponentLabel;
@@ -8516,6 +9816,40 @@ namespace DecoLimitLifter.AutomationEditMode
                 default:
                     return node.Label;
             }
+        }
+
+        private static string NativeExactBlockTitle(AutomationBlockNode node)
+        {
+            if (node == null)
+                return "Native component";
+
+            string target = NativeExactTargetLine(node);
+            if (!string.IsNullOrWhiteSpace(target))
+                return target;
+
+            return string.IsNullOrWhiteSpace(node.NativeComponentLabel)
+                ? "Native component"
+                : node.NativeComponentLabel;
+        }
+
+        private static string NativeExactTargetLine(AutomationBlockNode node)
+        {
+            if (node == null)
+                return string.Empty;
+
+            string type = string.IsNullOrWhiteSpace(node.NativeBlockTypeName)
+                ? string.Empty
+                : node.NativeBlockTypeName.Trim();
+            string filter = string.IsNullOrWhiteSpace(node.NativeBlockFilter)
+                ? string.Empty
+                : node.NativeBlockFilter.Trim();
+            if (!string.IsNullOrWhiteSpace(type) && !string.IsNullOrWhiteSpace(filter))
+                return type + " / " + filter;
+            if (!string.IsNullOrWhiteSpace(type))
+                return type;
+            if (!string.IsNullOrWhiteSpace(filter))
+                return filter;
+            return string.Empty;
         }
 
         private void DrawAutomationBlockNodeControls(AutomationBlockNode node)
@@ -9595,8 +10929,11 @@ namespace DecoLimitLifter.AutomationEditMode
                 return false;
             }
 
-            float deltaX = dropPosition.X - node.CanvasPosition.X;
-            float deltaY = dropPosition.Y - node.CanvasPosition.Y;
+            float displayScale = _blockWorkspace?.NativeDisplayScale ?? 1f;
+            if (float.IsNaN(displayScale) || float.IsInfinity(displayScale) || displayScale <= 0.05f)
+                displayScale = 1f;
+            float deltaX = (dropPosition.X - node.CanvasPosition.X) / displayScale;
+            float deltaY = (dropPosition.Y - node.CanvasPosition.Y) / displayScale;
             if (Math.Abs(deltaX) < 0.01f && Math.Abs(deltaY) < 0.01f)
             {
                 message = "Native component position unchanged.";
@@ -10084,7 +11421,14 @@ namespace DecoLimitLifter.AutomationEditMode
             bool applied = true;
             bool inputBindingOk = true;
             string inputBindingMessage = string.Empty;
-            if (_blockLoweringPlan.HasSemanticFlow)
+            if (_blockLoweringPlan.HasDirectValueFlow)
+            {
+                applied = TryApplyDirectReadSetBlocks(_blockLoweringPlan, out inputBindingMessage);
+                inputBindingOk = applied;
+                if (!applied)
+                    _status = inputBindingMessage;
+            }
+            else if (_blockLoweringPlan.HasSemanticFlow)
             {
                 applied = CompileAutomationCodeExpression(returnToGraph: false);
                 if (applied)
@@ -10103,13 +11447,17 @@ namespace DecoLimitLifter.AutomationEditMode
                 {
                     _automationNativeDirty = false;
                     PersistSelectedAutomationWorkspaceState(saveProfile: true);
+                    string revertSummary = CanRevertLastAutomationCompile()
+                        ? " Revert blocks can remove the generated component ids."
+                        : " No new native proxy ids were generated for Revert.";
                     _blockLoweringStatus = inputBindingOk
-                        ? "Applied ESU Blocks to native Breadboard nodes. Revert blocks can remove the generated component ids." +
+                        ? "Applied ESU Blocks to native Breadboard nodes." +
+                          revertSummary +
                           (string.IsNullOrWhiteSpace(inputBindingMessage) ? string.Empty : " " + inputBindingMessage) +
                           (string.IsNullOrWhiteSpace(nativeComponentMessage) ? string.Empty : " " + nativeComponentMessage)
                         : "Applied native Breadboard nodes, but ESU Blocks input binding needs attention: " +
                           inputBindingMessage +
-                          " Revert blocks can remove the generated component ids." +
+                          revertSummary +
                           (string.IsNullOrWhiteSpace(nativeComponentMessage) ? string.Empty : " " + nativeComponentMessage);
                     _status = _blockLoweringStatus;
                 }
@@ -10123,6 +11471,265 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 _blockLoweringStatus = _status;
             }
+        }
+
+        private bool TryApplyDirectReadSetBlocks(
+            AutomationLoweringPlan plan,
+            out string message)
+        {
+            message = string.Empty;
+            _lastCompileBoundOutput = false;
+            _lastCompileRevert = null;
+            if (plan == null || !plan.HasDirectValueFlow)
+            {
+                message = "Direct Read -> Set lowering requires a checked direct value plan.";
+                return false;
+            }
+
+            AutomationTarget readTarget = PlanLinkedTarget(plan.ReadTargetKey, AutomationLinkDirection.Input);
+            AutomationTarget setTarget = PlanLinkedTarget(plan.OutputTargetKey, AutomationLinkDirection.Output);
+            if (readTarget == null)
+            {
+                message = "Direct Read -> Set apply failed: the linked input target is no longer live.";
+                return false;
+            }
+
+            if (setTarget == null)
+            {
+                message = "Direct Read -> Set apply failed: the linked output target is no longer live.";
+                return false;
+            }
+
+            if (!TryCreateSelectedBreadboardInspector(
+                    out AutomationBreadboardInspector inspector,
+                    out string reason))
+            {
+                message = "Direct Read -> Set apply failed: " +
+                          (reason ?? "selected controller does not expose a native Breadboard") +
+                          ".";
+                return false;
+            }
+
+            var generatedIds = new List<uint>();
+            if (!TryEnsureDirectFlowProxy(
+                    inspector,
+                    readTarget,
+                    plan.ReadProperty,
+                    getter: true,
+                    out AutomationBreadboardComponentSummary getter,
+                    out IReadOnlyList<uint> getterIds,
+                    out message))
+            {
+                TrackPartialDirectFlowRevert(generatedIds);
+                return false;
+            }
+            generatedIds.AddRange(getterIds ?? Array.Empty<uint>());
+
+            if (!TryEnsureDirectFlowProxy(
+                    inspector,
+                    setTarget,
+                    plan.OutputProperty,
+                    getter: false,
+                    out AutomationBreadboardComponentSummary setter,
+                    out IReadOnlyList<uint> setterIds,
+                    out message))
+            {
+                TrackPartialDirectFlowRevert(generatedIds);
+                return false;
+            }
+            generatedIds.AddRange(setterIds ?? Array.Empty<uint>());
+
+            AutomationBreadboardPortSummary getterOutput =
+                inspector.OutputPorts(getter, 1).FirstOrDefault();
+            AutomationBreadboardPortSummary setterInput =
+                inspector.InputPorts(setter, 4).FirstOrDefault();
+            if (getterOutput == null)
+            {
+                TrackPartialDirectFlowRevert(generatedIds);
+                message = "Direct Read -> Set apply failed: the selected Generic Getter exposes no output port.";
+                return false;
+            }
+
+            if (setterInput == null)
+            {
+                TrackPartialDirectFlowRevert(generatedIds);
+                message = "Direct Read -> Set apply failed: the selected Generic Setter exposes no value input port.";
+                return false;
+            }
+
+            if (!inspector.TryConnectPorts(
+                    getter,
+                    getterOutput.Index,
+                    setter,
+                    setterInput.Index,
+                    out string wireMessage))
+            {
+                TrackPartialDirectFlowRevert(generatedIds);
+                message = "Direct Read -> Set apply failed: " +
+                          (wireMessage ?? "FtD rejected the native getter-to-setter wire") +
+                          ".";
+                return false;
+            }
+
+            uint[] ids = generatedIds
+                .Where(id => id != 0U)
+                .Distinct()
+                .ToArray();
+            if (ids.Length > 0)
+            {
+                _lastCompileRevert = new AutomationCompileRevertSet(
+                    _selectedController?.StableKey,
+                    new AutomationBreadboardCompileResult("direct read-to-set proxy flow", ids));
+            }
+
+            _lastCompileBoundOutput = true;
+            message =
+                "Direct Read -> Set wired " +
+                readTarget.Label +
+                " / " +
+                LoweringPlanPropertyLabel(plan.ReadProperty, "Getter property") +
+                " to " +
+                setTarget.Label +
+                " / " +
+                LoweringPlanPropertyLabel(plan.OutputProperty, "Setter property") +
+                " using native Generic Getter/Setter ports" +
+                (ids.Length > 0
+                    ? "; generated " + ids.Length.ToString(CultureInfo.InvariantCulture) + " proxy node(s)."
+                    : "; reused existing proxy node(s).");
+            return true;
+        }
+
+        private AutomationTarget PlanLinkedTarget(
+            string targetKey,
+            AutomationLinkDirection direction)
+        {
+            if (string.IsNullOrWhiteSpace(targetKey))
+                return null;
+
+            return SelectedLinks
+                .Where(link => link.Direction == direction)
+                .Select(link => link.Target)
+                .FirstOrDefault(target =>
+                    target != null &&
+                    string.Equals(target.StableKey, targetKey, StringComparison.Ordinal));
+        }
+
+        private bool TryEnsureDirectFlowProxy(
+            AutomationBreadboardInspector inspector,
+            AutomationTarget target,
+            AutomationProxyPropertySelection selection,
+            bool getter,
+            out AutomationBreadboardComponentSummary proxy,
+            out IReadOnlyList<uint> generatedIds,
+            out string message)
+        {
+            proxy = null;
+            generatedIds = Array.Empty<uint>();
+            message = null;
+            if (inspector == null || target == null)
+            {
+                message = "Direct flow proxy selection failed because the native board or target is missing.";
+                return false;
+            }
+
+            if (selection == null || selection.IsClear)
+            {
+                message = "Direct flow proxy selection failed because " +
+                          (getter ? "the Getter" : "the Setter") +
+                          " property is not explicit.";
+                return false;
+            }
+
+            AutomationBreadboardComponentSummary[] proxies = getter
+                ? TargetGettersFor(inspector.Components, target)
+                : TargetSettersFor(inspector.Components, target);
+            proxy = proxies
+                .Where(component => ProxyMatchesSelection(component, selection))
+                .FirstOrDefault(component => getter
+                    ? inspector.OutputPorts(component, 1).Count > 0
+                    : inspector.InputPorts(component, 4).Count > 0);
+            if (proxy != null)
+                return true;
+
+            if (!inspector.TryCreateTargetProxy(
+                    target,
+                    getter,
+                    !getter,
+                    out AutomationBreadboardCompileResult proxyResult,
+                    out string proxyMessage))
+            {
+                message = "Could not create a Generic " +
+                          (getter ? "Getter" : "Setter") +
+                          " for " +
+                          target.Label +
+                          ": " +
+                          (proxyMessage ?? "FtD rejected the native proxy") +
+                          ".";
+                return false;
+            }
+
+            generatedIds = proxyResult?.ComponentIds?.Where(id => id != 0U).ToArray() ?? Array.Empty<uint>();
+            foreach (uint componentId in generatedIds)
+            {
+                AutomationBreadboardComponentSummary created = FindComponentById(inspector.Components, componentId);
+                if (created == null ||
+                    getter && !created.IsGenericGetter ||
+                    !getter && !created.IsGenericSetter)
+                {
+                    continue;
+                }
+
+                if (!TryApplyProxyPropertySelection(inspector, created, selection, out string selectionMessage))
+                {
+                    message = "Created a Generic " +
+                              (getter ? "Getter" : "Setter") +
+                              " for " +
+                              target.Label +
+                              ", but could not select " +
+                              LoweringPlanPropertyLabel(selection, "the requested property") +
+                              ": " +
+                              (selectionMessage ?? "property selection failed") +
+                              ".";
+                    return false;
+                }
+
+                bool hasPort = getter
+                    ? inspector.OutputPorts(created, 1).Count > 0
+                    : inspector.InputPorts(created, 4).Count > 0;
+                if (!hasPort)
+                {
+                    message = "Created a Generic " +
+                              (getter ? "Getter" : "Setter") +
+                              " for " +
+                              target.Label +
+                              ", but its native value port was not visible.";
+                    return false;
+                }
+
+                proxy = created;
+                return true;
+            }
+
+            message = "Created a Generic " +
+                      (getter ? "Getter" : "Setter") +
+                      " for " +
+                      target.Label +
+                      ", but the generated proxy component was not visible.";
+            return false;
+        }
+
+        private void TrackPartialDirectFlowRevert(IEnumerable<uint> generatedIds)
+        {
+            uint[] ids = generatedIds?
+                .Where(id => id != 0U)
+                .Distinct()
+                .ToArray() ?? Array.Empty<uint>();
+            if (ids.Length == 0)
+                return;
+
+            _lastCompileRevert = new AutomationCompileRevertSet(
+                _selectedController?.StableKey,
+                new AutomationBreadboardCompileResult("partial direct read-to-set proxy flow", ids));
         }
 
         private bool TryApplyNativeComponentBlocks(
@@ -12047,6 +13654,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 CanvasPanX = data.CanvasPanX,
                 CanvasPanY = data.CanvasPanY,
                 CanvasZoom = data.CanvasZoom,
+                NativeDisplayScale = data.NativeDisplayScale,
                 NativeImportStatus = data.NativeImportStatus,
                 SelectedNodeId = data.SelectedNodeId,
                 Nodes = (data.Nodes ?? new List<SerializationHudProfile.AutomationBlockNodeData>())
@@ -12092,6 +13700,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 NativeComponentTypeName = data.NativeComponentTypeName,
                 NativeComponentLabel = data.NativeComponentLabel,
                 NativeComponentDescription = data.NativeComponentDescription,
+                NativeBlockTypeName = data.NativeBlockTypeName,
+                NativeBlockFilter = data.NativeBlockFilter,
                 NativeComponentId = data.NativeComponentId,
                 NativeComponentTypeId = data.NativeComponentTypeId,
                 NativeComponentFingerprint = data.NativeComponentFingerprint,
@@ -17232,9 +18842,13 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private bool ShouldSuppressAutomationBackgroundInput(
             Event current,
-            bool foregroundOpenBeforeBackground) =>
+            bool foregroundOpen) =>
             _automationClosePromptOpen ||
-            foregroundOpenBeforeBackground && ShouldConsumeGuiEvent(current);
+            foregroundOpen && ShouldConsumeGuiEvent(current);
+
+        private bool ShouldSuppressAutomationBackgroundDirectInput(Event current) =>
+            _suppressAutomationBackgroundDirectInput &&
+            ShouldConsumeGuiEvent(current);
 
         private bool IsAutomationForegroundPopupOpen()
         {

@@ -108,10 +108,39 @@ namespace DecoLimitLifter.AutomationEditMode
 
             var importedComponents = new List<AutomationNativeComponentSnapshot>(components.Count);
             var importedWires = new List<AutomationNativeWireSnapshot>();
+            var importedIds = new HashSet<uint>();
             foreach (AutomationBreadboardComponentSummary component in components)
             {
                 if (component == null)
                     continue;
+
+                if (component.UniqueId == 0U)
+                {
+                    message =
+                        "Native exact import stopped: a Breadboard component has a zero native id. Use Advanced Graph instead of an unsafe exact import.";
+                    return false;
+                }
+
+                if (!importedIds.Add(component.UniqueId))
+                {
+                    message =
+                        "Native exact import stopped: duplicate native component id " +
+                        component.UniqueId.ToString(CultureInfo.InvariantCulture) +
+                        " was found. Use Advanced Graph instead of an unsafe exact import.";
+                    return false;
+                }
+
+                if (!IsFinite(component.X) ||
+                    !IsFinite(component.Y) ||
+                    !IsFinite(component.Width) ||
+                    !IsFinite(component.Height))
+                {
+                    message =
+                        "Native exact import stopped: " +
+                        component.Label +
+                        " has invalid non-finite Breadboard coordinates. Use Advanced Graph for this board.";
+                    return false;
+                }
 
                 if (component.InputCount > NativeGraphImportPortLimit ||
                     component.OutputCount > NativeGraphImportPortLimit)
@@ -143,6 +172,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     component.TypeName,
                     component.Label,
                     component.Description,
+                    component.BlockTypeName,
+                    component.BlockFilter,
                     component.X,
                     component.Y,
                     component.Width,
@@ -180,6 +211,9 @@ namespace DecoLimitLifter.AutomationEditMode
                 " wire(s).";
             return true;
         }
+
+        private static bool IsFinite(float value) =>
+            !float.IsNaN(value) && !float.IsInfinity(value);
 
         internal bool TryRewriteCurrentSettings(out string message)
         {

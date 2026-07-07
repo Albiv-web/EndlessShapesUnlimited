@@ -35,6 +35,8 @@ namespace DecoLimitLifter.AutomationEditMode
             string typeName,
             string label,
             string description,
+            string blockTypeName,
+            string blockFilter,
             float x,
             float y,
             float width,
@@ -48,6 +50,8 @@ namespace DecoLimitLifter.AutomationEditMode
             TypeName = typeName ?? string.Empty;
             Label = string.IsNullOrWhiteSpace(label) ? "Native component" : label;
             Description = description ?? string.Empty;
+            BlockTypeName = blockTypeName ?? string.Empty;
+            BlockFilter = blockFilter ?? string.Empty;
             X = x;
             Y = y;
             Width = width;
@@ -67,6 +71,10 @@ namespace DecoLimitLifter.AutomationEditMode
         internal string Label { get; }
 
         internal string Description { get; }
+
+        internal string BlockTypeName { get; }
+
+        internal string BlockFilter { get; }
 
         internal float X { get; }
 
@@ -95,6 +103,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     TypeName,
                     ComponentTypeId.ToString("D"),
                     Label,
+                    BlockTypeName,
+                    BlockFilter,
                     X.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
                     Y.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
                     inputShape,
