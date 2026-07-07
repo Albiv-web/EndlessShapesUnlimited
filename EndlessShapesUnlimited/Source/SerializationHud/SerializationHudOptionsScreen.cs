@@ -198,9 +198,9 @@ namespace DecoLimitLifter.SerializationHud
             editor.AddInterpretter(
                 SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
                     data,
-                    "Warn before Ctrl+D applies",
+                    "Warn before Ctrl+D auto-applies",
                     new ToolTip(
-                        "When Decoration Edit Mode has unapplied changes, pressing Ctrl+D asks whether to apply before closing."),
+                        "When Decoration Edit Mode has unapplied changes, pressing Ctrl+D asks before applying the preview and closing."),
                     (profile, value) => profile.DecorationEditPromptBeforeHotkeyClose = value,
                     profile => profile.DecorationEditPromptBeforeHotkeyClose));
             editor.AddInterpretter(

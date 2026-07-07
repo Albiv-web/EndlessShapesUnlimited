@@ -84,6 +84,14 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static GUIStyle Button { get; private set; }
         internal static GUIStyle ActiveButton { get; private set; }
         internal static GUIStyle DisabledButton { get; private set; }
+        internal static GUIStyle DialogHeader { get; private set; }
+        internal static GUIStyle DialogTitle { get; private set; }
+        internal static GUIStyle DialogBody { get; private set; }
+        internal static GUIStyle DialogWarning { get; private set; }
+        internal static GUIStyle DialogToggle { get; private set; }
+        internal static GUIStyle DialogToggleSelected { get; private set; }
+        internal static GUIStyle DialogButton { get; private set; }
+        internal static GUIStyle DialogActiveButton { get; private set; }
         internal static GUIStyle TextField { get; private set; }
         internal static GUIStyle Status { get; private set; }
         internal static GUIStyle Warning { get; private set; }
@@ -217,6 +225,54 @@ namespace DecoLimitLifter.DecorationEditMode
                 normal = { background = _buttonDisabled, textColor = new Color(0.55f, 0.65f, 0.68f, 1f) },
                 hover = { background = _buttonDisabled, textColor = new Color(0.55f, 0.65f, 0.68f, 1f) },
                 active = { background = _buttonDisabled, textColor = new Color(0.55f, 0.65f, 0.68f, 1f) }
+            };
+            DialogHeader = new GUIStyle(GUI.skin.box)
+            {
+                normal = { background = _header, textColor = Color.white },
+                padding = EsuHudLayout.Offset(8, 8, 4, 4),
+                margin = new RectOffset(0, 0, 0, 0)
+            };
+            DialogTitle = new GUIStyle(GUI.skin.label)
+            {
+                normal = { textColor = Color.white },
+                alignment = TextAnchor.MiddleLeft,
+                fontStyle = FontStyle.Bold,
+                fontSize = EsuHudLayout.FontSize(14),
+                padding = EsuHudLayout.Offset(8, 8, 3, 3),
+                imagePosition = ImagePosition.ImageLeft
+            };
+            DialogBody = new GUIStyle(BodyWrap)
+            {
+                fontSize = EsuHudLayout.FontSize(12),
+                padding = EsuHudLayout.Offset(4, 4, 2, 2)
+            };
+            DialogWarning = new GUIStyle(DialogBody)
+            {
+                normal = { textColor = WarningColor },
+                fontStyle = FontStyle.Bold
+            };
+            DialogToggle = new GUIStyle(Row)
+            {
+                imagePosition = ImagePosition.TextOnly,
+                fontSize = EsuHudLayout.FontSize(11),
+                padding = EsuHudLayout.Offset(8, 8, 3, 3)
+            };
+            DialogToggleSelected = new GUIStyle(DialogToggle)
+            {
+                normal = { background = _rowSelected, textColor = Color.white },
+                fontStyle = FontStyle.Bold
+            };
+            DialogButton = new GUIStyle(Button)
+            {
+                imagePosition = ImagePosition.ImageLeft,
+                fontStyle = FontStyle.Normal,
+                padding = EsuHudLayout.Offset(8, 8, 4, 4),
+                margin = new RectOffset(0, 0, 0, 0)
+            };
+            DialogActiveButton = new GUIStyle(DialogButton)
+            {
+                normal = { background = _buttonActive, textColor = Color.white },
+                fontStyle = FontStyle.Bold
             };
             TextField = new GUIStyle(GUI.skin.textField)
             {

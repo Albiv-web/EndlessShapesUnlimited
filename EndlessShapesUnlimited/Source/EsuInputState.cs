@@ -55,10 +55,17 @@ namespace DecoLimitLifter
             }
         }
 
+        internal static bool IsFacingSymmetryShortcutDown() =>
+            Input.GetKeyDown(KeyCode.N);
+
         internal static bool AnyEsuNumberShortcutDown() =>
             IsEsuNumberShortcutDown(1) ||
             IsEsuNumberShortcutDown(2) ||
             IsEsuNumberShortcutDown(3);
+
+        internal static bool AnyEsuBuildShortcutDown() =>
+            AnyEsuNumberShortcutDown() ||
+            IsFacingSymmetryShortcutDown();
 
         internal static bool IsTextInputActive()
         {

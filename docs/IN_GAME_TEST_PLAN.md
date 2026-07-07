@@ -131,6 +131,11 @@ Pass: all content survives both reload paths without truncation or corruption.
 1. Start FTD, enter build mode on a craft, and press `Ctrl+D`.
 2. Confirm the mouse remains visible, build controls do not place/remove blocks
    while the editor is active, and `Esc` or `Ctrl+D` closes the editor.
+   Make a dirty preview, press `Ctrl+D`, and click the toolbar **Close** button.
+   Confirm both paths dim the editor and show the foreground
+   **Unapplied decorations** prompt with **Apply and close**, **Discard**, and
+   **Keep editing** buttons; there should be no dim-only state where WASD/view
+   input is captured without a visible prompt.
 3. Reopen from the Decoration Builder **Decoration Edit Mode** button.
 4. Confirm the UI is the native-styled shell: compact top toolbar, independent
    **Mesh Palette**, **Inspector**, **Outliner**, and **Selected anchor** panels,
@@ -154,6 +159,9 @@ Pass: all content survives both reload paths without truncation or corruption.
    **Pal** leaves **Insp** visible, hiding **Out** leaves **Anch** visible, each
    single visible panel expands into its side stack, and paired visible panels
    split that stack.
+   Select a decoration, enable **Focus deco** in the bottom selection strip, and
+   confirm viewport clicks, Box select, Outliner rows, and Selected anchor rows
+   cannot switch away from it until the toggle is turned off.
 8. Resize the left and right panel stacks using their corner grips, switch
    Deco -> Surf -> Build -> Deco, and confirm the resized Deco panel stacks and
    independent visibility choices persist and remain clamped inside the screen.

@@ -70,18 +70,22 @@ namespace DecoLimitLifter
                 return false;
 
             float x = Mathf.Abs(localFacing.x);
+            float y = Mathf.Abs(localFacing.y);
             float z = Mathf.Abs(localFacing.z);
-            if (Mathf.Max(x, z) > 0.0001f)
+            if (Mathf.Max(x, Mathf.Max(y, z)) <= 0.0001f)
+                return false;
+
+            if (y >= x && y >= z)
             {
-                axis = x >= z
-                    ? DecorationEditAxis.X
-                    : DecorationEditAxis.Z;
+                axis = DecorationEditAxis.Y;
                 return true;
             }
 
-            if (Mathf.Abs(localFacing.y) > 0.0001f)
+            if (Mathf.Max(x, z) > 0.0001f)
             {
-                axis = DecorationEditAxis.Y;
+                axis = x >= z
+                    ? DecorationEditAxis.Z
+                    : DecorationEditAxis.X;
                 return true;
             }
 

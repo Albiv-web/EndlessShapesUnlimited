@@ -651,7 +651,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private bool TryHandleFacingSymmetryShortcut()
         {
-            if (!Input.GetKeyDown(KeyCode.N))
+            if (!DecoLimitLifter.EsuInputState.IsFacingSymmetryShortcutDown())
                 return false;
 
             SmartBuildInputScope.ClaimBuildInputForFrames();

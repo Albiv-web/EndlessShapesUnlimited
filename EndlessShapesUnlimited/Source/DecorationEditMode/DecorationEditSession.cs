@@ -141,8 +141,6 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private readonly cBuild _build;
         private readonly int _modalWindowId = "EndlessShapesUnlimited.DecorationEditMode.Modal".GetHashCode();
-        private readonly int _unappliedClosePromptWindowId =
-            "EndlessShapesUnlimited.DecorationEditMode.UnappliedClosePrompt".GetHashCode();
         private Rect _meshPaletteRect = s_meshPaletteRect;
         private Rect _rightPanelRect = s_rightPanelRect;
         private Vector2 _meshScroll;
@@ -172,6 +170,10 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool _unappliedClosePromptOpen;
         private bool _unappliedClosePromptAlwaysApply;
         private DecorationSelectionMode _selectionMode = DecorationSelectionMode.Single;
+        private bool _selectionFocusLocked;
+        private Decoration _selectionFocusDecoration;
+        private AllConstruct _selectionFocusConstruct;
+        private float _selectionFocusBlockedNoticeUntil = -1f;
         private bool _selectionXray;
         private bool _boxSelecting;
         private Vector2 _boxSelectStartMouse;
@@ -598,6 +600,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 _hits.Clear();
                 _outlinerRows.Clear();
                 _selection.Clear();
+                ClearSelectionFocusLock(notify: false);
                 _boxSelecting = false;
                 _boxSelectCandidateCount = 0;
                 ClearMultiTransformState();
@@ -660,6 +663,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _unappliedClosePromptOpen = false;
             _unappliedClosePromptAlwaysApply = false;
             RestoreFocusView();
+            ClearSelectionFocusLock(notify: false);
             _boxSelecting = false;
             _draggingMeshPalette = false;
             _resizingMeshPalette = false;
@@ -687,6 +691,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             RefreshDecorationCache(force: false);
             RefreshForecast(force: false);
+            RefreshSelectionFocusLock();
             _viewModes.Tick(_viewMode);
             DecorationEditorOverlay.BeginFrame();
             if (_unappliedClosePromptOpen)
@@ -768,6 +773,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUI.depth = previousDepth;
                 GUI.enabled = previousEnabled;
             }
+
             if (interactive)
                 _textInputFocused = GUIUtility.keyboardControl != 0;
         }
@@ -775,22 +781,23 @@ namespace DecoLimitLifter.DecorationEditMode
         private void DrawModalEditorWindow(int id)
         {
             bool promptWasOpen = _unappliedClosePromptOpen;
-            DrawEditorShell(interactive: true);
-            Event current = Event.current;
-            if ((promptWasOpen || _unappliedClosePromptOpen) &&
-                IsPromptBlockingEvent(current))
+            if (promptWasOpen)
+                DrawDisabledEditorShellBehindPrompt();
+            else
+                DrawEditorShell(interactive: true);
+
+            if (promptWasOpen || _unappliedClosePromptOpen)
             {
-                if (current.type == EventType.ScrollWheel)
-                    DecorationEditorInputScope.ClaimMouseWheelInputForFrames();
-                else
-                {
-                    DecorationEditorInputScope.ClaimBuildInputForFrames();
-                    DecorationEditorInputScope.ClaimCameraInputForFrames();
-                }
-                current.Use();
+                Event promptEvent = Event.current;
+                EventType promptEventType = promptEvent == null
+                    ? EventType.Ignore
+                    : promptEvent.type;
+                DrawUnappliedClosePrompt();
+                ConsumeUnappliedClosePromptInput(promptEvent, promptEventType);
                 return;
             }
 
+            Event current = Event.current;
             if (ShouldConsumeGuiEvent(current))
             {
                 if (current.type == EventType.ScrollWheel)
@@ -804,17 +811,57 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
+        private void DrawDisabledEditorShellBehindPrompt()
+        {
+            bool previousEnabled = GUI.enabled;
+            GUI.enabled = false;
+            try
+            {
+                DrawEditorShell(interactive: false);
+            }
+            finally
+            {
+                GUI.enabled = previousEnabled;
+            }
+        }
+
         private static bool IsPromptBlockingEvent(Event current)
         {
             if (current == null)
                 return false;
 
-            return current.type == EventType.MouseDown ||
-                   current.type == EventType.MouseUp ||
-                   current.type == EventType.MouseDrag ||
-                   current.type == EventType.ScrollWheel ||
-                   current.type == EventType.KeyDown ||
-                   current.type == EventType.KeyUp;
+            return IsPromptBlockingEventType(current.type);
+        }
+
+        private static bool IsPromptBlockingEventType(EventType eventType) =>
+            eventType == EventType.MouseDown ||
+            eventType == EventType.MouseUp ||
+            eventType == EventType.MouseDrag ||
+            eventType == EventType.ScrollWheel ||
+            eventType == EventType.ContextClick ||
+            eventType == EventType.KeyDown ||
+            eventType == EventType.KeyUp;
+
+        private void ClaimUnappliedClosePromptInput(EventType eventType)
+        {
+            if (eventType == EventType.ScrollWheel)
+            {
+                DecorationEditorInputScope.ClaimMouseWheelInputForFrames();
+                return;
+            }
+
+            DecorationEditorInputScope.ClaimBuildInputForFrames();
+            DecorationEditorInputScope.ClaimCameraInputForFrames();
+        }
+
+        private void ConsumeUnappliedClosePromptInput(Event current, EventType originalType)
+        {
+            if (!IsPromptBlockingEventType(originalType))
+                return;
+
+            ClaimUnappliedClosePromptInput(originalType);
+            if (current != null && current.type != EventType.Used)
+                current.Use();
         }
 
         private void DrawModeSwitchHandoffWindow(int id)
@@ -982,7 +1029,6 @@ namespace DecoLimitLifter.DecorationEditMode
             if (interactive)
             {
                 DrawViewModeMenu(toolbarRect);
-                DrawUnappliedClosePrompt();
                 EsuCursorTooltip.Draw();
                 PersistPanelState();
             }
@@ -1131,8 +1177,14 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private Rect UnappliedClosePromptRect()
         {
-            float width = Mathf.Min(EsuHudLayout.Scale(560f), Screen.width - EsuHudLayout.Scale(40f));
-            float height = Mathf.Min(EsuHudLayout.Scale(260f), Screen.height - EsuHudLayout.Scale(40f));
+            float availableWidth = Mathf.Max(1f, Screen.width - EsuHudLayout.Scale(40f));
+            float availableHeight = Mathf.Max(1f, Screen.height - EsuHudLayout.Scale(40f));
+            float width = Mathf.Max(
+                Mathf.Min(EsuHudLayout.Scale(420f), availableWidth),
+                Mathf.Min(EsuHudLayout.Scale(640f), availableWidth));
+            float height = Mathf.Max(
+                Mathf.Min(EsuHudLayout.Scale(220f), availableHeight),
+                Mathf.Min(EsuHudLayout.Scale(276f), availableHeight));
             return new Rect(
                 (Screen.width - width) * 0.5f,
                 (Screen.height - height) * 0.5f,
@@ -1148,81 +1200,110 @@ namespace DecoLimitLifter.DecorationEditMode
             GUI.DrawTexture(
                 new Rect(0f, 0f, Screen.width, Screen.height),
                 DecorationEditorTheme.DimTexture);
+
             Rect rect = UnappliedClosePromptRect();
-            GUI.Window(
-                _unappliedClosePromptWindowId,
-                rect,
-                DrawUnappliedClosePromptWindow,
-                GUIContent.none,
-                DecorationEditorTheme.Panel);
+            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+
+            Rect inner = EsuHudLayout.PanelInnerRect(rect, 10f);
+            float gap = EsuHudLayout.Scale(8f);
+            float headerHeight = EsuHudLayout.Scale(34f);
+            float warningHeight = EsuHudLayout.Scale(26f);
+            float toggleHeight = EsuHudLayout.Scale(32f);
+            float actionHeight = EsuHudLayout.Scale(40f);
+            Rect headerRect = new Rect(inner.x, inner.y, inner.width, headerHeight);
+            GUI.Box(headerRect, GUIContent.none, DecorationEditorTheme.DialogHeader);
+            GUI.Label(
+                headerRect,
+                new GUIContent("Unapplied decorations", DecorationEditorIconCatalog.Get("save")),
+                DecorationEditorTheme.DialogTitle);
+
+            float y = headerRect.yMax + gap;
+            Rect warningRect = new Rect(inner.x, y, inner.width, warningHeight);
+            GUI.Label(
+                warningRect,
+                "Decoration Edit has unapplied preview changes. Apply them before closing?",
+                DecorationEditorTheme.DialogWarning);
+            y = warningRect.yMax + EsuHudLayout.Scale(4f);
+
+            Rect actionsRect = new Rect(
+                inner.x,
+                inner.yMax - actionHeight,
+                inner.width,
+                actionHeight);
+            Rect toggleRect = new Rect(
+                inner.x,
+                actionsRect.y - gap - toggleHeight,
+                inner.width,
+                toggleHeight);
+            Rect bodyRect = new Rect(
+                inner.x,
+                y,
+                inner.width,
+                Mathf.Max(EsuHudLayout.Scale(36f), toggleRect.y - gap - y));
+            GUI.Label(
+                bodyRect,
+                "Apply commits the current preview to the craft. Discard restores the last applied state. Keep editing leaves the editor open.",
+                DecorationEditorTheme.DialogBody);
+
+            bool alwaysApply = GUI.Toggle(
+                toggleRect,
+                _unappliedClosePromptAlwaysApply,
+                new GUIContent(
+                    (_unappliedClosePromptAlwaysApply ? "[x] " : "[ ] ") +
+                    "Always apply with Ctrl+D next time",
+                    "Store this preference in ESU options. You can re-enable the warning from the ESU options screen."),
+                _unappliedClosePromptAlwaysApply
+                    ? DecorationEditorTheme.DialogToggleSelected
+                    : DecorationEditorTheme.DialogToggle);
+            _unappliedClosePromptAlwaysApply = alwaysApply;
+
+            DrawUnappliedClosePromptActions(actionsRect);
             HandleUnappliedClosePromptKeyboard();
         }
 
-        private void DrawUnappliedClosePromptWindow(int id)
+        private void DrawUnappliedClosePromptActions(Rect rect)
         {
-            GUILayout.Label(
-                new GUIContent("Unapplied decorations", DecorationEditorIconCatalog.Get("save")),
-                DecorationEditorTheme.Header,
-                GUILayout.Height(EsuHudLayout.Scale(28f)));
-            GUILayout.Space(EsuHudLayout.Scale(8f));
-            GUILayout.Label(
-                "Decoration Edit has unapplied preview changes. Apply them before closing?",
-                DecorationEditorTheme.Warning,
-                GUILayout.ExpandWidth(true));
-            GUILayout.Label(
-                "Apply commits the current preview to the craft. Discard restores the last applied state. Keep editing leaves the editor open.",
-                DecorationEditorTheme.BodyWrap,
-                GUILayout.ExpandWidth(true));
-            GUILayout.Space(EsuHudLayout.Scale(8f));
-            if (GUILayout.Button(
-                    new GUIContent(
-                        (_unappliedClosePromptAlwaysApply ? "[x] " : "[ ] ") +
-                        "Always apply on Ctrl+D (don't show again)",
-                        "Store this preference in ESU options. You can re-enable the warning from the ESU options screen."),
-                    _unappliedClosePromptAlwaysApply
-                        ? DecorationEditorTheme.RowSelected
-                        : DecorationEditorTheme.Row,
-                    GUILayout.Height(EsuHudLayout.Scale(28f))))
-            {
-                _unappliedClosePromptAlwaysApply = !_unappliedClosePromptAlwaysApply;
-            }
+            float gap = EsuHudLayout.Scale(8f);
+            float buttonWidth = Mathf.Max(1f, (rect.width - gap * 2f) / 3f);
+            Rect applyRect = new Rect(rect.x, rect.y, buttonWidth, rect.height);
+            Rect discardRect = new Rect(applyRect.xMax + gap, rect.y, buttonWidth, rect.height);
+            Rect keepEditingRect = new Rect(discardRect.xMax + gap, rect.y, buttonWidth, rect.height);
 
-            GUILayout.FlexibleSpace();
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button(
-                    new GUIContent(
-                        "Apply and close",
-                        DecorationEditorIconCatalog.Get("save"),
-                        "Commit the preview changes and close Decoration Edit Mode."),
-                    DecorationEditorTheme.ActiveButton,
-                    GUILayout.Height(EsuHudLayout.Scale(38f))))
-            {
+            if (PromptActionButton(
+                    applyRect,
+                    "save",
+                    "Apply and close",
+                    "Commit the preview changes and close Decoration Edit Mode.",
+                    DecorationEditorTheme.DialogActiveButton))
                 ApplyAndCloseFromPrompt();
-            }
 
-            if (GUILayout.Button(
-                    new GUIContent(
-                        "Discard",
-                        DecorationEditorIconCatalog.Get("cancel"),
-                        "Restore the last applied Decoration Edit state and close."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Height(EsuHudLayout.Scale(38f))))
-            {
+            if (PromptActionButton(
+                    discardRect,
+                    "cancel",
+                    "Discard",
+                    "Restore the last applied Decoration Edit state and close.",
+                    DecorationEditorTheme.DialogButton))
                 DiscardAndCloseFromPrompt();
-            }
 
-            if (GUILayout.Button(
-                    new GUIContent(
-                        "Keep editing",
-                        DecorationEditorIconCatalog.Get("close"),
-                        "Close this warning and return to Decoration Edit Mode."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Height(EsuHudLayout.Scale(38f))))
-            {
+            if (PromptActionButton(
+                    keepEditingRect,
+                    "close",
+                    "Keep editing",
+                    "Close this warning and return to Decoration Edit Mode.",
+                    DecorationEditorTheme.DialogButton))
                 CloseUnappliedClosePrompt();
-            }
-            GUILayout.EndHorizontal();
         }
+
+        private static bool PromptActionButton(
+            Rect rect,
+            string icon,
+            string label,
+            string tooltip,
+            GUIStyle style) =>
+            GUI.Button(
+                rect,
+                new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
+                style);
 
         private void HandleUnappliedClosePromptKeyboard()
         {
@@ -1535,11 +1616,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 ApplySelection();
             if (AttentionIconButton("cancel", "Cancel", DecorationEditorTheme.Button, "Restore the current preview."))
                 CancelSelection();
-            if (IconButton("close", "Close", DecorationEditorTheme.Button, "Close and restore un-applied changes."))
-            {
-                CloseRequested = true;
-                CloseApplies = false;
-            }
+            if (IconButton("close", "Close", DecorationEditorTheme.Button, "Close Decoration Edit Mode. Dirty previews ask whether to apply or discard."))
+                RequestHotkeyClose();
             GUILayout.EndHorizontal();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
@@ -1837,6 +1915,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void ToggleSelectionMode()
         {
+            if (_selectionMode != DecorationSelectionMode.Box &&
+                TryHandleSelectionFocusBulkRequest())
+            {
+                return;
+            }
+
             if (_selectionMode == DecorationSelectionMode.Box)
             {
                 _selectionMode = DecorationSelectionMode.Single;
@@ -2607,6 +2691,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (TryHandleSelectionFocusRequest(clicked, _selectedConstruct))
+                return;
+
             bool control = IsControlHeld();
             bool shift = IsShiftHeld();
             if (shift &&
@@ -2665,6 +2752,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (TryHandleSelectionFocusRequest(clicked, _selectedConstruct))
+                return;
+
             if (!additive)
                 _selection.Clear();
 
@@ -2693,6 +2783,9 @@ namespace DecoLimitLifter.DecorationEditMode
         private void ToggleAnchorDecorationSelection(Decoration decoration)
         {
             if (decoration == null || decoration.IsDeleted || _selectedConstruct == null)
+                return;
+
+            if (TryHandleSelectionFocusRequest(decoration, _selectedConstruct))
                 return;
 
             if (_selection.Contains(decoration))
@@ -2953,6 +3046,9 @@ namespace DecoLimitLifter.DecorationEditMode
             if (row == null || row.Decoration == null || row.Decoration.IsDeleted || row.Construct == null)
                 return;
 
+            if (TryHandleSelectionFocusRequest(row.Decoration, row.Construct))
+                return;
+
             bool control = IsControlHeld();
             bool shift = IsShiftHeld();
             if (shift &&
@@ -3009,6 +3105,9 @@ namespace DecoLimitLifter.DecorationEditMode
             if (rows == null || clicked?.Decoration == null || clicked.Construct == null)
                 return;
 
+            if (TryHandleSelectionFocusRequest(clicked.Decoration, clicked.Construct))
+                return;
+
             if (!additive ||
                 _selectedConstruct == null ||
                 !ReferenceEquals(_selectedConstruct, clicked.Construct))
@@ -3046,6 +3145,9 @@ namespace DecoLimitLifter.DecorationEditMode
         private void ToggleOutlinerDecorationSelection(OutlinerRow row)
         {
             if (row?.Decoration == null || row.Decoration.IsDeleted || row.Construct == null)
+                return;
+
+            if (TryHandleSelectionFocusRequest(row.Decoration, row.Construct))
                 return;
 
             if (_selectedConstruct == null ||
@@ -5934,7 +6036,7 @@ namespace DecoLimitLifter.DecorationEditMode
             float cleanWidth = EsuHudLayout.Scale(92f);
             float settingsWidth = EsuHudLayout.Scale(132f);
             float anchorWidth = EsuHudLayout.Scale(132f);
-            float selectWidth = EsuHudLayout.Scale(388f);
+            float selectWidth = EsuHudLayout.Scale(476f);
             Rect cleanRect = new Rect(rect.xMax - cleanWidth, rect.y, cleanWidth, rect.height);
             Rect settingsRect = new Rect(cleanRect.x - gap - settingsWidth, rect.y, settingsWidth, rect.height);
             Rect anchorRect = new Rect(settingsRect.x - gap - anchorWidth, rect.y, anchorWidth, rect.height);
@@ -5963,13 +6065,17 @@ namespace DecoLimitLifter.DecorationEditMode
             float boxWidth = EsuHudLayout.Scale(46f);
             float xrayWidth = EsuHudLayout.Scale(58f);
             float hideMeshWidth = EsuHudLayout.Scale(78f);
+            float focusWidth = EsuHudLayout.Scale(82f);
             bool pivotEnabled = HasMultiSelectionForTransform();
             float pivotWidth = EsuHudLayout.Scale(112f);
-            float total = pivotWidth + singleWidth + boxWidth + xrayWidth + hideMeshWidth + gap * 4f;
+            float total = pivotWidth + focusWidth + singleWidth + boxWidth + xrayWidth + hideMeshWidth + gap * 5f;
             float x = rect.x + Mathf.Max(0f, (rect.width - total) * 0.5f);
 
             DrawGroupPivotButton(new Rect(x, y, pivotWidth, height), pivotEnabled);
             x += pivotWidth + gap;
+
+            DrawSelectionFocusButton(new Rect(x, y, focusWidth, height));
+            x += focusWidth + gap;
 
             if (GUI.Button(
                     new Rect(x, y, singleWidth, height),
@@ -5987,6 +6093,9 @@ namespace DecoLimitLifter.DecorationEditMode
                     new GUIContent("Box", "Drag a rectangle to select multiple decoration centers; Move, Rotate, and Scale then transform them as one group."),
                     DecorationEditorTheme.ToolButton(_selectionMode == DecorationSelectionMode.Box)))
             {
+                if (TryHandleSelectionFocusBulkRequest())
+                    return;
+
                 SetActiveTool(DecorationEditorTool.Select);
                 _selectionMode = DecorationSelectionMode.Box;
             }
@@ -6022,6 +6131,184 @@ namespace DecoLimitLifter.DecorationEditMode
                 CycleGroupPivotMode();
             }
             GUI.enabled = previous;
+        }
+
+        private void DrawSelectionFocusButton(Rect rect)
+        {
+            RefreshSelectionFocusLock();
+            bool available = _selected != null && !_selected.IsDeleted && _selectedConstruct != null;
+            bool active = HasActiveSelectionFocusLock();
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && available;
+            if (GUI.Button(
+                    rect,
+                    new GUIContent(
+                        "Focus deco",
+                        available
+                            ? "Keep selection locked to the current decoration."
+                            : "Select a decoration before locking focus."),
+                    DecorationEditorTheme.ToolButton(active, available)))
+            {
+                ToggleSelectionFocusLock();
+            }
+            GUI.enabled = previous;
+        }
+
+        private bool HasActiveSelectionFocusLock()
+        {
+            Decoration decoration;
+            AllConstruct construct;
+            return TryGetSelectionFocus(out decoration, out construct);
+        }
+
+        private bool TryGetSelectionFocus(out Decoration decoration, out AllConstruct construct)
+        {
+            decoration = null;
+            construct = null;
+            if (!_selectionFocusLocked)
+                return false;
+
+            if (_selectionFocusDecoration == null ||
+                _selectionFocusDecoration.IsDeleted ||
+                _selectionFocusConstruct == null)
+            {
+                ClearSelectionFocusLock(notify: false);
+                return false;
+            }
+
+            decoration = _selectionFocusDecoration;
+            construct = _selectionFocusConstruct;
+            return true;
+        }
+
+        private void RefreshSelectionFocusLock()
+        {
+            if (!_selectionFocusLocked)
+                return;
+
+            Decoration decoration;
+            AllConstruct construct;
+            if (!TryGetSelectionFocus(out decoration, out construct))
+                return;
+
+            if (_selected == null ||
+                _selected.IsDeleted ||
+                !ReferenceEquals(_selected, decoration) ||
+                !ReferenceEquals(_selectedConstruct, construct) ||
+                _selection.Count != 1 ||
+                !_selection.Contains(decoration))
+            {
+                KeepSelectionFocused(decoration, construct);
+            }
+        }
+
+        private void ToggleSelectionFocusLock()
+        {
+            if (HasActiveSelectionFocusLock())
+            {
+                ClearSelectionFocusLock(notify: true);
+                return;
+            }
+
+            EnableSelectionFocusLock();
+        }
+
+        private void EnableSelectionFocusLock()
+        {
+            if (_selected == null ||
+                _selected.IsDeleted ||
+                _selectedConstruct == null)
+            {
+                InfoStore.Add("Select a decoration before locking focus.");
+                return;
+            }
+
+            _selectionFocusLocked = true;
+            _selectionFocusDecoration = _selected;
+            _selectionFocusConstruct = _selectedConstruct;
+            KeepSelectionFocused(_selected, _selectedConstruct);
+            InfoStore.Add("Focus deco enabled. Selection locked to the current decoration.");
+        }
+
+        private void ClearSelectionFocusLock(bool notify)
+        {
+            bool wasLocked = _selectionFocusLocked;
+            _selectionFocusLocked = false;
+            _selectionFocusDecoration = null;
+            _selectionFocusConstruct = null;
+            _selectionFocusBlockedNoticeUntil = -1f;
+            if (notify && wasLocked)
+                InfoStore.Add("Focus deco disabled.");
+        }
+
+        private bool TryHandleSelectionFocusRequest(Decoration decoration, AllConstruct construct)
+        {
+            Decoration focusDecoration;
+            AllConstruct focusConstruct;
+            if (!TryGetSelectionFocus(out focusDecoration, out focusConstruct))
+                return false;
+
+            if (!ReferenceEquals(decoration, focusDecoration) ||
+                !ReferenceEquals(construct, focusConstruct))
+            {
+                NotifySelectionFocusBlocked();
+            }
+
+            KeepSelectionFocused(focusDecoration, focusConstruct);
+            return true;
+        }
+
+        private bool TryBlockSelectionFocusContextTarget(Decoration decoration, AllConstruct construct)
+        {
+            Decoration focusDecoration;
+            AllConstruct focusConstruct;
+            if (!TryGetSelectionFocus(out focusDecoration, out focusConstruct))
+                return false;
+
+            if (ReferenceEquals(decoration, focusDecoration) &&
+                ReferenceEquals(construct, focusConstruct))
+            {
+                return false;
+            }
+
+            NotifySelectionFocusBlocked();
+            KeepSelectionFocused(focusDecoration, focusConstruct);
+            return true;
+        }
+
+        private bool TryHandleSelectionFocusBulkRequest()
+        {
+            Decoration decoration;
+            AllConstruct construct;
+            if (!TryGetSelectionFocus(out decoration, out construct))
+                return false;
+
+            NotifySelectionFocusBlocked();
+            KeepSelectionFocused(decoration, construct);
+            return true;
+        }
+
+        private void NotifySelectionFocusBlocked()
+        {
+            float now = Time.unscaledTime;
+            if (now < _selectionFocusBlockedNoticeUntil)
+                return;
+
+            _selectionFocusBlockedNoticeUntil = now + 0.9f;
+            InfoStore.Add("Focus deco is locked. Turn it off to select another decoration.");
+        }
+
+        private void KeepSelectionFocused(Decoration decoration, AllConstruct construct)
+        {
+            if (decoration == null || decoration.IsDeleted || construct == null)
+                return;
+
+            SetPrimarySelection(decoration, construct);
+            _selection.Clear();
+            _selection.Add(decoration);
+            _selectionMode = DecorationSelectionMode.Single;
+            CancelBoxSelection();
+            ResetInspectorFields();
         }
 
         private void DrawHideOriginalMeshButton(Rect rect)
@@ -6810,6 +7097,9 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
+                if (TryHandleSelectionFocusBulkRequest())
+                    return;
+
                 BeginBoxSelection(_lastMouseGui);
                 return;
             }
@@ -8469,6 +8759,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void SelectBox(Rect rect, bool xray)
         {
+            if (TryHandleSelectionFocusBulkRequest())
+                return;
+
             List<DecorationHit> selected = EnumerateBoxSelectionHits(rect, xray, refresh: true).ToList();
             if (selected.Count == 0)
             {
@@ -8628,6 +8921,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (TryHandleSelectionFocusRequest(best.Decoration, best.Construct))
+                return;
+
             if (additive)
             {
                 AddNearestToSelection(best);
@@ -8673,6 +8969,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 InfoStore.Add("No decoration center near the cursor.");
                 return;
             }
+
+            if (TryHandleSelectionFocusRequest(hit.Decoration, hit.Construct))
+                return;
 
             if (_selectedConstruct != null &&
                 !ReferenceEquals(_selectedConstruct, hit.Construct))
@@ -8749,6 +9048,12 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 CloseDecorationContextMenu();
                 return false;
+            }
+
+            if (TryBlockSelectionFocusContextTarget(hit.Decoration, hit.Construct))
+            {
+                CloseDecorationContextMenu();
+                return true;
             }
 
             _decorationContextTarget = hit.Decoration;
@@ -8913,6 +9218,9 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!DecorationContextTargetValid())
                 return;
 
+            if (TryBlockSelectionFocusContextTarget(_decorationContextTarget, _decorationContextConstruct))
+                return;
+
             SetPrimarySelection(_decorationContextTarget, _decorationContextConstruct);
             _selection.Clear();
             _selection.Add(_decorationContextTarget);
@@ -9039,6 +9347,9 @@ namespace DecoLimitLifter.DecorationEditMode
         private void Select(Decoration decoration, AllConstruct construct, bool notify = true)
         {
             if (decoration == null || decoration.IsDeleted || construct == null)
+                return;
+
+            if (TryHandleSelectionFocusRequest(decoration, construct))
                 return;
 
             SetPrimarySelection(decoration, construct);
@@ -9283,6 +9594,9 @@ namespace DecoLimitLifter.DecorationEditMode
             if (decoration == null)
                 return;
 
+            if (ReferenceEquals(_selectionFocusDecoration, decoration))
+                ClearSelectionFocusLock(notify: false);
+
             _selection.Remove(decoration);
             if (ReferenceEquals(_selected, decoration))
             {
@@ -9402,6 +9716,7 @@ namespace DecoLimitLifter.DecorationEditMode
             ResetInspectorFields();
             RefreshDecorationCache(force: true);
             RefreshForecast(force: true);
+            RefreshSelectionFocusLock();
             if (notify)
                 InfoStore.Add("Decoration edit session applied.");
         }
@@ -9439,6 +9754,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _selection.Clear();
             if (_selected != null && !_selected.IsDeleted)
                 _selection.Add(_selected);
+            RefreshSelectionFocusLock();
             ResetInspectorFields();
             RefreshDecorationCache(force: true);
             RefreshForecast(force: true);
@@ -12268,7 +12584,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private bool TryHandleFacingSymmetryShortcut()
         {
-            if (!Input.GetKeyDown(KeyCode.N))
+            if (!DecoLimitLifter.EsuInputState.IsFacingSymmetryShortcutDown())
                 return false;
 
             DecorationEditorInputScope.ClaimBuildInputForFrames();
@@ -12438,6 +12754,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 _selectionMode = DecorationSelectionMode.Single;
                 CancelBoxSelection();
                 InfoStore.Add("Selection: Single.");
+                return true;
+            }
+
+            if (_selectionMode == DecorationSelectionMode.Single &&
+                TryHandleSelectionFocusBulkRequest())
+            {
                 return true;
             }
 
@@ -12792,6 +13114,9 @@ namespace DecoLimitLifter.DecorationEditMode
             bool createdInSession)
         {
             if (decoration == null || decoration.IsDeleted)
+                return;
+
+            if (TryHandleSelectionFocusRequest(decoration, construct))
                 return;
 
             _selected = decoration;

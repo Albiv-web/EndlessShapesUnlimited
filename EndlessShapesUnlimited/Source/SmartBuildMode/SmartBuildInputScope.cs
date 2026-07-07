@@ -127,7 +127,7 @@ namespace DecoLimitLifter.SmartBuildMode
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             ControlHeldWhileActive ||
             OwnsBuildInputThisFrame ||
-            (_active && DecoLimitLifter.EsuInputState.AnyEsuNumberShortcutDown()) ||
+            (_active && DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()) ||
             ScrollWheelOverUi;
 
         internal static bool SuppressCameraInput() =>

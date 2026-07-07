@@ -66,7 +66,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
     internal enum AutomationProxyPropertyBindingMode
     {
-        Auto,
+        Unset,
         Explicit
     }
 
@@ -462,6 +462,12 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal IReadOnlyList<AutomationBlockNode> Nodes => _nodes;
 
+        internal IReadOnlyList<AutomationBlockNode> ExecutableNodes =>
+            _nodes
+                .Where(node => node != null && node.SnappedToStack)
+                .OrderBy(node => node.CanvasOrder)
+                .ToArray();
+
         internal IReadOnlyList<AutomationBlockPort> Ports => _ports;
 
         internal IReadOnlyList<AutomationBlockLink> Links => _links;
@@ -479,12 +485,6 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             var workspace = new AutomationBlockWorkspace(controllerKey, controllerLabel);
             workspace.ReplaceTargets(linkedTargets);
-            workspace.AddBlock(AutomationBlockKind.Comment);
-            workspace.AddBlock(AutomationBlockKind.WhenIf);
-            workspace.AddBlock(AutomationBlockKind.ReadTarget);
-            workspace.AddBlock(AutomationBlockKind.Compare);
-            workspace.AddBlock(AutomationBlockKind.Constant);
-            workspace.AddBlock(AutomationBlockKind.SetTarget);
             return workspace;
         }
 
@@ -500,23 +500,20 @@ namespace DecoLimitLifter.AutomationEditMode
                 return false;
             }
 
-            AutomationBlockNode read = FirstNode(AutomationBlockKind.ReadTarget);
-            AutomationBlockNode when = FirstNode(AutomationBlockKind.WhenIf);
-            AutomationBlockNode compare = FirstNode(AutomationBlockKind.Compare);
-            AutomationBlockNode constant = FirstNode(AutomationBlockKind.Constant);
-            AutomationBlockNode set = FirstNode(AutomationBlockKind.SetTarget);
-            if (read == null || when == null || compare == null || constant == null || set == null)
-                return false;
+            AutomationBlockNode read = EnsureStarterNode(AutomationBlockKind.ReadTarget);
+            AutomationBlockNode when = EnsureStarterNode(AutomationBlockKind.WhenIf);
+            AutomationBlockNode compare = EnsureStarterNode(AutomationBlockKind.Compare);
+            AutomationBlockNode constant = EnsureStarterNode(AutomationBlockKind.Constant);
+            AutomationBlockNode set = EnsureStarterNode(AutomationBlockKind.SetTarget);
+            AutomationBlockNode comment = EnsureStarterNode(AutomationBlockKind.Comment);
 
             SetNodeTarget(read.Id, inputTarget, AutomationLinkDirection.Input);
             SetNodeTarget(set.Id, outputTarget, AutomationLinkDirection.Output);
-            read.SetAutoPropertyHint("ammo");
-            set.SetAutoPropertyHint("angle");
             when.SecondaryNumericValue = 0f;
             compare.Operator = AutomationCompareOperator.LessThan;
             compare.NumericValue = 10f;
             constant.NumericValue = 45f;
-            if (FirstNode(AutomationBlockKind.Comment) is AutomationBlockNode comment)
+            if (comment != null)
                 comment.Comment = "APS ammo < 10 sets spinblock angle to 45, else 0.";
             RebuildPortsAndLinks();
             return true;
@@ -543,46 +540,35 @@ namespace DecoLimitLifter.AutomationEditMode
         }
 
         internal AutomationBlockNode AddBlock(AutomationBlockKind kind) =>
-            AddBlock(kind, _nodes.Count);
+            AddBlock(kind, ExecutableNodes.Count);
 
         internal AutomationBlockNode AddBlock(AutomationBlockKind kind, int insertIndex)
         {
-            AutomationTarget target = DefaultTargetFor(kind);
-            AutomationBlockDefinition definition = AutomationBlockCatalog.DefinitionFor(kind);
-            var node = new AutomationBlockNode(
-                "esu-block-" + _nextNodeIndex.ToString(CultureInfo.InvariantCulture),
-                kind,
-                definition.Label,
-                definition.IconKey,
-                definition.Category,
-                definition.TemplateId);
-            _nextNodeIndex++;
+            AutomationBlockNode node = CreateConfiguredBlock(kind);
+            InsertNodeIntoStack(node, insertIndex);
+            Select(node.Id);
+            RefreshCanvasOrder();
+            RebuildPortsAndLinks();
+            return node;
+        }
 
-            if (target != null)
-                node.SetTarget(target);
-            if (kind == AutomationBlockKind.ReadTarget)
-                node.LinkDirection = AutomationLinkDirection.Input;
-            if (kind == AutomationBlockKind.SetTarget)
-                node.LinkDirection = AutomationLinkDirection.Output;
-            if (kind == AutomationBlockKind.WhenIf)
-                node.SecondaryNumericValue = 0f;
-            if (kind == AutomationBlockKind.Compare)
-                node.NumericValue = 0.5f;
-            if (kind == AutomationBlockKind.MathScale)
-                node.NumericValue = 1f;
-            if (kind == AutomationBlockKind.Constant)
-                node.NumericValue = 1f;
-            if (kind == AutomationBlockKind.Delay)
-                node.NumericValue = 0.2f;
-            if (kind == AutomationBlockKind.MathEvaluator)
-                node.Expression = "input";
-            if (kind == AutomationBlockKind.Switch)
-                node.SecondaryNumericValue = 0f;
-            if (kind == AutomationBlockKind.Comment)
-                node.Comment = "Describe what this automation does.";
-
-            int clamped = Math.Max(0, Math.Min(_nodes.Count, insertIndex));
-            _nodes.Insert(clamped, node);
+        internal AutomationBlockNode AddBlockAt(
+            AutomationBlockKind kind,
+            AutomationBlockCanvasPosition canvasPosition,
+            bool snappedToStack)
+        {
+            AutomationBlockNode node = CreateConfiguredBlock(kind);
+            if (snappedToStack)
+            {
+                InsertNodeIntoStack(node, ExecutableNodes.Count);
+            }
+            else
+            {
+                node.SnappedToStack = false;
+                node.CanvasPosition = canvasPosition;
+                node.CanvasOrder = _nodes.Count;
+                _nodes.Add(node);
+            }
             Select(node.Id);
             RefreshCanvasOrder();
             RebuildPortsAndLinks();
@@ -607,8 +593,42 @@ namespace DecoLimitLifter.AutomationEditMode
                 definition.Label,
                 component?.Description ?? string.Empty);
 
-            int clamped = Math.Max(0, Math.Min(_nodes.Count, insertIndex));
-            _nodes.Insert(clamped, node);
+            InsertNodeIntoStack(node, insertIndex);
+            Select(node.Id);
+            RefreshCanvasOrder();
+            RebuildPortsAndLinks();
+            return node;
+        }
+
+        internal AutomationBlockNode AddNativeComponentBlockAt(
+            AutomationBreadboardAvailableComponent component,
+            AutomationBlockCanvasPosition canvasPosition,
+            bool snappedToStack)
+        {
+            AutomationBlockDefinition definition = AutomationBlockCatalog.NativeDefinition(component);
+            var node = new AutomationBlockNode(
+                "esu-block-" + _nextNodeIndex.ToString(CultureInfo.InvariantCulture),
+                AutomationBlockKind.NativeComponent,
+                definition.Label,
+                definition.IconKey,
+                definition.Category,
+                definition.TemplateId);
+            _nextNodeIndex++;
+            node.SetNativeComponent(
+                definition.NativeComponentTypeName,
+                definition.Label,
+                component?.Description ?? string.Empty);
+
+            if (snappedToStack)
+                InsertNodeIntoStack(node, ExecutableNodes.Count);
+            else
+            {
+                node.SnappedToStack = false;
+                node.CanvasPosition = canvasPosition;
+                node.CanvasOrder = _nodes.Count;
+                _nodes.Add(node);
+            }
+
             Select(node.Id);
             RefreshCanvasOrder();
             RebuildPortsAndLinks();
@@ -650,21 +670,21 @@ namespace DecoLimitLifter.AutomationEditMode
             if (delta == 0 || string.IsNullOrWhiteSpace(SelectedNodeId))
                 return false;
 
-            int index = _nodes.FindIndex(node =>
+            AutomationBlockNode selected = _nodes.FirstOrDefault(node =>
+                string.Equals(node.Id, SelectedNodeId, StringComparison.Ordinal));
+            if (selected == null || !selected.SnappedToStack)
+                return false;
+
+            AutomationBlockNode[] executable = ExecutableNodes.ToArray();
+            int index = Array.FindIndex(executable, node =>
                 string.Equals(node.Id, SelectedNodeId, StringComparison.Ordinal));
             if (index < 0)
                 return false;
-
-            int next = Math.Max(0, Math.Min(_nodes.Count - 1, index + delta));
+            int next = Math.Max(0, Math.Min(executable.Length - 1, index + delta));
             if (next == index)
                 return false;
 
-            AutomationBlockNode nodeToMove = _nodes[index];
-            _nodes.RemoveAt(index);
-            _nodes.Insert(next, nodeToMove);
-            RefreshCanvasOrder();
-            RebuildPortsAndLinks();
-            return true;
+            return MoveNodeToIndex(SelectedNodeId, next);
         }
 
         internal bool MoveNodeToIndex(string nodeId, int insertIndex)
@@ -679,15 +699,49 @@ namespace DecoLimitLifter.AutomationEditMode
 
             AutomationBlockNode nodeToMove = _nodes[index];
             _nodes.RemoveAt(index);
-            int clamped = Math.Max(0, Math.Min(_nodes.Count, insertIndex));
-            if (clamped == index)
-            {
-                _nodes.Insert(clamped, nodeToMove);
-                return false;
-            }
-
-            _nodes.Insert(clamped, nodeToMove);
+            InsertNodeIntoStack(nodeToMove, insertIndex);
             Select(nodeId);
+            RefreshCanvasOrder();
+            RebuildPortsAndLinks();
+            return true;
+        }
+
+        internal bool MoveNodeToCanvas(
+            string nodeId,
+            AutomationBlockCanvasPosition canvasPosition)
+        {
+            if (string.IsNullOrWhiteSpace(nodeId))
+                return false;
+
+            AutomationBlockNode node = _nodes.FirstOrDefault(item =>
+                string.Equals(item.Id, nodeId, StringComparison.Ordinal));
+            if (node == null)
+                return false;
+
+            node.SnappedToStack = false;
+            node.CanvasPosition = canvasPosition;
+            Select(nodeId);
+            RefreshCanvasOrder();
+            RebuildPortsAndLinks();
+            return true;
+        }
+
+        internal bool SetNodeExecutionStackState(
+            string nodeId,
+            bool snappedToStack)
+        {
+            if (string.IsNullOrWhiteSpace(nodeId))
+                return false;
+
+            AutomationBlockNode node = _nodes.FirstOrDefault(item =>
+                string.Equals(item.Id, nodeId, StringComparison.Ordinal));
+            if (node == null || node.SnappedToStack == snappedToStack)
+                return false;
+
+            if (snappedToStack)
+                return MoveNodeToIndex(nodeId, ExecutableNodes.Count);
+
+            node.SnappedToStack = false;
             RefreshCanvasOrder();
             RebuildPortsAndLinks();
             return true;
@@ -705,6 +759,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal AutomationBlockNode FirstNode(AutomationBlockKind kind) =>
             _nodes.FirstOrDefault(node => node.Kind == kind);
+
+        internal AutomationBlockNode FirstExecutableNode(AutomationBlockKind kind) =>
+            ExecutableNodes.FirstOrDefault(node => node.Kind == kind);
 
         internal bool SetNodeTarget(
             string nodeId,
@@ -735,7 +792,7 @@ namespace DecoLimitLifter.AutomationEditMode
         }
 
         internal IReadOnlyList<AutomationBlockNode> NativeComponentNodes() =>
-            _nodes
+            ExecutableNodes
                 .Where(node => node.Kind == AutomationBlockKind.NativeComponent &&
                                !string.IsNullOrWhiteSpace(node.NativeComponentTypeName))
                 .ToArray();
@@ -747,9 +804,9 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             get
             {
-                AutomationBlockNode read = FirstNode(AutomationBlockKind.ReadTarget);
-                AutomationBlockNode compare = FirstNode(AutomationBlockKind.Compare);
-                AutomationBlockNode set = FirstNode(AutomationBlockKind.SetTarget);
+                AutomationBlockNode read = FirstExecutableNode(AutomationBlockKind.ReadTarget);
+                AutomationBlockNode compare = FirstExecutableNode(AutomationBlockKind.Compare);
+                AutomationBlockNode set = FirstExecutableNode(AutomationBlockKind.SetTarget);
                 return read != null &&
                        compare != null &&
                        set != null &&
@@ -760,11 +817,14 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal AutomationSystemBlockDefinition CollapseSelectionToSystemBlock(string name)
         {
+            AutomationBlockNode[] executable = ExecutableNodes.ToArray();
             AutomationBlockNode[] selected = string.IsNullOrWhiteSpace(SelectedNodeId)
-                ? _nodes.ToArray()
-                : _nodes.Where(node => string.Equals(node.Id, SelectedNodeId, StringComparison.Ordinal)).ToArray();
+                ? executable
+                : executable.Where(node => string.Equals(node.Id, SelectedNodeId, StringComparison.Ordinal)).ToArray();
             if (selected.Length == 0)
-                selected = _nodes.ToArray();
+                selected = string.IsNullOrWhiteSpace(SelectedNodeId)
+                    ? executable
+                    : Array.Empty<AutomationBlockNode>();
 
             var nodeIds = selected.Select(node => node.Id).ToArray();
             var inputs = selected
@@ -798,8 +858,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal string Summary()
         {
-            AutomationBlockNode read = FirstNode(AutomationBlockKind.ReadTarget);
-            AutomationBlockNode set = FirstNode(AutomationBlockKind.SetTarget);
+            AutomationBlockNode read = FirstExecutableNode(AutomationBlockKind.ReadTarget);
+            AutomationBlockNode set = FirstExecutableNode(AutomationBlockKind.SetTarget);
             return (read == null ? "Read target" : "Read " + read.TargetLabel) +
                    " -> " +
                    (set == null ? "Set target" : "Set " + set.TargetLabel);
@@ -882,13 +942,13 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void AddStarterRecipeLinks()
         {
-            AutomationBlockNode read = FirstNode(AutomationBlockKind.ReadTarget);
-            AutomationBlockNode compare = FirstNode(AutomationBlockKind.Compare);
-            AutomationBlockNode when = FirstNode(AutomationBlockKind.WhenIf);
-            AutomationBlockNode constant = FirstNode(AutomationBlockKind.Constant);
-            AutomationBlockNode scale = FirstNode(AutomationBlockKind.MathScale);
-            AutomationBlockNode evaluator = FirstNode(AutomationBlockKind.MathEvaluator);
-            AutomationBlockNode set = FirstNode(AutomationBlockKind.SetTarget);
+            AutomationBlockNode read = FirstExecutableNode(AutomationBlockKind.ReadTarget);
+            AutomationBlockNode compare = FirstExecutableNode(AutomationBlockKind.Compare);
+            AutomationBlockNode when = FirstExecutableNode(AutomationBlockKind.WhenIf);
+            AutomationBlockNode constant = FirstExecutableNode(AutomationBlockKind.Constant);
+            AutomationBlockNode scale = FirstExecutableNode(AutomationBlockKind.MathScale);
+            AutomationBlockNode evaluator = FirstExecutableNode(AutomationBlockKind.MathEvaluator);
+            AutomationBlockNode set = FirstExecutableNode(AutomationBlockKind.SetTarget);
 
             AddLink(read, "value", compare, "value");
             AddLink(compare, "condition", when, "condition");
@@ -903,7 +963,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private void AddLinearFallbackLinks()
         {
             AutomationBlockPort previousOutput = null;
-            foreach (AutomationBlockNode node in _nodes)
+            foreach (AutomationBlockNode node in ExecutableNodes)
             {
                 AutomationBlockPort input = _ports.FirstOrDefault(port =>
                     string.Equals(port.NodeId, node.Id, StringComparison.Ordinal) &&
@@ -1001,12 +1061,89 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void RefreshCanvasOrder()
         {
-            for (int index = 0; index < _nodes.Count; index++)
+            AutomationBlockNode[] executable = ExecutableNodes.ToArray();
+            for (int index = 0; index < executable.Length; index++)
             {
-                AutomationBlockNode node = _nodes[index];
+                AutomationBlockNode node = executable[index];
                 node.CanvasOrder = index;
                 node.CanvasPosition = new AutomationBlockCanvasPosition(0f, index * 68f);
             }
+
+            int looseIndex = executable.Length;
+            foreach (AutomationBlockNode node in _nodes.Where(item => item != null && !item.SnappedToStack))
+                node.CanvasOrder = looseIndex++;
+        }
+
+        private AutomationBlockNode EnsureStarterNode(AutomationBlockKind kind)
+        {
+            AutomationBlockNode node = FirstExecutableNode(kind);
+            if (node != null)
+                return node;
+
+            return AddBlock(kind, ExecutableNodes.Count);
+        }
+
+        private AutomationBlockNode CreateConfiguredBlock(AutomationBlockKind kind)
+        {
+            AutomationTarget target = DefaultTargetFor(kind);
+            AutomationBlockDefinition definition = AutomationBlockCatalog.DefinitionFor(kind);
+            var node = new AutomationBlockNode(
+                "esu-block-" + _nextNodeIndex.ToString(CultureInfo.InvariantCulture),
+                kind,
+                definition.Label,
+                definition.IconKey,
+                definition.Category,
+                definition.TemplateId);
+            _nextNodeIndex++;
+
+            if (target != null)
+                node.SetTarget(target);
+            if (kind == AutomationBlockKind.ReadTarget)
+                node.LinkDirection = AutomationLinkDirection.Input;
+            if (kind == AutomationBlockKind.SetTarget)
+                node.LinkDirection = AutomationLinkDirection.Output;
+            if (kind == AutomationBlockKind.WhenIf)
+                node.SecondaryNumericValue = 0f;
+            if (kind == AutomationBlockKind.Compare)
+                node.NumericValue = 0.5f;
+            if (kind == AutomationBlockKind.MathScale)
+                node.NumericValue = 1f;
+            if (kind == AutomationBlockKind.Constant)
+                node.NumericValue = 1f;
+            if (kind == AutomationBlockKind.Delay)
+                node.NumericValue = 0.2f;
+            if (kind == AutomationBlockKind.MathEvaluator)
+                node.Expression = "input";
+            if (kind == AutomationBlockKind.Switch)
+                node.SecondaryNumericValue = 0f;
+            if (kind == AutomationBlockKind.Comment)
+                node.Comment = "Describe what this automation does.";
+
+            return node;
+        }
+
+        private void InsertNodeIntoStack(
+            AutomationBlockNode node,
+            int insertIndex)
+        {
+            if (node == null)
+                return;
+
+            node.SnappedToStack = true;
+            AutomationBlockNode[] executable = ExecutableNodes.ToArray();
+            int clamped = Math.Max(0, Math.Min(executable.Length, insertIndex));
+            if (clamped >= executable.Length)
+            {
+                _nodes.Add(node);
+                return;
+            }
+
+            int absolute = _nodes.FindIndex(item =>
+                string.Equals(item.Id, executable[clamped].Id, StringComparison.Ordinal));
+            if (absolute < 0)
+                _nodes.Add(node);
+            else
+                _nodes.Insert(absolute, node);
         }
 
         internal static AutomationBlockCategory CategoryFor(AutomationBlockKind kind)
@@ -1144,6 +1281,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal AutomationBlockCanvasPosition CanvasPosition { get; set; }
 
+        internal bool SnappedToStack { get; set; }
+
         internal bool IsSelected { get; set; }
 
         internal string TargetKey { get; private set; }
@@ -1165,9 +1304,7 @@ namespace DecoLimitLifter.AutomationEditMode
         internal string Expression { get; set; }
 
         internal AutomationProxyPropertyBindingMode PropertyBindingMode { get; private set; } =
-            AutomationProxyPropertyBindingMode.Auto;
-
-        internal string AutoPropertyHint { get; private set; } = string.Empty;
+            AutomationProxyPropertyBindingMode.Unset;
 
         internal string NativeComponentTypeName { get; private set; } = string.Empty;
 
@@ -1183,28 +1320,21 @@ namespace DecoLimitLifter.AutomationEditMode
             TargetKey = target.StableKey;
             TargetLabel = target.Label;
             PropertySelection = null;
-            PropertyBindingMode = AutomationProxyPropertyBindingMode.Auto;
+            PropertyBindingMode = AutomationProxyPropertyBindingMode.Unset;
         }
 
         internal void SelectProperty(AutomationProxyPropertySelection selection)
         {
             PropertySelection = selection;
             PropertyBindingMode = selection == null || selection.IsClear
-                ? AutomationProxyPropertyBindingMode.Auto
+                ? AutomationProxyPropertyBindingMode.Unset
                 : AutomationProxyPropertyBindingMode.Explicit;
         }
 
         internal void ClearProperty()
         {
             PropertySelection = null;
-            PropertyBindingMode = AutomationProxyPropertyBindingMode.Auto;
-        }
-
-        internal void SetAutoPropertyHint(string hint)
-        {
-            AutoPropertyHint = hint ?? string.Empty;
-            if (PropertySelection == null || PropertySelection.IsClear)
-                PropertyBindingMode = AutomationProxyPropertyBindingMode.Auto;
+            PropertyBindingMode = AutomationProxyPropertyBindingMode.Unset;
         }
 
         internal void SetNativeComponent(
@@ -1526,14 +1656,14 @@ namespace DecoLimitLifter.AutomationEditMode
                 return false;
             }
 
-            AutomationBlockNode readNode = workspace.FirstNode(AutomationBlockKind.ReadTarget);
-            AutomationBlockNode whenNode = workspace.FirstNode(AutomationBlockKind.WhenIf);
-            AutomationBlockNode compareNode = workspace.FirstNode(AutomationBlockKind.Compare);
-            AutomationBlockNode scaleNode = workspace.FirstNode(AutomationBlockKind.MathScale);
-            AutomationBlockNode evaluatorNode = workspace.FirstNode(AutomationBlockKind.MathEvaluator);
-            AutomationBlockNode switchNode = workspace.FirstNode(AutomationBlockKind.Switch);
-            AutomationBlockNode constantNode = workspace.FirstNode(AutomationBlockKind.Constant);
-            AutomationBlockNode setNode = workspace.FirstNode(AutomationBlockKind.SetTarget);
+            AutomationBlockNode readNode = workspace.FirstExecutableNode(AutomationBlockKind.ReadTarget);
+            AutomationBlockNode whenNode = workspace.FirstExecutableNode(AutomationBlockKind.WhenIf);
+            AutomationBlockNode compareNode = workspace.FirstExecutableNode(AutomationBlockKind.Compare);
+            AutomationBlockNode scaleNode = workspace.FirstExecutableNode(AutomationBlockKind.MathScale);
+            AutomationBlockNode evaluatorNode = workspace.FirstExecutableNode(AutomationBlockKind.MathEvaluator);
+            AutomationBlockNode switchNode = workspace.FirstExecutableNode(AutomationBlockKind.Switch);
+            AutomationBlockNode constantNode = workspace.FirstExecutableNode(AutomationBlockKind.Constant);
+            AutomationBlockNode setNode = workspace.FirstExecutableNode(AutomationBlockKind.SetTarget);
             AutomationNativeComponentRequest[] nativeRequests = workspace
                 .NativeComponentNodes()
                 .Select(node => new AutomationNativeComponentRequest(
@@ -1553,6 +1683,12 @@ namespace DecoLimitLifter.AutomationEditMode
 
             if (!ValidateBlockSupportForCheck(workspace, out message))
                 return false;
+
+            if (!hasAnySemanticBlock && nativeRequests.Length == 0)
+            {
+                message = "No snapped ESU Blocks are ready to Check. Drag blocks near the forever stack to snap them into the executable flow.";
+                return false;
+            }
 
             if ((!hasAnySemanticBlock || !hasConfiguredSemanticFlow) && nativeRequests.Length > 0)
             {
@@ -1645,6 +1781,18 @@ namespace DecoLimitLifter.AutomationEditMode
                 return false;
             }
 
+            if (!HasExplicitPropertySelection(readNode))
+            {
+                message = "Read Target needs an explicit Getter property. Choose a property before checking ESU Blocks.";
+                return false;
+            }
+
+            if (!HasExplicitPropertySelection(setNode))
+            {
+                message = "Set Target needs an explicit Setter property. Choose a property before checking ESU Blocks.";
+                return false;
+            }
+
             string identifier = IdentifierForReadSignal(readTarget, readNode.PropertySelection);
             string condition = identifier + " " + OperatorText(compareNode.Operator) + " " +
                                compareNode.NumericValue.ToString("0.###", CultureInfo.InvariantCulture);
@@ -1652,8 +1800,8 @@ namespace DecoLimitLifter.AutomationEditMode
             float failValue = switchNode != null
                 ? switchNode.SecondaryNumericValue
                 : whenNode == null ? 0f : whenNode.SecondaryNumericValue;
-            string readProperty = PropertyPreview(readNode, "Auto Getter property");
-            string setProperty = PropertyPreview(setNode, "Auto Setter property");
+            string readProperty = PropertyPreview(readNode, "Choose Getter property");
+            string setProperty = PropertyPreview(setNode, "Choose Setter property");
             var steps = new List<string>
             {
                 "Read " + readTarget.Label + " property: " + readProperty + ".",
@@ -1696,7 +1844,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (workspace == null)
                 return true;
 
-            foreach (AutomationBlockNode node in workspace.Nodes)
+            foreach (AutomationBlockNode node in workspace.ExecutableNodes)
             {
                 if (node == null)
                     continue;
@@ -1731,7 +1879,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (workspace == null || steps == null)
                 return;
 
-            int comments = workspace.Nodes.Count(node => node.Kind == AutomationBlockKind.Comment);
+            int comments = workspace.ExecutableNodes.Count(node => node.Kind == AutomationBlockKind.Comment);
             if (comments > 0)
             {
                 steps.Add(
@@ -1754,10 +1902,14 @@ namespace DecoLimitLifter.AutomationEditMode
                 return node.PropertySelection.Label;
             }
 
-            return string.IsNullOrWhiteSpace(node.AutoPropertyHint)
-                ? fallback
-                : "auto: " + node.AutoPropertyHint;
+            return fallback;
         }
+
+        private static bool HasExplicitPropertySelection(AutomationBlockNode node) =>
+            node != null &&
+            node.PropertyBindingMode == AutomationProxyPropertyBindingMode.Explicit &&
+            node.PropertySelection != null &&
+            !node.PropertySelection.IsClear;
 
         internal static bool ApplyLoweringPlan(
             AutomationBreadboardInspector inspector,

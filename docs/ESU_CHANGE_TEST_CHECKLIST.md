@@ -395,8 +395,15 @@ coverage, not proof that the current editor is complete.
 ## Decoration Edit
 
 - Select existing decorations in viewport and outliner.
+- Toggle Focus deco on a selected decoration, then verify viewport click-select,
+  Box select, outliner rows, and selected-anchor rows cannot move selection
+  until Focus deco is turned off.
 - Move, rotate, scale, anchor, paint, and view-filter decorations.
 - Apply and undo changes.
+- With a dirty preview, press Ctrl+D and click toolbar Close. Confirm the
+  foreground Unapplied decorations prompt appears above the dimmed editor and
+  offers Apply and close, Discard, and Keep editing without trapping input in a
+  dim-only state.
 - Save and reload the construct.
 - With Vanilla Compatibility Mode on, verify blocked saves show an ESU popup and log entry.
 
