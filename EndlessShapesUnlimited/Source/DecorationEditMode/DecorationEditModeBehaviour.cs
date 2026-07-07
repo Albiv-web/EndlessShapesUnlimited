@@ -20,7 +20,7 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (Active)
             {
-                Close(apply: false);
+                RequestActiveSessionClose();
                 return;
             }
 
@@ -147,12 +147,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (Active &&
                     toggleDown)
                 {
-                    Close(apply: false);
+                    RequestActiveSessionClose();
                     return;
                 }
 
                 if (Active && Input.GetKeyDown(KeyCode.Escape))
                 {
+                    if (_session != null && _session.DismissOpenPrompt())
+                        return;
+
                     DecoLimitLifter.EsuEscapeCloseGuard.Arm();
                     Close(apply: false);
                     return;
@@ -206,6 +209,13 @@ namespace DecoLimitLifter.DecorationEditMode
             return DecoLimitLifter.EsuBuildModeInputGate.ConsumeSwitchModeDown();
         }
 
+        private void RequestActiveSessionClose()
+        {
+            _session?.RequestHotkeyClose();
+            if (_session != null && _session.CloseRequested)
+                Close(_session.CloseApplies);
+        }
+
         private void OnGUI()
         {
             try
@@ -214,6 +224,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     ClearModeSwitchHandoffGui();
                     _session.OnGUI();
+                    DecoLimitLifter.EsuModeSwitchHandoff.ClaimTargetEditorOpened();
                     return;
                 }
 

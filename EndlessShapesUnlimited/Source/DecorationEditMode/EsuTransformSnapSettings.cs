@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using BrilliantSkies.PlayerProfiles;
 using DecoLimitLifter.SerializationHud;
 using EndlessShapes2;
 using UnityEngine;
@@ -8,16 +9,19 @@ namespace DecoLimitLifter.DecorationEditMode
 {
     internal static class EsuTransformSnapSettings
     {
-        internal const float DefaultDecorationMoveSnap = 0.05f;
-        internal const float DefaultDecorationRotateSnapDegrees = 5f;
-        internal const float DefaultDecorationScaleSnap = 0.05f;
+        internal const float DefaultDecorationMoveSnap = 0.001f;
+        internal const float DefaultDecorationRotateSnapDegrees = 0.001f;
+        internal const float DefaultDecorationScaleSnap = 0.001f;
         internal const int DefaultSmartMoveStepCells = 1;
         internal const float DefaultSmartRotateSnapDegrees = 90f;
         internal const int DefaultSmartScaleStepCells = 1;
 
+        private const float LegacyDecorationMoveSnap = 0.05f;
+        private const float LegacyDecorationRotateSnapDegrees = 5f;
+        private const float LegacyDecorationScaleSnap = 0.05f;
         private const float DecorationMoveMinimum = 0.001f;
         private const float DecorationMoveMaximum = 10f;
-        private const float DecorationRotateMinimum = 0.1f;
+        private const float DecorationRotateMinimum = 0.001f;
         private const float DecorationRotateMaximum = 180f;
         private const float DecorationScaleMinimum = 0.00001f;
         private static readonly float DecorationScaleMaximum = float.PositiveInfinity;
@@ -56,10 +60,14 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 try
                 {
-                    return SerializationHudProfile.Data ?? Fallback;
+                    SerializationHudProfile.ProfileData data =
+                        SerializationHudProfile.Data ?? Fallback;
+                    EnsureSmoothDecorationDefaultsMigrated(data);
+                    return data;
                 }
                 catch
                 {
+                    EnsureSmoothDecorationDefaultsMigrated(Fallback);
                     return Fallback;
                 }
             }
@@ -71,6 +79,7 @@ namespace DecoLimitLifter.DecorationEditMode
             data.DecorationMoveSnap = ClampDecorationMove(moveSnap);
             data.DecorationRotateSnapDegrees = ClampDecorationRotate(rotateSnapDegrees);
             data.DecorationScaleSnap = ClampDecorationScale(scaleSnap);
+            data.DecorationSmoothSnapDefaultsMigrated = true;
         }
 
         internal static void SetSmart(float moveStepCells, float rotateSnapDegrees, float scaleStepCells)
@@ -104,6 +113,41 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static float ClampDecorationScale(float value) =>
             ClampFinite(value, DefaultDecorationScaleSnap, DecorationScaleMinimum, DecorationScaleMaximum);
+
+        private static void EnsureSmoothDecorationDefaultsMigrated(
+            SerializationHudProfile.ProfileData data)
+        {
+            if (data == null || data.DecorationSmoothSnapDefaultsMigrated)
+                return;
+
+            bool legacyDefaults =
+                Approximately(data.DecorationMoveSnap, LegacyDecorationMoveSnap) &&
+                Approximately(data.DecorationRotateSnapDegrees, LegacyDecorationRotateSnapDegrees) &&
+                Approximately(data.DecorationScaleSnap, LegacyDecorationScaleSnap);
+            if (legacyDefaults)
+            {
+                data.DecorationMoveSnap = DefaultDecorationMoveSnap;
+                data.DecorationRotateSnapDegrees = DefaultDecorationRotateSnapDegrees;
+                data.DecorationScaleSnap = DefaultDecorationScaleSnap;
+            }
+
+            data.DecorationSmoothSnapDefaultsMigrated = true;
+            SaveProfileBestEffort();
+        }
+
+        private static bool Approximately(float left, float right) =>
+            Mathf.Abs(left - right) <= 0.00001f;
+
+        internal static void SaveProfileBestEffort()
+        {
+            try
+            {
+                ProfileManager.Instance.Save(module => module is SerializationHudProfile);
+            }
+            catch
+            {
+            }
+        }
 
         private static int ClampSmartStep(int value) =>
             Mathf.Clamp(value, SmartStepMinimum, SmartStepMaximum);

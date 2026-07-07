@@ -15,9 +15,11 @@ namespace DecoLimitLifter.SerializationHud
             public bool EnforceVanillaCompatibility { get; set; } = true;
             public bool EsuEditorAutoScale { get; set; } = true;
             public float EsuEditorScale { get; set; } = 1f;
-            public float DecorationMoveSnap { get; set; } = 0.05f;
-            public float DecorationRotateSnapDegrees { get; set; } = 5f;
-            public float DecorationScaleSnap { get; set; } = 0.05f;
+            public bool DecorationEditPromptBeforeHotkeyClose { get; set; } = true;
+            public float DecorationMoveSnap { get; set; } = 0.001f;
+            public float DecorationRotateSnapDegrees { get; set; } = 0.001f;
+            public float DecorationScaleSnap { get; set; } = 0.001f;
+            public bool DecorationSmoothSnapDefaultsMigrated { get; set; }
             public int SmartBuildMoveStepCells { get; set; } = 1;
             public float SmartBuildRotateSnapDegrees { get; set; } = 90f;
             public int SmartBuildScaleStepCells { get; set; } = 1;

@@ -14,5 +14,8 @@ artifacts/
 *.local.md
 TECHNICAL_LOG.md
 docs/
+!docs/
+docs/*
+!docs/AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md
 tools/Beamification/
 LICENSES/FtD_Beamification-MIT.txt

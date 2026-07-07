@@ -38,6 +38,104 @@ namespace DecoLimitLifter
         internal static bool IsActive(DecorationEditAxis axis) =>
             Planes.ContainsKey(axis);
 
+        internal static bool TryCameraFacingLocal(
+            AllConstruct construct,
+            out Vector3 localFacing)
+        {
+            localFacing = Vector3.zero;
+            Camera camera = Camera.main ?? Camera.current;
+            if (camera == null)
+                return false;
+
+            try
+            {
+                localFacing = construct?.myTransform != null
+                    ? construct.myTransform.InverseTransformDirection(camera.transform.forward)
+                    : camera.transform.forward;
+            }
+            catch
+            {
+                localFacing = camera.transform.forward;
+            }
+
+            return localFacing.sqrMagnitude > 0.0001f;
+        }
+
+        internal static bool TryFacingAxis(
+            Vector3 localFacing,
+            out DecorationEditAxis axis)
+        {
+            axis = DecorationEditAxis.None;
+            if (!IsFinite(localFacing) || localFacing.sqrMagnitude <= 0.0001f)
+                return false;
+
+            float x = Mathf.Abs(localFacing.x);
+            float z = Mathf.Abs(localFacing.z);
+            if (Mathf.Max(x, z) > 0.0001f)
+            {
+                axis = x >= z
+                    ? DecorationEditAxis.X
+                    : DecorationEditAxis.Z;
+                return true;
+            }
+
+            if (Mathf.Abs(localFacing.y) > 0.0001f)
+            {
+                axis = DecorationEditAxis.Y;
+                return true;
+            }
+
+            return false;
+        }
+
+        internal static bool TryToggleFacingPlane(
+            AllConstruct construct,
+            Vector3i cell,
+            Vector3 localFacing,
+            out string message)
+        {
+            if (!TryFacingAxis(localFacing, out DecorationEditAxis axis))
+            {
+                message = "Face along the construct grid before toggling a symmetry mirror.";
+                return false;
+            }
+
+            if (PendingAxis == axis)
+            {
+                PendingAxis = DecorationEditAxis.None;
+                message = "Symmetry mirror placement cancelled.";
+                return true;
+            }
+
+            if (construct == null)
+            {
+                message = "Point at the focused construct grid before toggling a symmetry mirror.";
+                return false;
+            }
+
+            if (_construct != null && !ReferenceEquals(_construct, construct))
+            {
+                message = "Clear the existing symmetry planes before placing one on another construct.";
+                return false;
+            }
+
+            string axisName = AxisName(axis);
+            if (Planes.Remove(axis))
+            {
+                PendingAxis = DecorationEditAxis.None;
+                if (Planes.Count == 0)
+                    _construct = null;
+                message = "Facing symmetry mirror disabled (" + axisName + ").";
+                return true;
+            }
+
+            _construct = construct;
+            Planes[axis] = AxisComponent(cell, axis);
+            PendingAxis = DecorationEditAxis.None;
+            message = "Facing symmetry mirror placed (" + axisName + "). Press N again while facing this direction to disable it.";
+            return true;
+        }
+
         internal static string FormatSummary()
         {
             if (PendingAxis != DecorationEditAxis.None)
@@ -359,6 +457,11 @@ namespace DecoLimitLifter
 
         internal static Vector3 ToVector3(Vector3i cell) =>
             new Vector3(cell.x, cell.y, cell.z);
+
+        private static bool IsFinite(Vector3 value) =>
+            !float.IsNaN(value.x) && !float.IsInfinity(value.x) &&
+            !float.IsNaN(value.y) && !float.IsInfinity(value.y) &&
+            !float.IsNaN(value.z) && !float.IsInfinity(value.z);
 
         private static Vector3 SetAxis(Vector3 value, DecorationEditAxis axis, float component)
         {

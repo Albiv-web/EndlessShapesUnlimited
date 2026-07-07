@@ -14,6 +14,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private const int MaxSearchDepth = 6;
         private const int MaxExpandedEnumerableItems = 96;
         private const uint UnselectedCode = 999999U;
+        internal const int ComponentReflectionLimit = 64;
 
         private readonly object _board;
 
@@ -57,7 +58,19 @@ namespace DecoLimitLifter.AutomationEditMode
         internal int PackageCount => ReadPlainInt(_board, "PackageCount", Components.Count);
 
         internal IReadOnlyList<AutomationBreadboardComponentSummary> Components =>
-            ReadComponents(64);
+            ReadComponents(ComponentReflectionLimit);
+
+        internal bool ComponentReflectionMayBeCapped
+        {
+            get
+            {
+                int reflectedCount = Components.Count;
+                if (reflectedCount < ComponentReflectionLimit)
+                    return false;
+
+                return PackageCount >= reflectedCount;
+            }
+        }
 
         internal IReadOnlyList<AutomationBreadboardAvailableComponent> AvailableComponents =>
             ReadAvailableComponents();
@@ -97,6 +110,21 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!TryCreateNativeComponent(typeName, out object component, out message))
                 return false;
 
+            message = "Added " + ComponentDisplayName(component) + " to the native board.";
+            return true;
+        }
+
+        internal bool TryAddComponentTracked(
+            string typeName,
+            out AutomationBreadboardCompileResult result,
+            out string message)
+        {
+            result = null;
+            var createdComponents = new List<object>();
+            if (!TryCreateNativeComponentTracked(typeName, createdComponents, out object component, out message))
+                return false;
+
+            result = CompileResultFromComponents(createdComponents, "native component");
             message = "Added " + ComponentDisplayName(component) + " to the native board.";
             return true;
         }
@@ -1159,6 +1187,8 @@ namespace DecoLimitLifter.AutomationEditMode
             InvokeInstance(component, "ExtractCorrectInputs");
             object picker = InvokeInstance(component, "PropertyPicker");
             object items = InvokeInstance(picker, "EnumerateItems");
+            AutomationBreadboardProxyOption best = null;
+            int bestScore = int.MaxValue;
             foreach (object item in EnumerateCollection(items, 512))
             {
                 object nativeOption = ReadMember(item, "ObjectForAction");
@@ -1167,7 +1197,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 string label = ReadPlainString(item, "Name", "Property");
                 string tooltip = ReadPlainString(item, "ToolTip", string.Empty);
-                if (!MatchesAnyTerm(label, tooltip, searchTerms))
+                if (!TryMatchTermIndex(label, tooltip, searchTerms, out int score))
                     continue;
 
                 AutomationBreadboardProxyOption option = CreateProxyOption(
@@ -1175,11 +1205,16 @@ namespace DecoLimitLifter.AutomationEditMode
                     nativeOption,
                     label,
                     tooltip);
-                if (option != null && !option.IsClear)
-                    return option;
+                if (option == null || option.IsClear || score >= bestScore)
+                    continue;
+
+                best = option;
+                bestScore = score;
+                if (bestScore == 0)
+                    break;
             }
 
-            return null;
+            return best;
         }
 
         internal static IReadOnlyList<string> TargetProxySearchTerms(
@@ -1215,6 +1250,8 @@ namespace DecoLimitLifter.AutomationEditMode
                     AddTargetProxySearchTerms(terms, "angle", "speed", "velocity", "rotation", "azimuth", "elevation");
                     break;
                 case AutomationTargetCategory.TurretsWeapons:
+                    if (getter)
+                        AddTargetProxySearchTerms(terms, "ammo", "munition", "shell", "reload", "magazine", "clip", "count");
                     AddTargetProxySearchTerms(terms, "fire", "firing", "aim", "yaw", "pitch", "azimuth", "elevation");
                     break;
                 case AutomationTargetCategory.Propulsion:
@@ -1281,13 +1318,34 @@ namespace DecoLimitLifter.AutomationEditMode
             string tooltip,
             IReadOnlyList<string> searchTerms)
         {
+            return TryMatchTermIndex(label, tooltip, searchTerms, out _);
+        }
+
+        private static bool TryMatchTermIndex(
+            string label,
+            string tooltip,
+            IReadOnlyList<string> searchTerms,
+            out int index)
+        {
+            index = int.MaxValue;
             if (searchTerms == null || searchTerms.Count == 0)
                 return false;
 
             string haystack = (label ?? string.Empty) + " " + (tooltip ?? string.Empty);
-            return searchTerms.Any(term =>
-                !string.IsNullOrWhiteSpace(term) &&
-                haystack.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0);
+            for (int termIndex = 0; termIndex < searchTerms.Count; termIndex++)
+            {
+                string term = searchTerms[termIndex];
+                if (string.IsNullOrWhiteSpace(term) ||
+                    haystack.IndexOf(term, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                index = termIndex;
+                return true;
+            }
+
+            return false;
         }
 
         private static bool MatchesFilter(string label, string tooltip, string filter)

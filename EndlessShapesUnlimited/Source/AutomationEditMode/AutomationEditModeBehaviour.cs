@@ -186,6 +186,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 {
                     ClearModeSwitchHandoffGui();
                     _session.OnGUI();
+                    DecoLimitLifter.EsuModeSwitchHandoff.ClaimTargetEditorOpened();
                     return;
                 }
 

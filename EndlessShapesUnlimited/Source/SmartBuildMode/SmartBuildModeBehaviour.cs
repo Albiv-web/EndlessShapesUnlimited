@@ -188,6 +188,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 {
                     ClearModeSwitchHandoffGui();
                     _session.OnGUI();
+                    DecoLimitLifter.EsuModeSwitchHandoff.ClaimTargetEditorOpened();
                     return;
                 }
 

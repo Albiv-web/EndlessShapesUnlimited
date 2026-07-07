@@ -14,7 +14,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
     internal static class DecorationEditMath
     {
-        internal const float MoveSnapMetres = 0.05f;
+        internal const float MoveSnapMetres = 0.001f;
         internal const float PositionLimitMetres = 10f;
 
         internal static float Snap(float value, float snap = MoveSnapMetres)

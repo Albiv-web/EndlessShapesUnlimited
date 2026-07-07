@@ -153,19 +153,19 @@ namespace DecoLimitLifter.SmartBuildMode
             int stride = edges.Length > MaxWireEdgesPerPlacement
                 ? Mathf.CeilToInt(edges.Length / (float)MaxWireEdgesPerPlacement)
                 : 1;
-            bool hasRenderableEdge = false;
+            bool drewRenderableEdge = false;
             for (int index = 0; index < edges.Length; index += stride)
             {
                 Edge edge = edges[index];
                 if (edge.A < 0 || edge.B < 0 || edge.A >= vertices.Length || edge.B >= vertices.Length)
                     continue;
 
-                hasRenderableEdge = true;
                 Vector3 localA = localMatrix.MultiplyPoint3x4(vertices[edge.A]);
                 Vector3 localB = localMatrix.MultiplyPoint3x4(vertices[edge.B]);
                 if (shouldDrawLocalEdge != null && !shouldDrawLocalEdge(localA, localB))
                     continue;
 
+                drewRenderableEdge = true;
                 DecorationEditorOverlay.Line(
                     worldMatrix.MultiplyPoint3x4(vertices[edge.A]),
                     worldMatrix.MultiplyPoint3x4(vertices[edge.B]),
@@ -173,7 +173,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     width);
             }
 
-            return hasRenderableEdge;
+            return drewRenderableEdge;
         }
 
         public void Dispose()
@@ -363,7 +363,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (triangles == null || triangles.Length < 3 || vertices == null || vertices.Length == 0)
                 return Array.Empty<Edge>();
 
-            var edgeNormals = new Dictionary<long, EdgeAccumulator>();
+            var edgeNormals = new Dictionary<string, EdgeAccumulator>(StringComparer.Ordinal);
             for (int index = 0; index + 2 < triangles.Length; index += 3)
             {
                 int a = triangles[index];
@@ -384,9 +384,9 @@ namespace DecoLimitLifter.SmartBuildMode
                     continue;
 
                 normal.Normalize();
-                AddHardEdgeCandidate(a, b, normal, edgeNormals);
-                AddHardEdgeCandidate(b, c, normal, edgeNormals);
-                AddHardEdgeCandidate(c, a, normal, edgeNormals);
+                AddHardEdgeCandidate(a, b, vertices, normal, edgeNormals);
+                AddHardEdgeCandidate(b, c, vertices, normal, edgeNormals);
+                AddHardEdgeCandidate(c, a, vertices, normal, edgeNormals);
             }
 
             var result = new List<Edge>();
@@ -407,20 +407,33 @@ namespace DecoLimitLifter.SmartBuildMode
         private static void AddHardEdgeCandidate(
             int a,
             int b,
+            Vector3[] vertices,
             Vector3 normal,
-            Dictionary<long, EdgeAccumulator> edgeNormals)
+            Dictionary<string, EdgeAccumulator> edgeNormals)
         {
-            int min = Math.Min(a, b);
-            int max = Math.Max(a, b);
-            long key = ((long)min << 32) | (uint)max;
+            string key = EdgeKey(vertices[a], vertices[b]);
             if (!edgeNormals.TryGetValue(key, out EdgeAccumulator accumulator))
             {
-                accumulator = new EdgeAccumulator(min, max);
+                accumulator = new EdgeAccumulator(a, b);
                 edgeNormals[key] = accumulator;
             }
 
             accumulator.Add(normal);
         }
+
+        private static string EdgeKey(Vector3 a, Vector3 b)
+        {
+            string first = VertexKey(a);
+            string second = VertexKey(b);
+            return string.CompareOrdinal(first, second) <= 0
+                ? first + "|" + second
+                : second + "|" + first;
+        }
+
+        private static string VertexKey(Vector3 value) =>
+            Mathf.RoundToInt(value.x * 10000f).ToString("X8") + ":" +
+            Mathf.RoundToInt(value.y * 10000f).ToString("X8") + ":" +
+            Mathf.RoundToInt(value.z * 10000f).ToString("X8");
 
         private static string CandidateKey(SmartBlockCandidate candidate)
         {
@@ -513,10 +526,19 @@ namespace DecoLimitLifter.SmartBuildMode
 
             internal bool ShouldDrawHardEdge()
             {
-                if (_normals.Count != 2)
+                if (_normals.Count <= 1)
                     return true;
 
-                return Mathf.Abs(Vector3.Dot(_normals[0], _normals[1])) < HardEdgeDotThreshold;
+                for (int first = 0; first < _normals.Count; first++)
+                {
+                    for (int second = first + 1; second < _normals.Count; second++)
+                    {
+                        if (Mathf.Abs(Vector3.Dot(_normals[first], _normals[second])) < HardEdgeDotThreshold)
+                            return true;
+                    }
+                }
+
+                return false;
             }
         }
     }

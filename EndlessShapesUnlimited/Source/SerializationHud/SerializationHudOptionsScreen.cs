@@ -194,7 +194,15 @@ namespace DecoLimitLifter.SerializationHud
                 "Decoration Edit Mode",
                 new ToolTip(
                     "Modal decoration editor for selecting, moving, retethering, and assigning meshes in build mode."));
-            var editor = CreateTableSegment(1, 1);
+            var editor = CreateTableSegment(2, 1);
+            editor.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Warn before Ctrl+D applies",
+                    new ToolTip(
+                        "When Decoration Edit Mode has unapplied changes, pressing Ctrl+D asks whether to apply before closing."),
+                    (profile, value) => profile.DecorationEditPromptBeforeHotkeyClose = value,
+                    profile => profile.DecorationEditPromptBeforeHotkeyClose));
             editor.AddInterpretter(
                 BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Buttons.SubjectiveButton<byte>.Quick(
                     0,

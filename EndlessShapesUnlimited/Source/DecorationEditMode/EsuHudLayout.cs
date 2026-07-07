@@ -18,6 +18,15 @@ namespace DecoLimitLifter.DecorationEditMode
         internal const float ToolbarLeftRailBaseWidth = 650f;
         internal const float ToolbarNotificationBaseWidth = 250f;
         internal const float ToolbarRightControlsBaseWidth = 504f;
+        internal const float EditorSideMarginBase = 18f;
+        internal const float EditorBottomMarginBase = 10f;
+        internal const float EditorPanelTopGapBase = 8f;
+        internal const float EditorBottomPanelGapBase = 12f;
+        internal const float BottomStripScreenRatio = 0.13f;
+        internal const float BottomStripMinHeightBase = 118f;
+        internal const float BottomStripMaxHeightBase = 146f;
+        internal const float CompactHeaderHeightBase = 22f;
+        internal const float SectionHeaderHeightBase = 24f;
 
         private static int _resetGeneration;
 
@@ -154,6 +163,32 @@ namespace DecoLimitLifter.DecorationEditMode
         }
 
         internal static float ToolbarGap => Scale(ToolbarGapBase);
+
+        internal static float EditorSideMargin => Scale(EditorSideMarginBase);
+
+        internal static float EditorBottomMargin => Scale(EditorBottomMarginBase);
+
+        internal static float EditorPanelTopLimit(float toolbarBaseHeight) =>
+            ToolbarRect(toolbarBaseHeight).yMax + Scale(EditorPanelTopGapBase);
+
+        internal static float BottomStripHeight() =>
+            Mathf.Clamp(
+                Screen.height * BottomStripScreenRatio,
+                Scale(BottomStripMinHeightBase),
+                Scale(BottomStripMaxHeightBase));
+
+        internal static Rect BottomStripRect(float height)
+        {
+            float margin = EditorBottomMargin;
+            return new Rect(
+                margin,
+                Screen.height - height - margin,
+                Screen.width - margin * 2f,
+                height);
+        }
+
+        internal static float BottomPanelLimit(float bottomPanelHeight) =>
+            bottomPanelHeight + Scale(EditorBottomPanelGapBase);
 
         internal static ToolbarBudget CalculateToolbarBudget(float toolbarWidth) =>
             CalculateToolbarBudget(toolbarWidth, CurrentScale);

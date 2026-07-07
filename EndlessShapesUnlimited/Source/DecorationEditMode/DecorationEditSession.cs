@@ -141,6 +141,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private readonly cBuild _build;
         private readonly int _modalWindowId = "EndlessShapesUnlimited.DecorationEditMode.Modal".GetHashCode();
+        private readonly int _unappliedClosePromptWindowId =
+            "EndlessShapesUnlimited.DecorationEditMode.UnappliedClosePrompt".GetHashCode();
         private Rect _meshPaletteRect = s_meshPaletteRect;
         private Rect _rightPanelRect = s_rightPanelRect;
         private Vector2 _meshScroll;
@@ -167,6 +169,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool _textInputFocused;
         private bool _viewModeMenuOpen;
         private bool _anchorMenuOpen = s_anchorMenuOpen;
+        private bool _unappliedClosePromptOpen;
+        private bool _unappliedClosePromptAlwaysApply;
         private DecorationSelectionMode _selectionMode = DecorationSelectionMode.Single;
         private bool _selectionXray;
         private bool _boxSelecting;
@@ -399,6 +403,45 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceDraft.HasDraft ||
             _generatorDraft.HasDraft;
 
+        internal bool HasOpenPrompt => _unappliedClosePromptOpen;
+
+        internal void RequestHotkeyClose()
+        {
+            if (!Active)
+                return;
+
+            if (_unappliedClosePromptOpen)
+                return;
+
+            if (!HasUnappliedChanges)
+            {
+                CloseRequested = true;
+                CloseApplies = false;
+                return;
+            }
+
+            RefreshApplyCancelAttention();
+            if (!ShouldPromptBeforeHotkeyClose())
+            {
+                CloseRequested = true;
+                CloseApplies = true;
+                InfoStore.Add("Decoration Edit changes will be applied before closing.");
+                return;
+            }
+
+            OpenUnappliedClosePrompt();
+        }
+
+        internal bool DismissOpenPrompt()
+        {
+            if (!_unappliedClosePromptOpen)
+                return false;
+
+            CloseUnappliedClosePrompt();
+            InfoStore.Add("Decoration Edit close cancelled.");
+            return true;
+        }
+
         internal DecorationEditSession(cBuild build)
         {
             _build = build ?? throw new ArgumentNullException(nameof(build));
@@ -549,6 +592,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 Active = false;
                 CloseRequested = false;
                 SwitchToSmartBuildRequested = false;
+                _unappliedClosePromptOpen = false;
+                _unappliedClosePromptAlwaysApply = false;
                 RestoreFocusView();
                 _hits.Clear();
                 _outlinerRows.Clear();
@@ -612,6 +657,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Active = false;
             CloseRequested = false;
             SwitchToSmartBuildRequested = false;
+            _unappliedClosePromptOpen = false;
+            _unappliedClosePromptAlwaysApply = false;
             RestoreFocusView();
             _boxSelecting = false;
             _draggingMeshPalette = false;
@@ -642,6 +689,15 @@ namespace DecoLimitLifter.DecorationEditMode
             RefreshForecast(force: false);
             _viewModes.Tick(_viewMode);
             DecorationEditorOverlay.BeginFrame();
+            if (_unappliedClosePromptOpen)
+            {
+                DecorationEditorInputScope.SetMouseOverEditorUi(true);
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                DrawWorldOverlay();
+                return;
+            }
+
             if (_dragAxis != DecorationEditAxis.None ||
                 _rotateDragAxis != DecorationEditAxis.None ||
                 _scaleDragAxis != DecorationEditAxis.None ||
@@ -718,8 +774,23 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void DrawModalEditorWindow(int id)
         {
+            bool promptWasOpen = _unappliedClosePromptOpen;
             DrawEditorShell(interactive: true);
             Event current = Event.current;
+            if ((promptWasOpen || _unappliedClosePromptOpen) &&
+                IsPromptBlockingEvent(current))
+            {
+                if (current.type == EventType.ScrollWheel)
+                    DecorationEditorInputScope.ClaimMouseWheelInputForFrames();
+                else
+                {
+                    DecorationEditorInputScope.ClaimBuildInputForFrames();
+                    DecorationEditorInputScope.ClaimCameraInputForFrames();
+                }
+                current.Use();
+                return;
+            }
+
             if (ShouldConsumeGuiEvent(current))
             {
                 if (current.type == EventType.ScrollWheel)
@@ -731,6 +802,19 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
                 current.Use();
             }
+        }
+
+        private static bool IsPromptBlockingEvent(Event current)
+        {
+            if (current == null)
+                return false;
+
+            return current.type == EventType.MouseDown ||
+                   current.type == EventType.MouseUp ||
+                   current.type == EventType.MouseDrag ||
+                   current.type == EventType.ScrollWheel ||
+                   current.type == EventType.KeyDown ||
+                   current.type == EventType.KeyUp;
         }
 
         private void DrawModeSwitchHandoffWindow(int id)
@@ -750,6 +834,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 current.type == EventType.ScrollWheel;
             if (!mouseEvent)
                 return false;
+
+            if (_unappliedClosePromptOpen)
+                return true;
 
             bool overUi = IsMouseOverEditorUi(current.mousePosition);
             if (overUi)
@@ -805,6 +892,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector2 mouse = Event.current.mousePosition;
             _mouseOverWindow = toolbarRect.Contains(mouse) ||
                                EsuHudNotifications.ContainsMouse(mouse) ||
+                               (_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse)) ||
                                (_viewModeMenuOpen && ViewModeMenuRect(toolbarRect).Contains(mouse)) ||
                                (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
                                IsSurfaceContextMenuAt(mouse) ||
@@ -828,7 +916,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     MaxMeshPaletteWidth(),
                     MaxMeshPaletteHeight(),
                     ToolbarBottomLimit(),
-                    BottomPanelHeight() + EsuHudLayout.Scale(12f));
+                    EsuHudLayout.BottomPanelLimit(BottomPanelHeight()));
                 meshRect = _meshPaletteRect;
                 HandleMeshPaletteDrag(meshRect);
             }
@@ -846,7 +934,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     MaxRightPanelWidth(),
                     MaxRightPanelHeight(),
                     ToolbarBottomLimit(),
-                    BottomPanelHeight() + EsuHudLayout.Scale(12f));
+                    EsuHudLayout.BottomPanelLimit(BottomPanelHeight()));
                 rightRect = _rightPanelRect;
             }
 
@@ -894,12 +982,14 @@ namespace DecoLimitLifter.DecorationEditMode
             if (interactive)
             {
                 DrawViewModeMenu(toolbarRect);
+                DrawUnappliedClosePrompt();
                 EsuCursorTooltip.Draw();
                 PersistPanelState();
             }
         }
 
         private bool TooltipInputSuppressed() =>
+            _unappliedClosePromptOpen ||
             _dragAxis != DecorationEditAxis.None ||
             _rotateDragAxis != DecorationEditAxis.None ||
             _scaleDragAxis != DecorationEditAxis.None ||
@@ -932,7 +1022,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 MaxRightPanelWidth(),
                 MaxRightPanelHeight(),
                 ToolbarBottomLimit(),
-                BottomPanelHeight() + EsuHudLayout.Scale(12f));
+                EsuHudLayout.BottomPanelLimit(BottomPanelHeight()));
             s_rightPanelRect = _rightPanelRect;
             return _rightPanelRect;
         }
@@ -940,8 +1030,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private Rect StatusRect(Rect rightRect)
         {
             float height = BottomPanelHeight();
-            float margin = EsuHudLayout.Scale(10f);
-            return new Rect(margin, Screen.height - height - margin, Screen.width - margin * 2f, height);
+            return EsuHudLayout.BottomStripRect(height);
         }
 
         private Rect MeshPaletteRect()
@@ -953,36 +1042,36 @@ namespace DecoLimitLifter.DecorationEditMode
                 MaxMeshPaletteWidth(),
                 MaxMeshPaletteHeight(),
                 ToolbarBottomLimit(),
-                BottomPanelHeight() + EsuHudLayout.Scale(12f));
+                EsuHudLayout.BottomPanelLimit(BottomPanelHeight()));
             s_meshPaletteRect = _meshPaletteRect;
             return _meshPaletteRect;
         }
 
         private float BottomPanelHeight()
         {
-            return Mathf.Clamp(Screen.height * 0.13f, EsuHudLayout.Scale(118f), EsuHudLayout.Scale(146f));
+            return EsuHudLayout.BottomStripHeight();
         }
 
-        private float ToolbarBottomLimit() => ToolbarRect().yMax + EsuHudLayout.Scale(8f);
+        private float ToolbarBottomLimit() => EsuHudLayout.EditorPanelTopLimit(54f);
 
         private Rect DefaultMeshPaletteRect()
         {
             float width = Mathf.Min(EsuHudLayout.Scale(520f), Mathf.Max(EsuHudLayout.Scale(420f), Screen.width * 0.28f));
             float topLimit = ToolbarBottomLimit();
-            float bottomLimit = BottomPanelHeight() + EsuHudLayout.Scale(12f);
+            float bottomLimit = EsuHudLayout.BottomPanelLimit(BottomPanelHeight());
             float height = Mathf.Min(
                 MaxMeshPaletteHeight(),
                 Mathf.Max(MinMeshPaletteHeight(), Screen.height - topLimit - bottomLimit));
-            return new Rect(EsuHudLayout.Scale(18f), topLimit, width, height);
+            return new Rect(EsuHudLayout.EditorSideMargin, topLimit, width, height);
         }
 
         private Rect DefaultRightPanelRect()
         {
             float width = Mathf.Min(EsuHudLayout.Scale(390f), Mathf.Max(EsuHudLayout.Scale(300f), Screen.width * 0.23f));
             float topLimit = ToolbarBottomLimit();
-            float bottomLimit = BottomPanelHeight() + EsuHudLayout.Scale(12f);
+            float bottomLimit = EsuHudLayout.BottomPanelLimit(BottomPanelHeight());
             float height = Mathf.Max(MinRightPanelHeight(), Screen.height - topLimit - bottomLimit);
-            float margin = EsuHudLayout.Scale(10f);
+            float margin = EsuHudLayout.EditorSideMargin;
             return new Rect(Screen.width - width - margin, topLimit, width, height);
         }
 
@@ -1031,6 +1120,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool IsMouseOverEditorUi(Vector2 mouse) =>
             ToolbarRect().Contains(mouse) ||
             EsuHudNotifications.ContainsMouse(mouse) ||
+            (_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse)) ||
             (_viewModeMenuOpen && ViewModeMenuRect(ToolbarRect()).Contains(mouse)) ||
             (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
             IsSurfaceContextMenuAt(mouse) ||
@@ -1038,6 +1128,194 @@ namespace DecoLimitLifter.DecorationEditMode
             (IsRightPanelStackVisible() && RightPanelRect().Contains(mouse)) ||
             StatusRect(RightPanelRect()).Contains(mouse) ||
             (IsLeftPanelStackVisible() && MeshPaletteRect().Contains(mouse));
+
+        private Rect UnappliedClosePromptRect()
+        {
+            float width = Mathf.Min(EsuHudLayout.Scale(560f), Screen.width - EsuHudLayout.Scale(40f));
+            float height = Mathf.Min(EsuHudLayout.Scale(260f), Screen.height - EsuHudLayout.Scale(40f));
+            return new Rect(
+                (Screen.width - width) * 0.5f,
+                (Screen.height - height) * 0.5f,
+                width,
+                height);
+        }
+
+        private void DrawUnappliedClosePrompt()
+        {
+            if (!_unappliedClosePromptOpen)
+                return;
+
+            GUI.DrawTexture(
+                new Rect(0f, 0f, Screen.width, Screen.height),
+                DecorationEditorTheme.DimTexture);
+            Rect rect = UnappliedClosePromptRect();
+            GUI.Window(
+                _unappliedClosePromptWindowId,
+                rect,
+                DrawUnappliedClosePromptWindow,
+                GUIContent.none,
+                DecorationEditorTheme.Panel);
+            HandleUnappliedClosePromptKeyboard();
+        }
+
+        private void DrawUnappliedClosePromptWindow(int id)
+        {
+            GUILayout.Label(
+                new GUIContent("Unapplied decorations", DecorationEditorIconCatalog.Get("save")),
+                DecorationEditorTheme.Header,
+                GUILayout.Height(EsuHudLayout.Scale(28f)));
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            GUILayout.Label(
+                "Decoration Edit has unapplied preview changes. Apply them before closing?",
+                DecorationEditorTheme.Warning,
+                GUILayout.ExpandWidth(true));
+            GUILayout.Label(
+                "Apply commits the current preview to the craft. Discard restores the last applied state. Keep editing leaves the editor open.",
+                DecorationEditorTheme.BodyWrap,
+                GUILayout.ExpandWidth(true));
+            GUILayout.Space(EsuHudLayout.Scale(8f));
+            if (GUILayout.Button(
+                    new GUIContent(
+                        (_unappliedClosePromptAlwaysApply ? "[x] " : "[ ] ") +
+                        "Always apply on Ctrl+D (don't show again)",
+                        "Store this preference in ESU options. You can re-enable the warning from the ESU options screen."),
+                    _unappliedClosePromptAlwaysApply
+                        ? DecorationEditorTheme.RowSelected
+                        : DecorationEditorTheme.Row,
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+            {
+                _unappliedClosePromptAlwaysApply = !_unappliedClosePromptAlwaysApply;
+            }
+
+            GUILayout.FlexibleSpace();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                    new GUIContent(
+                        "Apply and close",
+                        DecorationEditorIconCatalog.Get("save"),
+                        "Commit the preview changes and close Decoration Edit Mode."),
+                    DecorationEditorTheme.ActiveButton,
+                    GUILayout.Height(EsuHudLayout.Scale(38f))))
+            {
+                ApplyAndCloseFromPrompt();
+            }
+
+            if (GUILayout.Button(
+                    new GUIContent(
+                        "Discard",
+                        DecorationEditorIconCatalog.Get("cancel"),
+                        "Restore the last applied Decoration Edit state and close."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(38f))))
+            {
+                DiscardAndCloseFromPrompt();
+            }
+
+            if (GUILayout.Button(
+                    new GUIContent(
+                        "Keep editing",
+                        DecorationEditorIconCatalog.Get("close"),
+                        "Close this warning and return to Decoration Edit Mode."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(38f))))
+            {
+                CloseUnappliedClosePrompt();
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private void HandleUnappliedClosePromptKeyboard()
+        {
+            Event current = Event.current;
+            if (current == null || current.type != EventType.KeyDown)
+                return;
+
+            if (current.keyCode == KeyCode.Return ||
+                current.keyCode == KeyCode.KeypadEnter)
+            {
+                ApplyAndCloseFromPrompt();
+                current.Use();
+                return;
+            }
+
+            if (current.keyCode == KeyCode.Escape)
+            {
+                CloseUnappliedClosePrompt();
+                InfoStore.Add("Decoration Edit close cancelled.");
+                current.Use();
+                return;
+            }
+
+            current.Use();
+        }
+
+        private void OpenUnappliedClosePrompt()
+        {
+            _unappliedClosePromptOpen = true;
+            _unappliedClosePromptAlwaysApply = false;
+            _viewModeMenuOpen = false;
+            _anchorMenuOpen = false;
+            CloseSurfacePointContextMenu();
+            CloseDecorationContextMenu();
+            InfoStore.Add("Unapplied Decoration Edit changes. Apply, discard, or keep editing.");
+        }
+
+        private void CloseUnappliedClosePrompt()
+        {
+            _unappliedClosePromptOpen = false;
+            _unappliedClosePromptAlwaysApply = false;
+        }
+
+        private void ApplyAndCloseFromPrompt()
+        {
+            if (_unappliedClosePromptAlwaysApply)
+                DisableHotkeyClosePrompt();
+
+            CloseUnappliedClosePrompt();
+            CloseRequested = true;
+            CloseApplies = true;
+            InfoStore.Add("Decoration Edit changes will be applied before closing.");
+        }
+
+        private void DiscardAndCloseFromPrompt()
+        {
+            CloseUnappliedClosePrompt();
+            CloseRequested = true;
+            CloseApplies = false;
+            InfoStore.Add("Decoration Edit changes will be discarded before closing.");
+        }
+
+        private static bool ShouldPromptBeforeHotkeyClose()
+        {
+            try
+            {
+                return SerializationHudProfile.Data?.DecorationEditPromptBeforeHotkeyClose != false;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static void DisableHotkeyClosePrompt()
+        {
+            try
+            {
+                SerializationHudProfile.ProfileData data = SerializationHudProfile.Data;
+                if (data == null)
+                    return;
+
+                data.DecorationEditPromptBeforeHotkeyClose = false;
+                ProfileManager.Instance.Save(module => module is SerializationHudProfile);
+            }
+            catch (Exception exception)
+            {
+                AdvLogger.LogException(
+                    "[EndlessShapes Unlimited] Could not persist Decoration Edit Ctrl+D warning preference",
+                    exception,
+                    LogOptions._AlertDevInGame);
+            }
+        }
 
         private void HandleMeshPaletteDrag(Rect meshRect)
         {
@@ -1071,7 +1349,7 @@ namespace DecoLimitLifter.DecorationEditMode
                     MaxMeshPaletteWidth(),
                     MaxMeshPaletteHeight(),
                     ToolbarBottomLimit(),
-                    BottomPanelHeight() + EsuHudLayout.Scale(12f));
+                    EsuHudLayout.BottomPanelLimit(BottomPanelHeight()));
                 s_meshPaletteRect = _meshPaletteRect;
                 current.Use();
             }
@@ -2469,7 +2747,10 @@ namespace DecoLimitLifter.DecorationEditMode
             string iconKey,
             params GUILayoutOption[] options)
         {
-            Rect rect = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(22f), options);
+            Rect rect = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(EsuHudLayout.CompactHeaderHeightBase),
+                options);
             DrawCompactIconHeader(rect, text, iconKey);
         }
 
@@ -4672,6 +4953,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             SyncSnapTextFromSettings();
+            EsuTransformSnapSettings.SaveProfileBestEffort();
             InfoStore.Add(
                 "Decoration snap set: move " + _snapMoveText +
                 "m, rotate " + _snapRotateText +
@@ -11984,6 +12266,67 @@ namespace DecoLimitLifter.DecorationEditMode
             InfoStore.Add("Symmetry plane placed.");
         }
 
+        private bool TryHandleFacingSymmetryShortcut()
+        {
+            if (!Input.GetKeyDown(KeyCode.N))
+                return false;
+
+            DecorationEditorInputScope.ClaimBuildInputForFrames();
+            DecorationEditorInputScope.ClaimCameraInputForFrames();
+            if (!TryFacingSymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell))
+            {
+                InfoStore.Add("Point at the focused construct grid before toggling a symmetry mirror.");
+                return true;
+            }
+
+            if (!DecoLimitLifter.EsuSymmetry.TryCameraFacingLocal(construct, out Vector3 localFacing))
+            {
+                InfoStore.Add("A camera direction is required before toggling a symmetry mirror.");
+                return true;
+            }
+
+            DecoLimitLifter.EsuSymmetry.TryToggleFacingPlane(
+                construct,
+                cell,
+                localFacing,
+                out string message);
+            InfoStore.Add(message);
+            return true;
+        }
+
+        private bool TryFacingSymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell)
+        {
+            construct = null;
+            cell = default;
+            if (_pointerProbe.TryProbe(out DecorationPointerHit hit))
+            {
+                construct = hit.Construct;
+                cell = hit.Anchor;
+                return construct != null;
+            }
+
+            if (_placingMesh != null && _placementConstruct != null)
+            {
+                construct = _placementConstruct;
+                cell = _placementAnchor;
+                return true;
+            }
+
+            if (_selected != null && !_selected.IsDeleted && _selectedConstruct != null)
+            {
+                construct = _selectedConstruct;
+                cell = _selected.TetherPoint.Us;
+                return true;
+            }
+
+            construct = FocusedConstruct();
+            if (construct == null)
+                return false;
+
+            cell = RoundToCell(FocusedConstructLocalCenter(construct));
+            return true;
+        }
+
         private void HandleEditorKeybinds()
         {
             if (_textInputFocused ||
@@ -11991,6 +12334,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             if (TryHandleEsuNumberShortcut())
+                return;
+
+            if (TryHandleFacingSymmetryShortcut())
+                return;
+
+            if (TryHandleBackspaceUtility())
                 return;
 
             bool undo = ReadEditorKeyDown(
@@ -12032,6 +12381,36 @@ namespace DecoLimitLifter.DecorationEditMode
             IsControlHeld() &&
             (Input.GetKeyDown(KeyCode.Y) ||
              (IsShiftHeld() && Input.GetKeyDown(KeyCode.Z)));
+
+        private bool TryHandleBackspaceUtility()
+        {
+            if (!Input.GetKeyDown(KeyCode.Backspace))
+                return false;
+
+            if (IsSurfaceMode)
+            {
+                if (_generatorDraft.HasActiveSelection)
+                {
+                    DeleteGeneratorSelection();
+                    return true;
+                }
+
+                if (_surfaceDraft.HasActiveSelection)
+                {
+                    DeleteSurfaceSelection();
+                    return true;
+                }
+            }
+
+            if (_selected != null && !_selected.IsDeleted && _selectedConstruct != null)
+            {
+                DeleteSelectedDecoration();
+                return true;
+            }
+
+            InfoStore.Add("Backspace: select a decoration or Surface Builder point before deleting.");
+            return true;
+        }
 
         private bool TryHandleEsuNumberShortcut()
         {
@@ -14672,6 +15051,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static Vector3 ToVector3(Vector3i value) =>
             new Vector3(value.x, value.y, value.z);
+
+        private static Vector3i RoundToCell(Vector3 value) =>
+            new Vector3i(
+                Mathf.RoundToInt(value.x),
+                Mathf.RoundToInt(value.y),
+                Mathf.RoundToInt(value.z));
 
         private static bool SameTether(Vector3i left, Vector3i right) =>
             left.x == right.x && left.y == right.y && left.z == right.z;

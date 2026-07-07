@@ -16,7 +16,6 @@ namespace DecoLimitLifter.SmartBuildMode
     {
         private const float ToolbarHeight = 54f;
         private const float LeftPanelWidth = 392f;
-        private const float LeftPanelDefaultHeight = 507f;
         private const float RightPanelWidth = 282f;
         private const float LeftPanelMinHeight = 292f;
         private const float RightPanelMinHeight = 420f;
@@ -46,8 +45,8 @@ namespace DecoLimitLifter.SmartBuildMode
             Generators
         }
 
-        private static Rect s_leftPanelRect = new Rect(18f, 110f, LeftPanelWidth, LeftPanelDefaultHeight);
-        private static Rect s_rightPanelRect = new Rect(980f, 110f, RightPanelWidth, 680f);
+        private static Rect s_leftPanelRect = Rect.zero;
+        private static Rect s_rightPanelRect = Rect.zero;
         private static int s_layoutGeneration = -1;
         private static SmartBuildMaterial s_selectedMaterial = SmartBuildMaterial.Wood;
         private static bool s_showLeftPanel = true;
@@ -323,13 +322,8 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             ApplyLayoutResetIfNeeded();
-            float margin = EsuHudLayout.Scale(8f);
             _toolbarRect = EsuHudLayout.ToolbarRect(ToolbarHeight);
-            _statusRect = new Rect(
-                margin,
-                Screen.height - StatusHeightScaled() - margin,
-                Screen.width - margin * 2f,
-                StatusHeightScaled());
+            _statusRect = EsuHudLayout.BottomStripRect(StatusHeightScaled());
             if (_leftPanelRect.width < 1f || _leftPanelRect.height < 1f)
                 _leftPanelRect = DefaultLeftPanelRect();
             if (_rightPanelRect.width < 1f || _rightPanelRect.height < 1f)
@@ -341,7 +335,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 MaxLeftPanelWidth(),
                 MaxLeftPanelHeight(),
                 LeftPanelTopLimit(),
-                StatusHeightScaled() + EsuHudLayout.Scale(12f));
+                EsuHudLayout.BottomPanelLimit(StatusHeightScaled()));
             _rightPanelRect = EsuHudLayout.ClampPanel(
                 _rightPanelRect,
                 MinRightPanelWidth(),
@@ -349,7 +343,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 MaxRightPanelWidth(),
                 MaxRightPanelHeight(),
                 LeftPanelTopLimit(),
-                StatusHeightScaled() + EsuHudLayout.Scale(12f));
+                EsuHudLayout.BottomPanelLimit(StatusHeightScaled()));
             if (interactive)
             {
                 if (_showLeftPanel)
@@ -432,13 +426,10 @@ namespace DecoLimitLifter.SmartBuildMode
             _resizingRightPanel ||
             _draggingShapeStackDivider != SmartShapeStackDividerKind.None;
 
-        private float ToolbarHeightScaled() =>
-            EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight, Screen.width - EsuHudLayout.Scale(16f));
-
         private float StatusHeightScaled() =>
-            Mathf.Clamp(Screen.height * 0.13f, EsuHudLayout.Scale(118f), EsuHudLayout.Scale(146f));
+            EsuHudLayout.BottomStripHeight();
 
-        private float LeftPanelTopLimit() => ToolbarHeightScaled() + EsuHudLayout.Scale(14f);
+        private float LeftPanelTopLimit() => EsuHudLayout.EditorPanelTopLimit(ToolbarHeight);
 
         private float MinLeftPanelWidth() => EsuHudLayout.Scale(300f);
 
@@ -463,10 +454,8 @@ namespace DecoLimitLifter.SmartBuildMode
             float width = Mathf.Min(
                 EsuHudLayout.Scale(LeftPanelWidth),
                 Mathf.Max(MinLeftPanelWidth(), Screen.width * 0.28f));
-            float height = Mathf.Min(
-                EsuHudLayout.Scale(LeftPanelDefaultHeight),
-                Mathf.Max(MinLeftPanelHeight(), Screen.height - LeftPanelTopLimit() - StatusHeightScaled() - EsuHudLayout.Scale(16f)));
-            return new Rect(EsuHudLayout.Scale(18f), LeftPanelTopLimit(), width, height);
+            float height = MaxLeftPanelHeight();
+            return new Rect(EsuHudLayout.EditorSideMargin, LeftPanelTopLimit(), width, height);
         }
 
         private Rect DefaultRightPanelRect()
@@ -474,10 +463,8 @@ namespace DecoLimitLifter.SmartBuildMode
             float width = Mathf.Min(
                 EsuHudLayout.Scale(RightPanelWidth),
                 Mathf.Max(MinRightPanelWidth(), Screen.width * 0.22f));
-            float height = Mathf.Min(
-                Mathf.Max(EsuHudLayout.Scale(560f), MaxRightPanelHeight() * 0.92f),
-                Mathf.Max(MinRightPanelHeight(), Screen.height - LeftPanelTopLimit() - StatusHeightScaled() - EsuHudLayout.Scale(16f)));
-            float x = Mathf.Max(EsuHudLayout.Scale(18f), Screen.width - width - EsuHudLayout.Scale(18f));
+            float height = MaxRightPanelHeight();
+            float x = Mathf.Max(EsuHudLayout.EditorSideMargin, Screen.width - width - EsuHudLayout.EditorSideMargin);
             return new Rect(x, LeftPanelTopLimit(), width, height);
         }
 
@@ -534,7 +521,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     MaxLeftPanelWidth(),
                     MaxLeftPanelHeight(),
                     LeftPanelTopLimit(),
-                    StatusHeightScaled() + EsuHudLayout.Scale(12f));
+                    EsuHudLayout.BottomPanelLimit(StatusHeightScaled()));
                 current.Use();
                 return;
             }
@@ -584,7 +571,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     MaxRightPanelWidth(),
                     MaxRightPanelHeight(),
                     LeftPanelTopLimit(),
-                    StatusHeightScaled() + EsuHudLayout.Scale(12f));
+                    EsuHudLayout.BottomPanelLimit(StatusHeightScaled()));
                 current.Use();
                 return;
             }
@@ -634,10 +621,13 @@ namespace DecoLimitLifter.SmartBuildMode
         private void HandleKeyboard()
         {
             if (GUIUtility.keyboardControl == 0 &&
-                !DecoLimitLifter.EsuInputState.IsTextInputActive() &&
-                TryHandleEsuNumberShortcut())
+                !DecoLimitLifter.EsuInputState.IsTextInputActive())
             {
-                return;
+                if (TryHandleEsuNumberShortcut())
+                    return;
+
+                if (TryHandleFacingSymmetryShortcut())
+                    return;
             }
 
             if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) &&
@@ -657,6 +647,36 @@ namespace DecoLimitLifter.SmartBuildMode
                 return CyclePreviewShortcut();
 
             return false;
+        }
+
+        private bool TryHandleFacingSymmetryShortcut()
+        {
+            if (!Input.GetKeyDown(KeyCode.N))
+                return false;
+
+            SmartBuildInputScope.ClaimBuildInputForFrames();
+            SmartBuildInputScope.ClaimCameraInputForFrames();
+            if (!TrySymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell))
+            {
+                InfoStore.Add("Point at the focused construct grid before toggling a symmetry mirror.");
+                return true;
+            }
+
+            if (!DecoLimitLifter.EsuSymmetry.TryCameraFacingLocal(construct, out Vector3 localFacing))
+            {
+                InfoStore.Add("A camera direction is required before toggling a symmetry mirror.");
+                return true;
+            }
+
+            bool changed = DecoLimitLifter.EsuSymmetry.TryToggleFacingPlane(
+                construct,
+                cell,
+                localFacing,
+                out string message);
+            if (changed)
+                RebuildPlan();
+            InfoStore.Add(message);
+            return true;
         }
 
         private bool CycleShapeShortcut()
@@ -1622,7 +1642,11 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             else if (_dragTool == SmartBuildTool.Scale)
             {
-                if (_draft.IsGeneratedShape && _draft.GeneratorRoundLock && _dragAxes.Length > 1)
+                if (ShouldUseCardinalSlopeStretch())
+                {
+                    ResizeDownSlopeCardinalFromDraggedHandles();
+                }
+                else if (_draft.IsGeneratedShape && _draft.GeneratorRoundLock && _dragAxes.Length > 1)
                 {
                     int cells = ProjectDragDeltaToCells(_dragAxis, SmartScaleStepCells);
                     _draft.ResizeFromHandle(_dragAxis, _dragSign, cells);
@@ -1644,6 +1668,50 @@ namespace DecoLimitLifter.SmartBuildMode
 
             _planDirty = true;
             RefreshPreviewVolumesOnly();
+        }
+
+        private bool ShouldUseCardinalSlopeStretch() =>
+            _draft?.ShapeKind == SmartBuildShapeKind.DownSlope && IsCardinalSlopeStretchHeld();
+
+        private void ResizeDownSlopeCardinalFromDraggedHandles()
+        {
+            bool convertedDropAxis = false;
+            for (int index = 0; index < _dragAxes.Length; index++)
+            {
+                DecorationEditAxis axis = _dragAxes[index];
+                if (axis == DecorationEditAxis.None ||
+                    axis == DecorationEditAxis.Free ||
+                    SmartBuildDraft.ToSmartAxis(axis) != _draft.DropAxis)
+                {
+                    continue;
+                }
+
+                int sign = index < _dragSigns.Length ? _dragSigns[index] : 1;
+                int cells = ProjectDragDeltaToCells(axis, SmartScaleStepCells);
+                _draft.ResizeDownSlopeCardinalFromHandle(axis, sign, cells);
+                convertedDropAxis = true;
+            }
+
+            for (int index = 0; index < _dragAxes.Length; index++)
+            {
+                DecorationEditAxis axis = _dragAxes[index];
+                if (axis == DecorationEditAxis.None ||
+                    axis == DecorationEditAxis.Free)
+                {
+                    continue;
+                }
+
+                SmartBuildAxis smartAxis = SmartBuildDraft.ToSmartAxis(axis);
+                if (smartAxis == _draft.DropAxis ||
+                    convertedDropAxis && smartAxis == _draft.ForwardAxis)
+                {
+                    continue;
+                }
+
+                int sign = index < _dragSigns.Length ? _dragSigns[index] : 1;
+                int cells = ProjectDragDeltaToCells(axis, SmartScaleStepCells);
+                _draft.ResizeDownSlopeCardinalFromHandle(axis, sign, cells);
+            }
         }
 
         private void EndDrag(bool resetDraft)
@@ -1774,6 +1842,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryPickDownSlopeFace(localOrigin, localDirection, out axis, out sign);
+
+            if (_draft.IsFixedGeometry &&
+                TryPickFixedGeometryFace(localOrigin, localDirection, out axis, out sign))
+            {
+                return true;
+            }
 
             Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
             Vector3 min = corners[0];
@@ -2621,7 +2695,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 ToolButton(SmartBuildTool.Draw, "create", "Add", "Click the focused construct grid to add the selected shape as a new preview piece.");
                 ToolButton(SmartBuildTool.Move, "move", "Move", "Drag RGB handles to move the preview by " + EsuTransformSnapSettings.SmartMoveStepCells + " cell step(s).");
                 ToolButton(SmartBuildTool.Rotate, "rotate", "Rotate", "Drag RGB rotation rings around the preview center.");
-                ToolButton(SmartBuildTool.Scale, "scale", "Scale", "Drag RGB handles to resize the preview by " + EsuTransformSnapSettings.SmartScaleStepCells + " cell step(s).");
+                ToolButton(SmartBuildTool.Scale, "scale", "Scale", "Drag RGB handles to resize the preview by " + EsuTransformSnapSettings.SmartScaleStepCells + " cell step(s). Hold Shift on down-slopes to keep the first slope cell anchored and stretch along the cardinal run.");
                 PlaneButton();
                 OccupancyButton();
                 ViewButton();
@@ -4441,7 +4515,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static void DrawCompactIconHeader(string text, string iconKey)
         {
-            Rect rect = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(22f), GUILayout.ExpandWidth(true));
+            Rect rect = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(EsuHudLayout.CompactHeaderHeightBase),
+                GUILayout.ExpandWidth(true));
             GUI.Label(rect, "      " + text, DecorationEditorTheme.SubHeader);
 
             Texture icon = DecorationEditorIconCatalog.Get(iconKey);
@@ -4582,6 +4659,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             SyncSnapTextFromSettings();
+            EsuTransformSnapSettings.SaveProfileBestEffort();
             InfoStore.Add(
                 "Smart Builder snap set: move " + _snapMoveText +
                 " cell(s), yaw " + _snapRotateText +
@@ -5407,13 +5485,31 @@ namespace DecoLimitLifter.SmartBuildMode
             IReadOnlyList<SmartBuildInternalFace> internalFaces,
             ISet<string> drawnEdges)
         {
-            for (int index = 0; index < internalFaces.Count; index++)
+            if (IsAxisAlignedPreviewEdge(start, end))
             {
-                if (internalFaces[index].Contains(start, end))
-                    return false;
+                for (int index = 0; index < internalFaces.Count; index++)
+                {
+                    if (internalFaces[index].Contains(start, end))
+                        return false;
+                }
             }
 
             return drawnEdges == null || drawnEdges.Add(EdgeKey(start, end));
+        }
+
+        private static bool IsAxisAlignedPreviewEdge(Vector3 start, Vector3 end)
+        {
+            const float epsilon = 0.0005f;
+            Vector3 delta = end - start;
+            int movingAxes = 0;
+            if (Mathf.Abs(delta.x) > epsilon)
+                movingAxes++;
+            if (Mathf.Abs(delta.y) > epsilon)
+                movingAxes++;
+            if (Mathf.Abs(delta.z) > epsilon)
+                movingAxes++;
+
+            return movingAxes <= 1;
         }
 
         private void DrawPlanPlacementPreview(
@@ -5631,6 +5727,143 @@ namespace DecoLimitLifter.SmartBuildMode
                 DecorationEditorOverlay.Line(world[2], world[3], edgeColor, width);
                 DecorationEditorOverlay.Line(world[3], world[0], edgeColor, width);
             }
+        }
+
+        private bool DrawFixedGeometryFaceHighlight(
+            DecorationEditAxis axis,
+            int sign,
+            Color faceColor,
+            Color edgeColor,
+            float width)
+        {
+            if (_draft?.Construct == null)
+                return false;
+
+            bool drew = false;
+            foreach (SmartBuildHullFace face in EnumerateFixedGeometryHandleFaces(_draft))
+            {
+                if (face.Axis != axis || face.Sign != sign)
+                    continue;
+
+                Vector3[] world = ToWorld(face.Local, _draft.Construct);
+                DecorationEditorOverlay.Quad(world[0], world[1], world[2], world[3], faceColor);
+                DecorationEditorOverlay.Line(world[0], world[1], edgeColor, width);
+                DecorationEditorOverlay.Line(world[1], world[2], edgeColor, width);
+                DecorationEditorOverlay.Line(world[2], world[3], edgeColor, width);
+                DecorationEditorOverlay.Line(world[3], world[0], edgeColor, width);
+                drew = true;
+            }
+
+            return drew;
+        }
+
+        private bool TryPickFixedGeometryFace(
+            Vector3 localOrigin,
+            Vector3 localDirection,
+            out DecorationEditAxis axis,
+            out int sign)
+        {
+            axis = DecorationEditAxis.None;
+            sign = 1;
+            float bestDistance = float.PositiveInfinity;
+            foreach (SmartBuildHullFace face in EnumerateFixedGeometryHandleFaces(_draft))
+            {
+                if (!TryRayQuad(localOrigin, localDirection, face.Local, out float distance))
+                    continue;
+                if (distance >= bestDistance)
+                    continue;
+
+                bestDistance = distance;
+                axis = face.Axis;
+                sign = face.Sign;
+            }
+
+            return axis != DecorationEditAxis.None;
+        }
+
+        private IEnumerable<SmartBuildHullFace> EnumerateFixedGeometryHandleFaces(SmartBuildPiece piece)
+        {
+            if (piece?.IsFixedGeometry != true || _itemPreviewRenderer == null)
+                yield break;
+
+            IReadOnlyList<SmartBuildPlacement> placements = piece.BuildFixedPlacements(_source, out _);
+            if (placements == null || placements.Count == 0)
+                yield break;
+
+            SmartBuildVolume volume = piece.ToVolume(_source);
+            if (volume == null)
+                yield break;
+
+            Vector3[] volumeCorners = volume.GetLocalCorners();
+            Vector3 min = volumeCorners[0];
+            Vector3 max = volumeCorners[6];
+            int placementCount = Math.Min(placements.Count, MaxExactMeshPreviewPlacements);
+            for (int placementIndex = 0; placementIndex < placementCount; placementIndex++)
+            {
+                SmartBuildPlacement placement = placements[placementIndex];
+                Mesh mesh = _itemPreviewRenderer.GetMesh(placement?.Candidate);
+                if (mesh == null)
+                    continue;
+
+                Vector3[] vertices = mesh.vertices;
+                int[] triangles = mesh.triangles;
+                if (vertices == null || triangles == null || vertices.Length == 0 || triangles.Length < 3)
+                    continue;
+
+                Matrix4x4 localMatrix = PlacementLocalMatrix(placement);
+                for (int index = 0; index + 2 < triangles.Length; index += 3)
+                {
+                    int ia = triangles[index];
+                    int ib = triangles[index + 1];
+                    int ic = triangles[index + 2];
+                    if (ia < 0 || ib < 0 || ic < 0 ||
+                        ia >= vertices.Length ||
+                        ib >= vertices.Length ||
+                        ic >= vertices.Length)
+                    {
+                        continue;
+                    }
+
+                    Vector3 a = localMatrix.MultiplyPoint3x4(vertices[ia]);
+                    Vector3 b = localMatrix.MultiplyPoint3x4(vertices[ib]);
+                    Vector3 c = localMatrix.MultiplyPoint3x4(vertices[ic]);
+                    if (!TryClassifyFixedGeometryHandleFace(a, b, c, min, max, out DecorationEditAxis faceAxis, out int faceSign))
+                        continue;
+
+                    yield return new SmartBuildHullFace(faceAxis, faceSign, a, b, c, a);
+                }
+            }
+        }
+
+        private static bool TryClassifyFixedGeometryHandleFace(
+            Vector3 a,
+            Vector3 b,
+            Vector3 c,
+            Vector3 min,
+            Vector3 max,
+            out DecorationEditAxis axis,
+            out int sign)
+        {
+            axis = DecorationEditAxis.None;
+            sign = 1;
+            Vector3 normal = Vector3.Cross(b - a, c - a);
+            if (normal.sqrMagnitude <= 0.000001f)
+                return false;
+
+            normal.Normalize();
+            SmartBuildAxis smartAxis = SmartBuildAxisHelper.FromLargestComponent(normal, out int normalSign);
+            axis = SmartBuildDraft.ToDecorationAxis(smartAxis);
+            float minComponent = AxisComponent(min, axis);
+            float maxComponent = AxisComponent(max, axis);
+            if (Mathf.Abs(maxComponent - minComponent) <= 0.001f)
+            {
+                sign = normalSign;
+                return true;
+            }
+
+            Vector3 center = (a + b + c) / 3f;
+            sign = SignForCoordinate(AxisComponent(center, axis), minComponent, maxComponent);
+            return true;
         }
 
         private bool TryPickDownSlopeFace(
@@ -6694,6 +6927,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
+            if (_draft.IsFixedGeometry &&
+                DrawFixedGeometryFaceHighlight(axis, sign, faceColor, edgeColor, active ? 4.2f : 2.6f))
+            {
+                return;
+            }
+
             if (!TryGetFaceWorldCorners(axis, sign, out Vector3[] face))
                 return;
 
@@ -7559,6 +7798,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static bool IsShiftHeld() =>
             Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
+        private static bool IsCardinalSlopeStretchHeld() =>
+            IsShiftHeld();
 
         private static Vector2 ScreenToGui(Vector3 screen) =>
             new Vector2(screen.x, Screen.height - screen.y);

@@ -45,7 +45,6 @@ namespace DecoLimitLifter
                 harmony = new Harmony(HarmonyId);
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
                 Patches.FastBlueprintLoadRouter.InstallOptionalV3BlockStatePatch(harmony);
-                Patches.FastBlueprintLoadRouter.InstallOptionalStage2ModuleExternalLinkupPatch(harmony);
                 Patches.FastBlueprintLoadRouter.InstallOptionalV3DColliderInternalTimingPatch(harmony);
                 DecorationTooltipSuppressor.Install(harmony);
 

@@ -1803,10 +1803,11 @@ f 0 2 3
                data.FastBlueprintLoadUnsafeProbeMode == FastBlueprintLoadUnsafeProbeMode.Off,
             "Experimental fast blueprint loading defaults to vanilla/off for a new profile.");
         Assert(data.EsuEditorAutoScale &&
+               data.DecorationEditPromptBeforeHotkeyClose &&
                Math.Abs(data.EsuEditorScale - 1f) < 0.001f &&
-               Math.Abs(data.DecorationMoveSnap - 0.05f) < 0.001f &&
-               Math.Abs(data.DecorationRotateSnapDegrees - 5f) < 0.001f &&
-               Math.Abs(data.DecorationScaleSnap - 0.05f) < 0.001f &&
+               Math.Abs(data.DecorationMoveSnap - 0.001f) < 0.0001f &&
+               Math.Abs(data.DecorationRotateSnapDegrees - 0.001f) < 0.0001f &&
+               Math.Abs(data.DecorationScaleSnap - 0.001f) < 0.0001f &&
                data.SmartBuildMoveStepCells == 1 &&
                Math.Abs(data.SmartBuildRotateSnapDegrees - 90f) < 0.001f &&
                data.SmartBuildScaleStepCells == 1 &&
@@ -1848,9 +1849,11 @@ f 0 2 3
                profileSource.Contains("StreamLargeBlueprintJsonSaves") &&
                profileSource.Contains("EsuEditorAutoScale") &&
                profileSource.Contains("EsuEditorScale") &&
+               profileSource.Contains("DecorationEditPromptBeforeHotkeyClose") &&
                profileSource.Contains("DecorationMoveSnap") &&
                profileSource.Contains("DecorationRotateSnapDegrees") &&
                profileSource.Contains("DecorationScaleSnap") &&
+               profileSource.Contains("DecorationSmoothSnapDefaultsMigrated") &&
                profileSource.Contains("SmartBuildMoveStepCells") &&
                profileSource.Contains("SmartBuildRotateSnapDegrees") &&
                profileSource.Contains("SmartBuildScaleStepCells") &&
@@ -1871,7 +1874,7 @@ f 0 2 3
                profileSource.Contains("SkipV3ColliderLinkup") &&
                profileSource.Contains("SkipV3ShellLinkup") &&
                profileSource.Contains("SkipV3SkinCalc"),
-            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/load/transform snap settings are profiled.");
+            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/load/transform snap/close-warning settings are profiled.");
         string optionsSource = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
             "EndlessShapesUnlimited",
@@ -1895,6 +1898,9 @@ f 0 2 3
                optionsSource.Contains("UnsafeProbeCycle") &&
                optionsSource.Contains("var blueprintLoading = CreateTableSegment(2, 4);"),
             "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and opt-in huge-craft loading controls without clipping Blueprint loading rows.");
+        Assert(optionsSource.Contains("Warn before Ctrl+D applies") &&
+               optionsSource.Contains("DecorationEditPromptBeforeHotkeyClose"),
+            "The ESU options screen exposes the Decoration Edit Ctrl+D unapplied-changes warning preference.");
         Assert(optionsSource.Contains("SubjectiveDisplay<SerializationHudProfile.ProfileData>.Quick") &&
                optionsSource.Contains("FastBlueprintLoadTierStatus(profile)") &&
                optionsSource.Contains("TriggerScreenRebuild()") &&
@@ -2590,7 +2596,7 @@ f 0 2 3
                pluginSource.Contains("ResolveConstructExtraInfoUpgradeConstructTarget") &&
                pluginSource.Contains("ResolveBlockBlockStateChangedTarget") &&
                pluginSource.Contains("InstallOptionalV3BlockStatePatch") &&
-               pluginSource.Contains("InstallOptionalStage2ModuleExternalLinkupPatch") &&
+               !pluginSource.Contains("InstallOptionalStage2ModuleExternalLinkupPatch") &&
                pluginSource.Contains("ResolveAllConstructInitialiseStage2Target") &&
                pluginSource.Contains("ResolveStage2ModuleExternalLinkupTarget") &&
                pluginSource.Contains("ResolvePartStatusRegisterCheckableBlockTarget") &&
@@ -2606,6 +2612,7 @@ f 0 2 3
                routerSource.Contains("InstallOptionalStage2ModuleCallsitePatch") &&
                !pluginSource.Contains("InstallOptionalStage2ModuleCallsitePatch") &&
                routerSource.Contains("InstallOptionalStage2ModuleExternalLinkupPatch") &&
+               !routerSource.Contains("Stage2 module external-linkup diagnostics patch") &&
                !routerSource.Contains("[HarmonyPatch]\r\n    internal static class AllConstruct_Stage2ModuleExternalLinkup_FastLoadDiagnostics_Patch") &&
                !routerSource.Contains("[HarmonyPatch]\n    internal static class AllConstruct_Stage2ModuleExternalLinkup_FastLoadDiagnostics_Patch") &&
                routerSource.Contains("AddInitialiseStage2SubphaseTimers") &&
@@ -2670,8 +2677,9 @@ f 0 2 3
                routerSource.Contains("InvokeStage2ModuleDictionaryLinkup(moduleDictionary)") &&
                routerSource.Contains("stage2-module-linkup") &&
                routerSource.Contains("IAllConstructModule") &&
-               routerSource.Contains("SkipStage2ModuleExternalLinkupForDiagnostics &&") &&
-               routerSource.Contains("_stage2ModuleExternalLinkupPatchInstalled") &&
+               routerSource.Contains("SkipStage2ModuleExternalLinkupForDiagnostics ||") &&
+               routerSource.Contains("if (SkipStage2ModuleExternalLinkupForDiagnostics)") &&
+               !routerSource.Contains("SkipStage2ModuleExternalLinkupForDiagnostics &&") &&
                routerSource.Contains("BlockBlockStateChangedMetadataToken = 0x06000D86") &&
                routerSource.Contains("InstallOptionalV3BlockStatePatch") &&
                routerSource.Contains("new SuperLoader(useStaticArrays: false)") &&
@@ -2754,6 +2762,11 @@ f 0 2 3
                telemetrySource.Contains("CompleteFastLoadTrace") &&
                telemetrySource.Contains("FailFastLoadTrace(__exception)"),
             "Fast blueprint load startup verifies V1/V2 patch targets, V3 safe-bulk hooks, shareable trace files, heartbeat progress, end-to-end load timers, and conversion trace bridging.");
+
+        Assert(routerSource.Split(
+                   new[] { "method.DeclaringType.IsGenericType == false" },
+                   StringSplitOptions.None).Length >= 3,
+            "Optional fast-load timing patches reject generic declaring types before using Harmony __originalMethod.");
     }
 
     private static BlueprintFileModel NewBlueprintFileModelForJsonStreamingTest()
@@ -2785,12 +2798,12 @@ f 0 2 3
 
     private static void VerifyDecorationEditModeMvp()
     {
-        Assert(DecorationEditMath.Snap(0.076f) == 0.1f &&
-               DecorationEditMath.Snap(0.024f) == 0f &&
+        Assert(Math.Abs(DecorationEditMath.Snap(0.0764f) - 0.076f) < 0.0001f &&
+               Math.Abs(DecorationEditMath.Snap(0.0244f) - 0.024f) < 0.0001f &&
                DecorationEditMath.IsWithinPositionLimit(new Vector3(10f, -10f, 0f)) &&
                !DecorationEditMath.IsWithinPositionLimit(new Vector3(10.01f, 0f, 0f)) &&
                !DecorationEditMath.IsWithinPositionLimit(new Vector3(float.NaN, 0f, 0f)),
-            "Decoration Edit Mode movement snaps to 0.05m and enforces finite +/-10 bounds.");
+            "Decoration Edit Mode movement snaps smoothly to 0.001m and enforces finite +/-10 bounds.");
 
         DecorationEditAxis picked = DecorationEditMath.PickAxis(
             new Vector2(50f, 2f),
@@ -2813,6 +2826,15 @@ f 0 2 3
                    .Equals(new Vector3i(3, 0, 5)) &&
                Math.Abs(EsuSymmetry.MirrorVector(new Vector3(3.25f, 4.5f, 5.75f), DecorationEditAxis.Z, 3).z - 0.25f) < 0.001f,
             "ESU symmetry mirrors cells and decoration centers across X/Y/Z grid planes.");
+
+        Assert(EsuSymmetry.TryFacingAxis(new Vector3(0.8f, -5f, 0.2f), out DecorationEditAxis facingX) &&
+               facingX == DecorationEditAxis.X &&
+               EsuSymmetry.TryFacingAxis(new Vector3(0.1f, 0f, -0.9f), out DecorationEditAxis facingZ) &&
+               facingZ == DecorationEditAxis.Z &&
+               EsuSymmetry.TryFacingAxis(new Vector3(0f, 1f, 0f), out DecorationEditAxis facingY) &&
+               facingY == DecorationEditAxis.Y &&
+               !EsuSymmetry.TryFacingAxis(Vector3.zero, out _),
+            "ESU symmetry can derive a quick-toggle mirror axis from camera-facing direction while favoring horizontal build directions.");
 
         var transformMirror = new EsuSymmetry.SymmetryVariant(new[] { DecorationEditAxis.X });
         Vector3 sourceScale = new Vector3(2f, 3f, 4f);
@@ -2973,6 +2995,7 @@ f 0 2 3
         string drawMeshPreviewGridSource = ExtractMethodSource(sessionSource, "DrawMeshPreviewGrid").Replace("\r\n", "\n");
         string meshPreviewGridLayoutSource = ExtractMethodSource(sessionSource, "MeshPreviewGridLayoutFor").Replace("\r\n", "\n");
         string handleEditorKeybindsSource = ExtractMethodSource(sessionSource, "HandleEditorKeybinds").Replace("\r\n", "\n");
+        string backspaceUtilitySource = ExtractMethodSource(sessionSource, "TryHandleBackspaceUtility").Replace("\r\n", "\n");
         string readEditorKeyDownSource = ExtractMethodSource(sessionSource, "ReadEditorKeyDown").Replace("\r\n", "\n");
         string setSelectedColorSource = ExtractMethodSource(sessionSource, "SetSelectedColor").Replace("\r\n", "\n");
         string setSelectedDecorationsColorSource = ExtractMethodSource(sessionSource, "SetSelectedDecorationsColor").Replace("\r\n", "\n");
@@ -3041,6 +3064,33 @@ f 0 2 3
                readEditorKeyDownSource.Contains("return SerializationHudKeyMap.Instance.Bool(") &&
                readEditorKeyDownSource.Contains("fallback != null && fallback()"),
             "Decoration Edit Mode has repository-profile keybinds, rejects direct opens over Smart Builder, and uses shared profiled input gates with defaults only as profile-failure fallbacks.");
+        Assert(sessionSource.Contains("internal void RequestHotkeyClose()") &&
+               sessionSource.Contains("HasUnappliedChanges") &&
+               sessionSource.Contains("OpenUnappliedClosePrompt()") &&
+               sessionSource.Contains("ShouldPromptBeforeHotkeyClose()") &&
+               sessionSource.Contains("DrawUnappliedClosePrompt()") &&
+               sessionSource.Contains("Apply and close") &&
+               sessionSource.Contains("Discard") &&
+               sessionSource.Contains("Keep editing") &&
+               sessionSource.Contains("Always apply on Ctrl+D (don't show again)") &&
+               sessionSource.Contains("DisableHotkeyClosePrompt()") &&
+               sessionSource.Contains("ProfileManager.Instance.Save(module => module is SerializationHudProfile)") &&
+               sessionSource.Contains("IsPromptBlockingEvent(current)") &&
+               decorationBehaviourSource.Contains("private void RequestActiveSessionClose()") &&
+               decorationBehaviourSource.Contains("RequestActiveSessionClose();") &&
+               decorationBehaviourSource.Contains("_session?.RequestHotkeyClose()") &&
+               decorationBehaviourSource.Contains("Close(_session.CloseApplies)") &&
+               decorationBehaviourSource.Contains("_session != null && _session.DismissOpenPrompt()"),
+            "Decoration Edit Mode Ctrl+D and UI toggles close immediately when clean, warn for unapplied decorations, can apply-and-close from the prompt, and persist the safe don't-show-again choice.");
+        Assert(handleEditorKeybindsSource.Contains("TryHandleBackspaceUtility()") &&
+               backspaceUtilitySource.Contains("Input.GetKeyDown(KeyCode.Backspace)") &&
+               backspaceUtilitySource.Contains("_generatorDraft.HasActiveSelection") &&
+               backspaceUtilitySource.Contains("DeleteGeneratorSelection()") &&
+               backspaceUtilitySource.Contains("_surfaceDraft.HasActiveSelection") &&
+               backspaceUtilitySource.Contains("DeleteSurfaceSelection()") &&
+               backspaceUtilitySource.Contains("DeleteSelectedDecoration()") &&
+               backspaceUtilitySource.Contains("Backspace: select a decoration or Surface Builder point before deleting."),
+            "Decoration Edit Mode Backspace deletes selected decorations or selected Surface Builder yellow-square draft handles through the existing undo-safe delete paths.");
         Assert(!sessionSource.Contains("SetGameControlOptions(") &&
                 focusGuardSource.Contains("internal static class EsuInputFocusGuard") &&
                 !focusGuardSource.Contains("SetGameControlOptions(") &&
@@ -3343,7 +3393,7 @@ f 0 2 3
                sessionSource.Contains("startBottomHeight - deltaY") &&
                sessionSource.Contains("DrawAnchorContext(inner.height)") &&
                sessionSource.Contains("DrawCompactAnchorHeader") &&
-               sessionSource.Contains("GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(22f)") &&
+               sessionSource.Contains("EsuHudLayout.CompactHeaderHeightBase") &&
                sessionSource.Contains("EsuHudLayout.Scale(16f)") &&
                !sessionSource.Contains("new GUIContent(\" Selected anchor\", DecorationEditorIconCatalog.Get(\"anchor\"))") &&
                sessionSource.Contains("float countHeight = Mathf.Min(EsuHudLayout.Scale(18f)") &&
@@ -3725,6 +3775,10 @@ f 0 2 3
         Assert(symmetrySource.Contains("internal static class EsuSymmetry") &&
                symmetrySource.Contains("PendingAxis") &&
                symmetrySource.Contains("TryPlacePending") &&
+               symmetrySource.Contains("TryToggleFacingPlane") &&
+               symmetrySource.Contains("TryCameraFacingLocal") &&
+               symmetrySource.Contains("TryFacingAxis") &&
+               symmetrySource.Contains("Planes.Remove(axis)") &&
                symmetrySource.Contains("MirrorCell") &&
                symmetrySource.Contains("MirrorVector") &&
                symmetrySource.Contains("MirrorDirection") &&
@@ -3735,6 +3789,8 @@ f 0 2 3
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.X)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y)") &&
                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z)") &&
+               sessionSource.Contains("TryHandleFacingSymmetryShortcut") &&
+               sessionSource.Contains("Input.GetKeyDown(KeyCode.N)") &&
                sessionSource.Contains("TryBuildDecorationPlacementPlans") &&
                sessionSource.Contains("DecorationPlacementTemplate") &&
                sessionSource.Contains("plan.Scaling") &&
@@ -4016,6 +4072,9 @@ f 0 2 3
                sessionSource.Contains("DecorationEditorViewMode.DecorationOnly") &&
                sessionSource.Contains("DecorationEditorViewMode.Normal") &&
                smartBuildSessionSource.Contains("TryHandleEsuNumberShortcut()") &&
+               smartBuildSessionSource.Contains("TryHandleFacingSymmetryShortcut()") &&
+               smartBuildSessionSource.Contains("Input.GetKeyDown(KeyCode.N)") &&
+               smartBuildSessionSource.Contains("TrySymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell)") &&
                smartBuildSessionSource.Contains("CycleShapeShortcut()") &&
                smartBuildSessionSource.Contains("CycleTransformToolShortcut()") &&
                smartBuildSessionSource.Contains("CyclePreviewShortcut()") &&
@@ -4026,7 +4085,7 @@ f 0 2 3
                smartBuildSessionSource.Contains("SmartBuildPreviewMode.Wireframe") &&
                smartBuildSessionSource.Contains("SmartBuildPreviewMode.Material") &&
                smartBuildSessionSource.Contains("SmartBuildPreviewMode.MaterialOnly"),
-            "Decoration Edit Mode, Surface Builder, and Smart Builder bind 1/2/3 to create/select, transform, and display/preview cycles, including Smart Builder material-only preview.");
+            "Decoration Edit Mode, Surface Builder, and Smart Builder bind 1/2/3 to create/select, transform, and display/preview cycles, and N to facing-direction symmetry toggle.");
 
         Assert(sessionSource.Contains("SerializationForecastCalculator.Calculate") &&
                sessionSource.Contains("FlexibleFloatParser.TryParse") &&
@@ -4050,13 +4109,21 @@ f 0 2 3
                sessionSource.Contains("DecorationEditMath.Snap(freeDelta, DecorationMoveSnap)") &&
                sessionSource.Contains("DecorationEditMath.Snap(1f + multiDelta, DecorationScaleSnap)") &&
                transformSnapSource.Contains("internal static class EsuTransformSnapSettings") &&
-               transformSnapSource.Contains("DefaultDecorationMoveSnap = 0.05f") &&
-               transformSnapSource.Contains("DefaultDecorationRotateSnapDegrees = 5f") &&
-               transformSnapSource.Contains("DefaultDecorationScaleSnap = 0.05f") &&
+               transformSnapSource.Contains("DefaultDecorationMoveSnap = 0.001f") &&
+               transformSnapSource.Contains("DefaultDecorationRotateSnapDegrees = 0.001f") &&
+               transformSnapSource.Contains("DefaultDecorationScaleSnap = 0.001f") &&
+               transformSnapSource.Contains("LegacyDecorationMoveSnap = 0.05f") &&
+               transformSnapSource.Contains("LegacyDecorationRotateSnapDegrees = 5f") &&
+               transformSnapSource.Contains("LegacyDecorationScaleSnap = 0.05f") &&
                transformSnapSource.Contains("DecorationMoveMinimum = 0.001f") &&
-               transformSnapSource.Contains("DecorationRotateMinimum = 0.1f") &&
+               transformSnapSource.Contains("DecorationRotateMinimum = 0.001f") &&
                transformSnapSource.Contains("DecorationScaleMinimum = 0.00001f") &&
                transformSnapSource.Contains("DecorationScaleMaximum = float.PositiveInfinity") &&
+               transformSnapSource.Contains("EnsureSmoothDecorationDefaultsMigrated") &&
+               transformSnapSource.Contains("DecorationSmoothSnapDefaultsMigrated = true") &&
+               transformSnapSource.Contains("internal static void SaveProfileBestEffort()") &&
+               sessionSource.Contains("EsuTransformSnapSettings.SaveProfileBestEffort()") &&
+               smartBuildSessionSource.Contains("EsuTransformSnapSettings.SaveProfileBestEffort()") &&
                transformSnapSource.Contains("value.ToString(\"0.#####\"") &&
                transformSnapSource.Contains("internal static class EsuTransformSnapHud") &&
                transformSnapSource.Contains("out bool commitRequested") &&
@@ -4117,7 +4184,7 @@ f 0 2 3
                !sessionSource.Contains("GUI.enabled = previous && hasSelection") &&
                sessionSource.Contains("RefreshLiveTransformFields") &&
                sessionSourceNormalized.Contains("HandleSceneInput();\n            RefreshLiveTransformFields();") &&
-               sessionSource.Contains("Mathf.Clamp(Screen.height * 0.13f, EsuHudLayout.Scale(118f), EsuHudLayout.Scale(146f))") &&
+               sessionSource.Contains("return EsuHudLayout.BottomStripHeight();") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Position\"") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Rotation\"") &&
                !inspectorSource.Contains("DrawVectorEditor(\"Scale\"") &&
@@ -4285,7 +4352,7 @@ f 0 2 3
                 sessionSource.Contains("toolbarScreenOrigin") &&
                 sessionSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
                 sessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
-                smartBuildSessionSource.Contains("EsuHudNotifications.ToolbarHeightScaled(ToolbarHeight") &&
+                smartBuildSessionSource.Contains("EsuHudLayout.EditorPanelTopLimit(ToolbarHeight)") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
                 smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
@@ -6411,6 +6478,10 @@ f 0 2 3
             SmartBuildShapeDescriptors.ByKey("triangle-corner-left");
         SmartBuildShapeDescriptor triangleRightDescriptor =
             SmartBuildShapeDescriptors.ByKey("triangle-corner-right");
+        SmartBuildShapeDescriptor beamSlopeLeftDescriptor =
+            SmartBuildShapeDescriptors.ByKey("facing-down-slope-left");
+        SmartBuildShapeDescriptor beamSlopeRightDescriptor =
+            SmartBuildShapeDescriptors.ByKey("facing-down-slope-right");
         var fixedShapeFamilies = new Dictionary<string, SmartBlockFamily>(StringComparer.OrdinalIgnoreCase)
         {
             [triangleLeftDescriptor.Key] = new SmartBlockFamily(
@@ -6438,7 +6509,29 @@ f 0 2 3
                         "RightTriangleCorner2m",
                         triangleRightDescriptor,
                         "RightTriangleCorner2m")
-                })
+                }),
+            [beamSlopeLeftDescriptor.Key] = new SmartBlockFamily(
+                "test left beam slopes",
+                Enumerable.Range(1, 4)
+                    .Select(length => new SmartBlockCandidate(
+                        length.ToString(CultureInfo.InvariantCulture) + "m left beam slope",
+                        length,
+                        null,
+                        beamSlopeLeftDescriptor.Kind,
+                        "LeftFacingDownSlope1m_" + length.ToString(CultureInfo.InvariantCulture) + "mLong",
+                        beamSlopeLeftDescriptor,
+                        "LeftFacingDownSlope1m_" + length.ToString(CultureInfo.InvariantCulture) + "mLong"))),
+            [beamSlopeRightDescriptor.Key] = new SmartBlockFamily(
+                "test right beam slopes",
+                Enumerable.Range(1, 4)
+                    .Select(length => new SmartBlockCandidate(
+                        length.ToString(CultureInfo.InvariantCulture) + "m right beam slope",
+                        length,
+                        null,
+                        beamSlopeRightDescriptor.Kind,
+                        "RightFacingDownSlope1m_" + length.ToString(CultureInfo.InvariantCulture) + "mLong",
+                        beamSlopeRightDescriptor,
+                        "RightFacingDownSlope1m_" + length.ToString(CultureInfo.InvariantCulture) + "mLong")))
         };
         var smartSource = new SmartBuildSource(
             null,
@@ -6664,7 +6757,7 @@ f 0 2 3
             forwardSign: 1,
             width: 2,
             drawPlane: SmartBuildDrawPlane.Camera);
-        fixedTriangle.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 3);
+        fixedTriangle.ResizeFromHandle(DecorationEditAxis.X, sign: 1, delta: 2);
         IReadOnlyList<SmartBuildPlacement> fixedPlacements = fixedTriangle.BuildFixedPlacements(
             smartSource,
             out string fixedReason);
@@ -6679,6 +6772,31 @@ f 0 2 3
                fixedPlacements.All(placement => placement.CoveredCells().Count == 2) &&
                fixedCoveredCells.Select(EsuSymmetry.CellKey).Distinct().Count() == fixedCoveredCells.Length,
             "Smart Builder fixed structural shapes repeat whole items on voxel strides and use the candidate footprint for placement coverage.");
+
+        SmartBuildPiece variableBeamSlope = SmartBuildPiece.CreateFixedShape(
+            null,
+            new Vector3i(0, 0, 0),
+            beamSlopeLeftDescriptor,
+            selectedLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 1,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        variableBeamSlope.ResizeFromHandle(DecorationEditAxis.Z, sign: 1, delta: 3);
+        IReadOnlyList<SmartBuildPlacement> variableBeamSlopePlacements = variableBeamSlope.BuildFixedPlacements(
+            smartSource,
+            out string variableBeamSlopeReason);
+        Vector3i[] variableBeamSlopeCells = variableBeamSlopePlacements
+            .SelectMany(placement => placement.CoveredCells())
+            .ToArray();
+        Assert(string.IsNullOrWhiteSpace(variableBeamSlopeReason) &&
+               variableBeamSlope.FixedForwardCells == 7 &&
+               variableBeamSlope.Size.z == 7 &&
+               variableBeamSlopePlacements.Select(placement => placement.Candidate.Length)
+                   .SequenceEqual(new[] { 4, 3 }) &&
+               variableBeamSlopeCells.Length == 7 &&
+               variableBeamSlopeCells.Select(EsuSymmetry.CellKey).Distinct().Count() == 7,
+            "Smart Builder fixed structural shapes pack variable length siblings so a 7-cell beam slope becomes 4m+3m instead of 4m+4m.");
 
         var mirrorShapeScene = new SmartBuildPieceScene(null);
         mirrorShapeScene.Add(SmartBuildPiece.CreateFixedShape(
@@ -6856,6 +6974,37 @@ f 0 2 3
                snappedDown.Size.z == 12 &&
                snappedDown.Size.y == 3,
             "Smart Builder snaps down-slope forward and downward scaling to whole pitch-locked ramp steps.");
+
+        SmartBuildPiece anchoredCardinalSlope = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(3, 5, 7),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 2,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        Vector3i anchoredSlopeOrigin = anchoredCardinalSlope.Origin;
+        anchoredCardinalSlope.ResizeDownSlopeCardinalFromHandle(DecorationEditAxis.Y, sign: -1, delta: -2);
+        SmartBuildPiece anchoredWidthSlope = SmartBuildPiece.CreateDownSlope(
+            null,
+            new Vector3i(6, 2, 1),
+            slopeLength: 4,
+            forwardAxis: SmartBuildAxis.Z,
+            forwardSign: 1,
+            width: 1,
+            drawPlane: SmartBuildDrawPlane.Camera);
+        Vector3i anchoredWidthOrigin = anchoredWidthSlope.Origin;
+        anchoredWidthSlope.ResizeDownSlopeCardinalFromHandle(
+            SmartBuildDraft.ToDecorationAxis(anchoredWidthSlope.RightAxis),
+            anchoredWidthSlope.RightSign,
+            delta: 2);
+        Assert(anchoredCardinalSlope.Origin.Equals(anchoredSlopeOrigin) &&
+               anchoredCardinalSlope.SlopeSteps == 3 &&
+               anchoredCardinalSlope.Size.z == 12 &&
+               anchoredCardinalSlope.Size.y == 3 &&
+               anchoredWidthSlope.Origin.Equals(anchoredWidthOrigin) &&
+               anchoredWidthSlope.SlopeWidth == 3,
+            "Smart Builder Shift cardinal down-slope scaling keeps the original slope cell anchored while extending run and width.");
 
         AllConstruct fakeConstruct = null;
         var occupiedScene = new SmartBuildPieceScene(fakeConstruct);
@@ -7077,6 +7226,11 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
+        string modeSwitchHandoffSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuModeSwitchHandoff.cs"));
         string automationRegistrationSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -7149,6 +7303,12 @@ f 0 2 3
             "Source",
             "AutomationEditMode",
             "AutomationBlockWorkspace.cs"));
+        string automationTargetPreviewRendererSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationEditMode",
+            "AutomationTargetPreviewRenderer.cs"));
         string automationRefreshTargetsSource = ExtractMethodSource(automationSessionSource, "RefreshTargets");
         string automationClearStaleControllerSource = ExtractMethodSource(automationSessionSource, "ClearStaleSelectedController");
         string automationOnGuiSource = ExtractMethodSource(automationSessionSource, "OnGUI");
@@ -7158,6 +7318,7 @@ f 0 2 3
         string automationDrawWorldOverlaySource = ExtractMethodSource(automationSessionSource, "DrawWorldOverlay");
         string automationDrawTargetHighlightsSource = ExtractMethodSource(automationSessionSource, "DrawTargetHighlights");
         string automationShouldDrawWorldHighlightSource = ExtractMethodSource(automationSessionSource, "ShouldDrawAutomationWorldHighlight");
+        string automationShouldDrawFilteredWorldHighlightSource = ExtractMethodSource(automationSessionSource, "ShouldDrawFilteredAutomationWorldHighlight");
         string automationWorldHoverTooltipSource = ExtractMethodSource(automationSessionSource, "AutomationWorldHoverTooltip");
         string automationHandleMouseSource = ExtractMethodSource(automationSessionSource, "HandleMouse");
         string automationPrepareLayoutSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationLayout");
@@ -7171,24 +7332,115 @@ f 0 2 3
         string automationProjectedTargetRectSource = ExtractMethodSource(automationSessionSource, "TryProjectedAutomationTargetScreenRect");
         string automationTryOpenSelectionContextSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationSelectionContextMenu");
         string automationDrawContextMenuSource = ExtractMethodSource(automationSessionSource, "DrawAutomationContextMenu");
+        string automationDrawContextMenuWindowSource = ExtractMethodSource(automationSessionSource, "DrawAutomationContextMenuWindow");
         string automationContextMenuItemsSource = ExtractMethodSource(automationSessionSource, "AutomationContextMenuItems");
         string automationExecuteContextActionSource = ExtractMethodSource(automationSessionSource, "ExecuteAutomationContextAction");
         string automationRowContextMenuSource = ExtractMethodSource(automationSessionSource, "TryOpenAutomationRowContextMenu");
         string automationGUILayoutButtonSource = ExtractMethodSource(automationSessionSource, "AutomationGUILayoutButton");
         string automationGUIButtonSource = ExtractMethodSource(automationSessionSource, "AutomationGUIButton");
         string automationButtonContentSource = ExtractMethodSource(automationSessionSource, "DrawAutomationButtonContent");
+        string automationDrawFittedSingleLineLabelSource = ExtractMethodSource(automationSessionSource, "DrawFittedSingleLineLabel");
         string automationToolbarButtonSource = ExtractMethodSource(automationSessionSource, "ToolbarButton");
         string automationStatusStripSource = ExtractMethodSource(automationSessionSource, "DrawStatusStrip");
         string automationPanelHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationPanelHeader");
         string automationSectionHeaderSource = ExtractMethodSource(automationSessionSource, "DrawAutomationSectionHeader");
         string automationTargetSearchControlsSource = ExtractMethodSource(automationSessionSource, "DrawTargetSearchControls");
+        string automationDrawLeftPanelSource = ExtractMethodSource(automationSessionSource, "DrawLeftPanel");
+        string automationDrawRuntimeDiagnosticsPanelSource = ExtractMethodSource(automationSessionSource, "DrawRuntimeDiagnosticsPanel");
+        string automationDrawRuntimeDiagnosticsFilterSource = ExtractMethodSource(automationSessionSource, "DrawRuntimeDiagnosticsFilter");
+        string automationDrawRuntimeValidationEvidenceRowsSource = ExtractMethodSource(automationSessionSource, "DrawRuntimeValidationEvidenceRows");
+        string automationDrawRuntimeValidationControlsSource = ExtractMethodSource(automationSessionSource, "DrawRuntimeValidationControls");
+        string automationPrepareAutomationValidationGraphSource = ExtractMethodSource(automationSessionSource, "PrepareAutomationValidationGraph");
+        string automationCaptureRuntimeValidationBaselineSource = ExtractMethodSource(automationSessionSource, "CaptureRuntimeValidationBaseline");
+        string automationCompareRuntimeValidationBaselineSource = ExtractMethodSource(automationSessionSource, "CompareRuntimeValidationBaseline");
+        string automationRuntimeDiagnosticLineMatchesFilterSource = ExtractMethodSource(automationSessionSource, "RuntimeDiagnosticLineMatchesFilter");
         string automationDrawEditorSource = ExtractMethodSource(automationSessionSource, "DrawEditor");
         string automationDrawBlocksEditorSource = ExtractMethodSource(automationSessionSource, "DrawBlocksEditor");
+        string automationDrawBlocksEditorViewportSource = ExtractMethodSource(automationSessionSource, "DrawBlocksEditorViewport");
+        string automationDrawBlocksRightColumnSource = ExtractMethodSource(automationSessionSource, "DrawBlocksRightColumn");
+        string automationDrawBlocksSplitterGripSource = ExtractMethodSource(automationSessionSource, "DrawBlocksSplitterGrip");
+        string automationHandleBlocksMainRightSplitterSource = ExtractMethodSource(automationSessionSource, "HandleBlocksMainRightSplitter");
+        string automationHandleBlocksCanvasLoweringSplitterSource = ExtractMethodSource(automationSessionSource, "HandleBlocksCanvasLoweringSplitter");
+        string automationDrawGraphEditorSource = ExtractMethodSource(automationSessionSource, "DrawGraphEditor");
+        string automationDrawBreadboardInspectorSectionSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardInspectorSection");
+        string automationDrawBreadboardNativeEditGuideSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardNativeEditGuide");
+        string automationDrawBreadboardQuickAddsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardQuickAdds");
+        string automationDrawBreadboardSharedVariableBridgeSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardSharedVariableBridge");
+        string automationDrawMissileBreadboardQuickAddsSource = ExtractMethodSource(automationSessionSource, "DrawMissileBreadboardQuickAdds");
+        string automationDrawBreadboardAddButtonSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardAddButton");
+        string automationDrawBreadboardSearchAddButtonSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardSearchAddButton");
+        string automationDrawBreadboardProxyActionsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardProxyActions");
+        string automationDrawBreadboardProxySearchSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardProxySearch");
+        string automationBreadboardProxyLinkMatchesSearchSource = ExtractMethodSource(automationSessionSource, "BreadboardProxyLinkMatchesSearch");
+        string automationDrawLinkedTargetProxyShortcutsSource = ExtractMethodSource(automationSessionSource, "DrawLinkedTargetProxyShortcuts");
+        string automationDrawAcbInspectorBodySource = ExtractMethodSource(automationSessionSource, "DrawAcbInspectorBody");
+        string automationDrawAcbNativeEditGuideSource = ExtractMethodSource(automationSessionSource, "DrawAcbNativeEditGuide");
+        string automationDrawAcbControllerInspectorBodySource = ExtractMethodSource(automationSessionSource, "DrawAcbControllerInspectorBody");
+        string automationDrawAcbControllerNativeEditGuideSource = ExtractMethodSource(automationSessionSource, "DrawAcbControllerNativeEditGuide");
+        string automationDrawAcbControllerButtonSearchSource = ExtractMethodSource(automationSessionSource, "DrawAcbControllerButtonSearch");
+        string automationAcbControllerButtonMatchesSearchSource = ExtractMethodSource(automationSessionSource, "AcbControllerButtonMatchesSearch");
+        string automationDrawCodeEditorSource = ExtractMethodSource(automationSessionSource, "DrawCodeEditor");
+        string automationDrawAutomationCodeRecipeGuideSource = ExtractMethodSource(automationSessionSource, "DrawAutomationCodeRecipeGuide");
+        string automationDrawAutomationCodeOutputTargetPickerSource = ExtractMethodSource(automationSessionSource, "DrawAutomationCodeOutputTargetPicker");
+        string automationDrawAutomationCodeOutputTargetSearchSource = ExtractMethodSource(automationSessionSource, "DrawAutomationCodeOutputTargetSearch");
+        string automationCodeOutputTargetMatchesSearchSource = ExtractMethodSource(automationSessionSource, "AutomationCodeOutputTargetMatchesSearch");
+        string automationDrawAutomationLinkedIdentifierHintsSource = ExtractMethodSource(automationSessionSource, "DrawAutomationLinkedIdentifierHints");
+        string automationDrawAutomationCodeIdentifierSearchSource = ExtractMethodSource(automationSessionSource, "DrawAutomationCodeIdentifierSearch");
+        string automationCodeIdentifierMatchesSearchSource = ExtractMethodSource(automationSessionSource, "AutomationCodeIdentifierMatchesSearch");
+        string automationDrawAutomationRecipePickerSource = ExtractMethodSource(automationSessionSource, "DrawAutomationRecipePicker");
+        string automationDrawAutomationCodeRecipeSearchCatalogSource = ExtractMethodSource(automationSessionSource, "DrawAutomationCodeRecipeSearchCatalog");
+        string automationDrawAutomationCodeRecipeCatalogRowSource = ExtractMethodSource(automationSessionSource, "DrawAutomationCodeRecipeCatalogRow");
+        string automationCodeRecipeMatchesSearchSource = ExtractMethodSource(automationSessionSource, "AutomationCodeRecipeMatchesSearch");
+        string automationDrawPanelNextStepPromptSource = ExtractMethodSource(automationSessionSource, "DrawPanelNextStepPrompt");
+        string automationDrawLinkedSignalMenusSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadLinkedSignalMenus");
+        string automationDrawLinkedTargetIdentityGuideSource = ExtractMethodSource(automationSessionSource, "DrawLinkedTargetIdentityGuide");
+        string automationDrawLinkedTargetListSearchSource = ExtractMethodSource(automationSessionSource, "DrawLinkedTargetListSearch");
+        string automationLinkedTargetListMatchesSearchSource = ExtractMethodSource(automationSessionSource, "LinkedTargetListMatchesSearch");
+        string automationDrawLinkedSignalSearchSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadLinkedSignalSearch");
+        string automationDrawLinkedSignalSectionSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadLinkedSignalSection");
+        string automationLinkedSignalMatchesSearchSource = ExtractMethodSource(automationSessionSource, "TinkercadLinkedSignalMatchesSearch");
+        string automationDrawLinkedSignalRowSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadLinkedSignalRow");
         string automationDrawTinkercadPaletteSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockPalette");
+        string automationDrawSemanticBlockPaletteSource = ExtractMethodSource(automationSessionSource, "DrawSemanticBlockPalette");
+        string automationDrawSemanticBlockPaletteSearchSource = ExtractMethodSource(automationSessionSource, "DrawSemanticBlockPaletteSearch");
+        string automationSemanticBlockDefinitionMatchesSearchSource = ExtractMethodSource(automationSessionSource, "SemanticBlockDefinitionMatchesSearch");
         string automationDrawTinkercadCanvasSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockCanvas");
+        string automationDrawTinkercadProgramSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadProgram");
+        string automationClampBlockCanvasPanSource = ExtractMethodSource(automationSessionSource, "ClampBlockCanvasPan");
         string automationHandleBlockCanvasDropSource = ExtractMethodSource(automationSessionSource, "HandleBlockCanvasDrop");
+        string automationHandleWorkspaceBlockInputSource = ExtractMethodSource(automationSessionSource, "HandleWorkspaceBlockInput");
         string automationDrawTinkercadInspectorSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockInspector");
         string automationDrawTinkercadShapeSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockShape");
+        string automationDrawTinkercadWorkspaceLinksSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadWorkspaceLinks");
+        string automationDrawTinkercadBlockPortsSource = ExtractMethodSource(automationSessionSource, "DrawTinkercadBlockPorts");
+        string automationBlockPortSummarySource = ExtractMethodSource(automationSessionSource, "AutomationBlockPortSummary");
+        string automationBlockNodeValidationLabelSource = ExtractMethodSource(automationSessionSource, "BlockNodeValidationLabel");
+        string automationHandleBlockCanvasNavigationSource = ExtractMethodSource(automationSessionSource, "HandleBlockCanvasNavigation");
+        string automationDrawLinksSource = ExtractMethodSource(automationSessionSource, "DrawLinks");
+        string automationToggleLinkSource = ExtractMethodSource(automationSessionSource, "ToggleLink");
+        string automationOpenPropertyPickerSource = ExtractMethodSource(automationSessionSource, "OpenAutomationPropertyPicker");
+        string automationDrawPropertyPickerSource = ExtractMethodSource(automationSessionSource, "DrawAutomationPropertyPicker");
+        string automationDrawPropertyPickerWindowSource = ExtractMethodSource(automationSessionSource, "DrawAutomationPropertyPickerWindow");
+        string automationDrawTargetPreviewCardSource = ExtractMethodSource(automationSessionSource, "DrawAutomationTargetPreviewCard");
+        string automationTryApplyProxyPropertySelectionSource = ExtractMethodSource(automationSessionSource, "TryApplyProxyPropertySelection");
+        string automationAddAutomationBlockForLinkSource = ExtractMethodSource(automationSessionSource, "AddAutomationBlockForLink");
+        string automationApplyBlockAutoPropertyHintSource = ExtractMethodSource(automationSessionSource, "ApplyAutomationBlockAutoPropertyHint");
+        string automationBlockAutoPropertyHintSource = ExtractMethodSource(automationSessionSource, "AutomationBlockAutoPropertyHint");
+        string automationApplyMissingBlockPropertyHintsSource = ExtractMethodSource(automationSessionSource, "ApplyMissingAutomationBlockPropertyHints");
+        string automationTryApplyContextualStarterTemplateSource = ExtractMethodSource(automationSessionSource, "TryApplyContextualStarterTemplate");
+        string automationDrawNativeBreadboardPaletteSource = ExtractMethodSource(automationSessionSource, "DrawNativeBreadboardBlockPalette");
+        string automationDrawNativeBreadboardPaletteSearchSource = ExtractMethodSource(automationSessionSource, "DrawNativeBreadboardPaletteSearch");
+        string automationNativeComponentMatchesSearchSource = ExtractMethodSource(automationSessionSource, "NativeComponentMatchesSearch");
+        string automationDrawNativeBreadboardTemplateSource = ExtractMethodSource(automationSessionSource, "DrawNativeBreadboardBlockTemplate");
+        string automationTryApplyNativeComponentBlocksSource = ExtractMethodSource(automationSessionSource, "TryApplyNativeComponentBlocks");
+        string automationEnsureBlockWorkspaceSource = ExtractMethodSource(automationSessionSource, "EnsureBlockWorkspace");
+        string automationDrawBlockNodeControlsSource = ExtractMethodSource(automationSessionSource, "DrawAutomationBlockNodeControls");
+        string automationBlockWorkspaceCreateDefaultSource = ExtractMethodSource(automationBlockWorkspaceSource, "CreateDefault");
+        string automationBlockWorkspaceAddBlockSource = ExtractMethodSource(automationBlockWorkspaceSource, "AddBlock");
+        string automationBlockWorkspaceAmmoTemplateSource = ExtractMethodSource(automationBlockWorkspaceSource, "TryApplyAmmoThresholdStarterTemplate");
+        string automationBlockLoweringCheckSource = ExtractMethodSource(automationBlockWorkspaceSource, "CheckBlocksToNative");
+        string automationBlockLoweringPassExpressionSource = ExtractMethodSource(automationBlockWorkspaceSource, "PassExpressionFor");
+        string automationBlockLoweringIdentifierSource = ExtractMethodSource(automationBlockWorkspaceSource, "IdentifierForReadSignal");
         string automationDrawBlocksLoweringPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksLoweringPanel");
         string automationDrawBlocksSystemBlockPanelSource = ExtractMethodSource(automationSessionSource, "DrawBlocksSystemBlockPanel");
         string automationCheckEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CheckEsuBlocks");
@@ -7196,11 +7448,13 @@ f 0 2 3
         string automationTryBindEsuBlockInputGetterSource = ExtractMethodSource(automationSessionSource, "TryBindEsuBlockInputGetter");
         string automationRevertEsuBlocksSource = ExtractMethodSource(automationSessionSource, "RevertEsuBlocks");
         string automationCollapseEsuBlocksSource = ExtractMethodSource(automationSessionSource, "CollapseEsuBlocksToSystemBlock");
-        string automationDrawWorkspaceGuideSource = ExtractMethodSource(automationSessionSource, "DrawWorkspaceGuide");
         string automationNextSafeActionSource = ExtractMethodSource(automationSessionSource, "NextSafeActionLine");
         string automationWorkspaceStageSource = ExtractMethodSource(automationSessionSource, "WorkspaceStageLabel");
         string automationWorkspaceSafetySource = ExtractMethodSource(automationSessionSource, "WorkspaceSafetyLine");
+        string automationWorkspaceCompatibilitySource = ExtractMethodSource(automationSessionSource, "WorkspaceCompatibilityLine");
         string automationDrawSystemBlockHostNodesSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNodes");
+        string automationDrawSystemBlockHostNodeSearchSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNodeSearch");
+        string automationSystemBlockHostNodeMatchesSearchSource = ExtractMethodSource(automationSessionSource, "SystemBlockHostNodeMatchesSearch");
         string automationDrawSystemBlockHostNodeSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockHostNode");
         string automationCheckSystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "CheckSystemBlockNativeLowering");
         string automationApplySystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "ApplySystemBlockNativeLowering");
@@ -7208,7 +7462,13 @@ f 0 2 3
         string automationRevertLastSystemBlockNativeLoweringSource = ExtractMethodSource(automationSessionSource, "RevertLastSystemBlockNativeLowering");
         string automationCanRevertLastSystemBlockLoweringSource = ExtractMethodSource(automationSessionSource, "CanRevertLastSystemBlockLowering");
         string automationDrawSystemBlockEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockEditor");
+        string automationDrawSystemBlockScopeGuideSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockScopeGuide");
+        string automationDrawSystemBlockDraftPortPreviewSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockDraftPortPreview");
         string automationDrawSystemBlockInternalGraphEditorSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockInternalGraphEditor");
+        string automationDrawSystemBlockTemplateListSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockTemplateList");
+        string automationDrawSystemBlockTemplateLibraryCapHintSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockTemplateLibraryCapHint");
+        string automationDrawSystemBlockTemplateSearchSource = ExtractMethodSource(automationSessionSource, "DrawSystemBlockTemplateSearch");
+        string automationSystemBlockTemplateMatchesSearchSource = ExtractMethodSource(automationSessionSource, "SystemBlockTemplateMatchesSearch");
         string automationEnterSystemBlockTemplateSource = ExtractMethodSource(automationSessionSource, "EnterSystemBlockTemplate");
         string automationIsSystemBlockTemplateForSelectedControllerSource = ExtractMethodSource(automationSessionSource, "IsSystemBlockTemplateForSelectedController");
         string automationValidateSystemBlockInternalGraphSource = ExtractMethodSource(automationSessionSource, "ValidateSystemBlockInternalGraph");
@@ -7222,27 +7482,36 @@ f 0 2 3
         string automationSystemBlockToProfileTemplateSource = ExtractMethodSource(automationSessionSource, "SystemBlockToProfileTemplate");
         string automationTemplateLibraryKeySource = ExtractMethodSource(automationSessionSource, "TemplateLibraryKey");
         string automationParseSystemBlockPortsSource = ExtractMethodSource(automationSessionSource, "ParseSystemBlockPorts");
+        string automationFirstDuplicateSystemBlockPortSource = ExtractMethodSource(automationSessionSource, "FirstDuplicateSystemBlockPort");
         string automationSystemBlockBreadcrumbSource = ExtractMethodSource(automationSessionSource, "SystemBlockBreadcrumb");
         string automationCompactHeaderSource = ExtractMethodSource(automationSessionSource, "DrawCompactIconHeader");
         string automationCategoryIconKeySource = ExtractMethodSource(automationSessionSource, "CategoryIconKey");
         string automationTargetIconKeySource = ExtractMethodSource(automationSessionSource, "AutomationTargetIconKey");
         string automationControllerPaletteRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerPaletteRow");
+        string automationControllerIndexSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndex");
+        string automationDrawControllerIndexSearchSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexSearch");
+        string automationControllerIndexMatchesSearchSource = ExtractMethodSource(automationSessionSource, "ControllerIndexMatchesSearch");
         string automationControllerIndexRowSource = ExtractMethodSource(automationSessionSource, "DrawControllerIndexRow");
         string automationTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawTargetListRow");
         string automationLinkedTargetListRowSource = ExtractMethodSource(automationSessionSource, "DrawLinkedTargetListRow");
+        string automationBuildBreadboardCanvasNodesSource = ExtractMethodSource(automationSessionSource, "BuildBreadboardCanvasNodes");
         string automationBreadboardCanvasInputSource = ExtractMethodSource(automationSessionSource, "HandleBreadboardCanvasInput");
         string automationBreadboardComponentListSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardComponentList");
         string automationBreadboardMoveControlsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardMoveControls");
         string automationBreadboardWireControlsSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardWireControls");
+        string automationDrawNativeWirePortSearchSource = ExtractMethodSource(automationSessionSource, "DrawNativeWirePortSearch");
+        string automationNativeWirePortMatchesSearchSource = ExtractMethodSource(automationSessionSource, "NativeWirePortMatchesSearch");
+        string automationDrawBreadboardStoredComponentSearchSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardStoredComponentSearch");
+        string automationStoredBreadboardComponentMatchesSearchSource = ExtractMethodSource(automationSessionSource, "StoredBreadboardComponentMatchesSearch");
+        string automationDrawBreadboardComponentReflectionCapHintSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardComponentReflectionCapHint");
+        string automationDrawBreadboardPortDisplayCapHintSource = ExtractMethodSource(automationSessionSource, "DrawBreadboardPortDisplayCapHint");
         string automationExecuteBoardCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteBoardCommand");
         string automationExecuteAddComponentCommandSource = ExtractMethodSource(automationBreadboardInspectorSource, "ExecuteAddComponentCommand");
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string changeTestChecklistSource = ReadDocumentationText(root, "docs", "ESU_CHANGE_TEST_CHECKLIST.md");
-        string automationNestedWorkspaceGoalSource = ReadDocumentationText(
-            root,
-            "docs",
-            "AUTOMATION_EDITOR_NESTED_WORKSPACE_GOAL.md");
+        string automationDesignDocSource = ReadDocumentationText(root, "docs", "AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md");
+        string automationGoalDocSource = ReadDocumentationText(root, "docs", "AUTOMATION_EDITOR_NESTED_WORKSPACE_GOAL.md");
         string smartBuilderHudDocSource = ReadDocumentationText(
             root,
             "SMART_BUILDER_HUD.md");
@@ -7287,15 +7556,8 @@ f 0 2 3
                automationBehaviourSource.Contains("EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame()") &&
                automationBehaviourSource.Contains("ConsumeAutomationEditToggleDown") &&
                automationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
-               automationNestedWorkspaceGoalSource.Contains("Blender-like nested automation workspace") &&
-               automationNestedWorkspaceGoalSource.Contains("Do not create a parallel automation runtime") &&
-               automationNestedWorkspaceGoalSource.Contains("nested System Blocks") &&
-               automationNestedWorkspaceGoalSource.Contains("Every HUD state must make the next safe user action obvious") &&
-               automationNestedWorkspaceGoalSource.Contains("Add live simulation/debugging values") &&
-               automationNestedWorkspaceGoalSource.Contains("Definition of done") &&
-               automationNestedWorkspaceGoalSource.Contains("docs/AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md") &&
                inGameTestPlanSource.Contains("Automation Editor") &&
-               changeTestChecklistSource.Contains("Workspace guide") &&
+               changeTestChecklistSource.Contains("bottom strip and focused page controls") &&
                changeTestChecklistSource.Contains("ESU Blocks") &&
                automationSessionSource.Contains("SwitchToDecorationEditRequested") &&
                automationSessionSource.Contains("SuspendForModeSwitchHandoff") &&
@@ -7651,13 +7913,16 @@ f 0 2 3
                automationGUILayoutButtonSource.Contains("AutomationGUIButton(rect, content, style)") &&
                automationGUIButtonSource.Contains("GUI.Button(rect, GUIContent.none, style)") &&
                automationGUIButtonSource.Contains("DrawAutomationButtonContent(rect, content, style)") &&
-               automationButtonContentSource.Contains("EsuHudLayout.Scale(16f)") &&
-               automationButtonContentSource.Contains("EsuHudLayout.Scale(14f)") &&
+               automationButtonContentSource.Contains("Mathf.Min(rect.height * 0.34f, rect.width * 0.34f)") &&
+               automationButtonContentSource.Contains("EsuHudLayout.Scale(13f)") &&
+               automationButtonContentSource.Contains("DrawFittedSingleLineLabel") &&
+               automationDrawFittedSingleLineLabelSource.Contains("EllipsizeText") &&
                automationButtonContentSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&
                automationSessionSource.Contains("ImagePosition.TextOnly") &&
                automationToolbarButtonSource.Contains("AutomationGUILayoutButton(") &&
                automationToolbarButtonSource.Contains("new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip)") &&
                automationStatusStripSource.Contains("AutomationGUILayoutButton(") &&
+               automationStatusStripSource.Contains("DrawAutomationSingleLineIconRow") &&
                automationStatusStripSource.Contains("new GUIContent(\"Link\", DecorationEditorIconCatalog.Get(\"anchor\")") &&
                automationStatusStripSource.Contains("\"Stage: \" + WorkspaceStageLabel()") &&
                automationStatusStripSource.Contains("\"Next: \" + NextSafeActionLine()") &&
@@ -7669,8 +7934,9 @@ f 0 2 3
                !automationSectionHeaderSource.Contains("DecorationEditorIconCatalog.Get(sectionVisible ? \"close\" : iconKey)") &&
                automationTargetSearchControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawEditorSource.Contains("AutomationGUILayoutButton(") &&
-               automationDrawEditorSource.Contains("DrawEditorBottomStrip()") &&
-               automationSessionSource.Contains("AutomationEditorPage.System") &&
+               automationDrawEditorSource.Contains("DrawEditorBottomStrip()"),
+            "Automation shared HUD shell keeps layout, resize grips, iconized controls, toolbar/status controls, and the editor bottom strip wired.");
+        Assert(automationSessionSource.Contains("AutomationEditorPage.System") &&
                automationSessionSource.Contains("AutomationEditorPage.Blocks") &&
                automationSessionSource.Contains("_editorPage = AutomationEditorPage.Blocks") &&
                automationSessionSource.Contains("AutomationSystemBlockTemplate") &&
@@ -7681,10 +7947,20 @@ f 0 2 3
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockNode") &&
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockPort") &&
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockLink") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationBlockDefinition") &&
+               automationBlockWorkspaceSource.Contains("internal static class AutomationBlockCatalog") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockAudience") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockCompatibility") &&
+               automationBlockWorkspaceSource.Contains("InputPortsForNode") &&
+               automationBlockWorkspaceSource.Contains("OutputPortsForNode") &&
+               automationBlockWorkspaceSource.Contains("HasInputLink") &&
+               automationBlockWorkspaceSource.Contains("HasOutputLink") &&
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationLoweringPlan") &&
+               automationBlockWorkspaceSource.Contains("internal sealed class AutomationNativeComponentRequest") &&
                automationBlockWorkspaceSource.Contains("internal sealed class AutomationSystemBlockDefinition") &&
                automationBlockWorkspaceSource.Contains("AutomationBlockKind") &&
                automationBlockWorkspaceSource.Contains("internal enum AutomationBlockCategory") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockCategory.Advanced") &&
                automationBlockWorkspaceSource.Contains("AutomationBlockCanvasPosition") &&
                automationBlockWorkspaceSource.Contains("PaletteTemplateId") &&
                automationBlockWorkspaceSource.Contains("MoveNodeToIndex") &&
@@ -7692,14 +7968,18 @@ f 0 2 3
                automationBlockWorkspaceSource.Contains("ReadTarget") &&
                automationBlockWorkspaceSource.Contains("Compare") &&
                automationBlockWorkspaceSource.Contains("MathScale") &&
+               automationBlockWorkspaceSource.Contains("MathEvaluator") &&
+               automationBlockWorkspaceSource.Contains("Switch") &&
                automationBlockWorkspaceSource.Contains("SetTarget") &&
                automationBlockWorkspaceSource.Contains("Constant") &&
                automationBlockWorkspaceSource.Contains("Delay") &&
                automationBlockWorkspaceSource.Contains("Comment") &&
+               automationBlockWorkspaceSource.Contains("NativeComponent") &&
                automationBlockWorkspaceSource.Contains("CheckBlocksToNative") &&
                automationBlockWorkspaceSource.Contains("ApplyLoweringPlan") &&
-               automationBlockWorkspaceSource.Contains("RevertLowering") &&
-               automationDrawEditorSource.Contains("new GUIContent(\"Blocks\"") &&
+               automationBlockWorkspaceSource.Contains("RevertLowering"),
+            "Automation block workspace model defines pages, catalog definitions, ports/links, lowering plans, native wrappers, and System Block metadata.");
+        Assert(automationDrawEditorSource.Contains("new GUIContent(\"Blocks\"") &&
                automationDrawEditorSource.Contains("new GUIContent(\"Advanced\"") &&
                automationDrawEditorSource.Contains("new GUIContent(\"Systems\"") &&
                automationDrawEditorSource.Contains("new GUIContent(\"Up\"") &&
@@ -7708,25 +7988,75 @@ f 0 2 3
                automationDrawEditorSource.Contains("SystemBlockBreadcrumb()") &&
                automationDrawBlocksEditorSource.Contains("ESU Blocks builder") &&
                automationDrawBlocksEditorSource.Contains("Beginner workflow") &&
-               automationDrawBlocksEditorSource.Contains("DrawTinkercadBlockPalette()") &&
-               automationDrawBlocksEditorSource.Contains("DrawTinkercadBlockCanvas()") &&
-               automationDrawBlocksEditorSource.Contains("DrawTinkercadBlockInspector()") &&
-               automationDrawBlocksEditorSource.Contains("DrawBlocksLoweringPanel()") &&
-               automationDrawBlocksEditorSource.Contains("DrawBlocksSystemBlockPanel()") &&
-               automationSessionSource.Contains("return \"Output\"") &&
-               automationSessionSource.Contains("return \"Control\"") &&
-               automationSessionSource.Contains("return \"Input\"") &&
+               automationDrawBlocksEditorSource.Contains("BlocksEditorViewportHeight()") &&
+               automationDrawBlocksEditorSource.Contains("DrawBlocksEditorViewport(viewport)") &&
+               automationDrawBlocksEditorViewportSource.Contains("DrawBlocksLeftColumn(leftRect") &&
+               automationDrawBlocksEditorViewportSource.Contains("DrawBlocksRightColumn(rightRect") &&
+               automationDrawBlocksEditorViewportSource.IndexOf("DrawBlocksLeftColumn(leftRect", StringComparison.Ordinal) <
+               automationDrawBlocksEditorViewportSource.IndexOf("DrawBlocksRightColumn(rightRect", StringComparison.Ordinal) &&
+               automationDrawBlocksRightColumnSource.Contains("DrawTinkercadLinkedSignalMenus") &&
+               automationDrawBlocksRightColumnSource.Contains("DrawTinkercadBlockPalette(paletteRect.height)") &&
+               automationDrawBlocksRightColumnSource.Contains("DrawTinkercadBlockInspector") &&
+               automationDrawBlocksRightColumnSource.Contains("DrawBlocksSystemBlockPanel") &&
+               automationDrawBlocksSplitterGripSource.Contains("EsuHudLayout.DrawStackDividerGrip") &&
+               automationHandleBlocksMainRightSplitterSource.Contains("_blocksRightColumnRatio") &&
+               automationHandleBlocksCanvasLoweringSplitterSource.Contains("_blocksLowerPanelRatio") &&
+               automationSessionSource.Contains("return \"Outputs\"") &&
+               automationSessionSource.Contains("return \"Logic\"") &&
+               automationSessionSource.Contains("return \"Inputs\"") &&
                automationSessionSource.Contains("return \"Math\"") &&
-               automationSessionSource.Contains("return \"Variables\"") &&
-               automationSessionSource.Contains("return \"Notation\"") &&
+               automationSessionSource.Contains("return \"Timing\"") &&
+               automationSessionSource.Contains("return \"Organization\"") &&
+               automationSessionSource.Contains("return \"Advanced Native\"") &&
+               automationSessionSource.Contains("_blockPaletteCategory = AutomationBlockCategory.Input") &&
+               automationDrawTinkercadPaletteSource.Contains("DrawNativeBreadboardBlockPalette()") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("inspector.AvailableComponents") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("DrawNativeBreadboardBlockTemplate(component)") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("AutomationBlockCatalog.NativeDefinition(component)") &&
                automationSessionSource.Contains("\"on start\"") &&
                automationSessionSource.Contains("\"forever\"") &&
                automationDrawTinkercadCanvasSource.Contains("DrawTinkercadProgram") &&
+               automationDrawTinkercadCanvasSource.Contains("ClampBlockCanvasPan(canvas)") &&
+               automationDrawTinkercadCanvasSource.Contains("GuiToScreenRect(canvas)") &&
+               automationDrawTinkercadProgramSource.Contains("GUI.BeginGroup(canvas)") &&
+               automationDrawTinkercadProgramSource.Contains("GUI.EndGroup()") &&
+               automationDrawTinkercadProgramSource.Contains("OffsetRect(rect, canvas.x, canvas.y)") &&
+               automationDrawTinkercadProgramSource.Contains("DrawTinkercadWorkspaceLinks(blockRectsByNodeId)") &&
+               automationDrawTinkercadWorkspaceLinksSource.Contains("DrawGuiLine(start, end") &&
+               automationDrawTinkercadWorkspaceLinksSource.Contains("from.Name + \" -> \" + to.Name") &&
+               automationSessionSource.Contains("\"Input\" : \"Output\"") &&
+               automationSessionSource.Contains("\" port: \"") &&
+               automationSessionSource.Contains("TinkercadBlockPortRect") &&
+               automationClampBlockCanvasPanSource.Contains("ClampBetween") &&
                automationHandleBlockCanvasDropSource.Contains("MoveNodeToIndex") &&
+               automationHandleBlockCanvasDropSource.Contains("AddNativeAutomationBlock") &&
                automationHandleBlockCanvasDropSource.Contains("AddAutomationBlock") &&
+               automationHandleWorkspaceBlockInputSource.Contains("OpenAutomationBlockContextMenu") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("_draggingNativePaletteBlock") &&
+               automationContextMenuItemsSource.Contains("AutomationContextMenuKind.Block") &&
+               automationExecuteContextActionSource.Contains("RemoveSelectedEsuBlock()") &&
                automationDrawTinkercadInspectorSource.Contains("Selected block") &&
                automationDrawTinkercadShapeSource.Contains("DrawFilledRect") &&
-               automationDrawBlocksLoweringPanelSource.Contains("Check blocks") &&
+               automationDrawTinkercadShapeSource.Contains("DrawFittedSingleLineLabel") &&
+               automationDrawTinkercadShapeSource.Contains("badge"),
+            "Automation Tinkercad editor exposes Blocks/Advanced/Systems navigation, resizable canvas/right-column layout, beginner categories, native wrapper drag/drop, named nubs, preview links, fitted text, and drag/context interactions.");
+        Assert(automationDrawLinkedSignalMenusSource.Contains("Linked signals") &&
+               automationDrawLinkedSignalSectionSource.Contains("AutomationLinkDirection.Input") &&
+               automationDrawLinkedSignalMenusSource.Contains("DrawTinkercadLinkedSignalSection(AutomationLinkDirection.Output)") &&
+               automationDrawLinkedSignalSectionSource.Contains("Input links become Read Target blocks and native Generic Block Getter proxy nodes on Apply.") &&
+               automationDrawLinkedSignalSectionSource.Contains("Output links become Set Target blocks and native Generic Block Setter proxy nodes on Apply.") &&
+               automationDrawLinkedSignalSectionSource.Contains("No input links yet") &&
+               automationDrawLinkedSignalSectionSource.Contains("Then use Add read") &&
+               automationDrawLinkedSignalSectionSource.Contains("No output links yet") &&
+               automationDrawLinkedSignalSectionSource.Contains("Then use Add set") &&
+               automationDesignDocSource.Contains("Input/Read/GBG and") &&
+               changeTestChecklistSource.Contains("Inputs create Read/GBG paths") &&
+               automationDrawLinkedSignalRowSource.Contains("Add read") &&
+               automationDrawLinkedSignalRowSource.Contains("Add set") &&
+               automationDrawLinkedSignalRowSource.Contains("Mathf.Clamp(row.width * 0.33f") &&
+               automationAddAutomationBlockForLinkSource.Contains("SetNodeTarget"),
+            "Automation ESU Blocks linked signals keep Input/Read/GBG and Output/Set/GBS onboarding and Add read/set wiring covered.");
+        Assert(automationDrawBlocksLoweringPanelSource.Contains("Check blocks") &&
                automationDrawBlocksLoweringPanelSource.Contains("Apply blocks") &&
                automationDrawBlocksLoweringPanelSource.Contains("Revert blocks") &&
                automationDrawBlocksSystemBlockPanelSource.Contains("Collapse to System Block") &&
@@ -7734,15 +8064,22 @@ f 0 2 3
                automationCheckEsuBlocksSource.Contains("_blockLoweringPlan") &&
                automationApplyEsuBlocksSource.Contains("ToNativeCode()") &&
                automationApplyEsuBlocksSource.Contains("CompileAutomationCodeExpression(returnToGraph: false)") &&
-               automationApplyEsuBlocksSource.Contains("TryBindEsuBlockInputGetter(_blockLoweringPlan)") &&
+               automationApplyEsuBlocksSource.Contains("TryBindEsuBlockInputGetter(_blockLoweringPlan, out inputBindingMessage)") &&
+               automationApplyEsuBlocksSource.Contains("TryApplyNativeComponentBlocks(_blockLoweringPlan, out string nativeComponentMessage)") &&
+               automationTryApplyNativeComponentBlocksSource.Contains("TryAddComponentTracked") &&
+               automationTryApplyNativeComponentBlocksSource.Contains("AddGeneratedComponentIdsToLastCompileRevert") &&
+               automationTryApplyNativeComponentBlocksSource.Contains("partialIds.Length") &&
                automationTryBindEsuBlockInputGetterSource.Contains("TryCreateTargetProxy") &&
                automationTryBindEsuBlockInputGetterSource.Contains("getter: true") &&
                automationTryBindEsuBlockInputGetterSource.Contains("setter: false") &&
                automationTryBindEsuBlockInputGetterSource.Contains("TargetGettersFor") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("PreferredProxyPropertySelection") &&
                automationTryBindEsuBlockInputGetterSource.Contains("TryConnectPorts") &&
-               automationTryBindEsuBlockInputGetterSource.Contains("new AutomationCompileRevertSet") &&
-               automationRevertEsuBlocksSource.Contains("RevertLastAutomationCompile()") &&
-               automationCollapseEsuBlocksSource.Contains("CollapseSelectionToSystemBlock") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("AddGeneratedComponentIdsToLastCompileRevert") &&
+               automationSessionSource.Contains("new AutomationCompileRevertSet") &&
+               automationRevertEsuBlocksSource.Contains("RevertLastAutomationCompile()"),
+            "Automation ESU Blocks lowering keeps Check preview, Apply native compile/proxy binding, native wrapper creation, generated-id tracking, and Revert wiring covered.");
+        Assert(automationCollapseEsuBlocksSource.Contains("CollapseSelectionToSystemBlock") &&
                automationCollapseEsuBlocksSource.Contains("PersistSystemBlockTemplateLibrary()") &&
                automationSessionSource.Contains("_openSystemBlockTemplateIndex") &&
                automationSessionSource.Contains("WithInternalGraph") &&
@@ -7771,13 +8108,15 @@ f 0 2 3
                automationRevertLastSystemBlockNativeLoweringSource.Contains("System Block proxy node") &&
                automationCanRevertLastSystemBlockLoweringSource.Contains("_lastSystemBlockLoweringRevert") &&
                automationIsSystemBlockTemplateForSelectedControllerSource.Contains("template.ControllerKey") &&
-               automationIsSystemBlockTemplateForSelectedControllerSource.Contains("_selectedController.StableKey") &&
-               automationDrawWorkspaceGuideSource.Contains("Workspace guide") &&
-               automationDrawWorkspaceGuideSource.Contains("WorkspaceStageLabel()") &&
-               automationDrawWorkspaceGuideSource.Contains("WorkspaceNativeSurfaceLine()") &&
-               automationDrawWorkspaceGuideSource.Contains("\"Next: \" + NextSafeActionLine()") &&
-               automationDrawWorkspaceGuideSource.Contains("\"Safety: \" + WorkspaceSafetyLine()") &&
-               automationDrawWorkspaceGuideSource.Contains("Default: ESU Blocks") &&
+               automationIsSystemBlockTemplateForSelectedControllerSource.Contains("_selectedController.StableKey"),
+            "Automation System Block host nodes keep collapse, Enter/Ports/Code actions, native proxy lowering, selected-controller scoping, and Revert ownership covered.");
+        Assert(!automationDrawLeftPanelSource.Contains("DrawWorkspaceGuide()") &&
+               !automationSessionSource.Contains("private void DrawWorkspaceGuide") &&
+               !automationSessionSource.Contains("Workspace guide") &&
+               automationDrawLeftPanelSource.Contains("Selected controller") &&
+               automationDrawLeftPanelSource.Contains("DrawLinkedTargetListSearch()") &&
+               automationDrawLeftPanelSource.Contains("DrawCompactIconHeader(\"Inputs\"") &&
+               automationDrawLeftPanelSource.Contains("DrawCompactIconHeader(\"Outputs\"") &&
                automationNextSafeActionSource.Contains("Compile expression into native graph nodes") &&
                automationNextSafeActionSource.Contains("create/enter System Blocks") &&
                automationNextSafeActionSource.Contains("Check blocks") &&
@@ -7796,12 +8135,24 @@ f 0 2 3
                automationWorkspaceSafetySource.Contains("Nested System Blocks store ESU layout/group metadata") &&
                automationWorkspaceSafetySource.Contains("System Blocks store ESU-only names") &&
                automationWorkspaceSafetySource.Contains("deterministic and lower into native Breadboard nodes") &&
-               automationDrawSystemBlockEditorSource.Contains("System Block signature") &&
+               automationWorkspaceCompatibilitySource.Contains("\"Compatibility: \" + WorkspaceCompatibilityBadge()") &&
+               automationWorkspaceCompatibilitySource.Contains("ESU Runtime Required: no") &&
+               automationSessionSource.Contains("Native + ESU Layout"),
+            "Automation left panel stays essentials-only while stage, next action, safety, native compatibility, and no-ESU-runtime copy remain covered elsewhere.");
+        Assert(automationDrawSystemBlockEditorSource.Contains("System Block signature") &&
                automationDrawSystemBlockEditorSource.Contains("ESU-only template metadata") &&
                automationDrawSystemBlockEditorSource.Contains("reusable library") &&
                automationDrawSystemBlockEditorSource.Contains("Suggest ports") &&
                automationDrawSystemBlockEditorSource.Contains("Apply template") &&
                automationDrawSystemBlockEditorSource.Contains("Revert draft") &&
+               automationDrawSystemBlockEditorSource.Contains("DrawSystemBlockScopeGuide()") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("System Block scope") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("Apply template saves ESU-only metadata") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("Check validates the signature without native controller mutation") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("Port rebinding is current-workspace based today") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("Suggest ports reads linked Inputs/Outputs on the selected controller") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("Re-check ports after save/reload or cross-craft reuse") &&
+               automationDrawSystemBlockScopeGuideSource.Contains("stable target identity and portable rebinding land") &&
                automationDrawSystemBlockInternalGraphEditorSource.Contains("System Block internal graph") &&
                automationDrawSystemBlockInternalGraphEditorSource.Contains("Check internals") &&
                automationDrawSystemBlockInternalGraphEditorSource.Contains("Apply internal graph") &&
@@ -7824,7 +8175,7 @@ f 0 2 3
                automationLoadSystemBlockTemplateLibrarySource.Contains("ProfileTemplateToSystemBlock") &&
                automationPersistSystemBlockTemplateLibrarySource.Contains("ProfileManager.Instance.Save") &&
                automationPersistSystemBlockTemplateLibrarySource.Contains("SerializationHudProfile") &&
-               automationPersistSystemBlockTemplateLibrarySource.Contains("Take(64)") &&
+               automationPersistSystemBlockTemplateLibrarySource.Contains("Take(SystemBlockTemplateLibraryLimit)") &&
                automationProfileTemplateToSystemBlockSource.Contains("string.Empty") &&
                automationProfileTemplateToSystemBlockSource.Contains("Reusable template") &&
                automationSystemBlockToProfileTemplateSource.Contains("InputPorts") &&
@@ -7832,9 +8183,15 @@ f 0 2 3
                automationTemplateLibraryKeySource.Contains("NormalizeSystemBlockPortName") &&
                automationParseSystemBlockPortsSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
                automationSystemBlockBreadcrumbSource.Contains("Root >") &&
-               automationSystemBlockBreadcrumbSource.Contains("Internal Graph") &&
-               changeTestChecklistSource.Contains("Advanced` -> `Systems` tab") &&
+               automationSystemBlockBreadcrumbSource.Contains("Internal Graph"),
+            "Automation System Block metadata editor keeps signature scope guidance, internal graph draft validation, profile persistence, and breadcrumbs covered.");
+        Assert(changeTestChecklistSource.Contains("Advanced` -> `Systems` tab") &&
                changeTestChecklistSource.Contains("Apply template") &&
+               automationDesignDocSource.Contains("System Block signature page now has a scope/rebinding guide") &&
+               automationDesignDocSource.Contains("current selected controller's") &&
+               automationDesignDocSource.Contains("stable target identity and portable rebinding") &&
+               changeTestChecklistSource.Contains("`System Block scope` guide") &&
+               changeTestChecklistSource.Contains("ports should be re-checked after save/reload") &&
                changeTestChecklistSource.Contains("reusable template library reloads") &&
                changeTestChecklistSource.Contains("`System Block nodes`") &&
                changeTestChecklistSource.Contains("`Ports`") &&
@@ -7843,8 +8200,9 @@ f 0 2 3
                changeTestChecklistSource.Contains("`Enter`") &&
                changeTestChecklistSource.Contains("`Check internals`") &&
                changeTestChecklistSource.Contains("`Up` control") &&
-               changeTestChecklistSource.Contains("no native controller mutation") &&
-               automationBreadboardMoveControlsSource.Contains("AutomationGUILayoutButton(") &&
+               changeTestChecklistSource.Contains("no native controller mutation"),
+            "Automation docs and smoke checklist cover System Block scope, rebinding limits, host-node actions, internals, and no native mutation.");
+        Assert(automationBreadboardMoveControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationBreadboardWireControlsSource.Contains("AutomationGUILayoutButton(") &&
                automationCompactHeaderSource.Contains("GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit") &&
                automationCategoryIconKeySource.Contains("AutomationTargetCategory.Missiles") &&
@@ -7861,19 +8219,24 @@ f 0 2 3
                automationDrawGuiSource.Contains("return;") &&
                automationDrawGuiSource.Contains("RegisterAutomationWorldHoverTooltip()") &&
                automationDrawGuiSource.Contains("if (!_editorOpen)") &&
-               automationDrawGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()") &&
-               automationDrawWorldOverlaySource.Contains("DrawTargetHighlights()") &&
+               automationDrawGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow()"),
+            "Automation HUD shell uses shared resizable foreground layout, scaled icon/button helpers, toolbar/status controls, and foreground console drawing.");
+        Assert(automationDrawWorldOverlaySource.Contains("DrawTargetHighlights()") &&
                !automationDrawWorldOverlaySource.Contains("0.92f, 0.25f") &&
                automationDrawTargetHighlightsSource.Contains("ShouldDrawAutomationWorldHighlight(target)") &&
-               automationShouldDrawWorldHighlightSource.Contains("IsCuratedAutomationWorldTarget(target)") &&
-               automationShouldDrawWorldHighlightSource.Contains("AutomationTargetCategory.BreadboardReadable") &&
+               automationShouldDrawFilteredWorldHighlightSource.Contains("IsImportantAutomationTarget(target)") &&
+               automationShouldDrawWorldHighlightSource.Contains("ShouldDrawFilteredAutomationWorldHighlight(target)") &&
+               automationShouldDrawFilteredWorldHighlightSource.Contains("TargetVisibleInBrowser(target)") &&
+               automationShouldDrawFilteredWorldHighlightSource.Contains("AutomationTargetCategory.BreadboardReadable") &&
+               automationShouldDrawFilteredWorldHighlightSource.Contains("AutomationTargetBrowserMode.Generic") &&
                automationShouldDrawWorldHighlightSource.Contains("IsLinked(_selectedController, target)") &&
                automationWorldHoverTooltipSource.Contains("\"Link to \" + target.Label") &&
                automationWorldHoverTooltipSource.Contains("\"Already linked: click to unlink \" + target.Label") &&
                automationPrepareLayoutSource.Contains("FullScreenEditorRect()") &&
                automationMouseOverUiSource.Contains("if (_editorOpen)") &&
-               automationMouseOverUiSource.Contains("return true;") &&
-               automationControllerCommitterSource.Contains("CandidatePlacementRotations") &&
+               automationMouseOverUiSource.Contains("return true;"),
+            "Automation world highlights, hover tooltips, focused editor layout, and editor UI hit testing stay wired.");
+        Assert(automationControllerCommitterSource.Contains("CandidatePlacementRotations") &&
                automationControllerCommitterSource.Contains("CubeRotations") &&
                automationControllerCommitterSource.Contains("Quaternion.LookRotation") &&
                automationControllerCommitterSource.Contains("TryRemoveController") &&
@@ -7884,8 +8247,9 @@ f 0 2 3
                automationSessionSource.Contains("EsuHudNotifications.ShowSystem") &&
                automationSessionSource.Contains("Placement preview shows green") &&
                automationSessionSource.Contains("Automation controller placement rejected") &&
-               automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()") &&
-               automationDrawGuiSource.Contains("DrawAutomationContextMenu()") &&
+               automationSessionSource.Contains("AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi()"),
+            "Automation controller placement previews target cells, tries valid attach-face rotations, logs failures, and blocks panel clicks from world placement.");
+        Assert(automationDrawGuiSource.Contains("DrawAutomationContextMenu()") &&
                automationDrawGuiSource.Contains("mouseOverUi && ShouldConsumeGuiEvent(Event.current)") &&
                automationDrawGuiSource.Contains("Event.current.Use();") &&
                automationHandleMouseSource.Contains("AutomationInputScope.ClaimMouseWheelInputForFrames();") &&
@@ -7893,25 +8257,29 @@ f 0 2 3
                automationHandleMouseSource.Contains("TryCancelAutomationPlacementRightClick()") &&
                automationHandleMouseSource.Contains("TryOpenAutomationWorldContextMenu()") &&
                automationHandleMouseSource.Contains("TryOpenAutomationSelectionContextMenu(MouseGuiPosition())") &&
-               automationHandleMouseSource.Contains("TryCancelAutomationRightClick()") &&
-               automationRefreshHoverTargetSource.Contains("TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget)") &&
+               automationHandleMouseSource.Contains("TryCancelAutomationRightClick()"),
+            "Automation mouse routing keeps panel event consumption, mouse-wheel claims, and right-click cancel/context paths separated.");
+        Assert(automationRefreshHoverTargetSource.Contains("TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget)") &&
                automationHandleMouseSource.Contains("TryPickProjectedAutomationTarget(out AutomationTarget projectedTarget)") &&
                automationHandleMouseSource.Contains("TryHandleAutomationTargetClick(") &&
                automationHandleMouseSource.Contains("Selected through x-ray Automation pick") &&
-               automationHandleTargetClickSource.Contains("ToggleLink(_selectedController, target)") &&
+               automationHandleTargetClickSource.Contains("ToggleLink(_selectedController, target, AutomationLinkDirection.Output)") &&
                automationHandleTargetClickSource.Contains("IsAutomationWorldPickableTarget(target)") &&
-               automationHandleTargetClickSource.Contains("AutomationTargetCatalog.PassesFilter(target, _filter)") &&
+               automationHandleTargetClickSource.Contains("TargetVisibleInBrowser(target)") &&
                automationProjectedTargetPickableSource.Contains("IsAutomationWorldPickableTarget(candidate)") &&
-               automationWorldPickableTargetSource.Contains("IsCuratedAutomationWorldTarget(candidate)") &&
+               automationWorldPickableTargetSource.Contains("IsImportantAutomationTarget(candidate)") &&
                automationWorldPickableTargetSource.Contains("AutomationTargetCatalog.MatchesSearch(candidate, _targetSearchText)") &&
                automationWorldPickableTargetSource.Contains("AutomationTargetCategory.BreadboardReadable") &&
+               automationWorldPickableTargetSource.Contains("AutomationTargetBrowserMode.Generic") &&
+               automationWorldPickableTargetSource.Contains("TargetVisibleInBrowser(candidate)") &&
                automationWorldPickableTargetSource.Contains("IsLinked(_selectedController, candidate)") &&
                automationProjectedTargetRectSource.Contains("CellCorners(target.Construct, target.LocalPosition)") &&
                automationProjectedTargetRectSource.Contains("camera.WorldToScreenPoint(corners[index])") &&
                automationProjectedTargetRectSource.Contains("Rect.MinMaxRect") &&
                automationSessionSource.Contains("ExpandRect(screenRect") &&
-               automationSessionSource.Contains("linkedBonus") &&
-               automationCancelPlacementRightClickSource.Contains("if (_tool != AutomationTool.Place)") &&
+               automationSessionSource.Contains("linkedBonus"),
+            "Automation x-ray world picking respects important/generic filters, search, linked targets, and projected target bounds.");
+        Assert(automationCancelPlacementRightClickSource.Contains("if (_tool != AutomationTool.Place)") &&
                automationCancelPlacementRightClickSource.Contains("_selectedPlacement = null") &&
                automationCancelPlacementRightClickSource.Contains("_tool = AutomationTool.Link") &&
                automationTryOpenWorldContextSource.Contains("TryPickProjectedAutomationTarget") &&
@@ -7919,8 +8287,12 @@ f 0 2 3
                automationTryOpenSelectionContextSource.Contains("OpenAutomationBreadboardNodeContextMenu") &&
                automationTryOpenSelectionContextSource.Contains("OpenAutomationControllerContextMenu") &&
                automationDrawContextMenuSource.Contains("AutomationContextRect(_contextMenuAnchor, items.Length)") &&
-               automationDrawContextMenuSource.Contains("GUI.Box(_contextMenuRect") &&
-               automationDrawContextMenuSource.Contains("AutomationGUILayoutButton(") &&
+               automationDrawContextMenuSource.Contains("GUI.Window(") &&
+               automationDrawContextMenuSource.Contains("DrawAutomationContextMenuWindow(items)") &&
+               automationDrawContextMenuSource.Contains("GUI.depth = Math.Min(previousDepth, -10950)") &&
+               automationDrawContextMenuSource.Contains("GUI.BringWindowToFront(_contextMenuWindowId)") &&
+               automationDrawContextMenuWindowSource.Contains("GUI.Box(localRect") &&
+               automationDrawContextMenuWindowSource.Contains("AutomationGUILayoutButton(") &&
                automationDrawContextMenuSource.Contains("ShouldConsumeAutomationContextEvent(current)") &&
                automationDrawContextMenuSource.Contains("ExecuteAutomationContextAction(action)") &&
                automationContextMenuItemsSource.Contains("AutomationContextMenuKind.Controller") &&
@@ -7948,37 +8320,732 @@ f 0 2 3
                automationMouseOverUiSource.Contains("IsAutomationContextMenuAt(mouse)") &&
                automationCancelRightClickSource.Contains("_selectedController = null") &&
                automationCancelRightClickSource.Contains("CloseEditor()"),
-            "Automation Editor shares the resizable foreground ESU shell pattern, uses scaled Decoration-style icons in toolbar/header/list rows, opens graph/code as a focused full-screen editor, arms palette placement by row click, previews target cells, tries valid attach-face rotations for controller placement, logs placement failures, blocks panel clicks from world placement without stealing WASD/camera on idle panel hover, and routes right-click through active-placement cancel or a contextual Automation menu for controllers, targets, links, and breadboard nodes.");
+            "Automation context menus cover placement cancel, world targets, selected controllers, links, Breadboard nodes, row right-clicks, and editor close/deselect cancel paths.");
+        Assert(automationDrawSystemBlockEditorSource.Contains("DrawSystemBlockDraftPortPreview()") &&
+               automationDrawSystemBlockDraftPortPreviewSource.Contains("Port preview") &&
+               automationDrawSystemBlockDraftPortPreviewSource.Contains("Ports/nubs: ") &&
+               automationDrawSystemBlockDraftPortPreviewSource.Contains("Check normalizes names and verifies duplicates without native mutation") &&
+               automationDrawSystemBlockDraftPortPreviewSource.Contains("Duplicate System Block port") &&
+               automationDrawSystemBlockDraftPortPreviewSource.Contains("Use one name per line, comma, semicolon, or pipe") &&
+               automationValidateSystemBlockDraftSource.Contains("FirstDuplicateSystemBlockPort(inputs, outputs)") &&
+               automationFirstDuplicateSystemBlockPortSource.Contains("GroupBy(port => port, StringComparer.OrdinalIgnoreCase)") &&
+               !automationParseSystemBlockPortsSource.Contains("ports.Contains(name") &&
+               automationDesignDocSource.Contains("System Block signature port preview") &&
+               changeTestChecklistSource.Contains("Duplicate System Block port"),
+            "Automation System Block signature previews normalized ports and rejects duplicate port names before template Apply.");
+        Assert(automationSessionSource.Contains("private const int ControllerIndexGroupVisibleLimit = 6") &&
+               automationSessionSource.Contains("private const int ControllerIndexVisibleLimit = 18") &&
+               automationSessionSource.Contains("private string _controllerIndexSearch = string.Empty") &&
+               automationControllerIndexSource.Contains("DrawControllerIndexSearch()") &&
+               automationControllerIndexSource.Contains("ControllerIndexMatchesSearch(target, _controllerIndexSearch)") &&
+               automationControllerIndexSource.Contains("Controller list: ") &&
+               automationControllerIndexSource.Contains("No Automation controllers match the current controller search") &&
+               automationControllerIndexSource.Contains("Use controller search to narrow results") &&
+               automationControllerIndexSource.Contains("Selected controller is hidden by the current controller search") &&
+               automationDrawControllerIndexSearchSource.Contains("Clear Automation controller search.") &&
+               automationDrawControllerIndexSearchSource.Contains("Search placed Automation controllers by label, controller type, construct, cell, or target key.") &&
+               automationControllerIndexMatchesSearchSource.Contains("target.Controller?.ShortLabel") &&
+               automationControllerIndexMatchesSearchSource.Contains("target.Controller?.ClassName") &&
+               automationControllerIndexMatchesSearchSource.Contains("FormatCell(target.LocalPosition)") &&
+               automationControllerIndexMatchesSearchSource.Contains("target.StableKey") &&
+               automationDesignDocSource.Contains("`Controllers on craft` index now has its own search field") &&
+               automationDesignDocSource.Contains("shown/matching/total counts") &&
+               changeTestChecklistSource.Contains("`Controllers on craft` list") &&
+               changeTestChecklistSource.Contains("shown/matching/total controllers"),
+            "Automation Controllers on craft index searches placed controllers before grouped display caps.");
+        Assert(automationSessionSource.Contains("private const string AutomationLinkIdentityGuideLine") &&
+               automationSessionSource.Contains("Link identity: live-session target keys today.") &&
+               automationSessionSource.Contains("Re-check linked Inputs/Outputs after save/reload or cross-craft reuse") &&
+               automationDrawLinkedTargetIdentityGuideSource.Contains("AutomationLinkIdentityGuideLine") &&
+               automationDrawLeftPanelSource.Contains("DrawLinkedTargetIdentityGuide()") &&
+               automationDrawLinkedSignalMenusSource.Contains("DrawLinkedTargetIdentityGuide()") &&
+               automationDesignDocSource.Contains("link identity uses live-session target keys today") &&
+               changeTestChecklistSource.Contains("link identity uses live-session target keys today"),
+            "Automation linked target panels disclose live-session link identity and save/reload re-check guidance.");
+        Assert(automationSessionSource.Contains("private string _linkedTargetSearch = string.Empty") &&
+               automationDrawLeftPanelSource.Contains("DrawLinkedTargetListSearch()") &&
+               automationDrawLeftPanelSource.Contains("LinkedTargetListMatchesSearch") &&
+               automationDrawLeftPanelSource.Contains("Linked targets shown: ") &&
+               automationDrawLeftPanelSource.Contains("matching for selected controller") &&
+               automationDrawLeftPanelSource.Contains("No linked targets match the current linked-target search") &&
+               automationDrawLeftPanelSource.Contains("No input links match the current linked-target search") &&
+               automationDrawLeftPanelSource.Contains("No output links match the current linked-target search") &&
+               automationDrawLeftPanelSource.Contains("Selected linked target is hidden by the current linked-target search") &&
+               automationDrawLinkedTargetListSearchSource.Contains("Clear linked-target list search.") &&
+               automationDrawLinkedTargetListSearchSource.Contains("Search selected-controller links by Input/Output, target label, category, role, runtime type, cell, controller, or target key.") &&
+               automationLinkedTargetListMatchesSearchSource.Contains("link.DirectionLabel") &&
+               automationLinkedTargetListMatchesSearchSource.Contains("link.ControllerLabel") &&
+               automationLinkedTargetListMatchesSearchSource.Contains("AutomationTargetCatalog.CategoryLabel(target.Category)") &&
+               automationLinkedTargetListMatchesSearchSource.Contains("AutomationTargetCatalog.RoleLabel(target)") &&
+               automationLinkedTargetListMatchesSearchSource.Contains("FormatCell(target.LocalPosition)") &&
+               automationLinkedTargetListMatchesSearchSource.Contains("terms.All") &&
+               automationDesignDocSource.Contains("left linked-target list now has a local selected-controller link search") &&
+               automationDesignDocSource.Contains("matching/total counts") &&
+               changeTestChecklistSource.Contains("left linked-target list search") &&
+               changeTestChecklistSource.Contains("matching/total links for the selected controller") &&
+               changeTestChecklistSource.Contains("linked-target hidden warning"),
+            "Automation left linked-target list searches selected-controller links before rendering Inputs/Outputs.");
+        Assert(automationSessionSource.Contains("private string _linkedSignalSearch = string.Empty") &&
+               automationDrawLinkedSignalMenusSource.Contains("DrawTinkercadLinkedSignalSearch()") &&
+               automationDrawLinkedSignalSectionSource.Contains("TinkercadLinkedSignalMatchesSearch(link, _linkedSignalSearch)") &&
+               automationDrawLinkedSignalSectionSource.Contains("linked signal(s) shown") &&
+               automationDrawLinkedSignalSectionSource.Contains("No input links match the current linked signal search") &&
+               automationDrawLinkedSignalSectionSource.Contains("No output links match the current linked signal search") &&
+               automationDrawLinkedSignalSectionSource.Contains("Selected linked signal is hidden by the current linked signal search") &&
+               automationDrawLinkedSignalSearchSource.Contains("Clear linked signal search.") &&
+               automationDrawLinkedSignalSearchSource.Contains("Search linked Inputs/Outputs by direction, target label, category, role, runtime type, cell, or target key.") &&
+               automationLinkedSignalMatchesSearchSource.Contains("link.DirectionLabel") &&
+               automationLinkedSignalMatchesSearchSource.Contains("AutomationTargetCatalog.CategoryLabel(target.Category)") &&
+               automationLinkedSignalMatchesSearchSource.Contains("AutomationTargetCatalog.RoleLabel(target)") &&
+               automationLinkedSignalMatchesSearchSource.Contains("FormatCell(target.LocalPosition)") &&
+               automationLinkedSignalMatchesSearchSource.Contains("terms.All") &&
+               automationDesignDocSource.Contains("linked-signal panel now has a local search") &&
+               changeTestChecklistSource.Contains("Search linked Inputs/Outputs"),
+            "Automation ESU Blocks linked-signal panel searches linked Inputs/Outputs before offering Add read/set.");
+        Assert(automationSessionSource.Contains("private const int SystemBlockTemplateLibraryLimit = 64") &&
+               automationDrawSystemBlockTemplateListSource.Contains("DrawSystemBlockTemplateLibraryCapHint()") &&
+               automationDrawSystemBlockTemplateLibraryCapHintSource.Contains("Reusable template library: ") &&
+               automationDrawSystemBlockTemplateLibraryCapHintSource.Contains("SystemBlockTemplateLibraryLimit") &&
+               automationDrawSystemBlockTemplateLibraryCapHintSource.Contains("ESU-only template(s) in this profile") &&
+               automationDrawSystemBlockTemplateLibraryCapHintSource.Contains("Duplicate normalized name/ports keep the latest template") &&
+               automationDrawSystemBlockTemplateLibraryCapHintSource.Contains("Template library cap reached") &&
+               automationDrawSystemBlockTemplateLibraryCapHintSource.Contains("library paging/virtualization") &&
+               automationPersistSystemBlockTemplateLibrarySource.Contains("Take(SystemBlockTemplateLibraryLimit)") &&
+               automationDesignDocSource.Contains("64-template persistence cap") &&
+               automationDesignDocSource.Contains("duplicate") &&
+               automationDesignDocSource.Contains("paging/virtualization") &&
+               changeTestChecklistSource.Contains("64-template persistence cap") &&
+               changeTestChecklistSource.Contains("normalized name/ports keep the latest template"),
+            "Automation System Block reusable template library reports its persistence cap and remaining paging gap.");
+        Assert(automationSessionSource.Contains("private string _systemBlockTemplateSearch = string.Empty") &&
+               automationDrawSystemBlockTemplateListSource.Contains("DrawSystemBlockTemplateSearch()") &&
+               automationDrawSystemBlockTemplateListSource.Contains("SystemBlockTemplateMatchesSearch(") &&
+               automationDrawSystemBlockTemplateListSource.Contains("Reusable templates: showing ") &&
+               automationDrawSystemBlockTemplateListSource.Contains("saved template(s)") &&
+               automationDrawSystemBlockTemplateListSource.Contains("No reusable System Block templates match the current search") &&
+               automationDrawSystemBlockTemplateListSource.Contains("Active System Block template is hidden by the reusable template search filter") &&
+               automationDrawSystemBlockTemplateSearchSource.Contains("Clear reusable System Block template search") &&
+               automationDrawSystemBlockTemplateSearchSource.Contains("Search reusable System Block templates by name, controller, ports, comments, or internal graph notes") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.Name") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.ControllerLabel") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.ControllerKey") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.InputPorts") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.OutputPorts") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.Comment") &&
+               automationSystemBlockTemplateMatchesSearchSource.Contains("template.InternalGraph") &&
+               automationDesignDocSource.Contains("reusable System Block template list now has a search field") &&
+               automationDesignDocSource.Contains("matching/total counts") &&
+               changeTestChecklistSource.Contains("search by template name") &&
+               changeTestChecklistSource.Contains("matching/total saved templates"),
+            "Automation System Block reusable template list is searchable before rendering saved templates.");
+        Assert(automationDrawSystemBlockHostNodesSource.Contains("DrawSystemBlockHostNodeSearch()") &&
+               automationDrawSystemBlockHostNodesSource.Contains("SystemBlockHostNodeMatchesSearch") &&
+               automationDrawSystemBlockHostNodesSource.Contains("System Block nodes: ") &&
+               automationDrawSystemBlockHostNodesSource.Contains("shown for selected controller") &&
+               automationDrawSystemBlockHostNodesSource.Contains("No System Block nodes match the current graph-node search") &&
+               automationDrawSystemBlockHostNodesSource.Contains("Open System Block node is hidden by the current graph-node search") &&
+               automationDrawSystemBlockHostNodeSearchSource.Contains("Clear System Block graph-node search.") &&
+               automationDrawSystemBlockHostNodeSearchSource.Contains("Search System Block graph nodes by name, controller, input/output ports, comment, or internal graph notes.") &&
+               automationSystemBlockHostNodeMatchesSearchSource.Contains("template.InputPorts") &&
+               automationSystemBlockHostNodeMatchesSearchSource.Contains("template.OutputPorts") &&
+               automationSystemBlockHostNodeMatchesSearchSource.Contains("template.InternalGraph") &&
+               automationSystemBlockHostNodeMatchesSearchSource.Contains("terms.All") &&
+               automationDesignDocSource.Contains("Graph page `System Block nodes` list now has a local graph-node search") &&
+               changeTestChecklistSource.Contains("`System Block nodes` graph-node search") &&
+               changeTestChecklistSource.Contains("shown/total nodes for the selected controller") &&
+               changeTestChecklistSource.Contains("currently open System Block is hidden by the filter"),
+            "Automation System Block graph-node list is searchable before rendering host nodes.");
+        Assert(automationDrawPanelNextStepPromptSource.Contains("\"Next: \" + NextSafeActionLine()") &&
+               automationDrawPanelNextStepPromptSource.Contains("WorkspaceCompatibilityLine()") &&
+               automationDrawBlocksEditorSource.Contains("DrawPanelNextStepPrompt()") &&
+               automationDrawGraphEditorSource.Contains("DrawPanelNextStepPrompt()") &&
+               automationDrawCodeEditorSource.Contains("DrawPanelNextStepPrompt()") &&
+               automationDrawSystemBlockEditorSource.Contains("DrawPanelNextStepPrompt()") &&
+               automationDrawSystemBlockInternalGraphEditorSource.Contains("DrawPanelNextStepPrompt()") &&
+               automationDesignDocSource.Contains("focused editor pages repeat the current Next action") &&
+               changeTestChecklistSource.Contains("focused Graph, Code, ESU Blocks, and System Block pages repeat the") &&
+               changeTestChecklistSource.Contains("safe action remains visible while editing"),
+            "Automation editor pages repeat compact Next action and native compatibility prompts near Graph/Code/Blocks/System controls.");
+        Assert(automationDrawGraphEditorSource.Contains("DrawBreadboardInspectorSection()") &&
+               automationDrawBreadboardInspectorSectionSource.Contains("DrawBreadboardNativeEditGuide()") &&
+               automationDrawBreadboardNativeEditGuideSource.Contains("Native edit mode") &&
+               automationDrawBreadboardNativeEditGuideSource.Contains("Advanced Graph edits are direct native Breadboard edits") &&
+               automationDrawBreadboardNativeEditGuideSource.Contains("quick-adds, moves, wires, setting changes, and deletes apply through FtD board commands immediately") &&
+               automationDrawBreadboardNativeEditGuideSource.Contains("Revert compile only removes ESU-generated component ids") &&
+               automationDrawBreadboardNativeEditGuideSource.Contains("Manual native graph edits are not owned by that Revert path") &&
+               automationDesignDocSource.Contains("Advanced Graph page now labels its Breadboard canvas as native edit mode") &&
+               automationDesignDocSource.Contains("manual native") &&
+               automationDesignDocSource.Contains("ESU Revert ownership") &&
+               changeTestChecklistSource.Contains("`Native edit mode` guide") &&
+               changeTestChecklistSource.Contains("apply immediately") &&
+               changeTestChecklistSource.Contains("last Blocks/Code/System apply"),
+            "Automation Advanced Graph page explains immediate native edit behavior and generated-node Revert ownership.");
+        Assert(automationDrawBreadboardQuickAddsSource.Contains("These shortcuts add advertised native Breadboard components immediately") &&
+               automationDrawBreadboardQuickAddsSource.Contains("manual native graph edits") &&
+               automationDrawBreadboardQuickAddsSource.Contains("Blocks/Code/System Apply nodes tracked by Revert compile") &&
+               automationDrawBreadboardSharedVariableBridgeSource.Contains("Reader/Writer/Pair create native variable nodes now") &&
+               automationDrawBreadboardSharedVariableBridgeSource.Contains("matching native variable names/settings") &&
+               automationDrawMissileBreadboardQuickAddsSource.Contains("Missile shortcuts search the advertised native component list") &&
+               automationDrawMissileBreadboardQuickAddsSource.Contains("first matching vanilla node immediately") &&
+               automationDesignDocSource.Contains("native Breadboard quick-add, shared-variable bridge, and missile-output") &&
+               automationDesignDocSource.Contains("shortcuts create advertised/native vanilla nodes immediately") &&
+               automationDesignDocSource.Contains("Blocks/Code/System Apply-owned nodes are the ones tracked by `Revert compile`") &&
+               automationDrawBreadboardAddButtonSource.Contains("Add native ") &&
+               automationDrawBreadboardAddButtonSource.Contains("to the selected Breadboard immediately") &&
+               automationDrawBreadboardAddButtonSource.Contains("Disabled means this board does not advertise that vanilla component") &&
+               automationDrawBreadboardAddButtonSource.Contains("Revert compile only owns Blocks/Code/System Apply nodes") &&
+               automationDrawBreadboardSearchAddButtonSource.Contains("Search advertised native Breadboard components for ") &&
+               automationDrawBreadboardSearchAddButtonSource.Contains("first matching vanilla node immediately") &&
+               automationDrawBreadboardSearchAddButtonSource.Contains("Disabled means no advertised match is available on this board") &&
+               automationDesignDocSource.Contains("outcome-focused tooltips") &&
+               automationDesignDocSource.Contains("disabled state when the selected board does not advertise") &&
+               changeTestChecklistSource.Contains("Advanced Graph quick-add rows") &&
+               changeTestChecklistSource.Contains("advertised/native vanilla nodes immediately") &&
+               changeTestChecklistSource.Contains("Blocks/Code/System Apply-owned nodes tracked by `Revert compile`") &&
+               changeTestChecklistSource.Contains("Hover the Advanced Graph quick-add buttons") &&
+               changeTestChecklistSource.Contains("tooltips name the") &&
+               changeTestChecklistSource.Contains("disabled buttons mean the selected board does not advertise"),
+            "Automation Advanced Graph quick-add rows and tooltips explain immediate native node creation, disabled native capability, and Revert ownership boundaries.");
+        Assert(automationSessionSource.Contains("private string _breadboardProxySearch = string.Empty") &&
+               automationDrawBreadboardProxyActionsSource.Contains("DrawBreadboardProxySearch()") &&
+               automationDrawBreadboardProxyActionsSource.Contains("BreadboardProxyLinkMatchesSearch") &&
+               automationDrawBreadboardProxyActionsSource.Contains("Proxy links shown: ") &&
+               automationDrawBreadboardProxyActionsSource.Contains("matching from") &&
+               automationDrawBreadboardProxyActionsSource.Contains("No linked targets match the current proxy search") &&
+               automationDrawBreadboardProxyActionsSource.Contains("Use proxy search to narrow GBG/GBS actions") &&
+               automationDrawBreadboardProxyActionsSource.Contains("Selected link is hidden by the current proxy search") &&
+               automationDrawBreadboardProxySearchSource.Contains("Clear linked target proxy search.") &&
+               automationDrawBreadboardProxySearchSource.Contains("Search linked target proxy actions by Input/Output, GBG/GBS, label, category, role, runtime type, controller, cell, or target key.") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("link.DirectionLabel") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("generic block getter") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("generic block setter") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("link.ControllerLabel") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("AutomationTargetCatalog.CategoryLabel") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("AutomationTargetCatalog.RoleLabel") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("target.RuntimeType") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("target.LocalPosition") &&
+               automationBreadboardProxyLinkMatchesSearchSource.Contains("terms.All") &&
+               automationDesignDocSource.Contains("Breadboard `Linked target proxies` action list now searches linked targets") &&
+               automationDesignDocSource.Contains("shown/matching/total counts") &&
+               changeTestChecklistSource.Contains("Breadboard `Linked target proxies` search") &&
+               changeTestChecklistSource.Contains("shown/matching/total linked targets") &&
+               changeTestChecklistSource.Contains("selected link is hidden by the filter"),
+            "Automation Breadboard linked target proxy actions search linked targets before the visible cap.");
+        Assert(automationDrawLinkedTargetProxyShortcutsSource.Contains("Proxy Node shortcuts") &&
+               automationDrawLinkedTargetProxyShortcutsSource.Contains("create native GBG/GBS components now for this Target") &&
+               automationDrawLinkedTargetProxyShortcutsSource.Contains("Blocks/Code/System Apply-owned nodes remain the ones tracked by Revert compile") &&
+               automationDrawLinkedTargetProxyShortcutsSource.Contains("Auto-pick is best effort") &&
+               automationDrawLinkedTargetProxyShortcutsSource.Contains("use the native property picker afterward") &&
+               automationDesignDocSource.Contains("Individual linked-target proxy shortcut rows now label those buttons") &&
+               automationDesignDocSource.Contains("immediate native Proxy Node creation") &&
+               automationDesignDocSource.Contains("manual proxy shortcuts from Blocks/Code/System Apply-owned nodes") &&
+               changeTestChecklistSource.Contains("individual linked target card") &&
+               changeTestChecklistSource.Contains("native GBG/GBS Proxy Nodes immediately") &&
+               changeTestChecklistSource.Contains("auto-picked properties can be corrected"),
+            "Automation linked-target proxy shortcuts explain immediate native GBG/GBS creation and Revert ownership boundaries.");
+        Assert(automationBreadboardInspectorSource.Contains("internal const int ComponentReflectionLimit = 64") &&
+               automationBreadboardInspectorSource.Contains("ReadComponents(ComponentReflectionLimit)") &&
+               automationBreadboardInspectorSource.Contains("ComponentReflectionMayBeCapped") &&
+               automationBreadboardInspectorSource.Contains("PackageCount >= reflectedCount"),
+            "Automation Breadboard inspector centralizes the reflected native component scan cap.");
+        Assert(automationDrawBreadboardInspectorSectionSource.Contains("DrawBreadboardComponentReflectionCapHint(inspector)") &&
+               automationDrawBreadboardComponentReflectionCapHintSource.Contains("Native graph reflection cap") &&
+               automationDrawBreadboardComponentReflectionCapHintSource.Contains("ComponentReflectionMayBeCapped") &&
+               automationDrawBreadboardComponentReflectionCapHintSource.Contains("ComponentReflectionLimit") &&
+               automationDrawBreadboardComponentReflectionCapHintSource.Contains("Large Breadboards may contain more") &&
+               automationDrawBreadboardComponentReflectionCapHintSource.Contains("scalable native enumeration/virtualization"),
+            "Automation Breadboard Inspector warns when reflected native components reach the safe scan cap.");
+        Assert(automationDesignDocSource.Contains("64-component scan cap") &&
+               automationDesignDocSource.Contains("scalable native enumeration/virtualization") &&
+               changeTestChecklistSource.Contains("64-component scan cap") &&
+               changeTestChecklistSource.Contains("scalable native enumeration/virtualization"),
+            "Automation docs and smoke checklist cover the reflected native component scan-cap warning.");
+        Assert(automationSessionSource.Contains("private string _storedComponentSearch = string.Empty") &&
+               automationBreadboardComponentListSource.Contains("DrawBreadboardStoredComponentSearch()") &&
+               automationBreadboardComponentListSource.Contains("StoredBreadboardComponentMatchesSearch(component, _storedComponentSearch)") &&
+               automationBreadboardComponentListSource.Contains("matching reflected native component(s)") &&
+               automationBreadboardComponentListSource.Contains("from \" + components.Count.ToString") &&
+               automationDrawBreadboardStoredComponentSearchSource.Contains("Search reflected native components by label, type, id, target, filter, or description") &&
+               automationDrawBreadboardStoredComponentSearchSource.Contains("Clear stored component search") &&
+               automationStoredBreadboardComponentMatchesSearchSource.Contains("component.UniqueId.ToString") &&
+               automationStoredBreadboardComponentMatchesSearchSource.Contains("component.ComponentTypeId.ToString") &&
+               automationStoredBreadboardComponentMatchesSearchSource.Contains("component.BlockTypeName") &&
+               automationStoredBreadboardComponentMatchesSearchSource.Contains("component.BlockFilter") &&
+               automationStoredBreadboardComponentMatchesSearchSource.Contains("component.Description") &&
+               automationBreadboardComponentListSource.Contains("No stored native components match the current search") &&
+               automationBreadboardComponentListSource.Contains("Selected native node is hidden by the stored component search filter"),
+            "Automation Advanced Graph stored-component list is searchable before the safe visible-row cap.");
+        Assert(automationSessionSource.Contains("private const int NativeComponentListVisibleLimit = 18") &&
+               automationBreadboardComponentListSource.Contains("Math.Min(matchingComponents.Length, NativeComponentListVisibleLimit)") &&
+               automationBreadboardComponentListSource.Contains("Showing first ") &&
+               automationBreadboardComponentListSource.Contains("matching stored native components") &&
+               automationBreadboardComponentListSource.Contains("Use stored component search to narrow results") &&
+               automationBreadboardComponentListSource.Contains("virtualization") &&
+               automationBreadboardComponentListSource.Contains("matching reflected component(s) hidden by the safe list cap") &&
+               automationDesignDocSource.Contains("Advanced Graph stored-component list now has a search field before its") &&
+               automationDesignDocSource.Contains("safe 18-row display cap") &&
+               automationDesignDocSource.Contains("matching/total counts") &&
+               automationDesignDocSource.Contains("virtualization/pagination") &&
+               changeTestChecklistSource.Contains("search by native component label") &&
+               changeTestChecklistSource.Contains("shown/matching/total reflected native components") &&
+               changeTestChecklistSource.Contains("safe 18-row cap") &&
+               changeTestChecklistSource.Contains("virtualization/pagination"),
+            "Automation Advanced Graph stored-component list reports filtered counts, safe visible cap, and remaining virtualization gap.");
+        Assert(automationSessionSource.Contains("private const int NativeCanvasPortVisibleLimit = 8") &&
+               automationSessionSource.Contains("private const int NativeWireControlPortVisibleLimit = 4") &&
+               automationBuildBreadboardCanvasNodesSource.Contains("inspector.InputPorts(component, NativeCanvasPortVisibleLimit)") &&
+               automationBuildBreadboardCanvasNodesSource.Contains("inspector.OutputPorts(component, NativeCanvasPortVisibleLimit)") &&
+               automationBreadboardWireControlsSource.Contains("inspector.OutputPorts(component, NativeWireControlPortVisibleLimit)") &&
+               automationBreadboardWireControlsSource.Contains("inspector.InputPorts(component, NativeWireControlPortVisibleLimit)"),
+            "Automation Advanced Graph uses named native port/nub display limits for canvas and wire controls.");
+        Assert(automationDrawBreadboardPortDisplayCapHintSource.Contains("Port display cap: canvas shows first ") &&
+               automationDrawBreadboardPortDisplayCapHintSource.Contains("input/output nubs") &&
+               automationDrawBreadboardPortDisplayCapHintSource.Contains("wire controls show first ") &&
+               automationDrawBreadboardPortDisplayCapHintSource.Contains("port virtualization/pagination"),
+            "Automation selected-node inspector warns when native port/nub counts exceed the safe HUD display caps.");
+        Assert(automationSessionSource.Contains("private string _nativeWirePortSearch = string.Empty") &&
+               automationBreadboardWireControlsSource.Contains("DrawNativeWirePortSearch()") &&
+               automationBreadboardWireControlsSource.Contains("NativeWirePortMatchesSearch") &&
+               automationBreadboardWireControlsSource.Contains("Wire ports shown: ") &&
+               automationBreadboardWireControlsSource.Contains("visible under the current wire-control cap") &&
+               automationBreadboardWireControlsSource.Contains("No visible native wire-control ports match the current port search") &&
+               automationBreadboardWireControlsSource.Contains("Selected wire source output is hidden by the current native port search") &&
+               automationBreadboardWireControlsSource.Contains("string wirePortSearch = selectedNode ? _nativeWirePortSearch : string.Empty") &&
+               automationDrawNativeWirePortSearchSource.Contains("Clear selected native port search.") &&
+               automationDrawNativeWirePortSearchSource.Contains("Search visible native wire-control ports by input/output, index, label, connection state, or connected source. This narrows the current capped port set only.") &&
+               automationNativeWirePortMatchesSearchSource.Contains("port.Index") &&
+               automationNativeWirePortMatchesSearchSource.Contains("port.Label") &&
+               automationNativeWirePortMatchesSearchSource.Contains("port.IsConnected") &&
+               automationNativeWirePortMatchesSearchSource.Contains("port.ConnectedFrom") &&
+               automationNativeWirePortMatchesSearchSource.Contains("port.ConnectedFromComponentId") &&
+               automationNativeWirePortMatchesSearchSource.Contains("terms.All") &&
+               automationDesignDocSource.Contains("selected native node wire controls now have a local port/nub search") &&
+               automationDesignDocSource.Contains("currently visible capped ports") &&
+               changeTestChecklistSource.Contains("selected native node wire-control port search") &&
+               changeTestChecklistSource.Contains("visible/capped ports") &&
+               changeTestChecklistSource.Contains("selected wire-source output is hidden"),
+            "Automation selected native node wire controls search the visible capped port set.");
+        Assert(automationDesignDocSource.Contains("eight-nub canvas cap") &&
+               automationDesignDocSource.Contains("four-port wire-control cap") &&
+               automationDesignDocSource.Contains("virtualization/pagination gap") &&
+               changeTestChecklistSource.Contains("canvas shows the first eight") &&
+               changeTestChecklistSource.Contains("wire controls show the first four") &&
+               changeTestChecklistSource.Contains("port virtualization/pagination"),
+            "Automation docs and smoke checklist cover the native port/nub display-cap warning.");
+        Assert(automationDrawAcbInspectorBodySource.Contains("DrawAcbNativeEditGuide(prefix, allowTrigger)") &&
+               automationDrawAcbNativeEditGuideSource.Contains("Native ACB edit mode") &&
+               automationDrawAcbNativeEditGuideSource.Contains("ControlBlockData package through FtD's Var.Us path") &&
+               automationDrawAcbNativeEditGuideSource.Contains("native ACB test hook immediately") &&
+               automationDrawAcbNativeEditGuideSource.Contains("Linked ACB rows expose native rule data") &&
+               automationDrawAcbNativeEditGuideSource.Contains("not ESU recipe nodes or Revert-owned generated nodes") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("DrawAcbControllerNativeEditGuide(prefix)") &&
+               automationDrawAcbControllerNativeEditGuideSource.Contains("Native ACB Controller edit mode") &&
+               automationDrawAcbControllerNativeEditGuideSource.Contains("button fields write directly to native ACB Controller button data") &&
+               automationDrawAcbControllerNativeEditGuideSource.Contains("Name, keyword, Breadboard output, shape, and color changes are immediate native edits") &&
+               automationDrawAcbControllerNativeEditGuideSource.Contains("native keyword bridge that Generic Getter proxy nodes can read") &&
+               automationDrawAcbControllerNativeEditGuideSource.Contains("ESU Revert only owns generated proxy/component ids") &&
+               automationDesignDocSource.Contains("ACB and ACB Controller panels now use matching native edit-mode guidance") &&
+               automationDesignDocSource.Contains("ControlBlockData") &&
+               automationDesignDocSource.Contains("native keyword-output") &&
+               changeTestChecklistSource.Contains("`Native ACB edit mode` guide") &&
+               changeTestChecklistSource.Contains("native rule data") &&
+               changeTestChecklistSource.Contains("rather than ESU recipe nodes") &&
+               changeTestChecklistSource.Contains("`Native ACB Controller edit mode` guide") &&
+               changeTestChecklistSource.Contains("immediate native button data") &&
+               changeTestChecklistSource.Contains("edits, while ESU Revert only owns generated proxy/component ids"),
+            "Automation ACB and ACB Controller panels explain immediate native edit behavior and ESU Revert ownership boundaries.");
+        Assert(automationSessionSource.Contains("private string _acbControllerButtonSearch = string.Empty") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("DrawAcbControllerButtonSearch()") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("AcbControllerButtonMatchesSearch") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("Buttons shown: ") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("matching from") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("No ACB Controller buttons match the current button search") &&
+               automationDrawAcbControllerInspectorBodySource.Contains("Use button search to narrow results") &&
+               automationDrawAcbControllerButtonSearchSource.Contains("Clear ACB Controller button search.") &&
+               automationDrawAcbControllerButtonSearchSource.Contains("Search ACB Controller buttons by number, name, keyword, Breadboard output, shape, color, or reflected type.") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("button.ButtonName") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("button.Keyword") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("button.ShapeId") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("button.IsUsedForBreadboard") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("button.ButtonColor") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("button.DataTypeName") &&
+               automationAcbControllerButtonMatchesSearchSource.Contains("terms.All") &&
+               automationDesignDocSource.Contains("ACB Controller button editor now searches native button data") &&
+               automationDesignDocSource.Contains("shown/matching/total counts") &&
+               changeTestChecklistSource.Contains("ACB Controller button search") &&
+               changeTestChecklistSource.Contains("shown/matching/total native button rows") &&
+               changeTestChecklistSource.Contains("clearing the search restores the capped editable rows"),
+            "Automation ACB Controller button editor searches reflected native button rows before the visible cap.");
+        Assert(automationDrawCodeEditorSource.Contains("DrawAutomationCodeRecipeGuide()") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("Recipe lowering") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("Allowed code: one evaluator expression") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("four-line if/else recipe") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("Math Evaluator") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("optional Logic Gate") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("Switch") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("Generic Setter proxy") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("No arbitrary script runtime") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("unsupported syntax is rejected before native nodes are created") &&
+               automationDrawAutomationCodeRecipeGuideSource.Contains("Revert compile removes generated component ids") &&
+               automationDesignDocSource.Contains("compact recipe-lowering guide") &&
+               automationDesignDocSource.Contains("no-arbitrary-runtime rule") &&
+               changeTestChecklistSource.Contains("`Recipe lowering` guide") &&
+               changeTestChecklistSource.Contains("one-expression") &&
+               changeTestChecklistSource.Contains("four-line if/else recipe shapes"),
+            "Automation Code page explains deterministic recipe shapes, native lowering, and no arbitrary runtime.");
+        Assert(automationSessionSource.Contains("private string _automationCodeRecipeSearch = string.Empty") &&
+               automationDrawAutomationRecipePickerSource.Contains("DrawAutomationCodeRecipeSearchCatalog()") &&
+               automationDrawAutomationCodeRecipeSearchCatalogSource.Contains("Clear code recipe search.") &&
+               automationDrawAutomationCodeRecipeSearchCatalogSource.Contains("Search deterministic recipes by name, target category, or expression text.") &&
+               automationDrawAutomationCodeRecipeSearchCatalogSource.Contains("Recipe catalog: ") &&
+               automationDrawAutomationCodeRecipeSearchCatalogSource.Contains("No deterministic code recipes match the current search") &&
+               automationDrawAutomationCodeRecipeSearchCatalogSource.Contains("AutomationCodeRecipeMatchesSearch") &&
+               automationDrawAutomationCodeRecipeCatalogRowSource.Contains("AutomationTargetCatalog.CategoryLabel(recipe.Category)") &&
+               automationDrawAutomationCodeRecipeCatalogRowSource.Contains("_automationCodeText = recipe.Code") &&
+               automationCodeRecipeMatchesSearchSource.Contains("recipe.Label") &&
+               automationCodeRecipeMatchesSearchSource.Contains("recipe.Category.ToString()") &&
+               automationCodeRecipeMatchesSearchSource.Contains("recipe.Code") &&
+               automationCodeRecipeMatchesSearchSource.Contains("terms.All(term") &&
+               automationDesignDocSource.Contains("built-in recipe picker now includes a searchable deterministic") &&
+               automationDesignDocSource.Contains("without expanding the supported parser syntax") &&
+               changeTestChecklistSource.Contains("Code page recipe catalog") &&
+               changeTestChecklistSource.Contains("matching/total deterministic"),
+            "Automation Code page recipe catalog is searchable without expanding deterministic parser behavior.");
+        Assert(automationSessionSource.Contains("private const int CodeOutputTargetVisibleLimit = 6") &&
+               automationSessionSource.Contains("private string _automationCodeOutputTargetSearch = string.Empty") &&
+               automationDrawCodeEditorSource.Contains("DrawAutomationCodeOutputTargetPicker()") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("DrawAutomationCodeOutputTargetSearch()") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("AutomationCodeOutputTargetMatchesSearch") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("Take(CodeOutputTargetVisibleLimit)") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("Output targets: ") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("No writable Code output targets match the current search") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("Selected Code output target is hidden by the current search filter") &&
+               automationDrawAutomationCodeOutputTargetPickerSource.Contains("Use search to narrow Code output targets") &&
+               automationDrawAutomationCodeOutputTargetSearchSource.Contains("Clear Code output target search.") &&
+               automationDrawAutomationCodeOutputTargetSearchSource.Contains("Search writable output links by label, category, role, runtime type, cell, or target key.") &&
+               automationCodeOutputTargetMatchesSearchSource.Contains("AutomationTargetCatalog.CategoryLabel(target.Category)") &&
+               automationCodeOutputTargetMatchesSearchSource.Contains("AutomationTargetCatalog.RoleLabel(target)") &&
+               automationCodeOutputTargetMatchesSearchSource.Contains("FormatCell(target.LocalPosition)") &&
+               automationCodeOutputTargetMatchesSearchSource.Contains("target.StableKey") &&
+               automationDesignDocSource.Contains("output-target picker now searches linked writable outputs") &&
+               automationDesignDocSource.Contains("six-button HUD display cap") &&
+               changeTestChecklistSource.Contains("Code page output-target picker") &&
+               changeTestChecklistSource.Contains("shown/matching/total outputs"),
+            "Automation Code output target picker searches linked writable outputs before the safe display cap.");
+        Assert(automationSessionSource.Contains("private const int CodeIdentifierVisibleLimit = 5") &&
+               automationSessionSource.Contains("private string _automationCodeIdentifierSearch = string.Empty") &&
+               automationDrawCodeEditorSource.Contains("DrawAutomationLinkedIdentifierHints()") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("DrawAutomationCodeIdentifierSearch()") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("AutomationCodeIdentifierMatchesSearch(identifier, _automationCodeIdentifierSearch)") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("CodeIdentifierVisibleLimit") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("Linked identifiers: ") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("No linked identifiers match the current search") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("Use search to narrow the input names") &&
+               automationDrawAutomationLinkedIdentifierHintsSource.Contains("InsertAutomationCodeIdentifier(identifier)") &&
+               automationDrawAutomationCodeIdentifierSearchSource.Contains("Clear linked identifier search.") &&
+               automationDrawAutomationCodeIdentifierSearchSource.Contains("Search evaluator-safe linked input identifiers before inserting them into Code recipes.") &&
+               automationCodeIdentifierMatchesSearchSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
+               automationCodeIdentifierMatchesSearchSource.Contains("terms.All(term") &&
+               automationDesignDocSource.Contains("linked-identifier strip now searches evaluator-safe input names") &&
+               automationDesignDocSource.Contains("five-button display cap") &&
+               changeTestChecklistSource.Contains("Code page linked-identifier strip") &&
+               changeTestChecklistSource.Contains("shown/matching/total input links"),
+            "Automation Code linked identifier strip filters evaluator-safe input names before insertion.");
+        Assert(automationDrawTinkercadInspectorSource.Contains("target, property, threshold/value, or order") &&
+               automationDrawTinkercadInspectorSource.Contains("Read/Set property binding stays Auto until Apply") &&
+               automationDrawTinkercadInspectorSource.Contains("LabelRow(\"Role\"") &&
+               automationDrawTinkercadInspectorSource.Contains("LabelRow(\"Ports\"") &&
+               automationDrawTinkercadInspectorSource.Contains("LabelRow(\"Compatibility\"") &&
+               automationDrawTinkercadInspectorSource.Contains("LabelRow(\"Validation\"") &&
+               automationBlockPortSummarySource.Contains("no inputs") &&
+               automationBlockPortSummarySource.Contains("no outputs") &&
+               automationBlockNodeValidationLabelSource.Contains("Not lowerable yet") &&
+               automationBlockNodeValidationLabelSource.Contains("Needs exposed ports in Systems") &&
+               automationDrawBlockNodeControlsSource.Contains("Property binding: Auto uses preferred terms at Apply") &&
+               automationDrawBlockNodeControlsSource.Contains("Choose property opens the native GBG/GBS picker") &&
+               automationDrawBlockNodeControlsSource.Contains("Use auto clears an explicit selection") &&
+               automationDrawBlockNodeControlsSource.Contains("Advanced wrapper: Apply creates this advertised native Breadboard component") &&
+               automationDrawBlockNodeControlsSource.Contains("Revert removes only ESU-generated component ids") &&
+               automationDesignDocSource.Contains("selected-block inspector now explains Target, Property") &&
+               automationDesignDocSource.Contains("Read/Set blocks spell out Auto versus") &&
+               automationDesignDocSource.Contains("explicit native GBG/GBS property binding") &&
+               automationDesignDocSource.Contains("Apply creates advertised native Breadboard components") &&
+               changeTestChecklistSource.Contains("ESU Blocks selected-block inspector") &&
+               changeTestChecklistSource.Contains("the explicit picker is native GBG/GBS") &&
+               changeTestChecklistSource.Contains("Select an Advanced native wrapper block") &&
+               changeTestChecklistSource.Contains("creates the advertised native Breadboard component"),
+            "Automation ESU Blocks selected-block inspector explains Auto/explicit native property binding and native wrapper Apply/Revert ownership.");
+        Assert(automationSessionSource.Contains("private const int PropertyPickerVisibleLimit = 80") &&
+               automationDrawPropertyPickerWindowSource.Contains("Property picker discovers live FtD options through a temporary native Generic Getter/Setter proxy") &&
+               automationDrawPropertyPickerWindowSource.Contains("Selection stores ESU metadata; Apply performs the real GBG/GBS binding") &&
+               automationDrawPropertyPickerWindowSource.Contains("Options shown: ") &&
+               automationDrawPropertyPickerWindowSource.Contains("PropertyPickerVisibleLimit.ToString") &&
+               automationDrawPropertyPickerWindowSource.Contains("Showing first ") &&
+               automationDrawPropertyPickerWindowSource.Contains("Use Filter to narrow large target property lists") &&
+               automationDrawPropertyPickerWindowSource.Contains("GUILayout.Height(height - EsuHudLayout.Scale(142f))") &&
+               automationSessionSource.Contains("ProxyPropertyOptions(component, _propertyPickerFilter, PropertyPickerVisibleLimit)") &&
+               automationDesignDocSource.Contains("Read/Set native property picker now explains") &&
+               automationDesignDocSource.Contains("temporary native Generic Getter/Setter proxy") &&
+               automationDesignDocSource.Contains("80-option safety cap") &&
+               changeTestChecklistSource.Contains("Open the Read/Set native property picker") &&
+               changeTestChecklistSource.Contains("temporary native Generic Getter/Setter proxy") &&
+               changeTestChecklistSource.Contains("80-option cap"),
+            "Automation native property picker explains temporary proxy discovery, ESU metadata selection, Apply-time GBG/GBS binding, and its visible option cap.");
+        Assert(automationSessionSource.Contains("private const int BlockLoweringVisibleStepLimit = 4") &&
+               automationDrawBlocksLoweringPanelSource.Contains("int totalSteps = _blockLoweringPlan.Steps?.Count ?? 0") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Math.Min(totalSteps, BlockLoweringVisibleStepLimit)") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Showing ") &&
+               automationDrawBlocksLoweringPanelSource.Contains("native lowering step(s).") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Graph complete: yes for the supported starter/native-wrapper slice") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Reads: ") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Writes: ") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Advanced native wrappers: ") &&
+               automationDrawBlocksLoweringPanelSource.Contains("LoweringPlanPropertyLabel") &&
+               automationDrawBlocksLoweringPanelSource.Contains("more native lowering step(s) hidden in this compact HUD") &&
+               automationDrawBlocksLoweringPanelSource.Contains("Check is still preview-only; Apply performs native writes") &&
+               automationDesignDocSource.Contains("native-lowering preview now reports how many native lowering") &&
+               changeTestChecklistSource.Contains("visible/total native lowering steps"),
+            "Automation ESU Blocks lowering preview reports visible/total native steps before Apply.");
+        Assert(automationDrawBlocksLoweringPanelSource.Contains("Check validates the native plan without mutation") &&
+               automationCheckEsuBlocksSource.Contains("CheckBlocksToNative") &&
+               automationCheckEsuBlocksSource.Contains("_blockLoweringPlan = ok ? plan : null") &&
+               automationBlockLoweringCheckSource.Contains("ValidateBlockSupportForCheck") &&
+               automationBlockLoweringCheckSource.Contains("Compare needs a left input") &&
+               automationBlockLoweringCheckSource.Contains("Set Target needs a target and value") &&
+               automationBlockWorkspaceSource.Contains("Delay is not lowerable yet") &&
+               automationBlockWorkspaceSource.Contains("This System Block has no exposed output ports yet") &&
+               !automationCheckEsuBlocksSource.Contains("CompileAutomationCodeExpression") &&
+               !automationCheckEsuBlocksSource.Contains("TryApplyNativeComponentBlocks") &&
+               !automationCheckEsuBlocksSource.Contains("TryCreateTargetProxy") &&
+               !automationCheckEsuBlocksSource.Contains("TryAddComponentTracked"),
+            "Automation ESU Blocks Check previews the native plan without compiling code, applying native wrapper blocks, creating proxies, or tracking component ids.");
+        Assert(automationCheckSystemBlockNativeLoweringSource.Contains("TryPlanSystemBlockNativeLowering") &&
+               automationCheckSystemBlockNativeLoweringSource.Contains("no native mutation during Check") &&
+               !automationCheckSystemBlockNativeLoweringSource.Contains("TryCreateTargetProxy") &&
+               !automationCheckSystemBlockNativeLoweringSource.Contains("new AutomationCompileRevertSet") &&
+               automationValidateSystemBlockInternalGraphSource.Contains("mutates no native data") &&
+               automationValidateSystemBlockDraftSource.Contains("no native mutation"),
+            "Automation System Block Check and validation paths remain metadata/native-plan validation without proxy creation or compile-revert allocation.");
+        Assert(automationApplyEsuBlocksSource.Contains("CompileAutomationCodeExpression") &&
+               automationApplyEsuBlocksSource.Contains("TryApplyNativeComponentBlocks") &&
+               automationTryApplyNativeComponentBlocksSource.Contains("TryAddComponentTracked") &&
+               automationApplySystemBlockNativeLoweringSource.Contains("TryCreateTargetProxy"),
+            "Automation Apply paths remain the source-separated routes that compile code, apply native wrappers, track components, and create System Block proxies.");
+        Assert(automationDesignDocSource.Contains("dedicated Check-safety gate") &&
+               changeTestChecklistSource.Contains("Check actions do not create native nodes"),
+            "Automation docs and smoke checklist keep the Check-safety contract visible.");
+        Assert(automationSessionSource.Contains("private string _semanticBlockPaletteSearch = string.Empty") &&
+               automationDrawTinkercadPaletteSource.Contains("DrawSemanticBlockPalette()") &&
+               automationDrawSemanticBlockPaletteSource.Contains("AutomationBlockCatalog") &&
+               automationDrawSemanticBlockPaletteSource.Contains("DefinitionsForCategory(_blockPaletteCategory)") &&
+               automationSessionSource.Contains("AutomationBlockCategory.Timing") &&
+               automationSessionSource.Contains("AutomationBlockCategory.Organization"),
+            "Automation semantic ESU block palette is wired into the Tinkercad palette and catalog category definitions.");
+        Assert(automationSessionSource.Contains("AutomationBlockAudienceLabel") &&
+               automationSessionSource.Contains("AutomationBlockCompatibilityLabel") &&
+               automationSessionSource.Contains("AutomationBlockPortSummary") &&
+               automationSessionSource.Contains("lowerable now") &&
+               automationSessionSource.Contains("not lowerable yet") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockCompatibility.NativeViaGetterSetter") &&
+               automationBlockWorkspaceSource.Contains("AutomationBlockAudience.MetadataOnly") &&
+               automationBlockWorkspaceSource.Contains("CanLowerToNative"),
+            "Automation semantic ESU block palette cards expose audience, port summary, compatibility, and current native-lowering status.");
+        Assert(automationDrawSemanticBlockPaletteSource.Contains("SemanticBlockDefinitionMatchesSearch(definition, _semanticBlockPaletteSearch)") &&
+               automationDrawSemanticBlockPaletteSource.Contains("Semantic blocks: ") &&
+               automationDrawSemanticBlockPaletteSource.Contains("No semantic ESU blocks match the current block search") &&
+               automationDrawSemanticBlockPaletteSearchSource.Contains("Clear semantic ESU block search.") &&
+               automationDrawSemanticBlockPaletteSearchSource.Contains("Search semantic ESU blocks by label, category, kind, port, setting, or description."),
+            "Automation semantic ESU block palette exposes search, count, clear, and empty-result states before rendering beginner blocks.");
+        Assert(automationSemanticBlockDefinitionMatchesSearchSource.Contains("definition.TemplateId") &&
+               automationSemanticBlockDefinitionMatchesSearchSource.Contains("definition.InputPorts") &&
+               automationSemanticBlockDefinitionMatchesSearchSource.Contains("definition.OutputPorts") &&
+               automationSemanticBlockDefinitionMatchesSearchSource.Contains("definition.Settings") &&
+               automationSemanticBlockDefinitionMatchesSearchSource.Contains("terms.All"),
+            "Automation semantic ESU block search matches template id, ports, settings, and all search terms.");
+        Assert(automationDesignDocSource.Contains("semantic ESU block palette now has its own search") &&
+               changeTestChecklistSource.Contains("Search semantic ESU blocks"),
+            "Automation docs and smoke checklist cover semantic ESU block palette search.");
+        Assert(automationDrawTinkercadPaletteSource.Contains("DrawNativeBreadboardBlockPalette()") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("inspector.AvailableComponents") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("DrawNativeBreadboardBlockTemplate(component)") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("AutomationBlockCatalog.NativeDefinition(component)"),
+            "Automation Advanced native wrapper palette is generated from live Breadboard AvailableComponents and catalog native definitions.");
+        Assert(automationDrawNativeBreadboardPaletteSource.Contains("DrawNativeBreadboardPaletteSearch()") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("matchingComponents") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("NativePaletteVisibleLimit") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("No native Breadboard component types match the current search.") &&
+               automationDrawNativeBreadboardPaletteSource.Contains("Use search/filter to narrow results") &&
+               automationDrawNativeBreadboardPaletteSearchSource.Contains("_nativeComponentPaletteSearch") &&
+               automationDrawNativeBreadboardPaletteSearchSource.Contains("Clear native Breadboard component search") &&
+               automationDrawNativeBreadboardPaletteSearchSource.Contains("Search native Breadboard components by label, type, namespace, or description.") &&
+               automationNativeComponentMatchesSearchSource.Contains("component.FullTypeName") &&
+               automationNativeComponentMatchesSearchSource.Contains("component.Description") &&
+               automationNativeComponentMatchesSearchSource.Contains("terms.All"),
+            "Automation Advanced native wrapper palette searches native labels/types/descriptions before the visible cap and reports empty/capped states.");
+        Assert(automationDrawNativeBreadboardTemplateSource.Contains("DrawFittedSingleLineLabel") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("\"Native type: \" + nativeType") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("\"Ports: \" + AutomationBlockPortSummary(definition)") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("Native Wrapper") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("component.FullTypeName") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("Native FtD component type:") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("Apply creates this advertised native component") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("_draggingNativePaletteBlock = true") &&
+               automationDrawNativeBreadboardTemplateSource.Contains("AddNativeAutomationBlock(component, -1)") &&
+               automationDesignDocSource.Contains("Native wrapper cards also expose") &&
+               changeTestChecklistSource.Contains("native wrapper card shows its `Native type` line"),
+            "Automation native wrapper cards expose fitted FtD type identity, Apply-created native component behavior, and drag/click insertion.");
+        Assert(automationBlockWorkspaceSource.Contains("workspace.AddBlock(AutomationBlockKind.Constant)") &&
+               !automationBlockWorkspaceCreateDefaultSource.Contains("workspace.AddBlock(AutomationBlockKind.MathScale)") &&
+               automationDrawTinkercadInspectorSource.Contains("Create starter automation") &&
+               automationEnsureBlockWorkspaceSource.Contains("TryApplyContextualStarterTemplate()") &&
+               automationTryApplyContextualStarterTemplateSource.Contains("TryApplyAmmoThresholdStarterTemplate(input, output)"),
+            "Automation Blocks default workspace remains template-driven instead of hard-coding the old MathScale starter.");
+        Assert(automationBlockWorkspaceAmmoTemplateSource.Contains("inputTarget.Category != AutomationTargetCategory.TurretsWeapons") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("outputTarget.Category != AutomationTargetCategory.Spinblocks") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("read.SetAutoPropertyHint(\"ammo\")") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("set.SetAutoPropertyHint(\"angle\")") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("compare.Operator = AutomationCompareOperator.LessThan") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("compare.NumericValue = 10f") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("constant.NumericValue = 45f") &&
+               automationBlockWorkspaceAmmoTemplateSource.Contains("when.SecondaryNumericValue = 0f"),
+            "Automation APS starter template keeps weapon input, spinblock output, ammo/angle hints, '< 10', true 45, and else 0 defaults.");
+        Assert(automationBlockWorkspaceSource.Contains("IdentifierForReadSignal(readTarget, readNode.PropertySelection)") &&
+               automationBlockWorkspaceSource.Contains("workspace.FirstNode(AutomationBlockKind.Constant)") &&
+               automationBlockWorkspaceSource.Contains("PassExpressionFor(identifier, constantNode, scaleNode, evaluatorNode)") &&
+               automationBlockWorkspaceSource.Contains("switchNode != null") &&
+               automationBlockWorkspaceSource.Contains("evaluatorNode.Expression") &&
+               automationBlockWorkspaceSource.Contains("HasConfiguredSemanticFlow") &&
+               automationBlockWorkspaceSource.Contains("AddStarterRecipeLinks") &&
+               automationBlockWorkspaceSource.Contains("AddLink(read, \"value\", compare, \"value\")") &&
+               automationBlockWorkspaceSource.Contains("AddLink(compare, \"condition\", when, \"condition\")") &&
+               automationBlockWorkspaceSource.Contains("AddLink(when, \"out\", set, \"value\")") &&
+               automationBlockWorkspaceSource.Contains("PassExpression + \" else \" + FailValue.ToString") &&
+               automationDrawBlockNodeControlsSource.Contains("node.Kind == AutomationBlockKind.WhenIf") &&
+               automationDrawBlockNodeControlsSource.Contains("DrawEsuBlockFloatStepper(\"Else\""),
+            "Automation semantic lowering keeps the named Read/Compare/Constant/WhenIf/Set flow and exposes the else-value editor.");
+        Assert(automationBlockWorkspaceSource.Contains("constantNode.NumericValue.ToString") &&
+               automationBlockWorkspaceSource.Contains("identifier + \" * \" + scale") &&
+               automationBlockWorkspaceSource.Contains("IdentifierForLabel(property.Label)") &&
+               automationBlockLoweringIdentifierSource.Contains("IdentifierForLabel(property.Label)") &&
+               automationBlockLoweringPassExpressionSource.Contains("constantNode.NumericValue.ToString") &&
+               automationBlockLoweringPassExpressionSource.Contains("identifier + \" * \" + scale"),
+            "Automation block lowering derives readable signal identifiers from explicit Getter properties and keeps constant/scale pass expressions.");
+        Assert(automationApplyMissingBlockPropertyHintsSource.Contains("ApplyAutomationBlockAutoPropertyHint(node, target)") &&
+               automationApplyBlockAutoPropertyHintSource.Contains("AutomationBlockAutoPropertyHint(target, getter)") &&
+               automationBlockAutoPropertyHintSource.Contains("TargetProxySearchTerms(target, getter)") &&
+               automationApplyBlockAutoPropertyHintSource.Contains("node.SetAutoPropertyHint(hint)") &&
+               automationSessionSource.Contains("AutomationBlockPropertyLabel") &&
+               automationSessionSource.Contains("PreferredProxyPropertySelection") &&
+               automationSessionSource.Contains("Applied native Breadboard nodes, but ESU Blocks input binding needs attention") &&
+               !automationEnsureBlockWorkspaceSource.Contains("TryCreateTargetProxy") &&
+               !automationApplyMissingBlockPropertyHintsSource.Contains("TryCreateTargetProxy"),
+            "Automation block auto property hints stay metadata-only until Apply and surface binding warnings without creating proxies during workspace setup.");
+        Assert(automationBreadboardInspectorSource.Contains("TryMatchTermIndex") &&
+               automationBreadboardInspectorSource.Contains("score >= bestScore") &&
+               automationBreadboardInspectorSource.Contains("\"ammo\", \"munition\", \"shell\", \"reload\", \"magazine\", \"clip\", \"count\""),
+            "Automation Breadboard property matching keeps scored preferred terms for ammo-like Getter options.");
+        Assert(automationBlockWorkspaceSource.Contains("internal enum AutomationLinkDirection") &&
+               automationBlockWorkspaceSource.Contains("AutomationProxyPropertySelection") &&
+               automationBlockWorkspaceSource.Contains("CanvasPan") &&
+               automationBlockWorkspaceSource.Contains("CanvasZoom"),
+            "Automation block workspace tracks link direction, proxy property selection, and canvas viewport state.");
+        Assert(automationTargetSearchControlsSource.Contains("Filter targets by label, class, category, cell, controller GUID, or ACB/Breadboard role.") &&
+               automationTargetSearchControlsSource.Contains("Examples: spinblock, APS, Breadboard Write, main, subconstruct, c0, 12,4,-2.") &&
+               automationTargetSearchControlsSource.Contains("Search active: ") &&
+               automationTargetSearchControlsSource.Contains("Clear it to restore the full filtered target list.") &&
+               automationDesignDocSource.Contains("Target search also shows example terms") &&
+               changeTestChecklistSource.Contains("`Target search` shows concrete examples"),
+            "Automation target search shows concrete role/cell examples and documents the active-search reset path.");
+        Assert(automationSessionSource.Contains("private enum AutomationTargetBrowserMode") &&
+               automationSessionSource.Contains("AutomationTargetBrowserMode.Important") &&
+               automationSessionSource.Contains("AutomationTargetBrowserMode.Generic") &&
+               automationSessionSource.Contains("TargetBrowserVisibleLimit") &&
+               automationSessionSource.Contains("Showing first \" +") &&
+               automationSessionSource.Contains("matching world target(s). Use search/filter or category filters to narrow results.") &&
+               automationSessionSource.Contains("private static bool s_showLeftPanel = true") &&
+               automationSessionSource.Contains("private bool _showLeftPanel = s_showLeftPanel") &&
+               automationSessionSource.Contains("s_showLeftPanel = _showLeftPanel") &&
+               automationSessionSource.Contains("s_showAdvancedFilters = _showAdvancedFilters") &&
+               automationSessionSource.Contains("_showAdvancedFilters"),
+            "Automation target browser keeps Important/Generic modes, visible caps, and session-persistent panel toggles separated.");
+        Assert(automationToggleLinkSource.Contains("link.Direction == direction") &&
+               automationToggleLinkSource.Contains("LinkDirectionLabel(direction)") &&
+               automationHandleTargetClickSource.Contains("ToggleLink(target, _pendingLinkTarget, AutomationLinkDirection.Input)") &&
+               automationHandleTargetClickSource.Contains("ToggleLink(_selectedController, target, AutomationLinkDirection.Output)") &&
+               automationDrawLinksSource.Contains("link.Direction == AutomationLinkDirection.Input") &&
+               automationDrawLinksSource.Contains("Time.unscaledTime") &&
+               automationDrawLinksSource.Contains("DecorationEditorOverlay.Circle"),
+            "Automation target linking preserves directional Input/Output behavior and draws animated link endpoints.");
+        Assert(automationHandleBlockCanvasNavigationSource.Contains("EventType.ScrollWheel") &&
+               automationHandleBlockCanvasNavigationSource.Contains("SetCanvasZoom") &&
+               automationHandleBlockCanvasNavigationSource.Contains("SetCanvasPan"),
+            "Automation block canvas navigation keeps scroll-wheel zoom and pan state routed through dedicated setters.");
+        Assert(automationDrawPropertyPickerSource.Contains("DrawAutomationPropertyPickerWindow") &&
+               automationDrawPropertyPickerSource.Contains("GUI.BringWindowToFront(_propertyPickerWindowId)") &&
+               automationDrawPropertyPickerSource.Contains("GUI.depth = Math.Min(previousDepth, -11000)") &&
+               automationOpenPropertyPickerSource.Contains("RefreshAutomationPropertyPickerOptions") &&
+               automationOpenPropertyPickerSource.Contains("CloseAutomationContextMenu()") &&
+               automationOpenPropertyPickerSource.Contains("_propertyPickerRect = ClampAutomationPopupRect") &&
+               automationTryApplyProxyPropertySelectionSource.Contains("TrySelectProxyProperty") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("TryApplyProxyPropertySelection") &&
+               automationSessionSource.Contains("InvalidateAutomationLinksChanged") &&
+               automationLinkedTargetListRowSource.Contains("RemoveAutomationLink(link)") &&
+               automationSessionSource.Contains("HasNativePropertyBinding") &&
+               automationSessionSource.Contains("AutomationProxyPropertyBindingMode.Auto") &&
+               automationTryBindEsuBlockInputGetterSource.Contains("Revert blocks can remove the generated getter") &&
+               automationSessionSource.Contains("Temporary property picker proxy cleanup was incomplete"),
+            "Automation native Getter/Setter property picking stays frontmost, link-aware, auto-bindable, and cleanup-guarded.");
+        Assert(!automationDrawTargetPreviewCardSource.Contains("SmartBlockItemPreviewRenderer") &&
+               automationDrawTargetPreviewCardSource.Contains("_targetPreviewRenderer.GetPreview") &&
+               automationTargetPreviewRendererSource.Contains("SmartBlockItemPreviewRenderer"),
+            "Automation target preview cards use the dedicated Automation preview renderer wrapper instead of direct Smart Builder renderer calls.");
+        Assert(modeSwitchHandoffSource.Contains("s_targetEditorClaimed") &&
+               modeSwitchHandoffSource.Contains("ClaimTargetEditorOpened") &&
+               modeSwitchHandoffSource.Contains("!s_targetEditorClaimed") &&
+               automationBehaviourSource.Contains("EsuModeSwitchHandoff.ClaimTargetEditorOpened()"),
+            "Automation mode open path participates in the shared target-editor handoff overlap guard.");
         Assert(automationExecuteBoardCommandSource.Contains("if (execute == null)") &&
                automationExecuteBoardCommandSource.Contains("return false;") &&
                automationExecuteBoardCommandSource.Contains("execute.Invoke(command, null)") &&
                automationExecuteAddComponentCommandSource.Contains("if (execute == null)") &&
                automationExecuteAddComponentCommandSource.Contains("return false;") &&
-               automationExecuteAddComponentCommandSource.Contains("execute.Invoke(command, null)") &&
-               automationRefreshTargetsSource.Contains("ClearStaleSelectedController(selectedKey)") &&
+               automationExecuteAddComponentCommandSource.Contains("execute.Invoke(command, null)"),
+            "Automation Breadboard command reflection fails honestly when native Execute methods are unavailable.");
+        Assert(automationRefreshTargetsSource.Contains("ClearStaleSelectedController(selectedKey)") &&
                automationClearStaleControllerSource.Contains("CloseEditor()") &&
-               automationClearStaleControllerSource.Contains("_selectedController = null") &&
-               automationClearStaleControllerSource.Contains("_selectedCanvasComponentId = NoWireSourceComponentId"),
-            "Automation Editor fails reflected Breadboard commands honestly and clears stale selected controllers before graph/code writes can reuse old block references.");
+               automationClearStaleControllerSource.Contains("_selectedController = null"),
+            "Automation target refresh clears stale selected controllers and closes the editor before more writes can target missing blocks.");
+        Assert(automationClearStaleControllerSource.Contains("_wireSourceComponentId = NoWireSourceComponentId") &&
+               automationClearStaleControllerSource.Contains("_wireSourceOutputIndex = -1") &&
+               automationClearStaleControllerSource.Contains("_selectedCanvasComponentId = NoWireSourceComponentId") &&
+               automationClearStaleControllerSource.Contains("_canvasDragComponentId = NoWireSourceComponentId") &&
+               automationClearStaleControllerSource.Contains("_lastCompileRevert = null") &&
+               automationClearStaleControllerSource.Contains("_lastSystemBlockLoweringRevert = null"),
+            "Automation stale-controller cleanup clears native graph selection, wire-source, drag, and generated-node Revert state.");
         Assert(!automationControllerPaletteRowSource.Contains("? \"placing\" : \"place\"") &&
-               !automationControllerIndexRowSource.Contains("\"select\"") &&
-               !automationControllerIndexRowSource.Contains("\"edit\"") &&
-               !automationTargetListRowSource.Contains("? \"unlink\" : \"link\"") &&
                automationControllerPaletteRowSource.Contains("Click to arm this Automation controller") &&
                automationControllerPaletteRowSource.Contains("DrawAutomationIconRow") &&
                automationControllerPaletteRowSource.Contains("ControllerIconKey(descriptor)") &&
-               automationControllerPaletteRowSource.Contains("GUI.Button(") &&
+               automationControllerPaletteRowSource.Contains("GUI.Button("),
+            "Automation controller palette rows use iconized whole-row placement targets instead of per-row place buttons.");
+        Assert(!automationControllerIndexRowSource.Contains("\"select\"") &&
+               !automationControllerIndexRowSource.Contains("\"edit\"") &&
                automationControllerIndexRowSource.Contains("Click to select this Automation controller") &&
                automationControllerIndexRowSource.Contains("DrawAutomationSingleLineIconRow") &&
                automationControllerIndexRowSource.Contains("AutomationTargetIconKey(target)") &&
-               automationControllerIndexRowSource.Contains("GUI.Button(row") &&
+               automationControllerIndexRowSource.Contains("GUI.Button(row"),
+            "Automation controller index rows use iconized whole-row selection targets instead of per-row select/edit buttons.");
+        Assert(!automationTargetListRowSource.Contains("? \"unlink\" : \"link\"") &&
                automationTargetListRowSource.Contains("DrawAutomationIconRow") &&
                automationTargetListRowSource.Contains("AutomationTargetIconKey(target)") &&
                automationTargetListRowSource.Contains("HandleTargetRowClick(target)"),
-            "Automation block and target lists use iconized whole-row click targets instead of per-row set/select/place/link buttons.");
+            "Automation target list rows use iconized whole-row link targets instead of per-row link/unlink buttons.");
         Assert(automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnostics") &&
                automationRuntimeDiagnosticsSource.Contains("AutomationRuntimeDiagnosticResult") &&
-               automationRuntimeDiagnosticsSource.Contains("AvailableComponentTypes is empty") &&
+               automationRuntimeDiagnosticsSource.Contains("Run(") &&
+               automationRuntimeDiagnosticsSource.Contains("ProbeBreadboard("),
+            "Automation runtime diagnostics keep the Run entry point, result model, and Breadboard probe path wired.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("AvailableComponentTypes is empty") &&
                automationRuntimeDiagnosticsSource.Contains("GenericBlockGetter") &&
                automationRuntimeDiagnosticsSource.Contains("GenericBlockSetter") &&
                automationRuntimeDiagnosticsSource.Contains("ProbeExpandedBreadboardComponents") &&
@@ -7987,38 +9054,66 @@ f 0 2 3
                automationRuntimeDiagnosticsSource.Contains("\"variable\", \"reader\"") &&
                automationRuntimeDiagnosticsSource.Contains("Variable Writer") &&
                automationRuntimeDiagnosticsSource.Contains("\"variable\", \"writer\"") &&
+               automationRuntimeDiagnosticsSource.Contains("BreadboardComponentFamily") &&
+               automationRuntimeDiagnosticsSource.Contains("Missile Breadboard advertised"),
+            "Automation runtime diagnostics probe advertised native Breadboard component capability and expanded palette families.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("ProbeBreadboardProxyPrerequisites") &&
                automationRuntimeDiagnosticsSource.Contains("ProbeExistingProxyPropertyPickers") &&
                automationRuntimeDiagnosticsSource.Contains("ProxyPropertyOptions") &&
                automationRuntimeDiagnosticsSource.Contains("property-picker enumeration") &&
-               automationRuntimeDiagnosticsSource.Contains("ProbeSwitchFailExpressionReadiness") &&
+               automationRuntimeDiagnosticsSource.Contains("No linked world targets are present"),
+            "Automation runtime diagnostics probe Generic Getter/Setter prerequisites and existing proxy property-picker enumeration.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("ProbeSwitchFailExpressionReadiness") &&
                automationRuntimeDiagnosticsSource.Contains("Switch node exposes input 2") &&
-               automationRuntimeDiagnosticsSource.Contains("ProbeNativeBreadboardPersistenceSnapshot") &&
+               automationRuntimeDiagnosticsSource.Contains("Existing Switch node did not expose input 2"),
+            "Automation runtime diagnostics probe Switch fail-expression readiness separately from other native capability checks.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("Linked ACB Controller") &&
+               automationRuntimeDiagnosticsSource.Contains("Linked ACB target exposes ControlBlockData") &&
+               automationRuntimeDiagnosticsSource.Contains("ProbeLinkedTargets"),
+            "Automation runtime diagnostics probe linked ACB and ACB Controller surfaces separately from Breadboard diagnostics.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("ProbeNativeBreadboardPersistenceSnapshot") &&
                automationRuntimeDiagnosticsSource.Contains("Native persistence fingerprint") &&
-               automationRuntimeDiagnosticsSource.Contains("Generic proxy fingerprint") &&
                automationRuntimeDiagnosticsSource.Contains("NativePersistenceFingerprint") &&
-               automationRuntimeDiagnosticsSource.Contains("GenericProxyFingerprint") &&
                automationRuntimeDiagnosticsSource.Contains("HasNativePersistenceFingerprint") &&
-               automationRuntimeDiagnosticsSource.Contains("HasCompleteValidationEvidence") &&
-               automationRuntimeDiagnosticsSource.Contains("SetNativePersistenceFingerprint") &&
-               automationRuntimeDiagnosticsSource.Contains("SetGenericProxyFingerprint") &&
-               automationRuntimeDiagnosticsSource.Contains("SetSwitchFailExpressionReadiness") &&
+               automationRuntimeDiagnosticsSource.Contains("SetNativePersistenceFingerprint"),
+            "Automation runtime diagnostics record native persistence fingerprints for save/reload evidence.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("Generic proxy fingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("GenericProxyFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("HasGenericProxyFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("SetGenericProxyFingerprint"),
+            "Automation runtime diagnostics record Generic Getter/Setter proxy fingerprints for validation evidence.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("SetSwitchFailExpressionReadiness") &&
                automationRuntimeDiagnosticsSource.Contains("SwitchFailExpressionReady") &&
                automationRuntimeDiagnosticsSource.Contains("SwitchMaxVisibleInputs") &&
-               automationRuntimeDiagnosticsSource.Contains("controller=\" + CleanSegment(controller.Label)") &&
+               automationRuntimeDiagnosticsSource.Contains("HasCompleteValidationEvidence"),
+            "Automation runtime diagnostics include Switch readiness in complete validation evidence.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("controller=\" + CleanSegment(controller.Label)") &&
                automationRuntimeDiagnosticsSource.Contains("CleanSegment(target.Label)") &&
-               automationRuntimeDiagnosticsSource.Contains("StableHash64") &&
-               automationRuntimeDiagnosticsSource.Contains("ComponentFingerprint") &&
+               automationRuntimeDiagnosticsSource.Contains("StableHash64"),
+            "Automation runtime diagnostics sanitize controller/target labels before stable evidence hashing.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("ComponentFingerprint") &&
                automationRuntimeDiagnosticsSource.Contains("WireFingerprints") &&
-               automationRuntimeDiagnosticsSource.Contains("BreadboardComponentFamily") &&
-               automationRuntimeDiagnosticsSource.Contains("Missile Breadboard advertised") &&
-               automationRuntimeDiagnosticsSource.Contains("Linked ACB Controller") &&
-               automationRuntimeDiagnosticsSource.Contains("Linked ACB target exposes ControlBlockData") &&
-               automationRuntimeDiagnosticsSource.Contains("No linked world targets are present") &&
-               automationRuntimeDiagnosticsSource.Contains("Runtime check: ") &&
-               automationSessionSource.Contains("DrawRuntimeDiagnosticsPanel") &&
-               automationSessionSource.Contains("RunAutomationRuntimeDiagnostics") &&
-               automationSessionSource.Contains("Runtime checks") &&
-               automationSessionSource.Contains("DrawRuntimeValidationEvidenceRows") &&
+               automationRuntimeDiagnosticsSource.Contains("CountWireFingerprints") &&
+               automationRuntimeDiagnosticsSource.Contains("LinkedTargetFingerprint"),
+            "Automation runtime diagnostics include native component, wire, and linked-target fingerprints in persistence evidence.");
+        Assert(automationRuntimeDiagnosticsSource.Contains("Runtime check: ") &&
+               automationRuntimeDiagnosticsSource.Contains("Missing native capability:") &&
+               automationRuntimeDiagnosticsSource.Contains("ESU UI coverage:") &&
+               automationRuntimeDiagnosticsSource.Contains("Apply-required setup:") &&
+               automationRuntimeDiagnosticsSource.Contains("Save/reload evidence:") &&
+               automationRuntimeDiagnosticsSource.Contains("Scale/cap limit:"),
+            "Automation runtime diagnostics classify findings by native capability, ESU UI coverage, Apply-required setup, save/reload evidence, and scale limits.");
+        Assert(automationSessionSource.Contains("DrawRuntimeDiagnosticsPanel") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("DrawCompactIconHeader(\"Runtime checks\"") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("Run checks") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("RunAutomationRuntimeDiagnostics()"),
+            "Automation Runtime Checks HUD wires the Runtime checks panel and Run checks action.");
+        Assert(automationDrawRuntimeDiagnosticsPanelSource.Contains("Labels: Missing native capability") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("ESU UI coverage = native support needs more ESU editor surface") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("Apply-required setup = link/apply/create proof nodes first") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("Evidence labels: Save/reload evidence and Scale/cap limit are observational"),
+            "Automation Runtime Checks HUD exposes the native capability, ESU UI coverage, Apply-required, and evidence label legend.");
+        Assert(automationSessionSource.Contains("DrawRuntimeValidationEvidenceRows") &&
                automationSessionSource.Contains("DrawRuntimeEvidenceRow") &&
                automationSessionSource.Contains("Live evidence gates") &&
                automationSessionSource.Contains("Native graph fingerprint") &&
@@ -8032,8 +9127,10 @@ f 0 2 3
                automationSessionSource.Contains("Link a Breadboard-writable world target") &&
                automationSessionSource.Contains("Validation graph preparation failed") &&
                automationSessionSource.Contains("Validation graph prepared") &&
-               automationSessionSource.Contains("Requires a writable linked target") &&
-               automationSessionSource.Contains("creates expression-else Switch proof nodes") &&
+               automationSessionSource.Contains("Requires a writable linked Target") &&
+               automationSessionSource.Contains("writes native Evaluator/Switch proof nodes") &&
+               automationSessionSource.Contains("target-specific Generic Setter Proxy Node") &&
+               automationSessionSource.Contains("Revert compile removes those generated validation nodes") &&
                automationSessionSource.Contains("Complete all live evidence gates before capturing or comparing") &&
                automationSessionSource.Contains("Complete all live evidence gates before capturing a baseline") &&
                automationSessionSource.Contains("until all live evidence gates are OK") &&
@@ -8043,15 +9140,17 @@ f 0 2 3
                automationSessionSource.Contains("CaptureRuntimeValidationBaseline") &&
                automationSessionSource.Contains("CompareRuntimeValidationBaseline") &&
                automationSessionSource.Contains("Automation validation baseline match") &&
-               automationSessionSource.Contains("same-value writes") &&
-               automationSessionSource.Contains("EsuRuntimeLog.Info(\"Automation Editor\"") &&
+               automationSessionSource.Contains("EsuRuntimeLog.Info(\"Automation Editor\""),
+            "Automation runtime validation UI exposes evidence gates, validation graph preparation, and diagnostic baseline controls.");
+        Assert(automationSessionSource.Contains("same-value native access probes") &&
                automationBreadboardInspectorSource.Contains("TryRewriteCurrentSettings") &&
                automationBreadboardInspectorSource.Contains("same-value probes") &&
                automationAcbInspectorSource.Contains("TryRewriteCurrentSettings") &&
                automationAcbInspectorSource.Contains("same-value probes") &&
                automationAcbControllerInspectorSource.Contains("TryRewriteCurrentButtonValues") &&
-               automationAcbControllerInspectorSource.Contains("same-value probes") &&
-               changeTestChecklistSource.Contains("## Automation Editor") &&
+               automationAcbControllerInspectorSource.Contains("same-value probes"),
+            "Automation diagnostics keep same-value native access probes visible for Breadboard, ACB, and ACB Controller inspectors.");
+        Assert(changeTestChecklistSource.Contains("## Automation Editor") &&
                changeTestChecklistSource.Contains("`Run checks`") &&
                changeTestChecklistSource.Contains("`Live evidence gates`") &&
                changeTestChecklistSource.Contains("native graph fingerprint") &&
@@ -8065,8 +9164,9 @@ f 0 2 3
                changeTestChecklistSource.Contains("`ACB Actions`") &&
                changeTestChecklistSource.Contains("`Breadboard Read`") &&
                changeTestChecklistSource.Contains("`Breadboard Write`") &&
-               changeTestChecklistSource.Contains("matching role summaries") &&
-               changeTestChecklistSource.Contains("rebind to the live target") &&
+               changeTestChecklistSource.Contains("matching role summaries"),
+            "Automation smoke checklist covers runtime checks, live evidence, controller discovery, target search, and role summaries.");
+        Assert(changeTestChecklistSource.Contains("rebind to the live target") &&
                changeTestChecklistSource.Contains("`(missing)`") &&
                changeTestChecklistSource.Contains("linked-target list rehydrates from persisted") &&
                changeTestChecklistSource.Contains("native proxies without manual relinking") &&
@@ -8079,8 +9179,9 @@ f 0 2 3
                changeTestChecklistSource.Contains("`Revert blocks`") &&
                changeTestChecklistSource.Contains("edit a linked ACB node") &&
                changeTestChecklistSource.Contains("ACB Controller node's first buttons") &&
-               changeTestChecklistSource.Contains("bottom strip reports page") &&
-               changeTestChecklistSource.Contains("immediate native edit behavior") &&
+               changeTestChecklistSource.Contains("bottom strip reports page"),
+            "Automation smoke checklist covers link rebinding, linked target inspection, builder entry, and linked native editor surfaces.");
+        Assert(changeTestChecklistSource.Contains("immediate native edit behavior") &&
                changeTestChecklistSource.Contains("Rule getter/setter proxies") &&
                changeTestChecklistSource.Contains("in-card proxy buttons") &&
                changeTestChecklistSource.Contains("auto-pick terms") &&
@@ -8090,13 +9191,16 @@ f 0 2 3
                changeTestChecklistSource.Contains("`Shared variable bridge`") &&
                changeTestChecklistSource.Contains("Variable Reader/Writer bridge nodes") &&
                changeTestChecklistSource.Contains("extended component palette coverage") &&
-               changeTestChecklistSource.Contains("property-picker enumeration") &&
-               changeTestChecklistSource.Contains("`Prepare validation graph`") &&
+               changeTestChecklistSource.Contains("property-picker enumeration"),
+            "Automation smoke checklist covers immediate native edit boundaries, proxy/property workflows, shared-variable bridges, and expanded palette coverage.");
+        Assert(changeTestChecklistSource.Contains("`Prepare validation graph`") &&
                changeTestChecklistSource.Contains("unavailable or warns") &&
                changeTestChecklistSource.Contains("writable linked target") &&
-               changeTestChecklistSource.Contains("`Validation proof`") &&
-               changeTestChecklistSource.Contains("expression-else Switch proof nodes") &&
+               changeTestChecklistSource.Contains("deterministic validation") &&
+               changeTestChecklistSource.Contains("native Evaluator/Switch proof nodes") &&
                changeTestChecklistSource.Contains("target-specific") &&
+               changeTestChecklistSource.Contains("Generic Setter Proxy Node") &&
+               changeTestChecklistSource.Contains("tracked by `Revert compile`") &&
                changeTestChecklistSource.Contains("immediately refreshes the live evidence rows") &&
                changeTestChecklistSource.Contains("stay unavailable until all") &&
                changeTestChecklistSource.Contains("live evidence gates are OK") &&
@@ -8116,7 +9220,130 @@ f 0 2 3
                changeTestChecklistSource.Contains("auto-created proxy") &&
                changeTestChecklistSource.Contains("revert compile") &&
                changeTestChecklistSource.Contains("Save, reload, and confirm placed controllers"),
-            "Automation Editor exposes in-game runtime diagnostics for live controller discovery, same-value native writes, proxy prerequisites, linked ACBs, and linked ACB Controllers.");
+            "Automation smoke checklist covers validation graph preparation, baseline comparison, deterministic code recipes, and save/reload evidence.");
+        Assert(automationDrawRuntimeDiagnosticsPanelSource.Contains("Run observational native capability checks for the selected Controller") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("same-value native access probes") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("does not create nodes or change craft behavior") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("Checks use the live FtD Controller instance") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("They do not create native nodes or change craft behavior") &&
+               automationDesignDocSource.Contains("`Run checks` tooltip and empty") &&
+               automationDesignDocSource.Contains("do not create") &&
+               automationDesignDocSource.Contains("native nodes") &&
+               automationDesignDocSource.Contains("change craft behavior") &&
+               changeTestChecklistSource.Contains("observational native capability checks") &&
+               changeTestChecklistSource.Contains("same-value native access probes") &&
+               changeTestChecklistSource.Contains("do not create native nodes") &&
+               changeTestChecklistSource.Contains("change craft behavior"),
+            "Automation Run checks diagnostics disclose same-value probes as non-mutating and node-free.");
+        Assert(automationDrawRuntimeValidationEvidenceRowsSource.Contains("Read-only results from the last Run checks pass") &&
+               automationDrawRuntimeValidationEvidenceRowsSource.Contains("OK means evidence is present") &&
+               automationDrawRuntimeValidationEvidenceRowsSource.Contains("WAIT means link/apply/prepare/run checks is still needed") &&
+               automationDrawRuntimeValidationEvidenceRowsSource.Contains("These rows do not write native data") &&
+               automationDrawRuntimeValidationEvidenceRowsSource.Contains("Native graph fingerprint") &&
+               automationDrawRuntimeValidationEvidenceRowsSource.Contains("Generic proxy fingerprint") &&
+               automationDrawRuntimeValidationEvidenceRowsSource.Contains("Switch fail-expression readiness") &&
+               automationDesignDocSource.Contains("`Live evidence gates` rows now explain") &&
+               automationDesignDocSource.Contains("read-only results") &&
+               automationDesignDocSource.Contains("do not write native data") &&
+               changeTestChecklistSource.Contains("read-only results from the last `Run checks`") &&
+               changeTestChecklistSource.Contains("`OK` meaning evidence is present") &&
+               changeTestChecklistSource.Contains("`WAIT` meaning"),
+            "Automation Live evidence gates explain OK/WAIT as read-only diagnostic evidence.");
+        Assert(automationDrawRuntimeValidationControlsSource.Contains("Compile the deterministic validation Recipe into native Evaluator/Switch/Generic Setter nodes now") &&
+               automationDrawRuntimeValidationControlsSource.Contains("Disabled until a Breadboard Controller has a writable linked Target") &&
+               automationDrawRuntimeValidationControlsSource.Contains("generated nodes are tracked by Revert compile") &&
+               automationDrawRuntimeValidationControlsSource.Contains("Requires a writable linked Target") &&
+               automationDrawRuntimeValidationControlsSource.Contains("target-specific Generic Setter Proxy Node") &&
+               automationDrawRuntimeValidationControlsSource.Contains("Revert compile removes those generated validation nodes") &&
+               automationPrepareAutomationValidationGraphSource.Contains("RecipeIndexForLabel(\"Validation proof\")") &&
+               automationPrepareAutomationValidationGraphSource.Contains("CompileAutomationCodeExpression()") &&
+               automationPrepareAutomationValidationGraphSource.Contains("RunAutomationRuntimeDiagnostics()") &&
+               automationDesignDocSource.Contains("save/reload validation panel now spells out the one intentional native") &&
+               automationDesignDocSource.Contains("deterministic") &&
+               automationDesignDocSource.Contains("validation Recipe") &&
+               automationDesignDocSource.Contains("target-specific Generic Setter Proxy Node") &&
+               changeTestChecklistSource.Contains("panel/tooltip says it compiles the deterministic validation") &&
+               changeTestChecklistSource.Contains("tracked by `Revert compile`"),
+            "Automation save/reload validation controls explain intentional native validation-node creation and Revert ownership.");
+        Assert(automationDrawRuntimeValidationControlsSource.Contains("Capture the current live evidence fingerprints in memory only") &&
+               automationDrawRuntimeValidationControlsSource.Contains("This diagnostic step does not write native Breadboard data") &&
+               automationDrawRuntimeValidationControlsSource.Contains("Compare the current live evidence fingerprints against the captured baseline") &&
+               automationDrawRuntimeValidationControlsSource.Contains("This diagnostic step reads only and does not write native Breadboard data") &&
+               automationDrawRuntimeValidationControlsSource.Contains("Capture and Compare baseline are diagnostic-only") &&
+               automationDrawRuntimeValidationControlsSource.Contains("update ESU status/log text without native graph writes") &&
+               automationCaptureRuntimeValidationBaselineSource.Contains("s_validationBaseline = AutomationValidationBaseline.From") &&
+               automationCaptureRuntimeValidationBaselineSource.Contains("EsuRuntimeLog.Info") &&
+               automationCompareRuntimeValidationBaselineSource.Contains("AutomationValidationBaseline.From") &&
+               automationCompareRuntimeValidationBaselineSource.Contains("s_validationBaseline.Compare(current)") &&
+               automationCompareRuntimeValidationBaselineSource.Contains("EsuRuntimeLog.Warning") &&
+               automationDesignDocSource.Contains("labels `Capture baseline` and `Compare baseline` as") &&
+               automationDesignDocSource.Contains("diagnostic-only") &&
+               automationDesignDocSource.Contains("do not write native Breadboard data") &&
+               changeTestChecklistSource.Contains("diagnostic-only fingerprint reads") &&
+               changeTestChecklistSource.Contains("do not write native Breadboard data"),
+            "Automation save/reload baseline capture and compare are documented as diagnostic-only fingerprint reads.");
+        Assert(automationSessionSource.Contains("private string _runtimeDiagnosticsFilter = string.Empty") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("DrawRuntimeDiagnosticsFilter()") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("RuntimeDiagnosticLineMatchesFilter(line, _runtimeDiagnosticsFilter)") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("Diagnostic lines: showing ") &&
+               automationDrawRuntimeDiagnosticsPanelSource.Contains("No runtime diagnostic lines match the current filter") &&
+               automationDrawRuntimeDiagnosticsFilterSource.Contains("Clear runtime diagnostics filter.") &&
+               automationDrawRuntimeDiagnosticsFilterSource.Contains("Filter runtime checks by severity, label, native capability, proxy, Switch, save/reload, or target text.") &&
+               automationDrawRuntimeDiagnosticsFilterSource.Contains("This is display-only") &&
+               automationDrawRuntimeDiagnosticsFilterSource.Contains("filters cached diagnostic lines") &&
+               automationDrawRuntimeDiagnosticsFilterSource.Contains("does not rerun probes or write native data") &&
+               automationRuntimeDiagnosticLineMatchesFilterSource.Contains("StringSplitOptions.RemoveEmptyEntries") &&
+               automationRuntimeDiagnosticLineMatchesFilterSource.Contains("terms.All(term") &&
+               automationDesignDocSource.Contains("Runtime Checks HUD includes a compact legend for these labels plus a") &&
+               automationDesignDocSource.Contains("local filter for severity, labels, native capability text, proxies, Switch") &&
+               automationDesignDocSource.Contains("filter is display-only") &&
+               automationDesignDocSource.Contains("does not rerun probes or write native data") &&
+               changeTestChecklistSource.Contains("filter diagnostic lines by severity") &&
+               changeTestChecklistSource.Contains("shown/matching/total lines") &&
+               changeTestChecklistSource.Contains("display-only") &&
+               changeTestChecklistSource.Contains("filters cached lines"),
+            "Automation Runtime Checks HUD filters displayed diagnostic lines without changing diagnostic probes.");
+        Assert(automationDesignDocSource.Contains("# Automation Editor research and design") &&
+               automationDesignDocSource.Contains("Tinkercad Builder Model") &&
+               automationDesignDocSource.Contains("Current Safe Improvements") &&
+               automationDesignDocSource.Contains("Generic Block Getter (GBG)") &&
+               automationDesignDocSource.Contains("Generic Block Setter (GBS)") &&
+               automationDesignDocSource.Contains("Math Evaluator") &&
+               automationDesignDocSource.Contains("Switch components") &&
+               automationDesignDocSource.Contains("ordinary graph recursion") &&
+               automationDesignDocSource.Contains("Full Vanilla Breadboard Compatibility Target") &&
+               automationDesignDocSource.Contains("Native + ESU Layout") &&
+               automationDesignDocSource.Contains("ESU Runtime Required") &&
+               automationDesignDocSource.Contains("search field before the") &&
+               automationDesignDocSource.Contains("world target browser keeps its safe visible-row cap") &&
+               automationDesignDocSource.Contains("Check-safety verifier coverage is now split") &&
+               automationDesignDocSource.Contains("ESU Blocks/System Block workspace verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Runtime diagnostics now label findings") &&
+               automationDesignDocSource.Contains("Runtime Checks HUD includes a compact legend") &&
+               automationDesignDocSource.Contains("Runtime diagnostics verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Runtime diagnostics probe verifier coverage is now split further") &&
+               automationDesignDocSource.Contains("Runtime diagnostics evidence verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Runtime Checks HUD verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Target/link guard verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Breadboard command/stale-controller verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Iconized row verifier coverage is now split") &&
+               automationDesignDocSource.Contains("HUD shell and mode-state verifier coverage is now split") &&
+               automationDesignDocSource.Contains("APS starter and semantic-lowering verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Semantic ESU block palette verifier coverage is now split") &&
+               automationDesignDocSource.Contains("Advanced native wrapper verifier coverage is now split") &&
+               automationDesignDocSource.Contains("missing native capability") &&
+               automationDesignDocSource.Contains("Apply-required setup") &&
+               automationDesignDocSource.Contains("not full vanilla Breadboard compatibility yet") &&
+               automationDesignDocSource.Contains("APS ammo `< 10` to spinblock angle `45 else 0`") &&
+               automationDesignDocSource.Contains("Target identity is not save/reload stable") &&
+               automationDesignDocSource.Contains("ESU Blocks are still recipe-lowered") &&
+               automationDesignDocSource.Contains("Every native component advertised by the selected board is visible") &&
+               automationGoalDocSource.Contains("AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md") &&
+               automationGoalDocSource.Contains("Current state, July 2026") &&
+               changeTestChecklistSource.Contains("### Implemented smoke tests") &&
+               changeTestChecklistSource.Contains("### Future full compatibility tests") &&
+               changeTestChecklistSource.Contains("Read ammo -> Compare < 10 -> Constant 45 -> Set angle"),
+            "Automation Editor research/design docs record the current review findings, Tinkercad block model, vanilla Breadboard compatibility target, APS vertical slice, and separate current smoke tests from future full compatibility tests.");
         Assert(selectionSource.Contains("build.BuildingWith?.Item") &&
                catalogSource.Contains("internal enum SmartBuildMaterial") &&
                catalogSource.Contains("BasicMaterials") &&
@@ -8353,6 +9580,13 @@ f 0 2 3
                tryDrawFixedGeometryPiecePreviewSource.Contains("BuildFixedPlacements") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("DrawPlacementWire(") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("ShouldDrawFixedGeometryPreviewEdge") &&
+               sessionSource.Contains("IsAxisAlignedPreviewEdge(start, end)") &&
+               sessionSource.Contains("private static bool IsAxisAlignedPreviewEdge") &&
+               sessionSource.Contains("DrawFixedGeometryFaceHighlight") &&
+               sessionSource.Contains("TryPickFixedGeometryFace") &&
+               sessionSource.Contains("EnumerateFixedGeometryHandleFaces") &&
+               sessionSource.Contains("TryClassifyFixedGeometryHandleFace") &&
+               sessionSource.Contains("Mesh mesh = _itemPreviewRenderer.GetMesh(placement?.Candidate)") &&
                tryDrawFixedGeometryPiecePreviewSource.Contains("MaxExactMeshPreviewPlacements") &&
                drawPlacementGhostSource.Contains("selectedDescriptor.IsGenerator") &&
                drawPlacementGhostSource.Contains("CreateGeneratedShapePreview") &&
@@ -8360,8 +9594,16 @@ f 0 2 3
                drawPlacementGhostSource.Contains("ghost.BuildFixedPlacements") &&
                drawPlacementGhostSource.Contains("slopeGhost.BuildFixedPlacements") &&
                drawPlacementGhostSource.Contains("ShouldDrawPreviewWire()") &&
-               itemPreviewRendererSource.Contains("mesh.triangles"),
-            "Smart Builder mesh-accurate material previews, fixed-shape scene wires, and cached/budgeted generated hull previews are derived from commit placements, with shared-face filtering and a material-only preview mode that suppresses wire overlays.");
+               itemPreviewRendererSource.Contains("mesh.triangles") &&
+               itemPreviewRendererSource.Contains("var edgeNormals = new Dictionary<string, EdgeAccumulator>(StringComparer.Ordinal)") &&
+               itemPreviewRendererSource.Contains("AddHardEdgeCandidate(a, b, vertices, normal, edgeNormals)") &&
+               itemPreviewRendererSource.Contains("private static string EdgeKey(Vector3 a, Vector3 b)") &&
+               itemPreviewRendererSource.Contains("private static string VertexKey(Vector3 value)") &&
+               itemPreviewRendererSource.Contains("if (_normals.Count <= 1)") &&
+               itemPreviewRendererSource.Contains("for (int first = 0; first < _normals.Count; first++)") &&
+               itemPreviewRendererSource.Contains("bool drewRenderableEdge = false") &&
+               itemPreviewRendererSource.Contains("return drewRenderableEdge;"),
+            "Smart Builder mesh-accurate material previews, fixed-shape scene wires, mesh-aligned fixed-shape face handles, and cached/budgeted generated hull previews are derived from commit placements, with duplicate-vertex mesh seams merged, diagonal fixed-shape edges preserved, shared-face filtering, and a material-only preview mode that suppresses wire overlays.");
         string handleMouseSource = ExtractMethodSource(sessionSource, "HandleMouse");
         Assert(handleMouseSource.Contains("EndDrag(resetDraft: true)") &&
                handleMouseSource.Contains("CancelAddMode()") &&
@@ -8548,6 +9790,13 @@ f 0 2 3
                 sessionSource.Contains("_tool = SmartBuildTool.Draw") &&
                 sessionSource.Contains("_tool = SmartBuildTool.Scale;") &&
                 sessionSource.Contains("IsShiftHeld()") &&
+                sessionSource.Contains("IsCardinalSlopeStretchHeld()") &&
+                sessionSource.Contains("ShouldUseCardinalSlopeStretch") &&
+                sessionSource.Contains("ResizeDownSlopeCardinalFromDraggedHandles") &&
+                sessionSource.Contains("Hold Shift on down-slopes") &&
+                pieceSource.Contains("ResizeDownSlopeCardinalFromHandle") &&
+                pieceSource.Contains("ResizeDownSlopeAnchoredForward") &&
+                pieceSource.Contains("AnchoredHandleDelta") &&
                 sessionSource.Contains("TrySeedFromPreviewFace(") &&
                 sessionSource.Contains("inheritPreviewScale") &&
                 sessionSource.Contains("SlabFromPreviewFace") &&
@@ -8556,9 +9805,10 @@ f 0 2 3
                sessionSource.Contains("HandleLeftPanelResize") &&
                sessionSource.Contains("EsuHudLayout.DrawResizeGrip(_leftPanelRect") &&
                sessionSource.Contains("MinLeftPanelWidth") &&
-               sessionSource.Contains("private const float LeftPanelDefaultHeight = 507f") &&
-               sessionSource.Contains("new Rect(18f, 110f, LeftPanelWidth, LeftPanelDefaultHeight)") &&
-               sessionSource.Contains("EsuHudLayout.Scale(LeftPanelDefaultHeight)") &&
+               sessionSource.Contains("private static Rect s_leftPanelRect = Rect.zero") &&
+               sessionSource.Contains("private static Rect s_rightPanelRect = Rect.zero") &&
+               sessionSource.Contains("EsuHudLayout.EditorSideMargin") &&
+               sessionSource.Contains("float height = MaxLeftPanelHeight();") &&
                sessionSource.Contains("DefaultLeftPanelRect") &&
                sessionSource.Contains("PlanTouchesExistingConstruct") &&
                committerSource.Contains("TryOrderPlacementsForCommit") &&
@@ -8592,7 +9842,7 @@ f 0 2 3
         string smartStatusRightLabelSource = ExtractMethodSource(sessionSource, "DrawStatusRightLabel");
         string notifySmartPlanIssueSource = ExtractMethodSource(sessionSource, "NotifyPlanIssueIfNeeded");
         string smartPlanIssueMessageSource = ExtractMethodSource(sessionSource, "TryGetPlanIssueMessage");
-        Assert(sessionSource.Contains("Mathf.Clamp(Screen.height * 0.13f") &&
+        Assert(sessionSource.Contains("EsuHudLayout.BottomStripHeight()") &&
                !sessionSource.Contains("private const float StatusHeight = 56f") &&
                smartStatusStripSource.Contains("DrawSmartBottomHeader") &&
                smartStatusStripSource.Contains("DrawCyanLine") &&

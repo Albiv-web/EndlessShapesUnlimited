@@ -1894,6 +1894,7 @@ namespace DecoLimitLifter.Patches
             !method.IsStatic &&
             !method.ContainsGenericParameters &&
             method.DeclaringType != null &&
+            method.DeclaringType.IsGenericType == false &&
             method.DeclaringType.ContainsGenericParameters == false;
 
         internal static MethodBase ResolveAllConstructInitialiseStage2Target() =>
@@ -2018,6 +2019,8 @@ namespace DecoLimitLifter.Patches
             !method.IsStatic &&
             !method.ContainsGenericParameters &&
             method.DeclaringType != null &&
+            method.DeclaringType.IsGenericType == false &&
+            method.DeclaringType.ContainsGenericParameters == false &&
             method.ReturnType == typeof(void);
 
         private static bool IsConcreteStage2ModuleType(Type type)
@@ -4607,11 +4610,6 @@ namespace DecoLimitLifter.Patches
                 missing.Add("ConstructExtraInfo.ProvideInfoToBlocks");
             if (ResolveAllConstructInitialiseStage2Target() == null)
                 missing.Add("AllConstruct.InitialiseStage2");
-            if (SkipStage2ModuleExternalLinkupForDiagnostics &&
-                !_stage2ModuleExternalLinkupPatchInstalled)
-            {
-                missing.Add("Stage2 module external-linkup diagnostics patch");
-            }
             if (ResolvePartStatusRegisterCheckableBlockTarget() == null)
                 missing.Add("IStatusHandler.RegisterCheckableBlock(ICheckState)");
             if (ResolvePartStatusUnregisterCheckableBlockTarget() == null)

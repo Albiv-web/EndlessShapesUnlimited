@@ -99,6 +99,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private Vector3i _rightStep;
         private Vector3i _dropStep;
         private int _fixedForwardTiles;
+        private int _fixedForwardCells;
         private int _fixedRightTiles;
         private int _fixedDropTiles;
         private int _generatorSides;
@@ -123,6 +124,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int fixedForwardTiles = 1,
             int fixedRightTiles = 1,
             int fixedDropTiles = 1,
+            int fixedForwardCells = 0,
             SmartBuildSlopeSupportMode supportMode = SmartBuildSlopeSupportMode.Full,
             int generatorSides = 0,
             SmartBuildGeneratorFillMode generatorFillMode = SmartBuildGeneratorFillMode.OutlineShell,
@@ -143,6 +145,11 @@ namespace DecoLimitLifter.SmartBuildMode
             SlopeWidth = Math.Max(1, slopeWidth);
             SelectedLength = Mathf.Clamp(selectedLength, 1, 4);
             _fixedForwardTiles = Math.Max(1, fixedForwardTiles);
+            _fixedForwardCells = Math.Max(
+                1,
+                fixedForwardCells > 0
+                    ? fixedForwardCells
+                    : _fixedForwardTiles * SelectedLength);
             _fixedRightTiles = Math.Max(1, fixedRightTiles);
             _fixedDropTiles = Math.Max(1, fixedDropTiles);
             SupportMode = supportMode;
@@ -174,6 +181,8 @@ namespace DecoLimitLifter.SmartBuildMode
         internal int SelectedLength { get; private set; }
 
         internal int FixedForwardTiles => _fixedForwardTiles;
+
+        internal int FixedForwardCells => _fixedForwardCells;
 
         internal int FixedRightTiles => _fixedRightTiles;
 
@@ -455,6 +464,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _fixedForwardTiles,
                 _fixedRightTiles,
                 _fixedDropTiles,
+                _fixedForwardCells,
                 SupportMode,
                 _generatorSides,
                 _generatorFillMode,
@@ -483,6 +493,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _fixedForwardTiles,
                 _fixedRightTiles,
                 _fixedDropTiles,
+                _fixedForwardCells,
                 SupportMode,
                 _generatorSides,
                 _generatorFillMode,
@@ -507,6 +518,7 @@ namespace DecoLimitLifter.SmartBuildMode
             SlopeWidth = source.SlopeWidth;
             SelectedLength = source.SelectedLength;
             _fixedForwardTiles = source._fixedForwardTiles;
+            _fixedForwardCells = source._fixedForwardCells;
             _fixedRightTiles = source._fixedRightTiles;
             _fixedDropTiles = source._fixedDropTiles;
             SupportMode = source.SupportMode;
@@ -637,9 +649,9 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 return string.Format(
                     CultureInfo.InvariantCulture,
-                    "{0}m x {1} forward x {2} wide x {3} deep",
+                    "{0}m pack x {1} forward x {2} wide x {3} deep",
                     SelectedLength,
-                    _fixedForwardTiles,
+                    _fixedForwardCells,
                     _fixedRightTiles,
                     _fixedDropTiles);
             }
@@ -677,11 +689,11 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 return string.Format(
                     CultureInfo.InvariantCulture,
-                    "#{0} | {1} | {2}m x {3}x{4}x{5}",
+                    "#{0} | {1} | {2}m pack x {3}x{4}x{5}",
                     Id,
                     Descriptor()?.Label ?? ShapeKind.ToString(),
                     SelectedLength,
-                    _fixedForwardTiles,
+                    _fixedForwardCells,
                     _fixedRightTiles,
                     _fixedDropTiles);
             }
@@ -750,6 +762,46 @@ namespace DecoLimitLifter.SmartBuildMode
 
             SmartBuildBounds resized = ResizeBounds(Bounds, axis, sign, delta);
             ApplyDownSlopeBounds(resized, axis, sign);
+        }
+
+        internal void ResizeDownSlopeCardinalFromHandle(
+            DecorationEditAxis axis,
+            int sign,
+            int delta)
+        {
+            if (ShapeKind != SmartBuildShapeKind.DownSlope)
+            {
+                ResizeFromHandle(axis, sign, delta);
+                return;
+            }
+
+            if (axis == DecorationEditAxis.None ||
+                axis == DecorationEditAxis.Free ||
+                delta == 0)
+            {
+                return;
+            }
+
+            SmartBuildAxis changed = SmartBuildDraft.ToSmartAxis(axis);
+            if (changed == DropAxis)
+            {
+                ResizeDownSlopeAnchoredForward(HandleExtentDelta(sign, delta) * SlopeLength);
+                return;
+            }
+
+            if (changed == ForwardAxis)
+            {
+                ResizeDownSlopeAnchoredForward(AnchoredHandleDelta(sign, ForwardSign, delta));
+                return;
+            }
+
+            if (changed == RightAxis)
+            {
+                ResizeDownSlopeAnchoredWidth(AnchoredHandleDelta(sign, RightSign, delta));
+                return;
+            }
+
+            ResizeFromHandle(axis, sign, delta);
         }
 
         internal void RotateYaw()
@@ -948,24 +1000,74 @@ namespace DecoLimitLifter.SmartBuildMode
             if (baseFootprint.Length == 0)
                 baseFootprint = new[] { Origin };
 
-            int forwardStride = Math.Max(1, FootprintExtent(baseFootprint, ForwardAxis));
             int rightStride = Math.Max(1, FootprintExtent(baseFootprint, RightAxis));
             int dropStride = Math.Max(1, FootprintExtent(baseFootprint, DropAxis));
-            var placements = new List<SmartBuildPlacement>();
-            foreach (Vector3i tileOrigin in EnumerateFixedGeometryOrigins(forwardStride, rightStride, dropStride))
+            IReadOnlyList<SmartBlockCandidate> run = PackFixedGeometryRun(family, _fixedForwardCells);
+            if (run.Count == 0)
             {
-                Vector3i[] cells = candidate.CoveredCellsFrom(tileOrigin, rotation).ToArray();
+                reason = descriptor?.Label + " cannot pack " +
+                         _fixedForwardCells.ToString(CultureInfo.InvariantCulture) +
+                         " forward cell(s) with available length variants.";
+                return Array.Empty<SmartBuildPlacement>();
+            }
+
+            var placements = new List<SmartBuildPlacement>();
+            foreach (Vector3i laneOrigin in EnumerateFixedGeometryLanes(rightStride, dropStride))
+                AddFixedGeometryRunPlacements(placements, laneOrigin, run, rotation);
+
+            return placements;
+        }
+
+        private static IReadOnlyList<SmartBlockCandidate> PackFixedGeometryRun(
+            SmartBlockFamily family,
+            int forwardCells)
+        {
+            SmartBlockCandidate[] candidates = family?.Candidates
+                .Where(candidate => candidate != null && candidate.Length >= 1)
+                .GroupBy(candidate => candidate.Length)
+                .Select(group => group.First())
+                .OrderByDescending(candidate => candidate.Length)
+                .ToArray() ?? Array.Empty<SmartBlockCandidate>();
+            if (candidates.Length == 0)
+                return Array.Empty<SmartBlockCandidate>();
+
+            int remaining = Math.Max(1, forwardCells);
+            var run = new List<SmartBlockCandidate>();
+            while (remaining > 0)
+            {
+                SmartBlockCandidate chosen = candidates
+                    .FirstOrDefault(candidate => candidate.Length <= remaining);
+                if (chosen == null)
+                    return Array.Empty<SmartBlockCandidate>();
+
+                run.Add(chosen);
+                remaining -= chosen.Length;
+            }
+
+            return run;
+        }
+
+        private void AddFixedGeometryRunPlacements(
+            List<SmartBuildPlacement> placements,
+            Vector3i laneOrigin,
+            IReadOnlyList<SmartBlockCandidate> run,
+            Quaternion rotation)
+        {
+            int forwardOffset = 0;
+            foreach (SmartBlockCandidate runCandidate in run ?? Array.Empty<SmartBlockCandidate>())
+            {
+                Vector3i tileOrigin = laneOrigin + Multiply(_forwardStep, forwardOffset);
+                Vector3i[] cells = runCandidate.CoveredCellsFrom(tileOrigin, rotation).ToArray();
                 placements.Add(new SmartBuildPlacement(
                     tileOrigin,
-                    candidate,
+                    runCandidate,
                     ForwardAxis,
                     ForwardSign,
                     rotation,
                     cells,
-                    candidate.DisplayName));
+                    runCandidate.DisplayName));
+                forwardOffset += Math.Max(1, runCandidate.Length);
             }
-
-            return placements;
         }
 
         internal IReadOnlyList<SmartBuildPlacement> BuildGeneratedSmoothingPlacements(
@@ -1389,6 +1491,27 @@ namespace DecoLimitLifter.SmartBuildMode
             Origin = origin;
         }
 
+        private void ResizeDownSlopeAnchoredForward(int delta)
+        {
+            int currentRun = Math.Max(SlopeLength, SlopeSteps * SlopeLength);
+            int nextRun = Math.Max(SlopeLength, currentRun + delta);
+            SlopeSteps = Math.Max(1, (nextRun + SlopeLength - 1) / SlopeLength);
+        }
+
+        private void ResizeDownSlopeAnchoredWidth(int delta)
+        {
+            SlopeWidth = Math.Max(1, SlopeWidth + delta);
+        }
+
+        private static int HandleExtentDelta(int sign, int delta) =>
+            sign >= 0 ? delta : -delta;
+
+        private static int AnchoredHandleDelta(int sign, int anchoredSign, int delta)
+        {
+            int extentDelta = HandleExtentDelta(sign, delta);
+            return sign == anchoredSign ? extentDelta : -extentDelta;
+        }
+
         private void ApplyFixedGeometryBounds(
             SmartBuildBounds bounds,
             DecorationEditAxis resizedAxis,
@@ -1403,13 +1526,16 @@ namespace DecoLimitLifter.SmartBuildMode
             int dropExtent = Math.Max(1, bounds.Extent(DropAxis));
 
             if (!hasResizedAxis || changed == ForwardAxis)
+            {
+                _fixedForwardCells = runExtent;
                 _fixedForwardTiles = Math.Max(1, (runExtent + baseForward - 1) / baseForward);
+            }
             if (!hasResizedAxis || changed == RightAxis)
                 _fixedRightTiles = Math.Max(1, rightExtent);
             if (!hasResizedAxis || changed == DropAxis)
                 _fixedDropTiles = Math.Max(1, dropExtent);
 
-            int finalRun = _fixedForwardTiles * baseForward;
+            int finalRun = Math.Max(1, _fixedForwardCells);
             int startForward = StartComponentFromBounds(
                 bounds,
                 ForwardAxis,
@@ -1769,41 +1895,43 @@ namespace DecoLimitLifter.SmartBuildMode
             Vector3i origin,
             SmartBuildSource source)
         {
-            SmartBlockCandidate candidate = source?
-                .FamilyForShape(Descriptor())?
-                .CandidateForLength(SelectedLength);
-            Quaternion rotation = FixedGeometryRotation();
-            Vector3i[] baseFootprint = candidate?.CoveredCellsFrom(origin, rotation).ToArray() ??
-                                       FallbackFixedGeometryFootprint(origin).ToArray();
-            if (baseFootprint.Length == 0)
-                baseFootprint = new[] { origin };
-
-            int forwardStride = Math.Max(1, FootprintExtent(baseFootprint, ForwardAxis));
-            int rightStride = Math.Max(1, FootprintExtent(baseFootprint, RightAxis));
-            int dropStride = Math.Max(1, FootprintExtent(baseFootprint, DropAxis));
-            var seen = new HashSet<string>();
-            foreach (Vector3i tileOrigin in EnumerateFixedGeometryOrigins(
-                         origin,
-                         forwardStride,
-                         rightStride,
-                         dropStride))
+            if (source != null)
             {
-                IEnumerable<Vector3i> cells = candidate != null
-                    ? candidate.CoveredCellsFrom(tileOrigin, rotation)
-                    : FallbackFixedGeometryFootprint(tileOrigin);
-                foreach (Vector3i cell in cells)
+                IReadOnlyList<SmartBuildPlacement> placements = BuildFixedGeometryPlacements(
+                    source,
+                    out string reason);
+                if (placements.Count > 0 && string.IsNullOrWhiteSpace(reason))
                 {
-                    if (seen.Add(DecoLimitLifter.EsuSymmetry.CellKey(cell)))
-                        yield return cell;
+                    var placed = new HashSet<string>();
+                    foreach (SmartBuildPlacement placement in placements)
+                    {
+                        foreach (Vector3i cell in placement.CoveredCells())
+                        {
+                            if (placed.Add(DecoLimitLifter.EsuSymmetry.CellKey(cell)))
+                                yield return cell;
+                        }
+                    }
+
+                    yield break;
                 }
             }
+
+            foreach (Vector3i cell in FallbackFixedGeometryFootprint(origin))
+                yield return cell;
         }
 
         private IEnumerable<Vector3i> FallbackFixedGeometryFootprint(Vector3i origin)
         {
-            int length = Math.Max(1, SelectedLength);
-            for (int index = 0; index < length; index++)
-                yield return origin + Multiply(_forwardStep, index);
+            int length = Math.Max(1, _fixedForwardCells);
+            for (int drop = 0; drop < _fixedDropTiles; drop++)
+                for (int right = 0; right < _fixedRightTiles; right++)
+                    for (int index = 0; index < length; index++)
+                    {
+                        yield return origin +
+                                     Multiply(_forwardStep, index) +
+                                     Multiply(_rightStep, right) +
+                                     Multiply(_dropStep, drop);
+                    }
         }
 
         private IEnumerable<Vector3i> EnumerateFixedGeometryOrigins(
@@ -1829,6 +1957,19 @@ namespace DecoLimitLifter.SmartBuildMode
                                      Multiply(_rightStep, right * Math.Max(1, rightStride)) +
                                      Multiply(_dropStep, drop * Math.Max(1, dropStride));
                     }
+        }
+
+        private IEnumerable<Vector3i> EnumerateFixedGeometryLanes(
+            int rightStride,
+            int dropStride)
+        {
+            for (int drop = 0; drop < _fixedDropTiles; drop++)
+                for (int right = 0; right < _fixedRightTiles; right++)
+                {
+                    yield return Origin +
+                                 Multiply(_rightStep, right * Math.Max(1, rightStride)) +
+                                 Multiply(_dropStep, drop * Math.Max(1, dropStride));
+                }
         }
 
         private Quaternion FixedGeometryRotation() => DownSlopeRotation();

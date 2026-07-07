@@ -86,7 +86,7 @@ namespace DecoLimitLifter.AutomationEditMode
                     out AutomationBreadboardInspector inspector,
                     out string reason))
             {
-                builder.Fail(reason ?? "Native Breadboard graph was not found.");
+                builder.Fail("Missing native capability: " + (reason ?? "Native Breadboard graph was not found."));
                 return;
             }
 
@@ -104,7 +104,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 " available component type(s).");
 
             if (availableCount == 0)
-                builder.Fail("Breadboard AvailableComponentTypes is empty, so ESU cannot add native graph nodes.");
+                builder.Fail("Missing native capability: Breadboard AvailableComponentTypes is empty, so ESU cannot add native graph nodes through Apply.");
 
             if (inspector.TryRewriteCurrentSettings(out string writeMessage))
                 builder.Pass(writeMessage);
@@ -144,7 +144,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
             }
 
-            builder.Warn("Breadboard is missing advertised component(s): " + string.Join(", ", missing) + ".");
+            builder.Warn("Missing native capability: Breadboard is missing advertised component(s) for common ESU lowering: " + string.Join(", ", missing) + ".");
         }
 
         private static void ProbeExpandedBreadboardComponents(
@@ -174,7 +174,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             builder.Warn(
-                "Extended Breadboard component palette advertised " +
+                "ESU UI coverage: Extended Breadboard component palette advertised " +
                 advertised.ToString(CultureInfo.InvariantCulture) +
                 "/" +
                 families.Length.ToString(CultureInfo.InvariantCulture) +
@@ -208,7 +208,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
             }
 
-            builder.Warn("Missile Breadboard did not advertise expected missile output/fuse component names.");
+            builder.Warn("ESU UI coverage: Missile Breadboard did not advertise expected missile output/fuse component names.");
         }
 
         private static void ProbeBreadboardProxyPrerequisites(
@@ -219,7 +219,7 @@ namespace DecoLimitLifter.AutomationEditMode
             int count = linkedTargets?.Count ?? 0;
             if (count == 0)
             {
-                builder.Warn("No linked world targets are present, so Generic Getter/Setter proxy picking was not exercised.");
+                builder.Warn("Apply-required setup: No linked world targets are present, so Generic Getter/Setter proxy picking was not exercised.");
                 return;
             }
 
@@ -228,7 +228,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (canGetter || canSetter)
                 builder.Pass("Linked target proxy prerequisites are available on this board.");
             else
-                builder.Fail("Linked targets exist, but this board does not advertise Generic Getter or Generic Setter.");
+                builder.Fail("Missing native capability: Linked targets exist, but this board does not advertise Generic Getter or Generic Setter.");
         }
 
         private static void ProbeExistingProxyPropertyPickers(
@@ -241,7 +241,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 .ToArray();
             if (proxies.Length == 0)
             {
-                builder.Warn("No existing Generic Getter/Setter proxy nodes are present, so property-picker enumeration was not exercised.");
+                builder.Warn("Apply-required setup: No existing Generic Getter/Setter proxy nodes are present, so property-picker enumeration was not exercised.");
                 return;
             }
 
@@ -269,7 +269,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             builder.Warn(
-                "Generic Getter/Setter property-picker enumeration found " +
+                "ESU UI coverage: Generic Getter/Setter property-picker enumeration found " +
                 empty.ToString(CultureInfo.InvariantCulture) +
                 "/" +
                 proxies.Length.ToString(CultureInfo.InvariantCulture) +
@@ -287,7 +287,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (switches.Length == 0)
             {
                 builder.SetSwitchFailExpressionReadiness(probeRan: true, ready: false, maxVisibleInputs: 0);
-                builder.Warn("No existing Switch node is present; compile an expression-else if/else recipe and rerun checks to validate fail-expression wiring.");
+                builder.Warn("Apply-required setup: No existing Switch node is present; compile an expression-else if/else recipe and rerun checks to validate fail-expression wiring.");
                 return;
             }
 
@@ -306,7 +306,7 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             builder.Warn(
-                "Existing Switch node did not expose input 2; max visible Switch inputs: " +
+                "Missing native capability: Existing Switch node did not expose input 2; max visible Switch inputs: " +
                 maxInputs.ToString(CultureInfo.InvariantCulture) +
                 ".");
         }
@@ -354,7 +354,7 @@ namespace DecoLimitLifter.AutomationEditMode
             builder.SetNativePersistenceFingerprint(hash);
 
             builder.Pass(
-                "Native persistence fingerprint " +
+                "Save/reload evidence: Native persistence fingerprint " +
                 hash +
                 " covers " +
                 components.Length.ToString(CultureInfo.InvariantCulture) +
@@ -381,11 +381,11 @@ namespace DecoLimitLifter.AutomationEditMode
             }
             else
             {
-                builder.Warn("No Generic Getter/Setter proxy fingerprint is available until proxy nodes are created.");
+                builder.Warn("Apply-required setup: No Generic Getter/Setter proxy fingerprint is available until proxy nodes are created.");
             }
 
             if (componentFingerprint.Length == 0)
-                builder.Warn("Native persistence snapshot has no visible components yet.");
+                builder.Warn("Scale/cap limit: Native persistence snapshot has no visible components yet.");
         }
 
         private static string ControllerFingerprint(AutomationTarget controller)
@@ -595,7 +595,7 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 builder.Warn(
                     stale.ToString(CultureInfo.InvariantCulture) +
-                    " linked target(s) no longer have a live Block instance.");
+                    " linked target(s) no longer have a live Block instance; this is live target state, not a native graph write.");
             }
 
             foreach (AutomationTarget target in linkedTargets.Where(target => target?.Block != null).Take(12))
@@ -615,7 +615,7 @@ namespace DecoLimitLifter.AutomationEditMode
                         if (hasOutput)
                             builder.Pass("Linked ACB Controller has a Breadboard-output button: " + target.Label + ".");
                         else
-                            builder.Warn("Linked ACB Controller has no Breadboard-output button yet: " + target.Label + ".");
+                            builder.Warn("Apply-required setup: Linked ACB Controller has no Breadboard-output button yet: " + target.Label + ".");
                     }
                     else
                     {

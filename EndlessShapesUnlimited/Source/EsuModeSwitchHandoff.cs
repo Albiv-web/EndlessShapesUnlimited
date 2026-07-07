@@ -8,6 +8,7 @@ namespace DecoLimitLifter
         private static int s_framesRemaining;
         private static int s_lastConsumedFrame = -1;
         private static int s_beginFrame = -1;
+        private static bool s_targetEditorClaimed;
 
         internal static bool Active => s_framesRemaining > 0;
 
@@ -15,6 +16,7 @@ namespace DecoLimitLifter
 
         internal static bool ShouldDrawPassiveGui() =>
             Active &&
+            !s_targetEditorClaimed &&
             s_beginFrame != Time.frameCount &&
             !DecorationEditMode.DecorationEditModeRegistration.Active &&
             !SmartBuildMode.SmartBuildModeRegistration.Active &&
@@ -25,6 +27,16 @@ namespace DecoLimitLifter
             s_framesRemaining = HandoffFrames;
             s_lastConsumedFrame = -1;
             s_beginFrame = Time.frameCount;
+            s_targetEditorClaimed = false;
+        }
+
+        internal static void ClaimTargetEditorOpened()
+        {
+            if (s_framesRemaining <= 0)
+                return;
+
+            s_targetEditorClaimed = true;
+            s_framesRemaining = 0;
         }
 
         internal static bool ConsumeInactiveCleanupFrame()

@@ -56,7 +56,23 @@ lower it to native FtD behavior wherever possible.
 
 Use this document together with
 `docs/AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md`. The research document records
-the discovered FtD runtime surfaces and current ESU architecture. This goal
-document records the desired end state and should be referenced when deciding
-whether a smaller Automation Editor change is moving toward the nested native
-workspace rather than only polishing the current HUD.
+the discovered FtD runtime surfaces, current ESU architecture, code-review
+findings, Tinkercad-style block model, and missing full-compatibility work. This
+goal document records the desired end state and should be referenced when
+deciding whether a smaller Automation Editor change is moving toward the nested
+native workspace rather than only polishing the current HUD.
+
+Current state, July 2026:
+
+- The Automation Editor has the shared ESU HUD shell, controller placement,
+  target discovery, directional input/output links, native Breadboard
+  inspection, Generic Getter/Setter proxy creation, native component wrapper
+  creation from `AvailableComponentTypes`, code recipes, diagnostics, generated
+  node revert, and early System Block metadata.
+- The first official semantic workflow is the APS/weapon ammo-count input to
+  spinblock angle output: ammo `< 10` lowers to `45`, else `0`, using native
+  Evaluator/Switch logic and GBG/GBS proxy binding.
+- The editor is still not the final full-compatibility graph builder. The ESU
+  block compiler is currently recipe-shaped, target identity is live-session
+  based, native graph enumeration has fixed safety caps, and many vanilla
+  component settings still need discoverable editors.
