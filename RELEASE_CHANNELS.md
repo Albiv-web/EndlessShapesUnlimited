@@ -6,7 +6,7 @@ Unlimited. Keep it updated whenever the package layout changes.
 ## GitHub Repository
 
 Purpose: source control, technical history, development, review, and release
-automation.
+workflow.
 
 Include:
 

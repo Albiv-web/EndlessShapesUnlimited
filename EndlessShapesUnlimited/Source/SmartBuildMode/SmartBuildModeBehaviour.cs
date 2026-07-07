@@ -4,7 +4,6 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
 using UnityEngine;
@@ -53,20 +52,20 @@ namespace DecoLimitLifter.SmartBuildMode
             return true;
         }
 
-        internal bool TrySwitchToAutomationEdit()
+        internal bool TrySwitchToDecorationEdit()
         {
             if (!Active)
                 return false;
 
             if (_session != null &&
-                !_session.CanSwitchToAutomationEdit(out string reason))
+                !_session.CanSwitchToDecorationEdit(out string reason))
             {
                 EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
                 return true;
             }
 
-            if (!AutomationEditModeRegistration.CanOpenFromModeSwitch(out reason))
+            if (!DecorationEditModeRegistration.CanOpenFromModeSwitch(out reason))
             {
                 EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
@@ -79,8 +78,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 notifyClose: false,
                 preserveSharedHud: true,
                 keepModeSwitchHandoffGui: true);
-            if (AutomationEditModeRegistration.OpenFromModeSwitch())
-                InfoStore.Add("ESU mode: Automation.");
+            if (DecorationEditModeRegistration.OpenFromModeSwitch())
+                InfoStore.Add("ESU mode: Decoration Edit.");
             else
             {
                 ClearModeSwitchHandoffGui();
@@ -120,16 +119,16 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 if (Active &&
                     _session != null &&
-                    _session.SwitchToAutomationEditRequested)
+                    _session.SwitchToDecorationEditRequested)
                 {
-                    _session.ClearSwitchToAutomationEditRequest();
-                    TrySwitchToAutomationEdit();
+                    _session.ClearSwitchToDecorationEditRequest();
+                    TrySwitchToDecorationEdit();
                     return;
                 }
 
                 if (Active && ReadSwitchModeKeyDown())
                 {
-                    TrySwitchToAutomationEdit();
+                    TrySwitchToDecorationEdit();
                     return;
                 }
 

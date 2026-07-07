@@ -11,19 +11,6 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Added
 
-- Added Automation Editor target preview cards that reuse Smart Builder's 3D
-  item thumbnail renderer when hovering linked targets and target rows.
-- Added Automation Editor input/output link direction support, including
-  target-first input linking, directional link labels, and per-direction
-  context actions.
-- Added Automation Blocks canvas navigation, block context actions, native
-  Getter/Setter property picking, and automatic likely-property selection for
-  common target signals.
-- Added clearer ESU Blocks visual-coding cards with beginner categories, named
-  input/output nubs, nub-to-nub starter links, compatibility labels, and
-  Check-time validation for unsupported or incomplete blocks.
-- Added reusable Automation System Block templates with persisted profile
-  storage for named ports, comments, and internal graph metadata.
 - Added Smart Builder camera-facing symmetry toggling from the build cursor and
   fixed-geometry face picking/highlighting for non-cuboid preview pieces.
 - Added a Smart Builder `Mat only` preview mode that shows material-family
@@ -49,12 +36,8 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Changed
 
-- Automation Editor now separates Important and Generic target browsing, with
-  advanced category filters available when needed.
-- Automation Blocks starter flow now defaults toward an APS-style ammo
-  less-than check and lowers true constants through native Breadboard output.
 - ESU editor panels now share more of the same responsive top/bottom layout
-  limits across Decoration Edit, Surface Builder, Smart Builder, and Automation.
+  limits across Decoration Edit, Surface Builder, and Smart Builder.
 - Smart Builder down-slope scale handles can stretch along the cardinal ramp
   run while preserving the anchored first slope cell.
 - ESU mode handoff rendering now lets the newly opened target editor claim the
@@ -98,12 +81,6 @@ GitHub history, but short enough that it can be copied into release notes.
   uses the same unapplied-change prompt/apply/discard flow as the hotkey.
 - Fixed Decoration Edit and Smart Builder snap settings so pressing Set
   explicitly saves the ESU profile instead of relying on later profile writes.
-- Fixed Automation Editor panel and section show/hide state resetting on every
-  close/reopen; it now persists for the current game session like the other ESU
-  editor modes.
-- Fixed Automation target preview packaging risk by keeping the dedicated
-  Automation target preview renderer source alongside the session code that
-  uses it.
 - Fixed Smart Builder fixed-geometry preview edge filtering so angled mesh
   handles are not mistaken for removable internal axis-aligned faces.
 - Fixed Decoration/Smart Builder toolbar icons regressing to generic boxed

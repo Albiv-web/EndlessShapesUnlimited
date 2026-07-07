@@ -183,10 +183,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool CloseRequested => _closeRequested;
 
-        internal bool SwitchToAutomationEditRequested { get; private set; }
+        internal bool SwitchToDecorationEditRequested { get; private set; }
 
-        internal void ClearSwitchToAutomationEditRequest() =>
-            SwitchToAutomationEditRequested = false;
+        internal void ClearSwitchToDecorationEditRequest() =>
+            SwitchToDecorationEditRequested = false;
 
         private SmartBuildShapeDescriptor SelectedShapeDescriptor =>
             SmartBuildShapeDescriptors.ByKey(_selectedShapeDescriptorKey) ??
@@ -195,7 +195,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private bool HasActivePreviewScene =>
             _scene != null && _scene.Count > 0;
 
-        internal bool CanSwitchToAutomationEdit(out string reason)
+        internal bool CanSwitchToDecorationEdit(out string reason)
         {
             if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
             {
@@ -265,7 +265,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _itemPreviewRenderer?.Dispose();
             _itemPreviewRenderer = null;
             _generatedHullPreviewCache.Clear();
-            SwitchToAutomationEditRequested = false;
+            SwitchToDecorationEditRequested = false;
         }
 
         internal void SuspendForModeSwitchHandoff()
@@ -279,7 +279,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _resizingRightPanel = false;
             _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
             _viewModeMenuOpen = false;
-            SwitchToAutomationEditRequested = false;
+            SwitchToDecorationEditRequested = false;
         }
 
         internal void Update()
@@ -3110,11 +3110,11 @@ namespace DecoLimitLifter.SmartBuildMode
                     new GUIContent(
                         "Build",
                         DecorationEditorIconCatalog.Get("build"),
-                        "Tab: switch to Automation Editor when Smart Builder is clean."),
+                        "Tab: switch to Decoration Edit Mode when Smart Builder is clean."),
                     DecorationEditorTheme.ToolButton(true),
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(40f))))
-                SwitchToAutomationEditRequested = true;
+                SwitchToDecorationEditRequested = true;
         }
 
         private void DrawLeftPanel(int id)
@@ -4583,7 +4583,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 rect.height);
 
             GUI.Label(title, "Smart Block Builder", DecorationEditorTheme.SubHeader);
-            GUI.Label(mode, "Mode: Smart | Tab to Automation when clean", DecorationEditorTheme.Body);
+            GUI.Label(mode, "Mode: Smart | Tab to Deco when clean", DecorationEditorTheme.Body);
             DrawStatusRightLabel(state);
         }
 

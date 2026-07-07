@@ -4,7 +4,6 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
 using UnityEngine;
@@ -106,43 +105,21 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
-        internal static bool TrySwitchToAutomationEdit()
-        {
-            try
-            {
-                if (_behaviour == null || !_behaviour.Active)
-                    return false;
-
-                return _behaviour.TrySwitchToAutomationEdit();
-            }
-            catch (Exception exception)
-            {
-                AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Smart Block Builder switch failed",
-                    exception,
-                    LogOptions._AlertDevAndCustomerInGame);
-                return true;
-            }
-        }
-
         internal static bool CanOpenFromModeSwitch(out string reason) =>
             CanOpenNow(
                 out reason,
                 ignoreDecorationEditMode: true,
-                ignoreAutomationEditMode: true,
                 modeSwitch: true);
 
         internal static bool CanOpenNow(out string reason) =>
             CanOpenNow(
                 out reason,
                 ignoreDecorationEditMode: false,
-                ignoreAutomationEditMode: false,
                 modeSwitch: false);
 
         private static bool CanOpenNow(
             out string reason,
             bool ignoreDecorationEditMode,
-            bool ignoreAutomationEditMode,
             bool modeSwitch)
         {
             reason = null;
@@ -150,13 +127,6 @@ namespace DecoLimitLifter.SmartBuildMode
                 DecorationEditModeRegistration.Active)
             {
                 reason = "Close Decoration Edit Mode before opening Smart Block Builder.";
-                return false;
-            }
-
-            if (!ignoreAutomationEditMode &&
-                AutomationEditModeRegistration.Active)
-            {
-                reason = "Close Automation Editor before opening Smart Block Builder.";
                 return false;
             }
 

@@ -2,7 +2,6 @@ using BrilliantSkies.Core.Constants;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationEditMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SmartBuildMode;
 using HarmonyLib;
@@ -18,8 +17,7 @@ namespace DecoLimitLifter
         internal static void Tick()
         {
             if (!DecorationEditModeRegistration.Active &&
-                !SmartBuildModeRegistration.Active &&
-                !AutomationEditModeRegistration.Active)
+                !SmartBuildModeRegistration.Active)
             {
                 _pendingFreezeFrame = -1;
                 return;
