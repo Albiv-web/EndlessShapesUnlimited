@@ -20,7 +20,7 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             if (Active)
             {
-                Close("toggle pressed");
+                RequestActiveSessionClose("toggle pressed");
                 return;
             }
 
@@ -115,20 +115,23 @@ namespace DecoLimitLifter.AutomationEditMode
 
                 if (Active && ReadSwitchModeKeyDown())
                 {
-                    TrySwitchToDecorationEdit();
+                    _session?.RequestSwitchToDecorationEdit();
                     return;
                 }
 
                 if (Active && toggleDown)
                 {
-                    Close("toggle pressed");
+                    RequestActiveSessionClose("toggle pressed");
                     return;
                 }
 
                 if (Active && Input.GetKeyDown(KeyCode.Escape))
                 {
+                    if (_session != null && _session.DismissOpenPrompt())
+                        return;
+
                     DecoLimitLifter.EsuEscapeCloseGuard.Arm();
-                    Close("Escape pressed");
+                    RequestActiveSessionClose("Escape pressed");
                     return;
                 }
 
@@ -177,6 +180,13 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private static bool ReadSwitchModeKeyDown() =>
             DecoLimitLifter.EsuBuildModeInputGate.ConsumeSwitchModeDown();
+
+        private void RequestActiveSessionClose(string reason)
+        {
+            _session?.RequestHotkeyClose();
+            if (_session != null && _session.CloseRequested)
+                Close(reason);
+        }
 
         private void OnGUI()
         {

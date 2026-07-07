@@ -193,10 +193,10 @@ release pass.
   counts update, Add read/set rows remain usable for matches, empty states
   appear for filtered-out directions, and the selected-signal hidden warning
   appears when the active search hides it.
-- Confirm the left linked-target list and the `Linked signals` panel both warn
-  that link identity uses live-session target keys today, and that linked
-  Inputs/Outputs should be re-checked after save/reload or cross-craft reuse
-  until stable target identity lands.
+- Confirm the left linked-target list and the `Linked signals` panel both state
+  that link identity is saved per controller with portable target keys, and
+  that linked Inputs/Outputs only need re-checking when duplicated unnamed
+  blocks at the same cell/type make a restored target ambiguous.
 - In the ESU Blocks selected-block inspector, confirm the no-selection state
   explains Target, Property, Threshold/Value, and order edits. Select Read/Set
   blocks and confirm Auto property binding says it uses preferred terms at
@@ -306,8 +306,8 @@ release pass.
 - On the System Block signature page, confirm the `System Block scope` guide
   says Apply template saves ESU-only metadata, Check validates without native
   controller mutation, Suggest ports reads current linked Inputs/Outputs, and
-  ports should be re-checked after save/reload or cross-craft reuse until stable
-  target identity and portable rebinding land.
+  ports should be re-checked only when duplicated unnamed blocks make portable
+  rebinding ambiguous.
 - On the System Block signature page, edit input/output port text and confirm
   the `Port preview` shows normalized port/nub counts before Check/Apply. Enter
   a repeated name such as `ammo, ammo` and confirm a `Duplicate System Block port`

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Modding;
 using BrilliantSkies.Modding.Containers;
@@ -122,11 +123,28 @@ namespace DecoLimitLifter.AutomationEditMode
             if (block == null)
                 return "Block";
 
+            string vanillaName = VanillaBlockNameFilter(block);
+            if (!string.IsNullOrWhiteSpace(vanillaName))
+            {
+                if (TryClassify(block, out AutomationControllerDescriptor namedController))
+                    return vanillaName.Trim() + " (" + namedController.ShortLabel + ")";
+
+                return vanillaName.Trim();
+            }
+
             if (TryClassify(block, out AutomationControllerDescriptor controller))
                 return controller.Label;
 
             Type type = block.GetType();
             return string.IsNullOrWhiteSpace(type?.Name) ? "Block" : type.Name;
+        }
+
+        internal static string VanillaBlockNameFilter(Block block)
+        {
+            object idSet = ReadMember(block, "IdSet");
+            object name = ReadMember(idSet, "Name");
+            object value = ReadUs(name);
+            return value?.ToString() ?? string.Empty;
         }
 
         internal static string RuntimeTypeText(Block block)
@@ -163,6 +181,52 @@ namespace DecoLimitLifter.AutomationEditMode
                     descriptor.Label + ": " +
                     (descriptor.ResolveItemDefinition() == null ? "missing" : "available"))
                 .ToArray();
+        }
+
+        private static object ReadMember(object owner, string memberName)
+        {
+            if (owner == null || string.IsNullOrWhiteSpace(memberName))
+                return null;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            Type type = owner.GetType();
+            try
+            {
+                PropertyInfo property = type.GetProperty(memberName, flags);
+                if (property != null && property.GetIndexParameters().Length == 0)
+                    return property.GetValue(owner, null);
+            }
+            catch
+            {
+                // Try the matching field below.
+            }
+
+            try
+            {
+                FieldInfo field = type.GetField(memberName, flags);
+                return field?.GetValue(owner);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object ReadUs(object variable)
+        {
+            if (variable == null)
+                return null;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            try
+            {
+                PropertyInfo property = variable.GetType().GetProperty("Us", flags);
+                return property?.GetValue(variable, null);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

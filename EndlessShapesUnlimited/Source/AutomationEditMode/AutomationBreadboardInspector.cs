@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using BrilliantSkies.Core.Types;
 
 namespace DecoLimitLifter.AutomationEditMode
@@ -15,6 +16,8 @@ namespace DecoLimitLifter.AutomationEditMode
         private const int MaxExpandedEnumerableItems = 96;
         private const uint UnselectedCode = 999999U;
         internal const int ComponentReflectionLimit = 64;
+        internal const int NativeGraphImportComponentLimit = 256;
+        internal const int NativeGraphImportPortLimit = 64;
 
         private readonly object _board;
 
@@ -74,6 +77,109 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal IReadOnlyList<AutomationBreadboardAvailableComponent> AvailableComponents =>
             ReadAvailableComponents();
+
+        internal bool TryCaptureNativeGraphSnapshot(
+            out AutomationNativeGraphSnapshot snapshot,
+            out string message)
+        {
+            snapshot = null;
+            message = null;
+            int packageCount = PackageCount;
+            if (packageCount > NativeGraphImportComponentLimit)
+            {
+                message =
+                    "Native exact import stopped: this Breadboard has " +
+                    packageCount.ToString(CultureInfo.InvariantCulture) +
+                    " component(s), above the safe import cap of " +
+                    NativeGraphImportComponentLimit.ToString(CultureInfo.InvariantCulture) +
+                    ". Use Advanced Graph for this large board.";
+                return false;
+            }
+
+            IReadOnlyList<AutomationBreadboardComponentSummary> components =
+                ReadComponents(NativeGraphImportComponentLimit);
+            if (components.Count >= NativeGraphImportComponentLimit &&
+                packageCount >= NativeGraphImportComponentLimit)
+            {
+                message =
+                    "Native exact import stopped at the component safety cap. Use Advanced Graph instead of a partial ESU Blocks import.";
+                return false;
+            }
+
+            var importedComponents = new List<AutomationNativeComponentSnapshot>(components.Count);
+            var importedWires = new List<AutomationNativeWireSnapshot>();
+            foreach (AutomationBreadboardComponentSummary component in components)
+            {
+                if (component == null)
+                    continue;
+
+                if (component.InputCount > NativeGraphImportPortLimit ||
+                    component.OutputCount > NativeGraphImportPortLimit)
+                {
+                    message =
+                        "Native exact import stopped: " +
+                        component.Label +
+                        " exposes more than " +
+                        NativeGraphImportPortLimit.ToString(CultureInfo.InvariantCulture) +
+                        " port(s). Use Advanced Graph for this board.";
+                    return false;
+                }
+
+                IReadOnlyList<AutomationBreadboardPortSummary> inputPorts =
+                    InputPorts(component, NativeGraphImportPortLimit);
+                IReadOnlyList<AutomationBreadboardPortSummary> outputPorts =
+                    OutputPorts(component, NativeGraphImportPortLimit);
+                if (inputPorts.Count < component.InputCount ||
+                    outputPorts.Count < component.OutputCount)
+                {
+                    message =
+                        "Native exact import stopped before all ports were read. Use Advanced Graph instead of a partial ESU Blocks import.";
+                    return false;
+                }
+
+                importedComponents.Add(new AutomationNativeComponentSnapshot(
+                    component.UniqueId,
+                    component.ComponentTypeId,
+                    component.TypeName,
+                    component.Label,
+                    component.Description,
+                    component.X,
+                    component.Y,
+                    component.Width,
+                    component.Height,
+                    NativeSettingsSummary(component),
+                    inputPorts
+                        .Select(port => new AutomationNativePortSnapshot(port.Index, port.Label, isOutput: false))
+                        .ToArray(),
+                    outputPorts
+                        .Select(port => new AutomationNativePortSnapshot(port.Index, port.Label, isOutput: true))
+                        .ToArray()));
+
+                foreach (AutomationBreadboardPortSummary input in inputPorts.Where(port => port.IsConnected))
+                {
+                    if (input.ConnectedFromComponentId == 0U || input.ConnectedFromOutputIndex < 0)
+                        continue;
+
+                    importedWires.Add(new AutomationNativeWireSnapshot(
+                        input.ConnectedFromComponentId,
+                        input.ConnectedFromOutputIndex,
+                        component.UniqueId,
+                        input.Index));
+                }
+            }
+
+            snapshot = new AutomationNativeGraphSnapshot(
+                ControllerName,
+                importedComponents,
+                importedWires);
+            message =
+                "Imported native Breadboard graph: " +
+                importedComponents.Count.ToString(CultureInfo.InvariantCulture) +
+                " component(s), " +
+                importedWires.Count.ToString(CultureInfo.InvariantCulture) +
+                " wire(s).";
+            return true;
+        }
 
         internal bool TryRewriteCurrentSettings(out string message)
         {
@@ -537,6 +643,52 @@ namespace DecoLimitLifter.AutomationEditMode
             return results;
         }
 
+        internal static bool TryReadSelectedTargetPropertyValue(
+            AutomationTarget target,
+            AutomationProxyPropertySelection selection,
+            out string valueLabel,
+            out string reason)
+        {
+            valueLabel = string.Empty;
+            reason = string.Empty;
+
+            if (target?.Block == null)
+            {
+                reason = "No linked target block is selected.";
+                return false;
+            }
+
+            if (selection == null || selection.IsClear)
+            {
+                reason = "No native property is selected.";
+                return false;
+            }
+
+            try
+            {
+                object value;
+                if (selection.IsGetter && selection.IsGetterReadable)
+                {
+                    if (!TryReadReadableTargetValue(target.Block, selection.ReadableAttributeId, out value, out reason))
+                        return false;
+                }
+                else
+                {
+                    if (!TryReadVariableTargetValue(target.Block, selection.BlockSetId, selection.BlockPropertyId, out value, out reason))
+                        return false;
+                }
+
+                valueLabel = FormatTargetPropertyValue(value);
+                reason = "Live value read from " + target.Label + ".";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                reason = "Native value read failed: " + exception.GetType().Name + ".";
+                return false;
+            }
+        }
+
         internal bool TrySelectProxyProperty(
             AutomationBreadboardComponentSummary component,
             AutomationBreadboardProxyOption option,
@@ -564,6 +716,306 @@ namespace DecoLimitLifter.AutomationEditMode
                 ? "Cleared " + component.Label + " property selection."
                 : "Selected " + option.Label + " for " + component.Label + ".";
             return true;
+        }
+
+        private static bool TryReadReadableTargetValue(
+            object block,
+            uint readableAttributeId,
+            out object value,
+            out string reason)
+        {
+            value = null;
+            reason = null;
+            if (block == null)
+            {
+                reason = "The linked target block no longer exists.";
+                return false;
+            }
+
+            Type blockType = block.GetType();
+            foreach (object packageProperty in TargetPackageProperties(blockType))
+            {
+                PropertyInfo propertyInfo = ReadMember(packageProperty, "PropertyInfo") as PropertyInfo;
+                if (propertyInfo == null)
+                    continue;
+
+                object package = InvokeInstance(packageProperty, "GetSystem", block);
+                if (package == null)
+                    continue;
+
+                if (TryReadReadableValueFromInstance(
+                        package,
+                        propertyInfo.PropertyType,
+                        readableAttributeId,
+                        out value))
+                {
+                    return true;
+                }
+            }
+
+            if (TryReadReadableValueFromInstance(block, blockType, readableAttributeId, out value))
+                return true;
+
+            reason = "The selected readable property was not found on this target.";
+            return false;
+        }
+
+        private static bool TryReadVariableTargetValue(
+            object block,
+            uint blockSetId,
+            uint blockPropertyId,
+            out object value,
+            out string reason)
+        {
+            value = null;
+            reason = null;
+            if (block == null)
+            {
+                reason = "The linked target block no longer exists.";
+                return false;
+            }
+
+            foreach (object packageProperty in TargetPackageProperties(block.GetType()))
+            {
+                if (ReadPlainUInt(packageProperty, "Index", UnselectedCode) != blockSetId)
+                    continue;
+
+                PropertyInfo propertyInfo = ReadMember(packageProperty, "PropertyInfo") as PropertyInfo;
+                if (propertyInfo == null)
+                    continue;
+
+                object variableData = FindVariableData(propertyInfo.PropertyType, blockPropertyId);
+                if (variableData == null)
+                    continue;
+
+                object package = InvokeInstance(packageProperty, "GetSystem", block);
+                object variable = InvokeInstance(variableData, "GetBase", package);
+                value = ReadUs(variable);
+                if (value != null)
+                    return true;
+
+                reason = "The selected native variable exists but did not expose a current value.";
+                return false;
+            }
+
+            reason = "The selected native variable was not found on this target.";
+            return false;
+        }
+
+        private static bool TryReadReadableValueFromInstance(
+            object owner,
+            Type ownerType,
+            uint readableAttributeId,
+            out object value)
+        {
+            value = null;
+            if (owner == null || ownerType == null)
+                return false;
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach (PropertyInfo property in SafeProperties(ownerType, flags))
+            {
+                if (property == null || property.GetIndexParameters().Length != 0)
+                    continue;
+
+                object readable = property
+                    .GetCustomAttributes(inherit: true)
+                    .FirstOrDefault(attribute => string.Equals(
+                        attribute?.GetType().Name,
+                        "ReadableAttribute",
+                        StringComparison.Ordinal));
+                if (readable == null ||
+                    ReadPlainUInt(readable, "Index", UnselectedCode) != readableAttributeId)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    value = property.GetValue(owner, null);
+                    return true;
+                }
+                catch
+                {
+                    value = null;
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<object> TargetPackageProperties(Type blockType)
+        {
+            object record = InvokeStaticMethod(
+                "BrilliantSkies.DataManagement.Finders.SetFinder",
+                "GetAllPackagesFromType",
+                blockType);
+            object properties = ReadMember(record, "OurDataPackageProperties");
+            foreach (object property in EnumerateCollection(properties, 512))
+                yield return property;
+        }
+
+        private static object FindVariableData(Type packageType, uint blockPropertyId)
+        {
+            object varSet = InvokeStaticMethod(
+                "BrilliantSkies.DataManagement.Saving.DataPackageSaveAndLoad",
+                "Gather",
+                packageType);
+            object attributes = ReadMember(varSet, "Attributes");
+            foreach (object attribute in EnumerateCollection(attributes, 512))
+            {
+                if (ReadPlainUInt(attribute, "SaveIndex", UnselectedCode) == blockPropertyId)
+                    return attribute;
+            }
+
+            return null;
+        }
+
+        private static object InvokeStaticMethod(
+            string typeName,
+            string methodName,
+            params object[] parameters)
+        {
+            if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(methodName))
+                return null;
+
+            Type type = FindLoadedType(typeName);
+            if (type == null)
+                return null;
+
+            try
+            {
+                const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+                MethodInfo method = type
+                    .GetMethods(flags)
+                    .FirstOrDefault(candidate =>
+                    {
+                        if (!string.Equals(candidate.Name, methodName, StringComparison.Ordinal))
+                            return false;
+                        ParameterInfo[] methodParameters = candidate.GetParameters();
+                        return methodParameters.Length == (parameters?.Length ?? 0);
+                    });
+                return method?.Invoke(null, parameters);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static Type FindLoadedType(string typeName)
+        {
+            Type direct = Type.GetType(typeName);
+            if (direct != null)
+                return direct;
+
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    Type type = assembly.GetType(typeName, throwOnError: false);
+                    if (type != null)
+                        return type;
+                }
+                catch
+                {
+                    // Keep scanning loaded game assemblies.
+                }
+            }
+
+            return null;
+        }
+
+        private static string FormatTargetPropertyValue(object value)
+        {
+            value = ReadUs(value) ?? value;
+            if (value == null)
+                return "null";
+
+            if (value is bool boolValue)
+                return boolValue ? "true" : "false";
+            if (value is float floatValue)
+                return FormatNumber(floatValue);
+            if (value is double doubleValue)
+                return FormatNumber(doubleValue);
+            if (value is decimal decimalValue)
+                return decimalValue.ToString("0.###", CultureInfo.InvariantCulture);
+            if (value is IFormattable formattable &&
+                (value is int ||
+                 value is uint ||
+                 value is long ||
+                 value is ulong ||
+                 value is short ||
+                 value is ushort ||
+                 value is byte ||
+                 value is sbyte))
+            {
+                return formattable.ToString(null, CultureInfo.InvariantCulture);
+            }
+
+            if (TryFormatVectorLike(value, out string vector))
+                return vector;
+
+            string text = value.ToString();
+            if (string.IsNullOrWhiteSpace(text))
+                return "\"\"";
+            text = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
+            return text.Length <= 64 ? text : text.Substring(0, 61) + "...";
+        }
+
+        private static string FormatNumber(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return value.ToString(CultureInfo.InvariantCulture);
+
+            return Math.Abs(value) >= 10000d || Math.Abs(value) < 0.001d && value != 0d
+                ? value.ToString("0.###E+0", CultureInfo.InvariantCulture)
+                : value.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryFormatVectorLike(object value, out string text)
+        {
+            text = null;
+            if (value == null)
+                return false;
+
+            Type type = value.GetType();
+            string name = type.Name;
+            if (name == "Vector2")
+            {
+                text = "(" + FormatNumber(ReadPlainFloat(value, "x", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "y", 0f)) + ")";
+                return true;
+            }
+
+            if (name == "Vector3")
+            {
+                text = "(" + FormatNumber(ReadPlainFloat(value, "x", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "y", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "z", 0f)) + ")";
+                return true;
+            }
+
+            if (name == "Quaternion")
+            {
+                text = "(" + FormatNumber(ReadPlainFloat(value, "x", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "y", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "z", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "w", 0f)) + ")";
+                return true;
+            }
+
+            if (name == "Color")
+            {
+                text = "rgba(" + FormatNumber(ReadPlainFloat(value, "r", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "g", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "b", 0f)) + ", " +
+                       FormatNumber(ReadPlainFloat(value, "a", 0f)) + ")";
+                return true;
+            }
+
+            return false;
         }
 
         internal AutomationBreadboardComponentSettings SettingsFor(
@@ -603,6 +1055,51 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             return null;
+        }
+
+        private string NativeSettingsSummary(AutomationBreadboardComponentSummary component)
+        {
+            AutomationBreadboardComponentSettings settings = SettingsFor(component);
+            if (settings == null)
+                return string.Empty;
+
+            if (settings.Kind == "Evaluator")
+                return string.IsNullOrWhiteSpace(settings.Expression)
+                    ? "Expression: empty"
+                    : "Expression: " + settings.Expression;
+            if (settings.Kind == "Switch")
+            {
+                return "Threshold " +
+                       settings.Threshold.ToString("0.###", CultureInfo.InvariantCulture) +
+                       ", fail " +
+                       settings.FailValue.ToString("0.###", CultureInfo.InvariantCulture);
+            }
+            if (settings.Kind == "LogicGate")
+            {
+                string gate = SafeLabel(AutomationBreadboardComponentSettings.LogicGateLabels, settings.LogicGate);
+                string trueLogic = SafeLabel(AutomationBreadboardComponentSettings.TrueLogicLabels, settings.TrueLogic);
+                return "Gate " + gate + ", true " + trueLogic;
+            }
+            if (settings.Kind == "ConstantInput")
+            {
+                string type = SafeLabel(AutomationBreadboardComponentSettings.ConstantTypeLabels, settings.ConstantType);
+                if (settings.ConstantType == 1)
+                    return "Constant " + type + ": " + settings.ConstantString;
+                if (settings.ConstantType == 4)
+                    return "Constant " + type + ": " + settings.ConstantLong.ToString(CultureInfo.InvariantCulture);
+                return "Constant " + type + ": " + settings.ConstantFloat.ToString("0.###", CultureInfo.InvariantCulture);
+            }
+
+            return settings.Kind;
+        }
+
+        private static string SafeLabel(IReadOnlyList<string> labels, int index)
+        {
+            if (labels == null || labels.Count == 0)
+                return index.ToString(CultureInfo.InvariantCulture);
+
+            int clamped = Math.Max(0, Math.Min(labels.Count - 1, index));
+            return labels[clamped];
         }
 
         internal bool TryUpdateComponentSetting(
@@ -1700,7 +2197,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 : blockType.Name;
             WriteValue(component, "BlockTypeName", blockTypeName);
             WriteDirectMember(component, "BlockType", blockType);
-            WriteValue(component, "BlockFilter", SuggestedBlockFilter(target));
+            WriteValue(component, "BlockFilter", EnsureTargetBlockNameFilter(target));
             WriteDirectMember(component, "_blocksDirty", true);
             if (string.Equals(role, "Getter", StringComparison.OrdinalIgnoreCase))
             {
@@ -1714,19 +2211,122 @@ namespace DecoLimitLifter.AutomationEditMode
             InvokeInstance(component, "SetBlockType");
         }
 
-        private static string SuggestedBlockFilter(AutomationTarget target)
+        internal static string TargetBlockNameFilter(AutomationTarget target)
         {
-            if (target == null || string.IsNullOrWhiteSpace(target.Label))
+            string name = AutomationControllerCatalog.VanillaBlockNameFilter(target?.Block);
+            return IsTextOnlyAutomationFilterName(name)
+                ? name.Trim()
+                : string.Empty;
+        }
+
+        private static string EnsureTargetBlockNameFilter(AutomationTarget target)
+        {
+            if (target?.Block == null)
                 return string.Empty;
 
-            string runtimeType = target.RuntimeType ?? string.Empty;
-            if (string.Equals(target.Label, runtimeType, StringComparison.OrdinalIgnoreCase))
+            string existing = AutomationControllerCatalog.VanillaBlockNameFilter(target.Block);
+            if (IsTextOnlyAutomationFilterName(existing))
+                return existing.Trim();
+
+            string candidate = GeneratedTargetBlockFilterName(target);
+            object idSet = ReadMember(target.Block, "IdSet");
+            if (WriteValue(idSet, "Name", candidate))
+                return candidate;
+
+            existing = AutomationControllerCatalog.VanillaBlockNameFilter(target.Block);
+            return IsTextOnlyAutomationFilterName(existing)
+                ? existing.Trim()
+                : string.Empty;
+        }
+
+        private static string GeneratedTargetBlockFilterName(AutomationTarget target)
+        {
+            string baseWords = TextOnlyWords(target?.RuntimeType);
+            if (string.IsNullOrWhiteSpace(baseWords))
+                baseWords = TextOnlyWords(AutomationTargetCatalog.CategoryLabel(target?.Category ?? AutomationTargetCategory.Other));
+            if (string.IsNullOrWhiteSpace(baseWords))
+                baseWords = "block";
+
+            string seed =
+                (target?.StableKey ?? string.Empty) + "|" +
+                (target?.RuntimeType ?? string.Empty) + "|" +
+                (target == null ? string.Empty : target.Category.ToString());
+            return ("esu " + baseWords + " " + AlphabeticHashToken(seed)).Trim();
+        }
+
+        private static string TextOnlyWords(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
                 return string.Empty;
 
-            if (target.Controller != null)
-                return string.Empty;
+            var builder = new StringBuilder(value.Length + 8);
+            char previousOriginal = '\0';
+            bool previousWasLetter = false;
+            foreach (char character in value)
+            {
+                if (!char.IsLetter(character))
+                {
+                    if (builder.Length > 0 && builder[builder.Length - 1] != ' ')
+                        builder.Append(' ');
+                    previousOriginal = ' ';
+                    previousWasLetter = false;
+                    continue;
+                }
 
-            return target.Label;
+                if (builder.Length > 0 &&
+                    builder[builder.Length - 1] != ' ' &&
+                    previousWasLetter &&
+                    char.IsUpper(character) &&
+                    char.IsLower(previousOriginal))
+                {
+                    builder.Append(' ');
+                }
+
+                builder.Append(char.ToLowerInvariant(character));
+                previousOriginal = character;
+                previousWasLetter = true;
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        private static string AlphabeticHashToken(string seed)
+        {
+            unchecked
+            {
+                ulong hash = 14695981039346656037UL;
+                foreach (char character in seed ?? string.Empty)
+                {
+                    hash ^= character;
+                    hash *= 1099511628211UL;
+                }
+
+                var token = new char[10];
+                for (int index = 0; index < token.Length; index++)
+                {
+                    token[index] = (char)('a' + (int)(hash % 26UL));
+                    hash = hash / 26UL + 97UL;
+                }
+
+                return new string(token);
+            }
+        }
+
+        private static bool IsTextOnlyAutomationFilterName(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            bool hasLetter = false;
+            foreach (char character in value)
+            {
+                if (char.IsDigit(character))
+                    return false;
+                if (char.IsLetter(character))
+                    hasLetter = true;
+            }
+
+            return hasLetter;
         }
 
         private bool ReadBool(string propertyName, bool fallback) =>

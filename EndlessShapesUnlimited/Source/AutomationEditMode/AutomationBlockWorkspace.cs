@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using DecoLimitLifter.SerializationHud;
 
 namespace DecoLimitLifter.AutomationEditMode
 {
@@ -19,6 +20,12 @@ namespace DecoLimitLifter.AutomationEditMode
         Comment,
         SystemBlock,
         NativeComponent
+    }
+
+    internal enum AutomationBlockWorkspaceMode
+    {
+        Semantic,
+        NativeExact
     }
 
     internal enum AutomationBlockCategory
@@ -372,13 +379,32 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal static IReadOnlyList<AutomationBlockPortDefinition> InputPortsForNode(AutomationBlockNode node) =>
             node?.Kind == AutomationBlockKind.NativeComponent
-                ? s_nativeInputPorts
+                ? NativePortsForNode(node, AutomationBlockPortDirection.Input)
                 : DefinitionFor(node == null ? AutomationBlockKind.Comment : node.Kind).InputPorts;
 
         internal static IReadOnlyList<AutomationBlockPortDefinition> OutputPortsForNode(AutomationBlockNode node) =>
             node?.Kind == AutomationBlockKind.NativeComponent
-                ? s_nativeOutputPorts
+                ? NativePortsForNode(node, AutomationBlockPortDirection.Output)
                 : DefinitionFor(node == null ? AutomationBlockKind.Comment : node.Kind).OutputPorts;
+
+        private static IReadOnlyList<AutomationBlockPortDefinition> NativePortsForNode(
+            AutomationBlockNode node,
+            AutomationBlockPortDirection direction)
+        {
+            IReadOnlyList<string> labels = direction == AutomationBlockPortDirection.Input
+                ? node?.NativeInputPortLabels
+                : node?.NativeOutputPortLabels;
+            if (labels != null && labels.Count > 0)
+            {
+                return labels
+                    .Select(label => new AutomationBlockPortDefinition(label, direction))
+                    .ToArray();
+            }
+
+            return direction == AutomationBlockPortDirection.Input
+                ? s_nativeInputPorts
+                : s_nativeOutputPorts;
+        }
 
         internal static AutomationBlockDefinition DefinitionForNode(AutomationBlockNode node)
         {
@@ -396,8 +422,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 node.IconKey,
                 AutomationBlockCategory.Advanced,
                 node.NativeComponentDescription,
-                s_nativeInputPorts,
-                s_nativeOutputPorts,
+                InputPortsForNode(node),
+                OutputPortsForNode(node),
                 new[] { new AutomationBlockSettingDefinition("Native type", AutomationBlockSettingKind.NativeComponentType) },
                 node.NativeComponentTypeName,
                 AutomationBlockAudience.NativeWrapper,
@@ -443,6 +469,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private readonly List<AutomationBlockNode> _nodes = new List<AutomationBlockNode>();
         private readonly List<AutomationBlockPort> _ports = new List<AutomationBlockPort>();
         private readonly List<AutomationBlockLink> _links = new List<AutomationBlockLink>();
+        private readonly List<AutomationBlockLink> _explicitLinks = new List<AutomationBlockLink>();
         private IReadOnlyList<AutomationTarget> _linkedTargets = Array.Empty<AutomationTarget>();
         private int _nextNodeIndex = 1;
 
@@ -457,6 +484,10 @@ namespace DecoLimitLifter.AutomationEditMode
         internal string ControllerKey { get; }
 
         internal string ControllerLabel { get; }
+
+        internal AutomationBlockWorkspaceMode Mode { get; private set; }
+
+        internal string NativeImportStatus { get; private set; } = string.Empty;
 
         internal string SelectedNodeId { get; private set; }
 
@@ -486,6 +517,398 @@ namespace DecoLimitLifter.AutomationEditMode
             var workspace = new AutomationBlockWorkspace(controllerKey, controllerLabel);
             workspace.ReplaceTargets(linkedTargets);
             return workspace;
+        }
+
+        internal static AutomationBlockWorkspace FromNativeGraphSnapshot(
+            string controllerKey,
+            string controllerLabel,
+            AutomationNativeGraphSnapshot snapshot)
+        {
+            var workspace = new AutomationBlockWorkspace(controllerKey, controllerLabel)
+            {
+                Mode = AutomationBlockWorkspaceMode.NativeExact,
+                NativeImportStatus = snapshot == null
+                    ? "Native exact import found no Breadboard graph."
+                    : "Imported from vanilla Breadboard: " +
+                      snapshot.Components.Count.ToString(CultureInfo.InvariantCulture) +
+                      " component(s), " +
+                      snapshot.Wires.Count.ToString(CultureInfo.InvariantCulture) +
+                      " wire(s)."
+            };
+
+            if (snapshot == null)
+                return workspace;
+
+            int order = 0;
+            foreach (AutomationNativeComponentSnapshot component in snapshot.Components)
+            {
+                if (component == null)
+                    continue;
+
+                string id = NativeNodeId(component);
+                var node = new AutomationBlockNode(
+                    id,
+                    AutomationBlockKind.NativeComponent,
+                    component.Label,
+                    "duplicate",
+                    AutomationBlockCategory.Advanced,
+                    "native-imported-" + AutomationBlockLowering.IdentifierForLabel(component.Label));
+                node.SnappedToStack = false;
+                node.CanvasOrder = order++;
+                node.CanvasPosition = new AutomationBlockCanvasPosition(component.X, component.Y);
+                node.SetNativeComponent(
+                    component.TypeName,
+                    component.Label,
+                    component.Description);
+                node.SetNativeIdentity(
+                    component.ComponentId,
+                    component.ComponentTypeId.ToString("D"),
+                    component.Fingerprint,
+                    imported: true,
+                    esuOwned: false,
+                    component.X,
+                    component.Y,
+                    component.Width,
+                    component.Height,
+                    component.SettingsSummary,
+                    component.Inputs.Select(port => port.Label).ToArray(),
+                    component.Outputs.Select(port => port.Label).ToArray());
+                workspace._nodes.Add(node);
+            }
+
+            Dictionary<uint, AutomationBlockNode> nodesByNativeId = workspace._nodes
+                .Where(node => node.NativeComponentId != 0U)
+                .GroupBy(node => node.NativeComponentId)
+                .ToDictionary(group => group.Key, group => group.First());
+            foreach (AutomationNativeWireSnapshot wire in snapshot.Wires)
+            {
+                if (wire == null ||
+                    !nodesByNativeId.TryGetValue(wire.FromComponentId, out AutomationBlockNode fromNode) ||
+                    !nodesByNativeId.TryGetValue(wire.ToComponentId, out AutomationBlockNode toNode))
+                {
+                    continue;
+                }
+
+                workspace._explicitLinks.Add(new AutomationBlockLink(
+                    fromNode.Id,
+                    NativePortId(fromNode.Id, AutomationBlockPortDirection.Output, wire.FromOutputIndex),
+                    toNode.Id,
+                    NativePortId(toNode.Id, AutomationBlockPortDirection.Input, wire.ToInputIndex),
+                    wire.FromComponentId,
+                    wire.FromOutputIndex,
+                    wire.ToComponentId,
+                    wire.ToInputIndex));
+            }
+
+            workspace._nextNodeIndex = Math.Max(workspace._nodes.Count + 1, 1);
+            workspace.Select(workspace._nodes.FirstOrDefault()?.Id ?? string.Empty);
+            workspace.RebuildPortsAndLinks();
+            return workspace;
+        }
+
+        internal static AutomationBlockWorkspace FromProfileData(
+            string controllerKey,
+            string controllerLabel,
+            IReadOnlyList<AutomationTarget> linkedTargets,
+            SerializationHudProfile.AutomationBlockWorkspaceData data)
+        {
+            if (data == null)
+                return CreateDefault(controllerKey, controllerLabel, linkedTargets);
+
+            var workspace = new AutomationBlockWorkspace(controllerKey, controllerLabel);
+            workspace.Mode = Enum.IsDefined(typeof(AutomationBlockWorkspaceMode), data.Mode)
+                ? (AutomationBlockWorkspaceMode)data.Mode
+                : AutomationBlockWorkspaceMode.Semantic;
+            workspace.NativeImportStatus = data.NativeImportStatus ?? string.Empty;
+            workspace._linkedTargets = linkedTargets == null
+                ? Array.Empty<AutomationTarget>()
+                : linkedTargets.Where(target => target != null).ToArray();
+            workspace.CanvasPan = new AutomationBlockCanvasPosition(data.CanvasPanX, data.CanvasPanY);
+            workspace.CanvasZoom = Math.Max(0.45f, Math.Min(1.85f, data.CanvasZoom <= 0f ? 1f : data.CanvasZoom));
+
+            int maxNodeIndex = 0;
+            foreach (SerializationHudProfile.AutomationBlockNodeData nodeData in data.Nodes ?? new List<SerializationHudProfile.AutomationBlockNodeData>())
+            {
+                if (nodeData == null)
+                    continue;
+
+                if (!Enum.IsDefined(typeof(AutomationBlockKind), nodeData.Kind))
+                    continue;
+
+                var kind = (AutomationBlockKind)nodeData.Kind;
+                AutomationBlockDefinition definition = AutomationBlockCatalog.DefinitionFor(kind);
+                string id = string.IsNullOrWhiteSpace(nodeData.Id)
+                    ? "esu-block-" + workspace._nextNodeIndex.ToString(CultureInfo.InvariantCulture)
+                    : nodeData.Id;
+                maxNodeIndex = Math.Max(maxNodeIndex, ExtractNodeIndex(id));
+                var node = new AutomationBlockNode(
+                    id,
+                    kind,
+                    string.IsNullOrWhiteSpace(nodeData.Label) ? definition.Label : nodeData.Label,
+                    string.IsNullOrWhiteSpace(nodeData.IconKey) ? definition.IconKey : nodeData.IconKey,
+                    Enum.IsDefined(typeof(AutomationBlockCategory), nodeData.Category)
+                        ? (AutomationBlockCategory)nodeData.Category
+                        : definition.Category,
+                    string.IsNullOrWhiteSpace(nodeData.PaletteTemplateId)
+                        ? definition.TemplateId
+                        : nodeData.PaletteTemplateId);
+
+                node.ParentNodeId = nodeData.ParentNodeId ?? string.Empty;
+                node.CanvasOrder = nodeData.CanvasOrder;
+                node.CanvasPosition = new AutomationBlockCanvasPosition(nodeData.CanvasX, nodeData.CanvasY);
+                node.SnappedToStack = nodeData.SnappedToStack;
+                node.LinkDirection = Enum.IsDefined(typeof(AutomationLinkDirection), nodeData.LinkDirection)
+                    ? (AutomationLinkDirection)nodeData.LinkDirection
+                    : AutomationLinkDirection.Output;
+                node.Operator = Enum.IsDefined(typeof(AutomationCompareOperator), nodeData.Operator)
+                    ? (AutomationCompareOperator)nodeData.Operator
+                    : AutomationCompareOperator.GreaterThan;
+                node.NumericValue = nodeData.NumericValue;
+                node.SecondaryNumericValue = nodeData.SecondaryNumericValue;
+                node.Comment = nodeData.Comment ?? string.Empty;
+                node.Expression = nodeData.Expression ?? string.Empty;
+
+                AutomationTarget target = ResolveStoredTarget(
+                    workspace._linkedTargets,
+                    nodeData.TargetKey,
+                    nodeData.TargetPersistenceKey);
+                if (target != null)
+                    node.RebindTarget(target);
+                else
+                    node.RestoreTarget(
+                        nodeData.TargetKey,
+                        nodeData.TargetPersistenceKey,
+                        nodeData.TargetLabel);
+
+                AutomationProxyPropertySelection selection = ProfileToPropertySelection(nodeData.PropertySelection);
+                if (selection != null)
+                    node.SelectProperty(selection);
+
+                if (kind == AutomationBlockKind.NativeComponent)
+                {
+                    node.SetNativeComponent(
+                        nodeData.NativeComponentTypeName,
+                        nodeData.NativeComponentLabel,
+                        nodeData.NativeComponentDescription);
+                    node.SetNativeIdentity(
+                        nodeData.NativeComponentId,
+                        nodeData.NativeComponentTypeId,
+                        nodeData.NativeComponentFingerprint,
+                        nodeData.NativeImported,
+                        nodeData.NativeEsuOwned,
+                        nodeData.NativeX,
+                        nodeData.NativeY,
+                        nodeData.NativeWidth,
+                        nodeData.NativeHeight,
+                        nodeData.NativeSettingsSummary,
+                        nodeData.NativeInputPortLabels ?? new List<string>(),
+                        nodeData.NativeOutputPortLabels ?? new List<string>());
+                }
+
+                workspace._nodes.Add(node);
+            }
+
+            foreach (SerializationHudProfile.AutomationBlockLinkData linkData in data.Links ?? new List<SerializationHudProfile.AutomationBlockLinkData>())
+            {
+                if (linkData == null)
+                    continue;
+
+                workspace._explicitLinks.Add(new AutomationBlockLink(
+                    linkData.FromNodeId,
+                    linkData.FromPortId,
+                    linkData.ToNodeId,
+                    linkData.ToPortId,
+                    linkData.FromNativeComponentId,
+                    linkData.FromNativePortIndex,
+                    linkData.ToNativeComponentId,
+                    linkData.ToNativePortIndex));
+            }
+
+            workspace._nextNodeIndex = Math.Max(maxNodeIndex + 1, workspace._nodes.Count + 1);
+            workspace.Select(workspace._nodes.Any(node => string.Equals(node.Id, data.SelectedNodeId, StringComparison.Ordinal))
+                ? data.SelectedNodeId
+                : workspace._nodes.FirstOrDefault()?.Id ?? string.Empty);
+            workspace.RebuildPortsAndLinks();
+            return workspace;
+        }
+
+        internal SerializationHudProfile.AutomationBlockWorkspaceData ToProfileData()
+        {
+            return new SerializationHudProfile.AutomationBlockWorkspaceData
+            {
+                Mode = (int)Mode,
+                CanvasPanX = CanvasPan.X,
+                CanvasPanY = CanvasPan.Y,
+                CanvasZoom = CanvasZoom,
+                NativeImportStatus = NativeImportStatus,
+                SelectedNodeId = SelectedNodeId,
+                Nodes = _nodes
+                    .Where(node => node != null)
+                    .Select(NodeToProfileData)
+                    .ToList(),
+                Links = _explicitLinks
+                    .Where(link => link != null)
+                    .Select(LinkToProfileData)
+                    .ToList()
+            };
+        }
+
+        private static SerializationHudProfile.AutomationBlockNodeData NodeToProfileData(
+            AutomationBlockNode node)
+        {
+            return new SerializationHudProfile.AutomationBlockNodeData
+            {
+                Id = node.Id,
+                Kind = (int)node.Kind,
+                Label = node.Label,
+                IconKey = node.IconKey,
+                Category = (int)node.Category,
+                PaletteTemplateId = node.PaletteTemplateId,
+                ParentNodeId = node.ParentNodeId,
+                CanvasOrder = node.CanvasOrder,
+                CanvasX = node.CanvasPosition.X,
+                CanvasY = node.CanvasPosition.Y,
+                SnappedToStack = node.SnappedToStack,
+                TargetKey = node.TargetKey,
+                TargetPersistenceKey = node.TargetPersistenceKey,
+                TargetLabel = node.TargetLabel,
+                LinkDirection = (int)node.LinkDirection,
+                Operator = (int)node.Operator,
+                NumericValue = node.NumericValue,
+                SecondaryNumericValue = node.SecondaryNumericValue,
+                Comment = node.Comment,
+                Expression = node.Expression,
+                PropertySelection = PropertySelectionToProfileData(node.PropertySelection),
+                NativeComponentTypeName = node.NativeComponentTypeName,
+                NativeComponentLabel = node.NativeComponentLabel,
+                NativeComponentDescription = node.NativeComponentDescription,
+                NativeComponentId = node.NativeComponentId,
+                NativeComponentTypeId = node.NativeComponentTypeId,
+                NativeComponentFingerprint = node.NativeComponentFingerprint,
+                NativeImported = node.NativeImported,
+                NativeEsuOwned = node.NativeEsuOwned,
+                NativeX = node.NativeX,
+                NativeY = node.NativeY,
+                NativeWidth = node.NativeWidth,
+                NativeHeight = node.NativeHeight,
+                NativeSettingsSummary = node.NativeSettingsSummary,
+                NativeInputPortLabels = node.NativeInputPortLabels.ToList(),
+                NativeOutputPortLabels = node.NativeOutputPortLabels.ToList()
+            };
+        }
+
+        private static SerializationHudProfile.AutomationBlockLinkData LinkToProfileData(
+            AutomationBlockLink link)
+        {
+            return new SerializationHudProfile.AutomationBlockLinkData
+            {
+                FromNodeId = link.FromNodeId,
+                FromPortId = link.FromPortId,
+                ToNodeId = link.ToNodeId,
+                ToPortId = link.ToPortId,
+                FromNativeComponentId = link.FromNativeComponentId,
+                FromNativePortIndex = link.FromNativePortIndex,
+                ToNativeComponentId = link.ToNativeComponentId,
+                ToNativePortIndex = link.ToNativePortIndex
+            };
+        }
+
+        private static SerializationHudProfile.AutomationProxyPropertySelectionData PropertySelectionToProfileData(
+            AutomationProxyPropertySelection selection)
+        {
+            if (selection == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationProxyPropertySelectionData
+            {
+                Label = selection.Label,
+                Tooltip = selection.Tooltip,
+                IsGetter = selection.IsGetter,
+                IsClear = selection.IsClear,
+                IsGetterReadable = selection.IsGetterReadable,
+                ReadableAttributeId = selection.ReadableAttributeId,
+                BlockPropertyId = selection.BlockPropertyId,
+                BlockSetId = selection.BlockSetId
+            };
+        }
+
+        private static AutomationProxyPropertySelection ProfileToPropertySelection(
+            SerializationHudProfile.AutomationProxyPropertySelectionData data)
+        {
+            return data == null
+                ? null
+                : new AutomationProxyPropertySelection(
+                    data.Label,
+                    data.Tooltip,
+                    data.IsGetter,
+                    data.IsClear,
+                    data.IsGetterReadable,
+                    data.ReadableAttributeId,
+                    data.BlockPropertyId,
+                    data.BlockSetId);
+        }
+
+        private static AutomationTarget ResolveStoredTarget(
+            IReadOnlyList<AutomationTarget> targets,
+            string stableKey,
+            string persistenceKey)
+        {
+            if (targets == null || targets.Count == 0)
+                return null;
+
+            AutomationTarget target = targets.FirstOrDefault(item =>
+                string.Equals(item.StableKey, stableKey, StringComparison.Ordinal));
+            if (target != null || string.IsNullOrWhiteSpace(persistenceKey))
+                return target;
+
+            AutomationTarget[] matches = targets
+                .Where(item => string.Equals(item.PersistenceKey, persistenceKey, StringComparison.Ordinal))
+                .Take(2)
+                .ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
+
+        private static int ExtractNodeIndex(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return 0;
+
+            int index = id.Length - 1;
+            while (index >= 0 && char.IsDigit(id[index]))
+                index--;
+            if (index == id.Length - 1)
+                return 0;
+
+            return int.TryParse(
+                id.Substring(index + 1),
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int parsed)
+                ? parsed
+                : 0;
+        }
+
+        private static string NativeNodeId(AutomationNativeComponentSnapshot component)
+        {
+            if (component == null)
+                return "native-component";
+
+            if (component.ComponentId != 0U)
+                return "native-component-" + component.ComponentId.ToString(CultureInfo.InvariantCulture);
+
+            return "native-component-" + AutomationBlockLowering.IdentifierForLabel(component.Fingerprint);
+        }
+
+        private static string NativePortId(
+            string nodeId,
+            AutomationBlockPortDirection direction,
+            int index)
+        {
+            return (nodeId ?? string.Empty) +
+                   "." +
+                   (direction == AutomationBlockPortDirection.Output ? "out" : "in") +
+                   "." +
+                   Math.Max(0, index).ToString(CultureInfo.InvariantCulture);
         }
 
         internal bool TryApplyAmmoThresholdStarterTemplate(
@@ -530,10 +953,12 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (string.IsNullOrWhiteSpace(node.TargetKey))
                     continue;
 
-                AutomationTarget target = _linkedTargets.FirstOrDefault(item =>
-                    string.Equals(item.StableKey, node.TargetKey, StringComparison.Ordinal));
+                AutomationTarget target = ResolveStoredTarget(
+                    _linkedTargets,
+                    node.TargetKey,
+                    node.TargetPersistenceKey);
                 if (target != null)
-                    node.SetTarget(target);
+                    node.RebindTarget(target);
             }
 
             RebuildPortsAndLinks();
@@ -655,11 +1080,15 @@ namespace DecoLimitLifter.AutomationEditMode
             if (string.IsNullOrWhiteSpace(SelectedNodeId))
                 return false;
 
+            string removedNodeId = SelectedNodeId;
             int removed = _nodes.RemoveAll(node =>
                 string.Equals(node.Id, SelectedNodeId, StringComparison.Ordinal));
             if (removed == 0)
                 return false;
 
+            _explicitLinks.RemoveAll(link =>
+                string.Equals(link.FromNodeId, removedNodeId, StringComparison.Ordinal) ||
+                string.Equals(link.ToNodeId, removedNodeId, StringComparison.Ordinal));
             SelectedNodeId = _nodes.Count == 0 ? string.Empty : _nodes[Math.Max(0, _nodes.Count - 1)].Id;
             RebuildPortsAndLinks();
             return true;
@@ -689,6 +1118,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal bool MoveNodeToIndex(string nodeId, int insertIndex)
         {
+            if (Mode == AutomationBlockWorkspaceMode.NativeExact)
+                return false;
+
             if (string.IsNullOrWhiteSpace(nodeId))
                 return false;
 
@@ -730,6 +1162,9 @@ namespace DecoLimitLifter.AutomationEditMode
             string nodeId,
             bool snappedToStack)
         {
+            if (Mode == AutomationBlockWorkspaceMode.NativeExact && snappedToStack)
+                return false;
+
             if (string.IsNullOrWhiteSpace(nodeId))
                 return false;
 
@@ -778,6 +1213,23 @@ namespace DecoLimitLifter.AutomationEditMode
 
             node.LinkDirection = direction;
             node.SetTarget(target);
+            RebuildPortsAndLinks();
+            return true;
+        }
+
+        internal bool RebindNodeTarget(
+            string nodeId,
+            AutomationTarget target)
+        {
+            if (string.IsNullOrWhiteSpace(nodeId) || target == null)
+                return false;
+
+            AutomationBlockNode node = _nodes.FirstOrDefault(item =>
+                string.Equals(item.Id, nodeId, StringComparison.Ordinal));
+            if (node == null)
+                return false;
+
+            node.RebindTarget(target);
             RebuildPortsAndLinks();
             return true;
         }
@@ -892,6 +1344,12 @@ namespace DecoLimitLifter.AutomationEditMode
             foreach (AutomationBlockNode node in _nodes)
                 RebuildPortsForNode(node);
 
+            if (Mode == AutomationBlockWorkspaceMode.NativeExact)
+            {
+                AddExplicitNativeLinks();
+                return;
+            }
+
             AddStarterRecipeLinks();
             AddLinearFallbackLinks();
         }
@@ -922,12 +1380,14 @@ namespace DecoLimitLifter.AutomationEditMode
 
             string direction = definition.Direction == AutomationBlockPortDirection.Input ? "in" : "out";
             string portName = string.IsNullOrWhiteSpace(definition.Name) ? direction : definition.Name;
-            string portId =
-                node.Id +
-                "." +
-                direction +
-                "." +
-                AutomationBlockLowering.IdentifierForLabel(portName);
+            string portId = Mode == AutomationBlockWorkspaceMode.NativeExact &&
+                            node.Kind == AutomationBlockKind.NativeComponent
+                ? NativePortId(node.Id, definition.Direction, index)
+                : node.Id +
+                  "." +
+                  direction +
+                  "." +
+                  AutomationBlockLowering.IdentifierForLabel(portName);
             if (_ports.Any(port => string.Equals(port.Id, portId, StringComparison.Ordinal)))
                 portId += "." + index.ToString(CultureInfo.InvariantCulture);
 
@@ -938,6 +1398,21 @@ namespace DecoLimitLifter.AutomationEditMode
                 portName,
                 node.TargetKey,
                 node.TargetLabel));
+        }
+
+        private void AddExplicitNativeLinks()
+        {
+            foreach (AutomationBlockLink link in _explicitLinks)
+            {
+                if (link == null)
+                    continue;
+
+                AutomationBlockPort from = _ports.FirstOrDefault(port =>
+                    string.Equals(port.Id, link.FromPortId, StringComparison.Ordinal));
+                AutomationBlockPort to = _ports.FirstOrDefault(port =>
+                    string.Equals(port.Id, link.ToPortId, StringComparison.Ordinal));
+                AddLink(from, to);
+            }
         }
 
         private void AddStarterRecipeLinks()
@@ -1287,6 +1762,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal string TargetKey { get; private set; }
 
+        internal string TargetPersistenceKey { get; private set; }
+
         internal string TargetLabel { get; private set; }
 
         internal AutomationLinkDirection LinkDirection { get; set; }
@@ -1312,15 +1789,63 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal string NativeComponentDescription { get; private set; } = string.Empty;
 
+        internal uint NativeComponentId { get; private set; }
+
+        internal string NativeComponentTypeId { get; private set; } = string.Empty;
+
+        internal string NativeComponentFingerprint { get; private set; } = string.Empty;
+
+        internal bool NativeImported { get; private set; }
+
+        internal bool NativeEsuOwned { get; private set; }
+
+        internal float NativeX { get; private set; }
+
+        internal float NativeY { get; private set; }
+
+        internal float NativeWidth { get; private set; }
+
+        internal float NativeHeight { get; private set; }
+
+        internal string NativeSettingsSummary { get; private set; } = string.Empty;
+
+        internal IReadOnlyList<string> NativeInputPortLabels { get; private set; } =
+            Array.Empty<string>();
+
+        internal IReadOnlyList<string> NativeOutputPortLabels { get; private set; } =
+            Array.Empty<string>();
+
         internal void SetTarget(AutomationTarget target)
         {
             if (target == null)
                 return;
 
+            bool targetChanged = !string.Equals(TargetKey, target.StableKey, StringComparison.Ordinal);
             TargetKey = target.StableKey;
+            TargetPersistenceKey = target.PersistenceKey;
             TargetLabel = target.Label;
-            PropertySelection = null;
-            PropertyBindingMode = AutomationProxyPropertyBindingMode.Unset;
+            if (targetChanged)
+                ClearProperty();
+        }
+
+        internal void RebindTarget(AutomationTarget target)
+        {
+            if (target == null)
+                return;
+
+            TargetKey = target.StableKey;
+            TargetPersistenceKey = target.PersistenceKey;
+            TargetLabel = target.Label;
+        }
+
+        internal void RestoreTarget(
+            string targetKey,
+            string targetPersistenceKey,
+            string targetLabel)
+        {
+            TargetKey = targetKey ?? string.Empty;
+            TargetPersistenceKey = targetPersistenceKey ?? string.Empty;
+            TargetLabel = string.IsNullOrWhiteSpace(targetLabel) ? "target" : targetLabel;
         }
 
         internal void SelectProperty(AutomationProxyPropertySelection selection)
@@ -1345,6 +1870,38 @@ namespace DecoLimitLifter.AutomationEditMode
             NativeComponentTypeName = typeName ?? string.Empty;
             NativeComponentLabel = string.IsNullOrWhiteSpace(label) ? "Native component" : label;
             NativeComponentDescription = description ?? string.Empty;
+        }
+
+        internal void SetNativeIdentity(
+            uint componentId,
+            string componentTypeId,
+            string fingerprint,
+            bool imported,
+            bool esuOwned,
+            float x,
+            float y,
+            float width,
+            float height,
+            string settingsSummary,
+            IReadOnlyList<string> inputPortLabels,
+            IReadOnlyList<string> outputPortLabels)
+        {
+            NativeComponentId = componentId;
+            NativeComponentTypeId = componentTypeId ?? string.Empty;
+            NativeComponentFingerprint = fingerprint ?? string.Empty;
+            NativeImported = imported;
+            NativeEsuOwned = esuOwned;
+            NativeX = x;
+            NativeY = y;
+            NativeWidth = width;
+            NativeHeight = height;
+            NativeSettingsSummary = settingsSummary ?? string.Empty;
+            NativeInputPortLabels = (inputPortLabels ?? Array.Empty<string>())
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .ToArray();
+            NativeOutputPortLabels = (outputPortLabels ?? Array.Empty<string>())
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .ToArray();
         }
     }
 
@@ -1398,12 +1955,20 @@ namespace DecoLimitLifter.AutomationEditMode
             string fromNodeId,
             string fromPortId,
             string toNodeId,
-            string toPortId)
+            string toPortId,
+            uint fromNativeComponentId = 0U,
+            int fromNativePortIndex = -1,
+            uint toNativeComponentId = 0U,
+            int toNativePortIndex = -1)
         {
             FromNodeId = fromNodeId ?? string.Empty;
             FromPortId = fromPortId ?? string.Empty;
             ToNodeId = toNodeId ?? string.Empty;
             ToPortId = toPortId ?? string.Empty;
+            FromNativeComponentId = fromNativeComponentId;
+            FromNativePortIndex = fromNativePortIndex;
+            ToNativeComponentId = toNativeComponentId;
+            ToNativePortIndex = toNativePortIndex;
         }
 
         internal string FromNodeId { get; }
@@ -1413,6 +1978,14 @@ namespace DecoLimitLifter.AutomationEditMode
         internal string ToNodeId { get; }
 
         internal string ToPortId { get; }
+
+        internal uint FromNativeComponentId { get; }
+
+        internal int FromNativePortIndex { get; }
+
+        internal uint ToNativeComponentId { get; }
+
+        internal int ToNativePortIndex { get; }
     }
 
     internal sealed class AutomationProxyPropertySelection

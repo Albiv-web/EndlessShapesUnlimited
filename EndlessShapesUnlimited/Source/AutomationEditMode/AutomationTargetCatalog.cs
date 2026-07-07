@@ -77,6 +77,9 @@ namespace DecoLimitLifter.AutomationEditMode
             LocalPosition.z.ToString(CultureInfo.InvariantCulture) + "|" +
             RuntimeType;
 
+        internal string PersistenceKey =>
+            AutomationTargetCatalog.PersistenceKeyFor(this);
+
         internal Vector3 WorldCenter
         {
             get
@@ -281,6 +284,24 @@ namespace DecoLimitLifter.AutomationEditMode
                 target.LocalPosition.z.ToString(CultureInfo.InvariantCulture) + " " +
                 target.StableKey + " " +
                 controllerText;
+        }
+
+        internal static string PersistenceKeyFor(AutomationTarget target)
+        {
+            if (target == null)
+                return string.Empty;
+
+            string role = target.Controller == null
+                ? target.Category.ToString()
+                : target.Controller.Kind.ToString();
+            string blockName = AutomationControllerCatalog.VanillaBlockNameFilter(target.Block);
+            return
+                target.LocalPosition.x.ToString(CultureInfo.InvariantCulture) + "," +
+                target.LocalPosition.y.ToString(CultureInfo.InvariantCulture) + "," +
+                target.LocalPosition.z.ToString(CultureInfo.InvariantCulture) + "|" +
+                (target.RuntimeType ?? string.Empty) + "|" +
+                role + "|" +
+                (blockName ?? string.Empty);
         }
 
         internal static string RoleLabel(AutomationTarget target)

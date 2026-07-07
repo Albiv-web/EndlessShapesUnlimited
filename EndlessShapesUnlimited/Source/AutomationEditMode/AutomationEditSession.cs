@@ -33,11 +33,13 @@ namespace DecoLimitLifter.AutomationEditMode
         private const int CodeOutputTargetVisibleLimit = 6;
         private const int CodeIdentifierVisibleLimit = 5;
         private const int BlockLoweringVisibleStepLimit = 4;
+        private const int SignalFlyoutAvailableTargetLimit = 16;
+        private const int AutomationWorkspaceProfileLimit = 80;
         private const uint NoWireSourceComponentId = uint.MaxValue;
         private const string AutomationVocabularyLine =
             "Terms: Controller, Target, Link, Proxy Node, System Block, Port, Recipe, Native Lowering, Check, Apply, Revert.";
         private const string AutomationLinkIdentityGuideLine =
-            "Link identity: live-session target keys today. Re-check linked Inputs/Outputs after save/reload or cross-craft reuse until stable target identity lands.";
+            "Link identity: saved per controller with portable target keys. Re-check only if duplicated unnamed blocks at the same cell/type make a target ambiguous.";
 
         private enum AutomationTool
         {
@@ -94,6 +96,14 @@ namespace DecoLimitLifter.AutomationEditMode
             MoveBlockUp,
             MoveBlockDown,
             DeleteBlock
+        }
+
+        private enum AutomationClosePromptAction
+        {
+            None,
+            CloseEditor,
+            CloseMode,
+            SwitchToDecorationEdit
         }
 
         private enum AutomationBlocksSplitter
@@ -207,6 +217,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private readonly int _statusWindowId = "EndlessShapesUnlimited.Automation.Status".GetHashCode();
         private readonly int _contextMenuWindowId = "EndlessShapesUnlimited.Automation.ContextMenu".GetHashCode();
         private readonly int _propertyPickerWindowId = "EndlessShapesUnlimited.Automation.PropertyPicker".GetHashCode();
+        private readonly int _targetPickerWindowId = "EndlessShapesUnlimited.Automation.TargetPicker".GetHashCode();
         private readonly List<AutomationLink> _links = new List<AutomationLink>();
         private readonly AutomationTargetPreviewRenderer _targetPreviewRenderer =
             new AutomationTargetPreviewRenderer();
@@ -273,6 +284,11 @@ namespace DecoLimitLifter.AutomationEditMode
         private bool _showAdvancedFilters = s_showAdvancedFilters;
         private bool _editorOpen;
         private bool _closeRequested;
+        private bool _automationClosePromptOpen;
+        private AutomationClosePromptAction _automationClosePromptAction = AutomationClosePromptAction.None;
+        private bool _automationNativeDirty;
+        private readonly Dictionary<string, SerializationHudProfile.AutomationWorkspaceData> _automationWorkspaceSnapshots =
+            new Dictionary<string, SerializationHudProfile.AutomationWorkspaceData>(StringComparer.Ordinal);
         private bool _layoutInitialized;
         private bool _resizingLeftPanel;
         private bool _resizingRightPanel;
@@ -301,6 +317,8 @@ namespace DecoLimitLifter.AutomationEditMode
         private bool _panningBlockCanvas;
         private bool _blocksCanvasSignalsOpen;
         private bool _blocksCanvasSystemsOpen;
+        private AutomationLinkDirection _blocksCanvasSignalsTab = AutomationLinkDirection.Input;
+        private bool _outputLinkModeArmed;
         private AutomationBlockKind _dragPaletteBlockKind;
         private AutomationBreadboardAvailableComponent _dragNativePaletteComponent;
         private string _dragWorkspaceBlockId = string.Empty;
@@ -338,6 +356,12 @@ namespace DecoLimitLifter.AutomationEditMode
         private Vector2 _propertyPickerScroll;
         private IReadOnlyList<AutomationTargetPropertyOption> _propertyPickerOptions =
             Array.Empty<AutomationTargetPropertyOption>();
+        private readonly Dictionary<string, AutomationBlockLiveValueSnapshot> _blockLiveValueCache =
+            new Dictionary<string, AutomationBlockLiveValueSnapshot>(StringComparer.Ordinal);
+        private string _targetPickerNodeId = string.Empty;
+        private Rect _targetPickerRect = Rect.zero;
+        private string _targetPickerFilter = string.Empty;
+        private Vector2 _targetPickerScroll;
         private AutomationTarget _previewTarget;
         private string _previewReason = string.Empty;
         private Rect _previewSourceRect = Rect.zero;
@@ -348,6 +372,7 @@ namespace DecoLimitLifter.AutomationEditMode
         private string _lastRuntimeDiagnosticsControllerKey = string.Empty;
         private string _validationCompareStatus = string.Empty;
         private int _layoutResetGeneration = s_layoutGeneration;
+        private bool _confirmNativeRefreshFromNative;
 
         internal AutomationEditSession(cBuild build)
         {
@@ -361,8 +386,30 @@ namespace DecoLimitLifter.AutomationEditMode
 
         internal bool SwitchToDecorationEditRequested { get; private set; }
 
+        internal bool HasOpenPrompt => _automationClosePromptOpen;
+
         internal void ClearSwitchToDecorationEditRequest() =>
             SwitchToDecorationEditRequested = false;
+
+        internal void RequestHotkeyClose()
+        {
+            RequestAutomationClose(AutomationClosePromptAction.CloseMode);
+        }
+
+        internal void RequestSwitchToDecorationEdit()
+        {
+            RequestAutomationClose(AutomationClosePromptAction.SwitchToDecorationEdit);
+        }
+
+        internal bool DismissOpenPrompt()
+        {
+            if (!_automationClosePromptOpen)
+                return false;
+
+            CloseAutomationClosePrompt();
+            InfoStore.Add("Automation Editor close cancelled.");
+            return true;
+        }
 
         internal bool CanSwitchToDecorationEdit(out string reason)
         {
@@ -388,11 +435,16 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedController = null;
             _hoverTarget = null;
             _pendingLinkTarget = null;
+            _outputLinkModeArmed = false;
             _selectedLinkTargetKey = string.Empty;
             _selectedLinkDirection = AutomationLinkDirection.Output;
             CloseAutomationContextMenu();
             _links.Clear();
-            ClearAutomationBlockWorkspace();
+            CloseAutomationClosePrompt();
+            _automationNativeDirty = false;
+            _automationWorkspaceSnapshots.Clear();
+            _confirmNativeRefreshFromNative = false;
+            ClearAutomationBlockWorkspace(persistCurrent: false);
             ClearSystemBlockWorkspace();
             _targetPreviewRenderer.Dispose();
         }
@@ -407,6 +459,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _closeRequested = false;
             SwitchToDecorationEditRequested = false;
             _pendingLinkTarget = null;
+            _outputLinkModeArmed = false;
             CloseAutomationContextMenu();
         }
 
@@ -462,41 +515,62 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (interactive)
                     HandleAutomationPanelResizes();
 
-                if (!_editorOpen)
-                {
-                    GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
-                    if (_showLeftPanel)
-                        _leftPanelRect = GUI.Window(
-                            _leftPanelWindowId,
-                            _leftPanelRect,
-                            DrawLeftPanel,
-                            GUIContent.none,
-                            GUIStyle.none);
-                    if (_showRightPanel)
-                        _rightPanelRect = GUI.Window(
-                            _rightPanelWindowId,
-                            _rightPanelRect,
-                            DrawRightPanel,
-                            GUIContent.none,
-                            GUIStyle.none);
-                    GUI.Window(_statusWindowId, _statusRect, DrawStatusStrip, GUIContent.none, GUIStyle.none);
-                }
+                bool foregroundOpenBeforeBackground =
+                    interactive &&
+                    !_automationClosePromptOpen &&
+                    IsAutomationForegroundPopupOpen();
+                if (foregroundOpenBeforeBackground)
+                    DrawAutomationForegroundPopups();
 
-                if (_editorOpen)
-                    _editorRect = GUI.Window(
-                        _editorWindowId,
-                        _editorRect,
-                        DrawEditor,
-                        GUIContent.none,
-                        GUIStyle.none);
+                bool suppressBackgroundInput = ShouldSuppressAutomationBackgroundInput(
+                    Event.current,
+                    foregroundOpenBeforeBackground);
+                bool previousEnabled = GUI.enabled;
+                if (suppressBackgroundInput)
+                    GUI.enabled = false;
+                try
+                {
+                    if (!_editorOpen)
+                    {
+                        GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
+                        if (_showLeftPanel)
+                            _leftPanelRect = GUI.Window(
+                                _leftPanelWindowId,
+                                _leftPanelRect,
+                                DrawLeftPanel,
+                                GUIContent.none,
+                                GUIStyle.none);
+                        if (_showRightPanel)
+                            _rightPanelRect = GUI.Window(
+                                _rightPanelWindowId,
+                                _rightPanelRect,
+                                DrawRightPanel,
+                                GUIContent.none,
+                                GUIStyle.none);
+                        GUI.Window(_statusWindowId, _statusRect, DrawStatusStrip, GUIContent.none, GUIStyle.none);
+                    }
+
+                    if (_editorOpen)
+                        _editorRect = GUI.Window(
+                            _editorWindowId,
+                            _editorRect,
+                            DrawEditor,
+                            GUIContent.none,
+                            GUIStyle.none);
+                }
+                finally
+                {
+                    GUI.enabled = previousEnabled;
+                }
 
                 if (interactive)
                 {
                     RegisterAutomationWorldHoverTooltip();
                     DrawAutomationResizeGrips();
-                    DrawAutomationContextMenu();
-                    DrawAutomationPropertyPicker();
+                    if (!foregroundOpenBeforeBackground)
+                        DrawAutomationForegroundPopups();
                     DrawAutomationTargetPreviewCard();
+                    DrawAutomationClosePrompt();
                     EsuHudNotifications.DrawExpandedPopup();
                     EsuConsoleWindow.DrawForegroundWindow();
                     EsuCursorTooltip.Draw();
@@ -525,6 +599,174 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 GUI.depth = previousDepth;
             }
+        }
+
+        private void DrawAutomationForegroundPopups()
+        {
+            DrawAutomationContextMenu();
+            DrawAutomationTargetPicker();
+            DrawAutomationPropertyPicker();
+        }
+
+        private Rect AutomationClosePromptRect()
+        {
+            float width = Mathf.Min(EsuHudLayout.Scale(560f), Screen.width - EsuHudLayout.Scale(32f));
+            float height = EsuHudLayout.Scale(230f);
+            return new Rect(
+                (Screen.width - width) * 0.5f,
+                (Screen.height - height) * 0.5f,
+                width,
+                height);
+        }
+
+        private void DrawAutomationClosePrompt()
+        {
+            if (!_automationClosePromptOpen)
+                return;
+
+            int previousDepth = GUI.depth;
+            GUI.depth = Math.Min(previousDepth, -13000);
+            try
+            {
+                GUI.DrawTexture(
+                    new Rect(0f, 0f, Screen.width, Screen.height),
+                    DecorationEditorTheme.DimTexture);
+
+                Rect rect = AutomationClosePromptRect();
+                GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+                Rect inner = EsuHudLayout.PanelInnerRect(rect, 10f);
+                float gap = EsuHudLayout.Scale(8f);
+                float headerHeight = EsuHudLayout.Scale(34f);
+                float warningHeight = EsuHudLayout.Scale(28f);
+                float actionHeight = EsuHudLayout.Scale(40f);
+                Rect headerRect = new Rect(inner.x, inner.y, inner.width, headerHeight);
+                GUI.Box(headerRect, GUIContent.none, DecorationEditorTheme.DialogHeader);
+                GUI.Label(
+                    headerRect,
+                    new GUIContent("Unsaved automation", DecorationEditorIconCatalog.Get("save")),
+                    DecorationEditorTheme.DialogTitle);
+
+                float y = headerRect.yMax + gap;
+                Rect warningRect = new Rect(inner.x, y, inner.width, warningHeight);
+                GUI.Label(
+                    warningRect,
+                    AutomationClosePromptWarning(),
+                    DecorationEditorTheme.DialogWarning);
+                y = warningRect.yMax + EsuHudLayout.Scale(4f);
+
+                Rect actionsRect = new Rect(
+                    inner.x,
+                    inner.yMax - actionHeight,
+                    inner.width,
+                    actionHeight);
+                Rect bodyRect = new Rect(
+                    inner.x,
+                    y,
+                    inner.width,
+                    Mathf.Max(EsuHudLayout.Scale(48f), actionsRect.y - gap - y));
+                GUI.Label(
+                    bodyRect,
+                    AutomationClosePromptBody(),
+                    DecorationEditorTheme.DialogBody);
+
+                DrawAutomationClosePromptActions(actionsRect);
+                HandleAutomationClosePromptKeyboard();
+                ConsumeAutomationClosePromptInput();
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
+            }
+        }
+
+        private string AutomationClosePromptWarning()
+        {
+            if (HasUnsavedAutomationWorkspaceChanges() && HasUnappliedAutomationChanges())
+                return "Automation Editor has unsaved workspace changes and unapplied native changes.";
+            if (HasUnsavedAutomationWorkspaceChanges())
+                return "Automation Editor has unsaved workspace changes.";
+            return "Automation Editor has unapplied native changes.";
+        }
+
+        private string AutomationClosePromptBody()
+        {
+            return "Save stores linked targets and ESU Blocks in your profile. Apply blocks/template changes first when native Breadboard behavior should update now. Close without saving restores the last saved Automation workspace.";
+        }
+
+        private void DrawAutomationClosePromptActions(Rect rect)
+        {
+            float gap = EsuHudLayout.Scale(8f);
+            float buttonWidth = Mathf.Max(1f, (rect.width - gap * 2f) / 3f);
+            Rect saveRect = new Rect(rect.x, rect.y, buttonWidth, rect.height);
+            Rect discardRect = new Rect(saveRect.xMax + gap, rect.y, buttonWidth, rect.height);
+            Rect keepEditingRect = new Rect(discardRect.xMax + gap, rect.y, buttonWidth, rect.height);
+
+            if (PromptActionButton(
+                    saveRect,
+                    "save",
+                    "Save and close",
+                    "Save Automation workspace state, then finish the requested close action.",
+                    DecorationEditorTheme.DialogActiveButton))
+                SaveAndCloseFromAutomationPrompt();
+
+            if (PromptActionButton(
+                    discardRect,
+                    "cancel",
+                    "Close without saving",
+                    "Restore the last saved Automation workspace state and close.",
+                    DecorationEditorTheme.DialogButton))
+                DiscardAndCloseFromAutomationPrompt();
+
+            if (PromptActionButton(
+                    keepEditingRect,
+                    "close",
+                    "Keep editing",
+                    "Close this warning and return to Automation Editor.",
+                    DecorationEditorTheme.DialogButton))
+                CloseAutomationClosePrompt();
+        }
+
+        private static bool PromptActionButton(
+            Rect rect,
+            string icon,
+            string label,
+            string tooltip,
+            GUIStyle style) =>
+            GUI.Button(
+                rect,
+                new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
+                style);
+
+        private void HandleAutomationClosePromptKeyboard()
+        {
+            Event current = Event.current;
+            if (current == null || current.type != EventType.KeyDown)
+                return;
+
+            if (current.keyCode == KeyCode.Return ||
+                current.keyCode == KeyCode.KeypadEnter)
+            {
+                SaveAndCloseFromAutomationPrompt();
+                current.Use();
+                return;
+            }
+
+            if (current.keyCode == KeyCode.Escape)
+            {
+                CloseAutomationClosePrompt();
+                InfoStore.Add("Automation Editor close cancelled.");
+                current.Use();
+                return;
+            }
+
+            current.Use();
+        }
+
+        private static void ConsumeAutomationClosePromptInput()
+        {
+            Event current = Event.current;
+            if (current != null && ShouldConsumeGuiEvent(current))
+                current.Use();
         }
 
         private void RefreshTargets(bool force)
@@ -560,6 +802,7 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!string.IsNullOrWhiteSpace(selectedKey))
                 _links.RemoveAll(link => string.Equals(link.ControllerKey, selectedKey, StringComparison.Ordinal));
             _selectedController = null;
+            _outputLinkModeArmed = false;
             _selectedLinkTargetKey = string.Empty;
             _automationCodeOutputTargetKey = string.Empty;
             _automationCodeControllerKey = string.Empty;
@@ -573,7 +816,7 @@ namespace DecoLimitLifter.AutomationEditMode
             _selectedCanvasComponentId = NoWireSourceComponentId;
             _canvasDragComponentId = NoWireSourceComponentId;
             _canvasDragPreviewDelta = Vector2.zero;
-            ClearAutomationBlockWorkspace();
+            ClearAutomationBlockWorkspace(persistCurrent: false);
             ClearSystemBlockWorkspace();
             CloseAutomationContextMenu();
             CloseEditor();
@@ -595,10 +838,12 @@ namespace DecoLimitLifter.AutomationEditMode
                     continue;
 
                 AutomationTarget refreshed;
-                link.RebindTarget(
-                    targetsByKey.TryGetValue(link.TargetKey, out refreshed)
-                        ? refreshed
-                        : null);
+                if (!targetsByKey.TryGetValue(link.TargetKey, out refreshed))
+                    refreshed = ResolvePersistedAutomationTarget(
+                        link.TargetKey,
+                        link.TargetPersistenceKey);
+
+                link.RebindTarget(refreshed);
             }
         }
 
@@ -701,7 +946,7 @@ namespace DecoLimitLifter.AutomationEditMode
             else if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
                 if (_editorOpen)
-                    CloseEditor();
+                    RequestCloseEditor();
                 else
                     TryOpenEditor();
             }
@@ -741,6 +986,157 @@ namespace DecoLimitLifter.AutomationEditMode
             _canvasDragPreviewDelta = Vector2.zero;
         }
 
+        private void RequestCloseEditor()
+        {
+            RequestAutomationClose(AutomationClosePromptAction.CloseEditor);
+        }
+
+        private void RequestAutomationClose(AutomationClosePromptAction action)
+        {
+            if (_automationClosePromptOpen)
+                return;
+
+            if (!HasAutomationExitWarningChanges())
+            {
+                CompleteAutomationCloseAction(action);
+                return;
+            }
+
+            OpenAutomationClosePrompt(action);
+        }
+
+        private bool HasAutomationExitWarningChanges()
+        {
+            return HasUnsavedAutomationWorkspaceChanges() ||
+                   HasUnappliedAutomationChanges();
+        }
+
+        private bool HasUnsavedAutomationWorkspaceChanges() =>
+            _automationWorkspaceSnapshots.Count > 0;
+
+        private bool HasUnappliedAutomationChanges() =>
+            _automationNativeDirty ||
+            _systemBlockDraftDirty ||
+            _systemBlockInternalDirty;
+
+        private void OpenAutomationClosePrompt(AutomationClosePromptAction action)
+        {
+            _automationClosePromptOpen = true;
+            _automationClosePromptAction = action;
+            CloseAutomationContextMenu();
+            CloseAutomationPropertyPicker();
+            CloseAutomationTargetPicker();
+            InfoStore.Add("Unsaved Automation Editor changes. Save, close without saving, or keep editing.");
+        }
+
+        private void CloseAutomationClosePrompt()
+        {
+            _automationClosePromptOpen = false;
+            _automationClosePromptAction = AutomationClosePromptAction.None;
+        }
+
+        private void SaveAndCloseFromAutomationPrompt()
+        {
+            SaveSelectedAutomationWorkspace();
+            AutomationClosePromptAction action = _automationClosePromptAction;
+            CloseAutomationClosePrompt();
+            CompleteAutomationCloseAction(action);
+        }
+
+        private void DiscardAndCloseFromAutomationPrompt()
+        {
+            DiscardUnsavedAutomationWorkspaceStaging();
+            ReloadSelectedAutomationWorkspaceFromProfile();
+            AutomationClosePromptAction action = _automationClosePromptAction;
+            CloseAutomationClosePrompt();
+            CompleteAutomationCloseAction(action);
+        }
+
+        private void CompleteAutomationCloseAction(AutomationClosePromptAction action)
+        {
+            switch (action)
+            {
+                case AutomationClosePromptAction.CloseEditor:
+                    CloseEditor();
+                    _status = "Automation editor closed.";
+                    break;
+                case AutomationClosePromptAction.SwitchToDecorationEdit:
+                    SwitchToDecorationEditRequested = true;
+                    break;
+                case AutomationClosePromptAction.CloseMode:
+                    _closeRequested = true;
+                    break;
+            }
+        }
+
+        private void SaveSelectedAutomationWorkspace()
+        {
+            if (_selectedController == null)
+            {
+                _status = "Select a Breadboard/ACB controller before saving Automation workspace state.";
+                return;
+            }
+
+            PersistSelectedAutomationWorkspaceState(saveProfile: true);
+            _status = HasUnappliedAutomationChanges()
+                ? "Saved Automation workspace. Apply blocks/template changes before closing if native behavior should update now."
+                : "Saved Automation workspace.";
+        }
+
+        private void MarkAutomationWorkspaceDirty()
+        {
+            if (_selectedController == null)
+                return;
+
+            string key = AutomationWorkspaceStorageKey(_selectedController);
+            if (_automationWorkspaceSnapshots.ContainsKey(key))
+                return;
+
+            _automationWorkspaceSnapshots[key] =
+                CloneAutomationWorkspaceData(StoredAutomationWorkspaceFor(_selectedController));
+        }
+
+        private void DiscardUnsavedAutomationWorkspaceStaging()
+        {
+            try
+            {
+                SerializationHudProfile.ProfileData profile = SerializationHudProfile.Data;
+                if (profile?.AutomationWorkspaces == null)
+                    return;
+
+                foreach (KeyValuePair<string, SerializationHudProfile.AutomationWorkspaceData> snapshot in _automationWorkspaceSnapshots)
+                    RestoreAutomationWorkspaceProfileSnapshot(profile, snapshot.Key, snapshot.Value);
+            }
+            catch (Exception exception)
+            {
+                EsuRuntimeLog.Exception(
+                    "Automation Editor",
+                    exception,
+                    "Automation workspace discard failed");
+            }
+            finally
+            {
+                _automationWorkspaceSnapshots.Clear();
+                _automationNativeDirty = false;
+            }
+        }
+
+        private void ReloadSelectedAutomationWorkspaceFromProfile()
+        {
+            if (_selectedController == null)
+                return;
+
+            string controllerKey = _selectedController.StableKey;
+            _links.RemoveAll(link =>
+                string.Equals(link.ControllerKey, controllerKey, StringComparison.Ordinal));
+            ClearAutomationBlockWorkspace(persistCurrent: false);
+            RestoreSelectedAutomationWorkspaceState();
+            _blockLoweringPlan = null;
+            _blockLoweringStatus = string.Empty;
+            _automationNativeDirty = false;
+            _status = "Closed Automation editor without saving; restored last saved workspace state.";
+        }
+
         private void HandleMouse()
         {
             if (AutomationInputScope.MouseOverUi || IsMouseCurrentlyOverUi())
@@ -754,6 +1150,8 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 AutomationInputScope.ClaimBuildInputForFrames();
                 if (TryCancelAutomationPlacementRightClick())
+                    return;
+                if (TryCancelAutomationLinkModeRightClick())
                     return;
                 if (TryOpenAutomationWorldContextMenu())
                     return;
@@ -795,6 +1193,31 @@ namespace DecoLimitLifter.AutomationEditMode
             TryHandleAutomationTargetClick(target, "Selected ");
         }
 
+        private bool TryCancelAutomationLinkModeRightClick()
+        {
+            if (_tool != AutomationTool.Link)
+                return false;
+
+            if (_pendingLinkTarget != null)
+            {
+                string target = _pendingLinkTarget.Label;
+                _pendingLinkTarget = null;
+                _status = "Input link selection cancelled: " + target + ".";
+                return true;
+            }
+
+            if (!_outputLinkModeArmed ||
+                _selectedController == null)
+                return false;
+
+            string selected = SelectedControllerSummary();
+            _outputLinkModeArmed = false;
+            _status = string.Equals(selected, "none", StringComparison.Ordinal)
+                ? "Output link selection cancelled."
+                : "Output link selection cancelled: " + selected + ".";
+            return true;
+        }
+
         private bool TryCancelAutomationRightClick()
         {
             if (TryCancelAutomationPlacementRightClick())
@@ -812,6 +1235,7 @@ namespace DecoLimitLifter.AutomationEditMode
             string selected = SelectedControllerSummary();
             _selectedController = null;
             _pendingLinkTarget = null;
+            _outputLinkModeArmed = false;
             _selectedLinkTargetKey = string.Empty;
             _automationCodeOutputTargetKey = string.Empty;
             _automationCodeControllerKey = string.Empty;
@@ -880,22 +1304,26 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (_pendingLinkTarget != null &&
                     !string.Equals(_pendingLinkTarget.StableKey, target.StableKey, StringComparison.Ordinal))
                 {
-                    SelectAutomationController(target, controllerStatusPrefix);
+                    SelectAutomationController(target, controllerStatusPrefix, armOutputLinkMode: true);
                     ToggleLink(target, _pendingLinkTarget, AutomationLinkDirection.Input);
                     _pendingLinkTarget = null;
+                    ArmOutputLinkModeForSelectedController();
                     return true;
                 }
 
-                if (TryToggleControllerTargetLink(target))
+                if (_outputLinkModeArmed &&
+                    TryToggleControllerTargetLink(target))
                     return true;
 
-                SelectAutomationController(target, controllerStatusPrefix);
+                SelectAutomationController(target, controllerStatusPrefix, armOutputLinkMode: true);
                 return true;
             }
 
-            if (_selectedController == null)
+            if (_selectedController == null ||
+                !_outputLinkModeArmed)
             {
                 _pendingLinkTarget = target;
+                _outputLinkModeArmed = false;
                 _status = "Input source selected: " + target.Label + ". Click a Breadboard/controller to read from it.";
                 return true;
             }
@@ -1048,6 +1476,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void OpenAutomationContextMenuAt(Vector2 mouse, int buttonCount)
         {
+            CloseAutomationPropertyPicker();
+            CloseAutomationTargetPicker();
             _contextMenuAnchor = mouse;
             _contextMenuRect = AutomationContextRect(mouse, buttonCount);
         }
@@ -1076,6 +1506,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 !_contextMenuRect.Contains(current.mousePosition))
             {
                 CloseAutomationContextMenu();
+                AutomationInputScope.ClaimBuildInputForFrames();
+                current.Use();
                 return;
             }
 
@@ -1367,17 +1799,18 @@ namespace DecoLimitLifter.AutomationEditMode
             AutomationBlockNode node = ContextBlockNode();
             bool hasNode = node != null;
             int index = node == null ? -1 : BlockNodeIndex(node.Id);
-            int count = _blockWorkspace?.Nodes.Count ?? 0;
+            int count = _blockWorkspace?.ExecutableNodes.Count ?? 0;
+            bool inExecutableStack = node?.SnappedToStack == true;
             yield return new AutomationContextMenuItem(
                 "Move up",
                 AutomationContextAction.MoveBlockUp,
                 "Move this ESU Block one slot up.",
-                hasNode && index > 0);
+                hasNode && inExecutableStack && index > 0);
             yield return new AutomationContextMenuItem(
                 "Move down",
                 AutomationContextAction.MoveBlockDown,
                 "Move this ESU Block one slot down.",
-                hasNode && index >= 0 && index < count - 1);
+                hasNode && inExecutableStack && index >= 0 && index < count - 1);
             yield return new AutomationContextMenuItem(
                 "Delete block",
                 AutomationContextAction.DeleteBlock,
@@ -1410,7 +1843,7 @@ namespace DecoLimitLifter.AutomationEditMode
                     OpenContextEditor();
                     break;
                 case AutomationContextAction.CloseEditor:
-                    CloseEditor();
+                    RequestCloseEditor();
                     _status = "Automation editor closed.";
                     break;
                 case AutomationContextAction.LinkTarget:
@@ -1448,16 +1881,13 @@ namespace DecoLimitLifter.AutomationEditMode
                     ClearContextWireSource();
                     break;
                 case AutomationContextAction.MoveBlockUp:
-                    SelectContextBlockNode();
-                    MoveSelectedEsuBlock(-1);
+                    MoveContextEsuBlock(-1);
                     break;
                 case AutomationContextAction.MoveBlockDown:
-                    SelectContextBlockNode();
-                    MoveSelectedEsuBlock(1);
+                    MoveContextEsuBlock(1);
                     break;
                 case AutomationContextAction.DeleteBlock:
-                    SelectContextBlockNode();
-                    RemoveSelectedEsuBlock();
+                    RemoveContextEsuBlock();
                     break;
             }
 
@@ -1635,6 +2065,46 @@ namespace DecoLimitLifter.AutomationEditMode
                 return;
 
             _blockWorkspace?.Select(node.Id);
+        }
+
+        private bool TrySelectContextBlockNode(out AutomationBlockNode node)
+        {
+            node = ContextBlockNode();
+            if (node == null)
+            {
+                _status = "ESU Block context target is no longer available.";
+                return false;
+            }
+
+            _blockWorkspace?.Select(node.Id);
+            return true;
+        }
+
+        private void MoveContextEsuBlock(int delta)
+        {
+            if (!TrySelectContextBlockNode(out AutomationBlockNode node))
+                return;
+
+            int index = BlockNodeIndex(node.Id);
+            int count = _blockWorkspace?.ExecutableNodes.Count ?? 0;
+            bool canMove = node.SnappedToStack &&
+                           index >= 0 &&
+                           (delta < 0 ? index > 0 : index < count - 1);
+            if (!canMove)
+            {
+                _status = "Only snapped ESU Blocks inside forever can move up or down.";
+                return;
+            }
+
+            MoveSelectedEsuBlock(delta);
+        }
+
+        private void RemoveContextEsuBlock()
+        {
+            if (!TrySelectContextBlockNode(out _))
+                return;
+
+            RemoveSelectedEsuBlock();
         }
 
         private bool CanContextLinkTarget(AutomationTarget target)
@@ -1933,13 +2403,19 @@ namespace DecoLimitLifter.AutomationEditMode
             InvalidateAutomationLinksChanged(status);
         }
 
-        private void SelectAutomationController(AutomationTarget target, string statusPrefix = "Selected controller: ")
+        private void SelectAutomationController(
+            AutomationTarget target,
+            string statusPrefix = "Selected controller: ",
+            bool armOutputLinkMode = false)
         {
             if (target == null)
                 return;
 
             bool changed = _selectedController == null ||
                            !string.Equals(_selectedController.StableKey, target.StableKey, StringComparison.Ordinal);
+            if (changed)
+                PersistSelectedAutomationWorkspaceState(saveProfile: false);
+
             _selectedController = target;
             if (changed)
             {
@@ -1951,11 +2427,26 @@ namespace DecoLimitLifter.AutomationEditMode
                 _selectedCanvasComponentId = NoWireSourceComponentId;
                 _canvasDragComponentId = NoWireSourceComponentId;
                 _canvasDragPreviewDelta = Vector2.zero;
-                ClearAutomationBlockWorkspace();
+                ClearAutomationBlockWorkspace(persistCurrent: false);
                 ClearSystemBlockWorkspace();
+                RestoreSelectedAutomationWorkspaceState();
             }
 
+            _outputLinkModeArmed = armOutputLinkMode && _tool == AutomationTool.Link;
             _status = statusPrefix + target.Label + ".";
+            if (_outputLinkModeArmed)
+            {
+                _status += " Output mode: click a target it should affect, or right-click to exit.";
+            }
+        }
+
+        private void ArmOutputLinkModeForSelectedController()
+        {
+            if (_selectedController == null || _tool != AutomationTool.Link)
+                return;
+
+            _outputLinkModeArmed = true;
+            _status += " Output mode: click a target it should affect, or right-click to exit.";
         }
 
         private bool TryToggleControllerTargetLink(AutomationTarget target)
@@ -2280,18 +2771,46 @@ namespace DecoLimitLifter.AutomationEditMode
                     continue;
                 }
 
-                bool linked = IsLinked(_selectedController, target);
+                bool linked = TryGetLinkedTargetHighlightColor(target, out Color linkedColor);
                 bool hovered = _hoverTarget != null &&
                                string.Equals(_hoverTarget.StableKey, target.StableKey, StringComparison.Ordinal);
                 Color color = target.IsController
                     ? new Color(0.1f, 0.95f, 1f, 0.78f)
                     : linked
-                        ? new Color(0.2f, 1f, 0.65f, 0.86f)
+                        ? linkedColor
                         : CategoryColor(target.Category);
                 float width = hovered ? 2.8f : target.IsController ? 3.2f : 2.2f;
                 float pulse = hovered ? 0.055f : target.IsController ? 0.07f : 0.035f;
                 DrawTargetBox(target, color, width, pulse);
             }
+        }
+
+        private bool TryGetLinkedTargetHighlightColor(AutomationTarget target, out Color color)
+        {
+            color = default(Color);
+            if (_selectedController == null || target == null)
+                return false;
+
+            string controllerKey = _selectedController.StableKey;
+            string targetKey = target.StableKey;
+            AutomationLink selected = SelectedLink();
+            AutomationLink link = selected != null &&
+                                  string.Equals(selected.ControllerKey, controllerKey, StringComparison.Ordinal) &&
+                                  string.Equals(selected.TargetKey, targetKey, StringComparison.Ordinal)
+                ? selected
+                : _links.FirstOrDefault(candidate =>
+                      string.Equals(candidate.ControllerKey, controllerKey, StringComparison.Ordinal) &&
+                      string.Equals(candidate.TargetKey, targetKey, StringComparison.Ordinal) &&
+                      candidate.Direction == AutomationLinkDirection.Output) ??
+                  _links.FirstOrDefault(candidate =>
+                      string.Equals(candidate.ControllerKey, controllerKey, StringComparison.Ordinal) &&
+                      string.Equals(candidate.TargetKey, targetKey, StringComparison.Ordinal) &&
+                      candidate.Direction == AutomationLinkDirection.Input);
+            if (link == null)
+                return false;
+
+            color = AutomationLinkColor(link.Direction, 0.86f);
+            return true;
         }
 
         private bool ShouldDrawAutomationWorldHighlight(AutomationTarget target)
@@ -2447,9 +2966,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 Vector3 end = link.Direction == AutomationLinkDirection.Input
                     ? controllerCenter
                     : targetCenter;
-                Color color = link.Direction == AutomationLinkDirection.Input
-                    ? new Color(0.62f, 0.36f, 1f, 0.96f)
-                    : new Color(0.2f, 1f, 0.65f, 0.96f);
+                Color color = AutomationLinkColor(link.Direction, 0.96f);
                 DecorationEditorOverlay.Arrow(
                     start,
                     end,
@@ -2472,6 +2989,15 @@ namespace DecoLimitLifter.AutomationEditMode
                     2.3f,
                     16);
             }
+        }
+
+        private static Color AutomationLinkColor(
+            AutomationLinkDirection direction,
+            float alpha)
+        {
+            return direction == AutomationLinkDirection.Output
+                ? new Color(0.62f, 0.36f, 1f, alpha)
+                : new Color(0.2f, 1f, 0.65f, alpha);
         }
 
         private static void DrawTargetBox(
@@ -2612,7 +3138,7 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginHorizontal();
             GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth));
             if (ToolbarButton("build", "Auto", "Tab: switch to Decoration Edit Mode.", true))
-                SwitchToDecorationEditRequested = true;
+                RequestSwitchToDecorationEdit();
             if (ToolbarButton("anchor", "Link", "Select controllers and link target blocks.", _tool == AutomationTool.Link))
                 _tool = AutomationTool.Link;
             if (ToolbarButton("create", "Place", "Place the selected Breadboard/ACB controller.", _tool == AutomationTool.Place))
@@ -2639,8 +3165,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 ToggleRightPanelSection(ref _showBlocksSection);
             if (ToolbarButton("filter", "Filter", "Show or hide Automation target filters.", _showRightPanel && _showFilterSection))
                 ToggleRightPanelSection(ref _showFilterSection);
-            if (ToolbarButton("close", "Close", "Close Automation Editor.", false))
-                _closeRequested = true;
+            if (ToolbarButton(null, "Close", "Close Automation Editor.", false))
+                RequestHotkeyClose();
             GUILayout.EndHorizontal();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
@@ -2648,8 +3174,11 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private static bool ToolbarButton(string icon, string label, string tooltip, bool active)
         {
+            Texture image = string.IsNullOrWhiteSpace(icon)
+                ? null
+                : DecorationEditorIconCatalog.Get(icon);
             return AutomationGUILayoutButton(
-                new GUIContent(label, DecorationEditorIconCatalog.Get(icon), tooltip),
+                new GUIContent(label, image, tooltip),
                 DecorationEditorTheme.ToolButton(active),
                 GUILayout.Width(EsuHudLayout.Scale(58f)),
                 GUILayout.Height(EsuHudLayout.Scale(40f)));
@@ -2948,7 +3477,7 @@ namespace DecoLimitLifter.AutomationEditMode
                     GUILayout.Height(controlsHeight)))
             {
                 if (_editorOpen)
-                    CloseEditor();
+                    RequestCloseEditor();
                 else
                     TryOpenEditor();
             }
@@ -3052,6 +3581,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private GUIStyle AutomationStateStyle()
         {
+            if (HasAutomationExitWarningChanges())
+                return DecorationEditorTheme.Warning;
+
             if (_tool == AutomationTool.Place && _selectedPlacement == null)
                 return DecorationEditorTheme.Warning;
 
@@ -3062,6 +3594,11 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private string WorkspaceStageLabel()
         {
+            if (HasUnsavedAutomationWorkspaceChanges())
+                return "Unsaved";
+            if (HasUnappliedAutomationChanges())
+                return "Needs Apply";
+
             if (_editorOpen)
             {
                 if (IsSystemBlockWorkspaceOpen())
@@ -3566,7 +4103,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_linkedTargetSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear linked-target list search."),
+                    new GUIContent("clear", "Clear linked-target list search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -3837,7 +4374,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_runtimeDiagnosticsFilter);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear runtime diagnostics filter."),
+                    new GUIContent("clear", "Clear runtime diagnostics filter."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -4346,7 +4883,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_targetSearchText);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear Automation target search."),
+                    new GUIContent("clear", "Clear Automation target search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -4521,7 +5058,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_controllerIndexSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear Automation controller search."),
+                    new GUIContent("clear", "Clear Automation controller search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -4595,13 +5132,14 @@ namespace DecoLimitLifter.AutomationEditMode
                 if (_pendingLinkTarget != null &&
                     !string.Equals(_pendingLinkTarget.StableKey, target.StableKey, StringComparison.Ordinal))
                 {
-                    SelectAutomationController(target);
+                    SelectAutomationController(target, armOutputLinkMode: true);
                     ToggleLink(target, _pendingLinkTarget, AutomationLinkDirection.Input);
                     _pendingLinkTarget = null;
+                    ArmOutputLinkModeForSelectedController();
                 }
                 else
                 {
-                    SelectAutomationController(target);
+                    SelectAutomationController(target, armOutputLinkMode: true);
                 }
             }
 
@@ -4668,7 +5206,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return string.Empty;
             return target.IsController
                 ? "Click to select this controller, or link it when the selected controller can drive controller targets."
-                : _selectedController == null
+                : _selectedController == null || !_outputLinkModeArmed
                     ? "Click to choose this as an input source, then click a Breadboard/controller."
                     : "Click to link or unlink this target as an output from the selected controller.";
         }
@@ -4682,21 +5220,30 @@ namespace DecoLimitLifter.AutomationEditMode
                 _pendingLinkTarget != null &&
                 !string.Equals(_pendingLinkTarget.StableKey, target.StableKey, StringComparison.Ordinal))
             {
-                SelectAutomationController(target);
+                SelectAutomationController(target, armOutputLinkMode: true);
                 ToggleLink(target, _pendingLinkTarget, AutomationLinkDirection.Input);
                 _pendingLinkTarget = null;
+                ArmOutputLinkModeForSelectedController();
                 return;
             }
 
-            if (target.IsController && !CanLinkControllerTarget(_selectedController, target))
+            if (target.IsController)
             {
-                SelectAutomationController(target);
+                if (_outputLinkModeArmed &&
+                    TryToggleControllerTargetLink(target))
+                {
+                    return;
+                }
+
+                SelectAutomationController(target, armOutputLinkMode: true);
                 return;
             }
 
-            if (_selectedController == null)
+            if (_selectedController == null ||
+                !_outputLinkModeArmed)
             {
                 _pendingLinkTarget = target;
+                _outputLinkModeArmed = false;
                 _status = "Input source selected: " + target.Label + ". Click a Breadboard/controller to read from it.";
                 return;
             }
@@ -4748,11 +5295,22 @@ namespace DecoLimitLifter.AutomationEditMode
                 FitEditorToViewport();
                 _status = "Automation editor fitted to the available viewport.";
             }
+            bool saveEnabled = _selectedController != null;
+            bool previousSaveEnabled = GUI.enabled;
+            GUI.enabled = previousSaveEnabled && saveEnabled;
             if (AutomationGUILayoutButton(
-                    new GUIContent("Close", DecorationEditorIconCatalog.Get("close"), "Close the fullscreen Automation editor."),
+                    new GUIContent("Save", DecorationEditorIconCatalog.Get("save"), "Save linked targets and ESU Blocks for the selected Automation controller."),
+                    saveEnabled
+                        ? DecorationEditorTheme.ToolButton(HasUnsavedAutomationWorkspaceChanges())
+                        : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(68f))))
+                SaveSelectedAutomationWorkspace();
+            GUI.enabled = previousSaveEnabled;
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Close", "Close the fullscreen Automation editor."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(68f))))
-                CloseEditor();
+                RequestCloseEditor();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
 
@@ -5294,7 +5852,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_semanticBlockPaletteSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear semantic ESU block search."),
+                    new GUIContent("clear", "Clear semantic ESU block search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -5418,7 +5976,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_nativeComponentPaletteSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear native Breadboard component search."),
+                    new GUIContent("clear", "Clear native Breadboard component search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -5567,13 +6125,50 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             GUILayout.BeginVertical(DecorationEditorTheme.Panel);
             DrawCompactIconHeader("Linked signals", "link", DecorationEditorTheme.SubHeader);
+            DrawTinkercadLinkedSignalTabs();
             DrawLinkedTargetIdentityGuide();
             DrawTinkercadLinkedSignalSearch();
-            DrawTinkercadLinkedSignalSection(AutomationLinkDirection.Input);
-            GUILayout.Space(EsuHudLayout.Scale(5f));
-            DrawTinkercadLinkedSignalSection(AutomationLinkDirection.Output);
+            DrawTinkercadLinkedSignalSection(_blocksCanvasSignalsTab);
             GUILayout.EndVertical();
             GUILayout.Space(EsuHudLayout.Scale(8f));
+        }
+
+        private void DrawTinkercadLinkedSignalFlyout()
+        {
+            DrawTinkercadLinkedSignalTabs();
+            DrawLinkedTargetIdentityGuide();
+            DrawTinkercadLinkedSignalSearch();
+            GUILayout.Space(EsuHudLayout.Scale(6f));
+            DrawTinkercadLinkedSignalSection(_blocksCanvasSignalsTab);
+            GUILayout.Space(EsuHudLayout.Scale(4f));
+        }
+
+        private void DrawTinkercadLinkedSignalTabs()
+        {
+            GUILayout.BeginHorizontal();
+            DrawTinkercadLinkedSignalTab(AutomationLinkDirection.Input, "Inputs", "visibility");
+            DrawTinkercadLinkedSignalTab(AutomationLinkDirection.Output, "Outputs", "anchor");
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.Space(EsuHudLayout.Scale(5f));
+        }
+
+        private void DrawTinkercadLinkedSignalTab(
+            AutomationLinkDirection direction,
+            string label,
+            string icon)
+        {
+            bool active = _blocksCanvasSignalsTab == direction;
+            if (AutomationGUILayoutButton(
+                    new GUIContent(label, DecorationEditorIconCatalog.Get(icon), "Show linked and available " + label.ToLowerInvariant() + "."),
+                    DecorationEditorTheme.ToolButton(active),
+                    GUILayout.Width(EsuHudLayout.Scale(88f)),
+                    GUILayout.Height(EsuHudLayout.Scale(26f))) &&
+                !active)
+            {
+                _blocksCanvasSignalsTab = direction;
+                _blocksCanvasSignalsScroll = Vector2.zero;
+            }
         }
 
         private void DrawLinkedTargetIdentityGuide()
@@ -5598,7 +6193,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_linkedSignalSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear linked signal search."),
+                    new GUIContent("clear", "Clear linked signal search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -5612,13 +6207,15 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void DrawTinkercadLinkedSignalSection(AutomationLinkDirection direction)
         {
-            string title = direction == AutomationLinkDirection.Input ? "Inputs" : "Outputs";
+            bool input = direction == AutomationLinkDirection.Input;
+            bool output = direction == AutomationLinkDirection.Output;
+            string title = input ? "Inputs" : output ? "Outputs" : "Signals";
             DrawCompactIconHeader(
                 title,
-                direction == AutomationLinkDirection.Input ? "visibility" : "anchor",
+                input ? "visibility" : "anchor",
                 DecorationEditorTheme.SubHeader);
             GUILayout.Label(
-                direction == AutomationLinkDirection.Input
+                input
                     ? "Input links become Read Target blocks and native Generic Block Getter proxy nodes on Apply."
                     : "Output links become Set Target blocks and native Generic Block Setter proxy nodes on Apply.",
                 DecorationEditorTheme.MiniWrap);
@@ -5638,35 +6235,247 @@ namespace DecoLimitLifter.AutomationEditMode
             if (links.Length == 0)
             {
                 GUILayout.Label(
-                    direction == AutomationLinkDirection.Input
+                    input
                         ? "No input links yet. Close the editor or use Link mode: click a target first, then this Breadboard/controller. Then use Add read."
                         : "No output links yet. Close the editor or use Link mode: click this Breadboard/controller first, then the target it should affect. Then use Add set.",
+                    DecorationEditorTheme.MiniWrap);
+            }
+            else if (matchingLinks.Length == 0)
+            {
+                GUILayout.Label(
+                    input
+                        ? "No input links match the current linked signal search. Clear it to show Read/GBG options."
+                        : "No output links match the current linked signal search. Clear it to show Set/GBS options.",
+                    DecorationEditorTheme.Warning);
+            }
+            else
+            {
+                AutomationBlockKind addKind = input
+                    ? AutomationBlockKind.ReadTarget
+                    : AutomationBlockKind.SetTarget;
+                foreach (AutomationLink link in matchingLinks)
+                    DrawTinkercadLinkedSignalRow(link, addKind);
+                if (!string.IsNullOrWhiteSpace(_selectedLinkTargetKey) &&
+                    _selectedLinkDirection == direction &&
+                    links.Any(IsSelectedAutomationLink) &&
+                    !matchingLinks.Any(IsSelectedAutomationLink))
+                {
+                    GUILayout.Label("Selected linked signal is hidden by the current linked signal search.", DecorationEditorTheme.Warning);
+                }
+            }
+
+            DrawTinkercadAvailableSignalTargets(direction);
+        }
+
+        private void DrawTinkercadAvailableSignalTargets(AutomationLinkDirection direction)
+        {
+            AutomationTarget[] available = AvailableSignalTargets(direction);
+            AutomationTarget[] matching = available
+                .Where(target => TinkercadAvailableSignalMatchesSearch(target, direction, _linkedSignalSearch))
+                .Take(SignalFlyoutAvailableTargetLimit)
+                .ToArray();
+            GUILayout.Space(EsuHudLayout.Scale(5f));
+            DrawCompactIconHeader(
+                direction == AutomationLinkDirection.Input ? "Available inputs" : "Available outputs",
+                direction == AutomationLinkDirection.Input ? "visibility" : "anchor",
+                DecorationEditorTheme.SubHeader);
+            GUILayout.Label(
+                matching.Length.ToString(CultureInfo.InvariantCulture) +
+                "/" +
+                available.Length.ToString(CultureInfo.InvariantCulture) +
+                " available target(s) shown. " +
+                (direction == AutomationLinkDirection.Input
+                    ? "Add read links this target as an input and drops a Read block."
+                    : "Add set links this target as an output and drops a Set block."),
+                DecorationEditorTheme.MiniWrap);
+            if (available.Length > SignalFlyoutAvailableTargetLimit)
+            {
+                GUILayout.Label(
+                    "Showing first " +
+                    SignalFlyoutAvailableTargetLimit.ToString(CultureInfo.InvariantCulture) +
+                    " available target(s). Use search to narrow the list.",
+                    DecorationEditorTheme.Warning);
+            }
+
+            if (available.Length == 0)
+            {
+                GUILayout.Label(
+                    direction == AutomationLinkDirection.Input
+                        ? "No readable input targets are available for the selected controller."
+                        : "No writable output targets are available for the selected controller.",
                     DecorationEditorTheme.MiniWrap);
                 return;
             }
 
-            if (matchingLinks.Length == 0)
+            if (matching.Length == 0)
             {
                 GUILayout.Label(
                     direction == AutomationLinkDirection.Input
-                        ? "No input links match the current linked signal search. Clear it to show Read/GBG options."
-                        : "No output links match the current linked signal search. Clear it to show Set/GBS options.",
+                        ? "No available input targets match the current linked signal search."
+                        : "No available output targets match the current linked signal search.",
                     DecorationEditorTheme.Warning);
                 return;
             }
 
+            foreach (AutomationTarget target in matching)
+                DrawTinkercadAvailableSignalRow(target, direction);
+        }
+
+        private AutomationTarget[] AvailableSignalTargets(AutomationLinkDirection direction)
+        {
+            if (_selectedController == null || _targets == null)
+                return Array.Empty<AutomationTarget>();
+
+            string controllerKey = _selectedController.StableKey;
+            HashSet<string> linkedKeys = new HashSet<string>(
+                SelectedLinks
+                    .Where(link => link.Direction == direction)
+                    .Select(link => link.TargetKey)
+                    .Where(key => !string.IsNullOrWhiteSpace(key)),
+                StringComparer.Ordinal);
+            return _targets
+                .Where(target => target != null &&
+                                 !string.Equals(target.StableKey, controllerKey, StringComparison.Ordinal) &&
+                                 !linkedKeys.Contains(target.StableKey))
+                .Where(target => direction == AutomationLinkDirection.Input
+                    ? AutomationTargetCatalog.IsBreadboardReadableTarget(target)
+                    : AutomationTargetCatalog.IsBreadboardWritableTarget(target))
+                .GroupBy(target => target.StableKey, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .OrderBy(target => AutomationTargetCatalog.CategoryLabel(target.Category), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(target => target.Label, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static bool TinkercadAvailableSignalMatchesSearch(
+            AutomationTarget target,
+            AutomationLinkDirection direction,
+            string search)
+        {
+            if (target == null)
+                return false;
+
+            string[] terms = (search ?? string.Empty)
+                .Split(new[] { ' ', '\t', ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(term => term.Trim())
+                .Where(term => !string.IsNullOrWhiteSpace(term))
+                .ToArray();
+            if (terms.Length == 0)
+                return true;
+
+            string haystack =
+                (direction == AutomationLinkDirection.Input ? "input read getter readable" : "output write setter writable") + " " +
+                target.Label + " " +
+                target.StableKey + " " +
+                AutomationTargetCatalog.CategoryLabel(target.Category) + " " +
+                AutomationTargetCatalog.RoleLabel(target) + " " +
+                target.RuntimeType + " " +
+                FormatCell(target.LocalPosition);
+            return terms.All(term =>
+                haystack.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private void DrawTinkercadAvailableSignalRow(
+            AutomationTarget target,
+            AutomationLinkDirection direction)
+        {
+            if (target == null)
+                return;
+
+            Rect row = GUILayoutUtility.GetRect(
+                1f,
+                EsuHudLayout.Scale(38f),
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(38f)));
+            GUI.Box(row, GUIContent.none, DecorationEditorTheme.Row);
+
+            float actionWidth = Mathf.Clamp(row.width * 0.33f, EsuHudLayout.Scale(58f), EsuHudLayout.Scale(92f));
+            Rect actionRect = new Rect(
+                row.xMax - actionWidth - EsuHudLayout.Scale(4f),
+                row.y + EsuHudLayout.Scale(5f),
+                actionWidth,
+                row.height - EsuHudLayout.Scale(10f));
+            Rect textRect = new Rect(
+                row.x,
+                row.y,
+                Mathf.Max(1f, actionRect.x - row.x - EsuHudLayout.Scale(4f)),
+                row.height);
+            DrawAutomationIconRow(
+                textRect,
+                AutomationTargetIconKey(target),
+                target.Label,
+                AutomationTargetCatalog.CategoryLabel(target.Category) + " | " + AutomationTargetCatalog.RoleLabel(target),
+                DecorationEditorTheme.Mini,
+                DecorationEditorTheme.MiniWrap);
+
             AutomationBlockKind addKind = direction == AutomationLinkDirection.Input
                 ? AutomationBlockKind.ReadTarget
                 : AutomationBlockKind.SetTarget;
-            foreach (AutomationLink link in matchingLinks)
-                DrawTinkercadLinkedSignalRow(link, addKind);
-            if (!string.IsNullOrWhiteSpace(_selectedLinkTargetKey) &&
-                _selectedLinkDirection == direction &&
-                links.Any(IsSelectedAutomationLink) &&
-                !matchingLinks.Any(IsSelectedAutomationLink))
+            if (AutomationGUIButton(
+                    actionRect,
+                    new GUIContent(
+                        addKind == AutomationBlockKind.ReadTarget ? "Add read" : "Add set",
+                        DecorationEditorIconCatalog.Get(addKind == AutomationBlockKind.ReadTarget ? "visibility" : "anchor"),
+                        "Link " + target.Label + " as an " + LinkDirectionLabel(direction).ToLowerInvariant() + " and add its ESU block."),
+                    DecorationEditorTheme.Button))
             {
-                GUILayout.Label("Selected linked signal is hidden by the current linked signal search.", DecorationEditorTheme.Warning);
+                AutomationLink link = EnsureAutomationSignalLink(target, direction);
+                AddAutomationBlockForLink(addKind, link);
             }
+
+            Event current = Event.current;
+            if (current != null &&
+                current.type == EventType.MouseDown &&
+                current.button == 0 &&
+                row.Contains(current.mousePosition) &&
+                !actionRect.Contains(current.mousePosition))
+            {
+                EnsureAutomationSignalLink(target, direction);
+                RegisterAutomationTargetPreview(row, target, LinkDirectionLabel(direction) + " target");
+                current.Use();
+            }
+
+            RegisterAutomationTargetPreview(row, target, LinkDirectionLabel(direction) + " target");
+            EsuCursorTooltip.Register(row, "Click to link this target, or use Add to link it and create a block.");
+        }
+
+        private AutomationLink EnsureAutomationSignalLink(
+            AutomationTarget target,
+            AutomationLinkDirection direction)
+        {
+            if (_selectedController == null || target == null)
+                return null;
+
+            string controllerKey = _selectedController.StableKey;
+            string targetKey = target.StableKey;
+            AutomationLink existing = _links.FirstOrDefault(link =>
+                string.Equals(link.ControllerKey, controllerKey, StringComparison.Ordinal) &&
+                string.Equals(link.TargetKey, targetKey, StringComparison.Ordinal) &&
+                link.Direction == direction);
+            if (existing != null)
+            {
+                SelectAutomationLink(existing);
+                return existing;
+            }
+
+            var added = new AutomationLink(_selectedController, target, direction);
+            _links.Add(added);
+            SelectAutomationLink(added);
+            if (direction == AutomationLinkDirection.Output &&
+                AutomationTargetCatalog.IsBreadboardWritableTarget(target))
+            {
+                _automationCodeOutputTargetKey = targetKey;
+            }
+
+            InvalidateAutomationLinksChanged(
+                "Linked " +
+                LinkDirectionLabel(direction).ToLowerInvariant() +
+                ": " +
+                _selectedController.Label +
+                " -> " +
+                target.Label +
+                ".");
+            return added;
         }
 
         private static bool TinkercadLinkedSignalMatchesSearch(
@@ -5865,7 +6674,10 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.BeginArea(viewport);
             GUILayout.BeginHorizontal();
             DrawCompactIconHeader("Block canvas", "outliner", DecorationEditorTheme.SubHeader);
+            bool signalsWasOpen = _blocksCanvasSignalsOpen;
             DrawCanvasFlyoutToggle("Signals", "link", ref _blocksCanvasSignalsOpen, ref _blocksCanvasSystemsOpen, ref _blocksCanvasSignalsScroll);
+            if (!signalsWasOpen && _blocksCanvasSignalsOpen)
+                _blocksCanvasSignalsTab = AutomationLinkDirection.Input;
             DrawCanvasFlyoutToggle("Systems", "duplicate", ref _blocksCanvasSystemsOpen, ref _blocksCanvasSignalsOpen, ref _blocksCanvasSystemsScroll);
             GUILayout.FlexibleSpace();
             GUILayout.Label(
@@ -5900,15 +6712,13 @@ namespace DecoLimitLifter.AutomationEditMode
             ref bool otherOpen,
             ref Vector2 scroll)
         {
-            bool next = GUILayout.Toggle(
-                open,
-                new GUIContent(label, DecorationEditorIconCatalog.Get(icon), "Open " + label + " tools on the canvas."),
-                DecorationEditorTheme.ToolButton(open),
-                GUILayout.Width(EsuHudLayout.Scale(82f)),
-                GUILayout.Height(EsuHudLayout.Scale(24f)));
-            if (next != open)
+            if (AutomationGUILayoutButton(
+                    new GUIContent(label, DecorationEditorIconCatalog.Get(icon), "Open " + label + " tools on the canvas."),
+                    DecorationEditorTheme.ToolButton(open),
+                    GUILayout.Width(EsuHudLayout.Scale(82f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                open = next;
+                open = !open;
                 if (open)
                 {
                     otherOpen = false;
@@ -5924,46 +6734,103 @@ namespace DecoLimitLifter.AutomationEditMode
 
             Rect flyout = BlocksCanvasFlyoutRect(canvas);
             GUI.Box(flyout, GUIContent.none, DecorationEditorTheme.Panel);
-            GUILayout.BeginArea(new Rect(
+
+            Rect header = new Rect(
                 flyout.x + EsuHudLayout.Scale(8f),
                 flyout.y + EsuHudLayout.Scale(8f),
                 flyout.width - EsuHudLayout.Scale(16f),
-                flyout.height - EsuHudLayout.Scale(16f)));
-            GUILayout.BeginHorizontal();
-            DrawCompactIconHeader(_blocksCanvasSignalsOpen ? "Signals" : "Systems", _blocksCanvasSignalsOpen ? "link" : "duplicate", DecorationEditorTheme.SubHeader);
-            if (AutomationGUILayoutButton(
-                    new GUIContent("Close", DecorationEditorIconCatalog.Get("close"), "Close this canvas panel."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(68f)),
-                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                EsuHudLayout.Scale(28f));
+            if (DrawBlocksCanvasFlyoutHeader(
+                    header,
+                    _blocksCanvasSignalsOpen ? "Signals" : "Systems",
+                    _blocksCanvasSignalsOpen ? "link" : "duplicate"))
             {
                 _blocksCanvasSignalsOpen = false;
                 _blocksCanvasSystemsOpen = false;
                 _blocksCanvasSignalsScroll = Vector2.zero;
                 _blocksCanvasSystemsScroll = Vector2.zero;
             }
-            GUILayout.EndHorizontal();
-            if (_blocksCanvasSignalsOpen)
+
+            Rect body = new Rect(
+                flyout.x + EsuHudLayout.Scale(12f),
+                header.yMax + EsuHudLayout.Scale(8f),
+                flyout.width - EsuHudLayout.Scale(24f),
+                flyout.yMax - header.yMax - EsuHudLayout.Scale(18f));
+            GUI.BeginGroup(body);
+            try
             {
-                _blocksCanvasSignalsScroll = GUILayout.BeginScrollView(
-                    _blocksCanvasSignalsScroll,
-                    alwaysShowHorizontal: false,
-                    alwaysShowVertical: true,
-                    GUILayout.Height(Mathf.Max(1f, flyout.height - EsuHudLayout.Scale(52f))));
-                DrawTinkercadLinkedSignalMenus();
-                GUILayout.EndScrollView();
+                Rect localBody = new Rect(0f, 0f, body.width, body.height);
+                GUILayout.BeginArea(localBody);
+                if (_blocksCanvasSignalsOpen)
+                {
+                    _blocksCanvasSignalsScroll = GUILayout.BeginScrollView(
+                        _blocksCanvasSignalsScroll,
+                        alwaysShowHorizontal: false,
+                        alwaysShowVertical: true,
+                        GUILayout.Width(Mathf.Max(1f, body.width)),
+                        GUILayout.Height(Mathf.Max(1f, body.height)));
+                    GUILayout.BeginVertical(GUILayout.Width(Mathf.Max(1f, body.width - EsuHudLayout.Scale(18f))));
+                    DrawTinkercadLinkedSignalFlyout();
+                    GUILayout.EndVertical();
+                    GUILayout.EndScrollView();
+                }
+                else
+                {
+                    _blocksCanvasSystemsScroll = GUILayout.BeginScrollView(
+                        _blocksCanvasSystemsScroll,
+                        alwaysShowHorizontal: false,
+                        alwaysShowVertical: true,
+                        GUILayout.Width(Mathf.Max(1f, body.width)),
+                        GUILayout.Height(Mathf.Max(1f, body.height)));
+                    GUILayout.BeginVertical(GUILayout.Width(Mathf.Max(1f, body.width - EsuHudLayout.Scale(18f))));
+                    DrawBlocksSystemBlockFlyout();
+                    GUILayout.EndVertical();
+                    GUILayout.EndScrollView();
+                }
+                GUILayout.EndArea();
             }
-            else
+            finally
             {
-                _blocksCanvasSystemsScroll = GUILayout.BeginScrollView(
-                    _blocksCanvasSystemsScroll,
-                    alwaysShowHorizontal: false,
-                    alwaysShowVertical: true,
-                    GUILayout.Height(Mathf.Max(1f, flyout.height - EsuHudLayout.Scale(52f))));
-                DrawBlocksSystemBlockPanel();
-                GUILayout.EndScrollView();
+                GUI.EndGroup();
             }
-            GUILayout.EndArea();
+        }
+
+        private bool DrawBlocksCanvasFlyoutHeader(
+            Rect header,
+            string title,
+            string iconKey)
+        {
+            GUI.Label(header, GUIContent.none, DecorationEditorTheme.SubHeader);
+            Texture icon = DecorationEditorIconCatalog.Get(iconKey);
+            Rect iconRect = new Rect(
+                header.x + EsuHudLayout.Scale(7f),
+                header.y + EsuHudLayout.Scale(6f),
+                EsuHudLayout.Scale(16f),
+                EsuHudLayout.Scale(16f));
+            if (icon != null)
+                GUI.DrawTexture(iconRect, icon, ScaleMode.ScaleToFit, alphaBlend: true);
+
+            Rect closeRect = new Rect(
+                header.xMax - EsuHudLayout.Scale(74f),
+                header.y + EsuHudLayout.Scale(3f),
+                EsuHudLayout.Scale(70f),
+                header.height - EsuHudLayout.Scale(6f));
+            Rect titleRect = new Rect(
+                iconRect.xMax + EsuHudLayout.Scale(8f),
+                header.y,
+                Mathf.Max(1f, closeRect.x - iconRect.xMax - EsuHudLayout.Scale(14f)),
+                header.height);
+            DrawFittedSingleLineLabel(
+                titleRect,
+                title,
+                IconHeaderTextStyle(DecorationEditorTheme.SubHeader),
+                TextAnchor.MiddleLeft,
+                EsuHudLayout.FontSize(9));
+
+            return AutomationGUIButton(
+                closeRect,
+                new GUIContent("Close", "Close this canvas panel."),
+                DecorationEditorTheme.Button);
         }
 
         private Rect BlocksCanvasFlyoutRect(Rect canvas)
@@ -5971,8 +6838,12 @@ namespace DecoLimitLifter.AutomationEditMode
             if (!_blocksCanvasSignalsOpen && !_blocksCanvasSystemsOpen)
                 return Rect.zero;
 
-            float width = Mathf.Min(EsuHudLayout.Scale(390f), Mathf.Max(EsuHudLayout.Scale(220f), canvas.width * 0.42f));
-            float height = Mathf.Min(EsuHudLayout.Scale(430f), Mathf.Max(EsuHudLayout.Scale(150f), canvas.height - EsuHudLayout.Scale(24f)));
+            float width = Mathf.Min(
+                canvas.width - EsuHudLayout.Scale(24f),
+                Mathf.Min(EsuHudLayout.Scale(520f), Mathf.Max(EsuHudLayout.Scale(360f), canvas.width * 0.48f)));
+            float height = Mathf.Min(
+                canvas.height - EsuHudLayout.Scale(24f),
+                Mathf.Min(EsuHudLayout.Scale(520f), Mathf.Max(EsuHudLayout.Scale(220f), canvas.height * 0.72f)));
             return new Rect(
                 canvas.x + EsuHudLayout.Scale(12f),
                 canvas.y + EsuHudLayout.Scale(12f),
@@ -6092,13 +6963,6 @@ namespace DecoLimitLifter.AutomationEditMode
                     blockY += height + EsuHudLayout.Scale(8f) * zoom;
                 }
 
-                DrawTinkercadWorkspaceLinks(blockRectsByNodeId);
-                foreach (AutomationBlockNode node in executableNodes)
-                {
-                    if (blockRectsByNodeId.TryGetValue(node.Id, out Rect rect))
-                        DrawTinkercadWorkspaceBlock(rect, node);
-                }
-
                 AutomationBlockNode[] looseNodes = _blockWorkspace.Nodes
                     .Where(node => node != null && !node.SnappedToStack)
                     .OrderBy(node => node.CanvasOrder)
@@ -6112,7 +6976,20 @@ namespace DecoLimitLifter.AutomationEditMode
                         childWidth,
                         height);
                     screenNodeRects.Add(OffsetRect(rect, canvas.x, canvas.y));
-                    DrawTinkercadWorkspaceBlock(rect, node);
+                    blockRectsByNodeId[node.Id] = rect;
+                }
+
+                DrawTinkercadWorkspaceLinks(blockRectsByNodeId);
+                foreach (AutomationBlockNode node in executableNodes)
+                {
+                    if (blockRectsByNodeId.TryGetValue(node.Id, out Rect rect))
+                        DrawTinkercadWorkspaceBlock(rect, node, LocalBlocksCanvasFlyoutRect(canvas));
+                }
+
+                foreach (AutomationBlockNode node in looseNodes)
+                {
+                    if (blockRectsByNodeId.TryGetValue(node.Id, out Rect rect))
+                        DrawTinkercadWorkspaceBlock(rect, node, LocalBlocksCanvasFlyoutRect(canvas));
                 }
 
                 if (executableNodes.Length == 0 && looseNodes.Length == 0)
@@ -6136,11 +7013,31 @@ namespace DecoLimitLifter.AutomationEditMode
         private static Rect OffsetRect(Rect rect, float x, float y) =>
             new Rect(rect.x + x, rect.y + y, rect.width, rect.height);
 
-        private void DrawTinkercadWorkspaceBlock(Rect rect, AutomationBlockNode node)
+        private Rect LocalBlocksCanvasFlyoutRect(Rect canvas)
+        {
+            Rect flyout = BlocksCanvasFlyoutRect(canvas);
+            if (flyout.width <= 1f || flyout.height <= 1f)
+                return Rect.zero;
+
+            return new Rect(
+                flyout.x - canvas.x,
+                flyout.y - canvas.y,
+                flyout.width,
+                flyout.height);
+        }
+
+        private void DrawTinkercadWorkspaceBlock(
+            Rect rect,
+            AutomationBlockNode node,
+            Rect inputBlocker)
         {
             if (node == null)
                 return;
 
+            Event current = Event.current;
+            bool inputBlocked = inputBlocker.width > 1f &&
+                                current != null &&
+                                inputBlocker.Contains(current.mousePosition);
             bool selected = string.Equals(_blockWorkspace.SelectedNodeId, node.Id, StringComparison.Ordinal);
             float uiScale = TinkercadBlockUiScale(rect, node);
             DrawTinkercadBlockShape(
@@ -6152,9 +7049,11 @@ namespace DecoLimitLifter.AutomationEditMode
                 node.Kind == AutomationBlockKind.WhenIf,
                 node.SnappedToStack ? BlockNodeCompatibilityLabel(node) : "loose / not applied",
                 uiScale);
-            DrawTinkercadBlockControls(rect, node, uiScale);
+            if (!inputBlocked)
+                DrawTinkercadBlockControls(rect, node, uiScale);
             DrawTinkercadBlockPorts(rect, node, uiScale);
-            HandleWorkspaceBlockInput(rect, node);
+            if (!inputBlocked)
+                HandleWorkspaceBlockInput(rect, node);
         }
 
         private void DrawTinkercadWorkspaceLinks(Dictionary<string, Rect> blockRectsByNodeId)
@@ -6328,12 +7227,14 @@ namespace DecoLimitLifter.AutomationEditMode
             if (node.Kind == AutomationBlockKind.ReadTarget ||
                 node.Kind == AutomationBlockKind.SetTarget)
             {
-                float rowHeight = Mathf.Max(EsuHudLayout.Scale(14f), EsuHudLayout.Scale(31f) * uiScale);
-                float gap = EsuHudLayout.Scale(7f) * uiScale;
+                float rowHeight = Mathf.Max(EsuHudLayout.Scale(14f), EsuHudLayout.Scale(28f) * uiScale);
+                float gap = EsuHudLayout.Scale(5f) * uiScale;
                 Rect targetRow = new Rect(control.x, control.y, control.width, rowHeight);
                 Rect propertyRow = new Rect(control.x, targetRow.yMax + gap, control.width, rowHeight);
+                Rect valueRow = new Rect(control.x, propertyRow.yMax + gap, control.width, rowHeight);
                 DrawTinkercadTargetPropertyRow(targetRow, node, target: true, uiScale);
                 DrawTinkercadTargetPropertyRow(propertyRow, node, target: false, uiScale);
+                DrawTinkercadTargetValueRow(valueRow, node, uiScale);
                 return;
             }
 
@@ -6401,11 +7302,14 @@ namespace DecoLimitLifter.AutomationEditMode
 
             if (node.Kind == AutomationBlockKind.NativeComponent)
             {
+                string nativeText = string.IsNullOrWhiteSpace(node.NativeSettingsSummary)
+                    ? string.IsNullOrWhiteSpace(node.NativeComponentTypeName)
+                        ? "native component"
+                        : node.NativeComponentTypeName
+                    : node.NativeSettingsSummary;
                 DrawFittedSingleLineLabel(
                     control,
-                    string.IsNullOrWhiteSpace(node.NativeComponentTypeName)
-                        ? "native component"
-                        : node.NativeComponentTypeName,
+                    nativeText,
                     TinkercadBlockTextStyle(TextAnchor.MiddleLeft),
                     TextAnchor.MiddleLeft,
                     EsuHudLayout.FontSize(8));
@@ -6448,14 +7352,18 @@ namespace DecoLimitLifter.AutomationEditMode
             AutomationTarget nodeTarget = _blockWorkspace.TargetForNode(node);
             if (target)
             {
-                if (AutomationGUIButton(
-                        pillRect,
-                        new GUIContent(
-                            string.IsNullOrWhiteSpace(node.TargetLabel) ? "choose linked target" : node.TargetLabel,
-                            DecorationEditorIconCatalog.Get(AutomationTargetIconKey(nodeTarget)),
-                            "Cycle linked " + LinkDirectionLabel(node.LinkDirection).ToLowerInvariant() + " targets available to this ESU Block."),
-                        DecorationEditorTheme.Button))
-                    CycleAutomationBlockTarget(node);
+                DrawAutomationPickerPill(
+                    pillRect,
+                    new GUIContent(
+                        string.IsNullOrWhiteSpace(node.TargetLabel) ? "choose linked target" : node.TargetLabel,
+                        DecorationEditorIconCatalog.Get(AutomationTargetIconKey(nodeTarget)),
+                        "Choose a linked " + LinkDirectionLabel(node.LinkDirection).ToLowerInvariant() + " target for this ESU Block."),
+                    DecorationEditorTheme.Button);
+                if (PrimaryMouseDownIn(row))
+                {
+                    OpenAutomationTargetPicker(node);
+                    Event.current.Use();
+                }
                 RegisterAutomationTargetPreview(pillRect, nodeTarget, node.Label);
                 return;
             }
@@ -6463,16 +7371,152 @@ namespace DecoLimitLifter.AutomationEditMode
             string propertyLabel = node.PropertySelection == null || node.PropertySelection.IsClear
                 ? AutomationBlockPropertyLabel(node)
                 : node.PropertySelection.Label;
-            if (AutomationGUIButton(
-                    pillRect,
-                    new GUIContent(
-                        propertyLabel,
-                        DecorationEditorIconCatalog.Get("filter"),
-                        "Choose the native Generic " + (node.Kind == AutomationBlockKind.ReadTarget ? "Getter" : "Setter") + " property used by Check and Apply."),
-                    DecorationEditorTheme.Button))
+            DrawAutomationPickerPill(
+                pillRect,
+                new GUIContent(
+                    propertyLabel,
+                    DecorationEditorIconCatalog.Get("filter"),
+                    "Choose the native Generic " + (node.Kind == AutomationBlockKind.ReadTarget ? "Getter" : "Setter") + " property used by Check and Apply."),
+                DecorationEditorTheme.Button);
+            if (PrimaryMouseDownIn(row))
             {
                 OpenAutomationPropertyPicker(node);
+                Event.current.Use();
             }
+        }
+
+        private void DrawTinkercadTargetValueRow(
+            Rect row,
+            AutomationBlockNode node,
+            float uiScale)
+        {
+            float labelWidth = Mathf.Clamp(row.width * 0.22f, EsuHudLayout.Scale(34f) * uiScale, EsuHudLayout.Scale(78f) * uiScale);
+            Rect labelRect = new Rect(row.x, row.y, labelWidth, row.height);
+            Rect valueRect = new Rect(
+                labelRect.xMax + EsuHudLayout.Scale(5f) * uiScale,
+                row.y,
+                Mathf.Max(0f, row.xMax - labelRect.xMax - EsuHudLayout.Scale(5f) * uiScale),
+                row.height);
+            DrawFittedSingleLineLabel(
+                labelRect,
+                "current",
+                TinkercadBlockTextStyle(TextAnchor.MiddleLeft),
+                TextAnchor.MiddleLeft,
+                EsuHudLayout.FontSize(8));
+
+            AutomationBlockLiveValueSnapshot snapshot = AutomationBlockLiveValueFor(node);
+            GUI.Label(valueRect, GUIContent.none, DecorationEditorTheme.Row);
+            DrawFittedSingleLineLabel(
+                new Rect(
+                    valueRect.x + EsuHudLayout.Scale(8f) * uiScale,
+                    valueRect.y,
+                    Mathf.Max(0f, valueRect.width - EsuHudLayout.Scale(16f) * uiScale),
+                    valueRect.height),
+                snapshot.Text,
+                TinkercadValueStyle(),
+                TextAnchor.MiddleCenter,
+                EsuHudLayout.FontSize(8));
+            EsuCursorTooltip.Register(valueRect, snapshot.Tooltip);
+        }
+
+        private AutomationBlockLiveValueSnapshot AutomationBlockLiveValueFor(AutomationBlockNode node)
+        {
+            if (node == null)
+            {
+                return new AutomationBlockLiveValueSnapshot(
+                    "select block",
+                    "Select a Read or Set block to inspect its current target value.",
+                    0f);
+            }
+
+            AutomationTarget target = _blockWorkspace?.TargetForNode(node);
+            if (target == null)
+            {
+                return new AutomationBlockLiveValueSnapshot(
+                    "choose linked target",
+                    "Pick the linked target before a current value can be read.",
+                    0f);
+            }
+
+            if (node.PropertySelection == null || node.PropertySelection.IsClear)
+            {
+                return new AutomationBlockLiveValueSnapshot(
+                    "choose property",
+                    "Pick the native Generic " +
+                    (node.Kind == AutomationBlockKind.ReadTarget ? "Getter" : "Setter") +
+                    " property before a current value can be read.",
+                    0f);
+            }
+
+            string key = AutomationBlockLiveValueCacheKey(node, target);
+            float now = Time.realtimeSinceStartup;
+            if (_blockLiveValueCache.TryGetValue(key, out AutomationBlockLiveValueSnapshot cached) &&
+                cached.RefreshAfter > now)
+            {
+                return cached;
+            }
+
+            AutomationBlockLiveValueSnapshot snapshot;
+            if (AutomationBreadboardInspector.TryReadSelectedTargetPropertyValue(
+                    target,
+                    node.PropertySelection,
+                    out string value,
+                    out string reason))
+            {
+                snapshot = new AutomationBlockLiveValueSnapshot(
+                    value,
+                    reason,
+                    now + 0.35f);
+            }
+            else
+            {
+                snapshot = new AutomationBlockLiveValueSnapshot(
+                    "unavailable",
+                    reason ?? "The selected native property did not expose a current value.",
+                    now + 1.25f);
+            }
+
+            _blockLiveValueCache[key] = snapshot;
+            if (_blockLiveValueCache.Count > 64)
+                _blockLiveValueCache.Clear();
+            return snapshot;
+        }
+
+        private static string AutomationBlockLiveValueCacheKey(
+            AutomationBlockNode node,
+            AutomationTarget target)
+        {
+            AutomationProxyPropertySelection selection = node?.PropertySelection;
+            if (node == null || target == null || selection == null)
+                return string.Empty;
+
+            return node.Id + "|" +
+                   node.Kind + "|" +
+                   target.StableKey + "|" +
+                   selection.IsGetter + "|" +
+                   selection.IsGetterReadable + "|" +
+                   selection.ReadableAttributeId.ToString(CultureInfo.InvariantCulture) + "|" +
+                   selection.BlockPropertyId.ToString(CultureInfo.InvariantCulture) + "|" +
+                   selection.BlockSetId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static void DrawAutomationPickerPill(
+            Rect rect,
+            GUIContent content,
+            GUIStyle style)
+        {
+            GUI.Label(rect, GUIContent.none, style);
+            DrawAutomationButtonContent(rect, content, style);
+            EsuCursorTooltip.Register(rect, content?.tooltip);
+        }
+
+        private static bool PrimaryMouseDownIn(Rect rect)
+        {
+            Event current = Event.current;
+            return current != null &&
+                   current.type == EventType.MouseDown &&
+                   current.button == 0 &&
+                   rect.Contains(current.mousePosition);
         }
 
         private void DrawTinkercadFloatStepper(Rect rect, float value, float step, Action<float> apply)
@@ -6601,12 +7645,29 @@ namespace DecoLimitLifter.AutomationEditMode
                     {
                         AddAutomationBlockAt(_dragPaletteBlockKind, dropPosition);
                     }
-                    else if (_draggingWorkspaceBlock &&
-                             _blockWorkspace.MoveNodeToCanvas(_dragWorkspaceBlockId, dropPosition))
+                    else if (_draggingWorkspaceBlock)
                     {
-                        InvalidateEsuBlockPlan();
-                        _status = "Moved ESU Block as loose grid metadata.";
-                        AutomationUiSound.PlayAdd();
+                        AutomationBlockNode draggedNode = _blockWorkspace?.Nodes.FirstOrDefault(node =>
+                            string.Equals(node.Id, _dragWorkspaceBlockId, StringComparison.Ordinal));
+                        if (TryMoveNativeExactWorkspaceBlock(
+                                draggedNode,
+                                dropPosition,
+                                out bool nativeMoveHandled,
+                                out string nativeMoveMessage))
+                        {
+                            RefreshNativeExactWorkspaceAfterNativeCommand(nativeMoveMessage);
+                            AutomationUiSound.PlayAdd();
+                        }
+                        else if (nativeMoveHandled)
+                        {
+                            _status = nativeMoveMessage ?? "Could not move native Breadboard component.";
+                        }
+                        else if (_blockWorkspace.MoveNodeToCanvas(_dragWorkspaceBlockId, dropPosition))
+                        {
+                            InvalidateEsuBlockPlan();
+                            _status = "Moved ESU Block as loose grid metadata.";
+                            AutomationUiSound.PlayAdd();
+                        }
                     }
                 }
             }
@@ -6760,6 +7821,12 @@ namespace DecoLimitLifter.AutomationEditMode
                 LabelRow("Compatibility", AutomationBlockCompatibilityLabel(definition.Compatibility));
                 LabelRow("Validation", BlockNodeValidationLabel(node, definition));
                 LabelRow("Template", node.PaletteTemplateId);
+                if (node.Kind == AutomationBlockKind.NativeComponent && node.NativeImported)
+                {
+                    LabelRow("Native exact", "Imported component " + node.NativeComponentId.ToString(CultureInfo.InvariantCulture));
+                    if (!string.IsNullOrWhiteSpace(node.NativeSettingsSummary))
+                        LabelRow("Settings", node.NativeSettingsSummary);
+                }
                 DecorationEditorTheme.Separator();
                 DrawAutomationBlockNodeControls(node);
                 DecorationEditorTheme.Separator();
@@ -6782,19 +7849,6 @@ namespace DecoLimitLifter.AutomationEditMode
                     RemoveSelectedEsuBlock();
             }
 
-            if (AutomationGUILayoutButton(
-                    new GUIContent("Create starter automation", DecorationEditorIconCatalog.Get("build"), "Rebuild the beginner APS ammo to spinblock angle starter automation from current linked targets."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Height(EsuHudLayout.Scale(26f))))
-            {
-                ClearAutomationBlockWorkspace();
-                EnsureBlockWorkspace();
-                if (TryApplyContextualStarterTemplate())
-                    _status = "Created starter automation from current linked targets. Choose explicit Read/Set properties before Check.";
-                else
-                    _status = "Link an APS input and spinblock output before creating the starter automation.";
-                InvalidateEsuBlockPlan();
-            }
             GUILayout.EndVertical();
         }
 
@@ -6850,6 +7904,8 @@ namespace DecoLimitLifter.AutomationEditMode
             _blockLoweringPlan = null;
             _blockLoweringStatus = "Block stack changed; Check ESU Blocks again before applying.";
             _status = "Added " + PaletteBlockPreviewText(kind) + " ESU Block.";
+            _automationNativeDirty = true;
+            PersistSelectedAutomationWorkspaceState(saveProfile: false);
             AutomationUiSound.PlaySnap();
             return node;
         }
@@ -7187,7 +8243,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 return EsuHudLayout.Scale(78f);
             if (node.Kind == AutomationBlockKind.ReadTarget ||
                 node.Kind == AutomationBlockKind.SetTarget)
-                return EsuHudLayout.Scale(116f) + portExtra;
+                return EsuHudLayout.Scale(148f) + portExtra;
             if (node.Kind == AutomationBlockKind.NativeComponent)
                 return EsuHudLayout.Scale(82f) + portExtra;
             return EsuHudLayout.Scale(76f) + portExtra;
@@ -7476,10 +8532,10 @@ namespace DecoLimitLifter.AutomationEditMode
                         new GUIContent(
                             string.IsNullOrWhiteSpace(node.TargetLabel) ? "Choose target" : node.TargetLabel,
                             DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_blockWorkspace.TargetForNode(node))),
-                            "Cycle linked targets available to this ESU Block."),
+                            "Choose a linked target available to this ESU Block."),
                         DecorationEditorTheme.Button,
                         GUILayout.Height(EsuHudLayout.Scale(24f))))
-                    CycleAutomationBlockTarget(node);
+                    OpenAutomationTargetPicker(node);
                 GUILayout.EndHorizontal();
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("Property", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(110f)));
@@ -7592,6 +8648,243 @@ namespace DecoLimitLifter.AutomationEditMode
             }
         }
 
+        private void OpenAutomationTargetPicker(AutomationBlockNode node)
+        {
+            if (node == null ||
+                (node.Kind != AutomationBlockKind.ReadTarget &&
+                 node.Kind != AutomationBlockKind.SetTarget))
+            {
+                return;
+            }
+
+            EnsureBlockWorkspace();
+            CloseAutomationContextMenu();
+            CloseAutomationPropertyPicker();
+            _blockWorkspace.Select(node.Id);
+            _targetPickerNodeId = node.Id;
+            _targetPickerFilter = string.Empty;
+            _targetPickerScroll = Vector2.zero;
+            float width = Mathf.Min(EsuHudLayout.Scale(440f), Screen.width - EsuHudLayout.Scale(24f));
+            float height = Mathf.Min(EsuHudLayout.Scale(360f), Screen.height - EsuHudLayout.Scale(96f));
+            Vector2 anchor = Event.current == null
+                ? MouseGuiPosition()
+                : GUIUtility.GUIToScreenPoint(Event.current.mousePosition);
+            _targetPickerRect = ClampAutomationPopupRect(
+                new Rect(anchor.x + EsuHudLayout.Scale(18f), anchor.y + EsuHudLayout.Scale(18f), width, height));
+        }
+
+        private void DrawAutomationTargetPicker()
+        {
+            if (string.IsNullOrWhiteSpace(_targetPickerNodeId) ||
+                _blockWorkspace == null)
+            {
+                return;
+            }
+
+            AutomationBlockNode node = _blockWorkspace.Nodes.FirstOrDefault(item =>
+                string.Equals(item.Id, _targetPickerNodeId, StringComparison.Ordinal));
+            if (node == null)
+            {
+                CloseAutomationTargetPicker();
+                return;
+            }
+
+            float width = Mathf.Min(EsuHudLayout.Scale(440f), Screen.width - EsuHudLayout.Scale(24f));
+            float height = Mathf.Min(EsuHudLayout.Scale(360f), Screen.height - EsuHudLayout.Scale(96f));
+            if (_targetPickerRect.width <= 1f || _targetPickerRect.height <= 1f)
+                _targetPickerRect = ClampAutomationPopupRect(new Rect(EsuHudLayout.Scale(24f), EsuHudLayout.Scale(82f), width, height));
+            _targetPickerRect.width = width;
+            _targetPickerRect.height = height;
+            _targetPickerRect = ClampAutomationPopupRect(_targetPickerRect);
+            if (ConsumeOutsideAutomationPopupClick(_targetPickerRect, CloseAutomationTargetPicker))
+                return;
+
+            int previousDepth = GUI.depth;
+            GUI.depth = Math.Min(previousDepth, -11000);
+            try
+            {
+                GUI.Window(_targetPickerWindowId, _targetPickerRect, _ => DrawAutomationTargetPickerWindow(node, width, height), GUIContent.none, GUIStyle.none);
+                GUI.BringWindowToFront(_targetPickerWindowId);
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
+            }
+        }
+
+        private void SelectAutomationBlockTarget(
+            AutomationBlockNode node,
+            AutomationTarget target)
+        {
+            if (node == null ||
+                target == null ||
+                _blockWorkspace == null)
+            {
+                return;
+            }
+
+            if (string.Equals(node.TargetKey, target.StableKey, StringComparison.Ordinal) ||
+                !string.IsNullOrWhiteSpace(node.TargetPersistenceKey) &&
+                string.Equals(node.TargetPersistenceKey, target.PersistenceKey, StringComparison.Ordinal))
+            {
+                _status = node.Label + " already uses " + target.Label + ".";
+                CloseAutomationTargetPicker();
+                return;
+            }
+
+            AutomationLinkDirection direction = node.Kind == AutomationBlockKind.ReadTarget
+                ? AutomationLinkDirection.Input
+                : AutomationLinkDirection.Output;
+            if (_blockWorkspace.SetNodeTarget(node.Id, target, direction))
+            {
+                InvalidateEsuBlockPlan();
+                _status = node.Label + " now uses " + target.Label + ". Choose its property before Check.";
+            }
+            CloseAutomationTargetPicker();
+        }
+
+        private void DrawAutomationTargetPickerWindow(
+            AutomationBlockNode node,
+            float width,
+            float height)
+        {
+            GUI.Box(new Rect(0f, 0f, width, height), GUIContent.none, DecorationEditorTheme.Panel);
+            float inset = EsuHudLayout.Scale(8f);
+            GUILayout.BeginArea(new Rect(inset, inset, width - inset * 2f, height - inset * 2f));
+            GUILayout.BeginHorizontal();
+            DrawCompactIconHeader(
+                (node.Kind == AutomationBlockKind.ReadTarget ? "Read input" : "Write output"),
+                node.Kind == AutomationBlockKind.ReadTarget ? "visibility" : "anchor",
+                DecorationEditorTheme.SubHeader);
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Close", "Close target picker."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(64f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+                CloseAutomationTargetPicker();
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Filter", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(52f)));
+            string nextFilter = GUILayout.TextField(_targetPickerFilter ?? string.Empty, DecorationEditorTheme.TextField, GUILayout.Height(EsuHudLayout.Scale(24f)));
+            if (!string.Equals(nextFilter, _targetPickerFilter, StringComparison.Ordinal))
+            {
+                _targetPickerFilter = nextFilter ?? string.Empty;
+                _targetPickerScroll = Vector2.zero;
+            }
+            GUILayout.EndHorizontal();
+
+            AutomationLinkDirection direction = node.Kind == AutomationBlockKind.ReadTarget
+                ? AutomationLinkDirection.Input
+                : AutomationLinkDirection.Output;
+            AutomationTarget[] options = BlockTargetOptions(node.Kind);
+            AutomationTarget[] matchingOptions = options
+                .Where(target => AutomationTargetPickerMatchesSearch(target, direction, _targetPickerFilter))
+                .ToArray();
+            GUILayout.Label(
+                "Choose linked " +
+                (direction == AutomationLinkDirection.Input ? "Input" : "Output") +
+                " target. Changing target resets the property selection.",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.Label(
+                "Targets shown: " +
+                matchingOptions.Length.ToString(CultureInfo.InvariantCulture) +
+                "/" +
+                options.Length.ToString(CultureInfo.InvariantCulture) +
+                ".",
+                DecorationEditorTheme.MiniWrap);
+
+            _targetPickerScroll = GUILayout.BeginScrollView(
+                _targetPickerScroll,
+                alwaysShowHorizontal: false,
+                alwaysShowVertical: true,
+                GUILayout.Height(height - EsuHudLayout.Scale(118f)));
+            if (options.Length == 0)
+            {
+                GUILayout.Label(
+                    direction == AutomationLinkDirection.Input
+                        ? "No linked Inputs are available. Use Signals or Link mode to add an input first."
+                        : "No linked Outputs are available. Use Signals or Link mode to add an output first.",
+                    DecorationEditorTheme.Warning);
+            }
+            else if (matchingOptions.Length == 0)
+            {
+                GUILayout.Label("No linked targets match the current filter.", DecorationEditorTheme.Warning);
+            }
+
+            foreach (AutomationTarget target in matchingOptions)
+            {
+                if (target == null)
+                    continue;
+
+                bool selected =
+                    string.Equals(node.TargetKey, target.StableKey, StringComparison.Ordinal) ||
+                    !string.IsNullOrWhiteSpace(node.TargetPersistenceKey) &&
+                    string.Equals(node.TargetPersistenceKey, target.PersistenceKey, StringComparison.Ordinal);
+                Rect row = GUILayoutUtility.GetRect(
+                    1f,
+                    EsuHudLayout.Scale(46f),
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(46f)));
+                GUI.Label(row, GUIContent.none, selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+                DrawAutomationIconRow(
+                    row,
+                    AutomationTargetIconKey(target),
+                    target.Label,
+                    AutomationTargetCatalog.CategoryLabel(target.Category) + " | " + AutomationTargetCatalog.RoleLabel(target),
+                    selected ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini,
+                    DecorationEditorTheme.MiniWrap);
+                RegisterAutomationTargetPreview(row, target, direction == AutomationLinkDirection.Input ? "Input target" : "Output target");
+                EsuCursorTooltip.Register(row, "Use this linked target for the selected ESU Block.");
+                if (PrimaryMouseDownIn(row))
+                {
+                    SelectAutomationBlockTarget(node, target);
+                    Event.current.Use();
+                    GUILayout.EndScrollView();
+                    GUILayout.EndArea();
+                    return;
+                }
+            }
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        private void CloseAutomationTargetPicker()
+        {
+            _targetPickerNodeId = string.Empty;
+            _targetPickerRect = Rect.zero;
+            _targetPickerFilter = string.Empty;
+            _targetPickerScroll = Vector2.zero;
+        }
+
+        private static bool AutomationTargetPickerMatchesSearch(
+            AutomationTarget target,
+            AutomationLinkDirection direction,
+            string search)
+        {
+            if (target == null)
+                return false;
+
+            string[] terms = (search ?? string.Empty)
+                .Split(new[] { ' ', '\t', ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(term => term.Trim())
+                .Where(term => !string.IsNullOrWhiteSpace(term))
+                .ToArray();
+            if (terms.Length == 0)
+                return true;
+
+            string haystack =
+                (direction == AutomationLinkDirection.Input ? "input read getter " : "output write setter ") +
+                (target.Label ?? string.Empty) + " " +
+                (target.StableKey ?? string.Empty) + " " +
+                (target.RuntimeType ?? string.Empty) + " " +
+                AutomationTargetCatalog.CategoryLabel(target.Category) + " " +
+                AutomationTargetCatalog.RoleLabel(target) + " " +
+                FormatCell(target.LocalPosition);
+            return terms.All(term =>
+                haystack.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         private void OpenAutomationPropertyPicker(AutomationBlockNode node)
         {
             if (node == null ||
@@ -7603,6 +8896,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
             EnsureBlockWorkspace();
             CloseAutomationContextMenu();
+            CloseAutomationTargetPicker();
             _blockWorkspace.Select(node.Id);
             _propertyPickerNodeId = node.Id;
             _propertyPickerFilter = string.Empty;
@@ -7640,6 +8934,8 @@ namespace DecoLimitLifter.AutomationEditMode
             _propertyPickerRect.width = width;
             _propertyPickerRect.height = height;
             _propertyPickerRect = ClampAutomationPopupRect(_propertyPickerRect);
+            if (ConsumeOutsideAutomationPopupClick(_propertyPickerRect, CloseAutomationPropertyPicker))
+                return;
 
             int previousDepth = GUI.depth;
             GUI.depth = Math.Min(previousDepth, -11000);
@@ -7660,6 +8956,22 @@ namespace DecoLimitLifter.AutomationEditMode
             rect.x = Mathf.Clamp(rect.x, margin, Mathf.Max(margin, Screen.width - rect.width - margin));
             rect.y = Mathf.Clamp(rect.y, margin, Mathf.Max(margin, Screen.height - rect.height - margin));
             return rect;
+        }
+
+        private bool ConsumeOutsideAutomationPopupClick(Rect rect, Action close)
+        {
+            Event current = Event.current;
+            if (current == null ||
+                current.type != EventType.MouseDown ||
+                rect.Contains(current.mousePosition))
+            {
+                return false;
+            }
+
+            close?.Invoke();
+            AutomationInputScope.ClaimBuildInputForFrames();
+            current.Use();
+            return true;
         }
 
         private void SelectAutomationBlockProperty(
@@ -7761,27 +9073,21 @@ namespace DecoLimitLifter.AutomationEditMode
                                 option.Selection != null &&
                                 node.PropertySelection.Matches(option.Selection);
                 Rect row = GUILayoutUtility.GetRect(1f, EsuHudLayout.Scale(42f), GUILayout.ExpandWidth(true), GUILayout.Height(EsuHudLayout.Scale(42f)));
-                bool rowSelected = AutomationGUIButton(
+                GUI.Label(row, GUIContent.none, selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
+                DrawAutomationIconRow(
                     row,
-                    new GUIContent(
-                        option.Label,
-                        DecorationEditorIconCatalog.Get(node.Kind == AutomationBlockKind.ReadTarget ? "visibility" : "anchor"),
-                        option.Tooltip),
-                    selected ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row);
-                Event current = Event.current;
-                if (!rowSelected &&
-                    current != null &&
-                    current.type == EventType.MouseDown &&
-                    current.button == 0 &&
-                    row.Contains(current.mousePosition))
-                {
-                    rowSelected = true;
-                    current.Use();
-                }
-
-                if (rowSelected)
+                    node.Kind == AutomationBlockKind.ReadTarget ? "visibility" : "anchor",
+                    option.Label,
+                    option.Tooltip,
+                    selected ? DecorationEditorTheme.Body : DecorationEditorTheme.Mini,
+                    DecorationEditorTheme.MiniWrap);
+                EsuCursorTooltip.Register(row, option.Tooltip);
+                if (PrimaryMouseDownIn(row))
                 {
                     SelectAutomationBlockProperty(node, option);
+                    Event.current.Use();
+                    GUILayout.EndScrollView();
+                    GUILayout.EndArea();
                     return;
                 }
             }
@@ -7918,7 +9224,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
             _previewTarget = target;
             _previewReason = reason ?? string.Empty;
-            _previewSourceRect = sourceRect;
+            _previewSourceRect = GuiToScreenRect(sourceRect);
             _hoverTarget = target;
         }
 
@@ -7927,51 +9233,71 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_previewTarget == null || Event.current == null)
                 return;
 
-            float width = EsuHudLayout.Scale(330f);
-            float height = EsuHudLayout.Scale(150f);
-            Vector2 mouse = Event.current.mousePosition;
-            Rect rect = new Rect(
-                Mathf.Clamp(mouse.x + EsuHudLayout.Scale(24f), EsuHudLayout.Scale(8f), Screen.width - width - EsuHudLayout.Scale(8f)),
-                Mathf.Clamp(mouse.y + EsuHudLayout.Scale(24f), EsuHudLayout.Scale(8f), Screen.height - height - EsuHudLayout.Scale(8f)),
-                width,
-                height);
-            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
-
-            Rect previewRect = new Rect(
-                rect.x + EsuHudLayout.Scale(10f),
-                rect.y + EsuHudLayout.Scale(32f),
-                EsuHudLayout.Scale(104f),
-                EsuHudLayout.Scale(104f));
-            Texture preview = _targetPreviewRenderer.GetPreview(_previewTarget, 128, _targetPreviewSpin);
-            if (preview != null)
+            int previousDepth = GUI.depth;
+            GUI.depth = Math.Min(previousDepth, -12000);
+            try
             {
-                GUI.DrawTexture(previewRect, preview, ScaleMode.ScaleToFit, alphaBlend: true);
-            }
-            else
-            {
-                GUI.Label(previewRect, new GUIContent(string.Empty, DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_previewTarget))), DecorationEditorTheme.Row);
-            }
+                float width = EsuHudLayout.Scale(330f);
+                float height = EsuHudLayout.Scale(150f);
+                Vector2 mouse = Event.current.mousePosition;
+                Vector2 anchor = PreviewCardAnchor(mouse, _previewSourceRect);
+                Rect rect = new Rect(
+                    Mathf.Clamp(anchor.x + EsuHudLayout.Scale(18f), EsuHudLayout.Scale(8f), Screen.width - width - EsuHudLayout.Scale(8f)),
+                    Mathf.Clamp(anchor.y + EsuHudLayout.Scale(18f), EsuHudLayout.Scale(8f), Screen.height - height - EsuHudLayout.Scale(8f)),
+                    width,
+                    height);
+                GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
 
-            GUI.BeginGroup(rect);
-            GUI.Label(
-                new Rect(EsuHudLayout.Scale(8f), EsuHudLayout.Scale(6f), rect.width - EsuHudLayout.Scale(16f), EsuHudLayout.Scale(24f)),
-                new GUIContent(" " + _previewReason, DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_previewTarget))),
-                DecorationEditorTheme.SubHeader);
-            float textX = EsuHudLayout.Scale(126f);
-            float textWidth = rect.width - textX - EsuHudLayout.Scale(10f);
-            GUI.Label(
-                new Rect(textX, EsuHudLayout.Scale(38f), textWidth, EsuHudLayout.Scale(24f)),
-                _previewTarget.Label,
-                DecorationEditorTheme.Body);
-            GUI.Label(
-                new Rect(textX, EsuHudLayout.Scale(64f), textWidth, EsuHudLayout.Scale(28f)),
-                AutomationTargetCatalog.CategoryLabel(_previewTarget.Category) + " | " + FormatCell(_previewTarget.LocalPosition),
-                DecorationEditorTheme.Mini);
-            GUI.Label(
-                new Rect(textX, EsuHudLayout.Scale(94f), textWidth, EsuHudLayout.Scale(44f)),
-                AutomationTargetCatalog.RoleLabel(_previewTarget),
-                DecorationEditorTheme.MiniWrap);
-            GUI.EndGroup();
+                Rect previewRect = new Rect(
+                    rect.x + EsuHudLayout.Scale(10f),
+                    rect.y + EsuHudLayout.Scale(32f),
+                    EsuHudLayout.Scale(104f),
+                    EsuHudLayout.Scale(104f));
+                Texture preview = _targetPreviewRenderer.GetPreview(_previewTarget, 128, _targetPreviewSpin);
+                if (preview != null)
+                {
+                    GUI.DrawTexture(previewRect, preview, ScaleMode.ScaleToFit, alphaBlend: true);
+                }
+                else
+                {
+                    GUI.Label(previewRect, new GUIContent(string.Empty, DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_previewTarget))), DecorationEditorTheme.Row);
+                }
+
+                GUI.BeginGroup(rect);
+                GUI.Label(
+                    new Rect(EsuHudLayout.Scale(8f), EsuHudLayout.Scale(6f), rect.width - EsuHudLayout.Scale(16f), EsuHudLayout.Scale(24f)),
+                    new GUIContent(" " + _previewReason, DecorationEditorIconCatalog.Get(AutomationTargetIconKey(_previewTarget))),
+                    DecorationEditorTheme.SubHeader);
+                float textX = EsuHudLayout.Scale(126f);
+                float textWidth = rect.width - textX - EsuHudLayout.Scale(10f);
+                GUI.Label(
+                    new Rect(textX, EsuHudLayout.Scale(38f), textWidth, EsuHudLayout.Scale(24f)),
+                    _previewTarget.Label,
+                    DecorationEditorTheme.Body);
+                GUI.Label(
+                    new Rect(textX, EsuHudLayout.Scale(64f), textWidth, EsuHudLayout.Scale(28f)),
+                    AutomationTargetCatalog.CategoryLabel(_previewTarget.Category) + " | " + FormatCell(_previewTarget.LocalPosition),
+                    DecorationEditorTheme.Mini);
+                GUI.Label(
+                    new Rect(textX, EsuHudLayout.Scale(94f), textWidth, EsuHudLayout.Scale(44f)),
+                    AutomationTargetCatalog.RoleLabel(_previewTarget),
+                    DecorationEditorTheme.MiniWrap);
+                GUI.EndGroup();
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
+            }
+        }
+
+        private static Vector2 PreviewCardAnchor(Vector2 mouse, Rect sourceScreenRect)
+        {
+            if (sourceScreenRect.width <= 1f || sourceScreenRect.height <= 1f)
+                return mouse;
+
+            return new Vector2(
+                Mathf.Max(mouse.x, sourceScreenRect.xMax),
+                Mathf.Clamp(mouse.y, sourceScreenRect.yMin, sourceScreenRect.yMax));
         }
 
         private void DrawBlocksLoweringPanel()
@@ -7979,20 +9305,42 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.Space(EsuHudLayout.Scale(8f));
             DrawCompactIconHeader("Native lowering", "settings", DecorationEditorTheme.SubHeader);
             GUILayout.BeginVertical(DecorationEditorTheme.Panel);
-            GUILayout.Label("Check validates the native plan without mutation. Apply lowers through Breadboard nodes and tracks generated component ids for Revert.", DecorationEditorTheme.MiniWrap);
+            bool nativeExact = _blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact;
+            GUILayout.Label(
+                nativeExact
+                    ? "Native exact import: these blocks mirror the selected vanilla Breadboard graph. Edits should preserve manual native work; semantic Check/Apply is for ESU recipe workspaces."
+                    : "Check validates the native plan without mutation. Apply lowers through Breadboard nodes and tracks generated component ids for Revert.",
+                DecorationEditorTheme.MiniWrap);
+            if (nativeExact && !string.IsNullOrWhiteSpace(_blockWorkspace.NativeImportStatus))
+                GUILayout.Label(_blockWorkspace.NativeImportStatus, DecorationEditorTheme.Body);
             GUILayout.BeginHorizontal();
             if (AutomationGUILayoutButton(
+                    new GUIContent(
+                        "Refresh from native",
+                        DecorationEditorIconCatalog.Get("reload"),
+                        "Rebuild ESU Blocks from the selected controller's live native Breadboard graph."),
+                    _confirmNativeRefreshFromNative ? DecorationEditorTheme.Warning : DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(132f)),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
+                RefreshBlocksFromNative();
+            bool previousSemanticEnabled = GUI.enabled;
+            GUI.enabled = previousSemanticEnabled && !nativeExact;
+            if (AutomationGUILayoutButton(
                     new GUIContent("Check blocks", DecorationEditorIconCatalog.Get("risk"), "Validate ESU Blocks and preview native lowering."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(112f)),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(98f)),
                     GUILayout.Height(EsuHudLayout.Scale(28f))))
                 CheckEsuBlocks();
             if (AutomationGUILayoutButton(
                     new GUIContent("Apply blocks", DecorationEditorIconCatalog.Get("save"), "Lower ESU Blocks into native Breadboard nodes."),
-                    DecorationEditorTheme.Button,
-                    GUILayout.Width(EsuHudLayout.Scale(112f)),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(98f)),
                     GUILayout.Height(EsuHudLayout.Scale(28f))))
                 ApplyEsuBlocks();
+            GUI.enabled = previousSemanticEnabled;
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
             bool previous = GUI.enabled;
             GUI.enabled = previous && CanRevertLastAutomationCompile();
             if (AutomationGUILayoutButton(
@@ -8088,12 +9436,45 @@ namespace DecoLimitLifter.AutomationEditMode
             GUILayout.EndVertical();
         }
 
+        private void DrawBlocksSystemBlockFlyout()
+        {
+            GUILayout.Label(
+                "Collapse snapped ESU Blocks into a reusable System Block. Loose grid blocks stay scratch-only until snapped.",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.BeginHorizontal();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Collapse", DecorationEditorIconCatalog.Get("duplicate"), "Create a reusable System Block from snapped ESU Blocks."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(30f))))
+                CollapseEsuBlocksToSystemBlock();
+            if (AutomationGUILayoutButton(
+                    new GUIContent("Open Systems", DecorationEditorIconCatalog.Get("open"), "Open Advanced System Block template tools."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(30f))))
+                _editorPage = AutomationEditorPage.System;
+            GUILayout.EndHorizontal();
+            DrawSystemBlockTemplateList();
+        }
+
         private void EnsureBlockWorkspace()
         {
             string controllerKey = _selectedController?.StableKey ?? string.Empty;
             if (_blockWorkspace == null ||
                 !string.Equals(_blockWorkspaceControllerKey, controllerKey, StringComparison.Ordinal))
             {
+                if (TryCreateNativeExactWorkspaceFromSelectedController(
+                        out AutomationBlockWorkspace importedWorkspace,
+                        out string importMessage))
+                {
+                    _blockWorkspace = importedWorkspace;
+                    _blockWorkspaceControllerKey = controllerKey;
+                    _blockLoweringPlan = null;
+                    _blockLoweringStatus = importMessage;
+                    _status = importMessage;
+                    RefreshDirectionalBlockTargets();
+                    return;
+                }
+
                 _blockWorkspace = AutomationBlockWorkspace.CreateDefault(
                     controllerKey,
                     _selectedController?.Label ?? "Automation controller",
@@ -8101,6 +9482,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 _blockWorkspaceControllerKey = controllerKey;
                 _blockLoweringPlan = null;
                 _blockLoweringStatus = "ESU Blocks canvas is empty. Drag blocks onto the grid; drop near forever to make them executable.";
+                if (!string.IsNullOrWhiteSpace(importMessage))
+                    _blockLoweringStatus = importMessage + " New ESU semantic workspace opened instead.";
                 RefreshDirectionalBlockTargets();
                 return;
             }
@@ -8108,6 +9491,240 @@ namespace DecoLimitLifter.AutomationEditMode
             _blockWorkspace.ReplaceTargets(
                 SelectedLinks.Select(link => link.Target).Where(target => target != null).ToArray());
             RefreshDirectionalBlockTargets();
+        }
+
+        private bool TryCreateNativeExactWorkspaceFromSelectedController(
+            out AutomationBlockWorkspace workspace,
+            out string message)
+        {
+            workspace = null;
+            message = null;
+            if (_selectedController == null ||
+                !IsBreadboardController(_selectedController.Controller))
+            {
+                return false;
+            }
+
+            if (!AutomationBreadboardInspector.TryCreate(
+                    _selectedController.Block,
+                    _selectedController.Controller,
+                    out AutomationBreadboardInspector inspector,
+                    out string inspectorMessage))
+            {
+                message = inspectorMessage ?? "Selected controller does not expose a native Breadboard graph.";
+                return false;
+            }
+
+            if (!inspector.TryCaptureNativeGraphSnapshot(
+                    out AutomationNativeGraphSnapshot snapshot,
+                    out string importMessage))
+            {
+                message = importMessage;
+                return false;
+            }
+
+            if (snapshot == null || !snapshot.HasNativeGraph)
+            {
+                message = "Native exact import found no vanilla Breadboard components.";
+                return false;
+            }
+
+            workspace = AutomationBlockWorkspace.FromNativeGraphSnapshot(
+                _selectedController.StableKey,
+                _selectedController.Label,
+                snapshot);
+            message = importMessage;
+            return true;
+        }
+
+        private void RefreshBlocksFromNative()
+        {
+            if (_selectedController == null)
+            {
+                _status = "Select a Breadboard controller before refreshing ESU Blocks from native.";
+                return;
+            }
+
+            if (HasUnsavedAutomationWorkspaceChanges() &&
+                !_confirmNativeRefreshFromNative)
+            {
+                _confirmNativeRefreshFromNative = true;
+                _status = "Refresh from native will discard unsaved ESU Blocks layout. Click Refresh from native again to confirm.";
+                InfoStore.Add(_status);
+                return;
+            }
+
+            DiscardUnsavedAutomationWorkspaceStaging();
+            if (!TryCreateNativeExactWorkspaceFromSelectedController(
+                    out AutomationBlockWorkspace importedWorkspace,
+                    out string importMessage))
+            {
+                _confirmNativeRefreshFromNative = false;
+                _status = importMessage ?? "No native Breadboard graph was available to import.";
+                _blockLoweringStatus = _status;
+                return;
+            }
+
+            _blockWorkspace = importedWorkspace;
+            _blockWorkspaceControllerKey = _selectedController.StableKey;
+            _blockLoweringPlan = null;
+            _blockLoweringStatus = importMessage;
+            _automationNativeDirty = false;
+            _confirmNativeRefreshFromNative = false;
+            PersistSelectedAutomationWorkspaceState(saveProfile: false);
+            _status = importMessage + " Save to keep this ESU layout; vanilla behavior already lives in the native Breadboard.";
+        }
+
+        private bool TryMoveNativeExactWorkspaceBlock(
+            AutomationBlockNode node,
+            AutomationBlockCanvasPosition dropPosition,
+            out bool handled,
+            out string message)
+        {
+            handled = IsNativeExactImportedNode(node);
+            message = null;
+            if (!handled)
+                return false;
+
+            if (!TryFindNativeExactComponent(
+                    node,
+                    out AutomationBreadboardInspector inspector,
+                    out AutomationBreadboardComponentSummary component,
+                    out message))
+            {
+                return false;
+            }
+
+            float deltaX = dropPosition.X - node.CanvasPosition.X;
+            float deltaY = dropPosition.Y - node.CanvasPosition.Y;
+            if (Math.Abs(deltaX) < 0.01f && Math.Abs(deltaY) < 0.01f)
+            {
+                message = "Native component position unchanged.";
+                return true;
+            }
+
+            return inspector.TryMoveComponent(component, deltaX, deltaY, out message);
+        }
+
+        private bool TryDeleteNativeExactWorkspaceBlock(
+            AutomationBlockNode node,
+            out bool handled,
+            out string message)
+        {
+            handled = IsNativeExactImportedNode(node);
+            message = null;
+            if (!handled)
+                return false;
+
+            if (!TryFindNativeExactComponent(
+                    node,
+                    out AutomationBreadboardInspector inspector,
+                    out AutomationBreadboardComponentSummary component,
+                    out message))
+            {
+                return false;
+            }
+
+            uint deletedId = component.UniqueId;
+            if (!inspector.TryDeleteComponent(component, out message))
+                return false;
+
+            ClearBreadboardComponentTransientState(deletedId);
+            return true;
+        }
+
+        private bool TryFindNativeExactComponent(
+            AutomationBlockNode node,
+            out AutomationBreadboardInspector inspector,
+            out AutomationBreadboardComponentSummary component,
+            out string message)
+        {
+            inspector = null;
+            component = null;
+            message = null;
+
+            if (!IsNativeExactImportedNode(node))
+            {
+                message = "Select an imported native Breadboard block first.";
+                return false;
+            }
+
+            if (node.NativeComponentId == 0U)
+            {
+                message = "This native block has only a fingerprint identity; FtD command edits require a component id.";
+                return false;
+            }
+
+            if (_selectedController == null)
+            {
+                message = "Select a Breadboard controller before editing native blocks.";
+                return false;
+            }
+
+            if (!AutomationBreadboardInspector.TryCreate(
+                    _selectedController.Block,
+                    _selectedController.Controller,
+                    out inspector,
+                    out string inspectorMessage))
+            {
+                message = inspectorMessage ?? "Selected controller does not expose a native Breadboard graph.";
+                return false;
+            }
+
+            component = FindComponentById(inspector.Components, node.NativeComponentId);
+            if (component == null)
+            {
+                message = "The imported native component is no longer present; refresh ESU Blocks from native.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsNativeExactImportedNode(AutomationBlockNode node) =>
+            _blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact &&
+            node != null &&
+            node.Kind == AutomationBlockKind.NativeComponent &&
+            node.NativeImported;
+
+        private void RefreshNativeExactWorkspaceAfterNativeCommand(string nativeMessage)
+        {
+            string controllerKey = _selectedController?.StableKey ?? string.Empty;
+            string statusPrefix = string.IsNullOrWhiteSpace(nativeMessage)
+                ? "Native Breadboard command applied."
+                : nativeMessage;
+
+            if (TryCreateNativeExactWorkspaceFromSelectedController(
+                    out AutomationBlockWorkspace importedWorkspace,
+                    out string importMessage))
+            {
+                _blockWorkspace = importedWorkspace;
+                _blockWorkspaceControllerKey = controllerKey;
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = statusPrefix + " " + importMessage;
+                _automationNativeDirty = false;
+                _confirmNativeRefreshFromNative = false;
+                RefreshDirectionalBlockTargets();
+                PersistSelectedAutomationWorkspaceState(saveProfile: false);
+                _status = _blockLoweringStatus;
+                return;
+            }
+
+            _blockWorkspace = AutomationBlockWorkspace.FromNativeGraphSnapshot(
+                controllerKey,
+                _selectedController?.Label ?? "Automation controller",
+                new AutomationNativeGraphSnapshot(
+                    _selectedController?.Label ?? "Automation controller",
+                    Array.Empty<AutomationNativeComponentSnapshot>(),
+                    Array.Empty<AutomationNativeWireSnapshot>()));
+            _blockWorkspaceControllerKey = controllerKey;
+            _blockLoweringPlan = null;
+            _blockLoweringStatus = statusPrefix + " " + (importMessage ?? "Native Breadboard graph is now empty.");
+            _automationNativeDirty = false;
+            _confirmNativeRefreshFromNative = false;
+            RefreshDirectionalBlockTargets();
+            PersistSelectedAutomationWorkspaceState(saveProfile: false);
+            _status = _blockLoweringStatus;
         }
 
         private bool TryApplyContextualStarterTemplate()
@@ -8155,6 +9772,15 @@ namespace DecoLimitLifter.AutomationEditMode
             if (options.Any(target => string.Equals(target.StableKey, node.TargetKey, StringComparison.Ordinal)))
                 return;
 
+            AutomationTarget persisted = options.FirstOrDefault(target =>
+                !string.IsNullOrWhiteSpace(node.TargetPersistenceKey) &&
+                string.Equals(target.PersistenceKey, node.TargetPersistenceKey, StringComparison.Ordinal));
+            if (persisted != null &&
+                _blockWorkspace?.RebindNodeTarget(node.Id, persisted) == true)
+            {
+                return;
+            }
+
             _blockWorkspace?.SetNodeTarget(node.Id, options[0], direction);
         }
 
@@ -8162,12 +9788,38 @@ namespace DecoLimitLifter.AutomationEditMode
         {
             EnsureBlockWorkspace();
             if (_blockWorkspace.MoveSelected(delta))
+            {
                 InvalidateEsuBlockPlan();
+                _status = delta < 0
+                    ? "Moved selected ESU Block up in the forever stack."
+                    : "Moved selected ESU Block down in the forever stack.";
+                AutomationUiSound.PlaySnap();
+            }
+            else
+            {
+                _status = "Only snapped ESU Blocks inside forever can move up or down.";
+            }
         }
 
         private void RemoveSelectedEsuBlock()
         {
             EnsureBlockWorkspace();
+            AutomationBlockNode selectedNode = _blockWorkspace.SelectedNode();
+            if (TryDeleteNativeExactWorkspaceBlock(
+                    selectedNode,
+                    out bool nativeDeleteHandled,
+                    out string nativeDeleteMessage))
+            {
+                RefreshNativeExactWorkspaceAfterNativeCommand(nativeDeleteMessage);
+                return;
+            }
+
+            if (nativeDeleteHandled)
+            {
+                _status = nativeDeleteMessage ?? "Could not delete native Breadboard component.";
+                return;
+            }
+
             if (_blockWorkspace.RemoveSelected())
             {
                 InvalidateEsuBlockPlan();
@@ -8189,7 +9841,9 @@ namespace DecoLimitLifter.AutomationEditMode
             }
 
             int current = Array.FindIndex(options, target =>
-                string.Equals(target.StableKey, node.TargetKey, StringComparison.Ordinal));
+                string.Equals(target.StableKey, node.TargetKey, StringComparison.Ordinal) ||
+                !string.IsNullOrWhiteSpace(node.TargetPersistenceKey) &&
+                string.Equals(target.PersistenceKey, node.TargetPersistenceKey, StringComparison.Ordinal));
             int next = PositiveModulo(current + 1, options.Length);
             _blockWorkspace?.SetNodeTarget(node.Id, options[next], node.Kind == AutomationBlockKind.ReadTarget
                 ? AutomationLinkDirection.Input
@@ -8224,7 +9878,9 @@ namespace DecoLimitLifter.AutomationEditMode
 
             return SelectedLinks.FirstOrDefault(link =>
                 link.Direction == direction &&
-                string.Equals(link.TargetKey, node.TargetKey, StringComparison.Ordinal));
+                (string.Equals(link.TargetKey, node.TargetKey, StringComparison.Ordinal) ||
+                 !string.IsNullOrWhiteSpace(node.TargetPersistenceKey) &&
+                 string.Equals(link.TargetPersistenceKey, node.TargetPersistenceKey, StringComparison.Ordinal)));
         }
 
         private void CycleAutomationCompareOperator(AutomationBlockNode node)
@@ -8279,14 +9935,27 @@ namespace DecoLimitLifter.AutomationEditMode
         private void InvalidateEsuBlockPlan()
         {
             _blockLoweringPlan = null;
-            _blockLoweringStatus = "Block stack changed; Check ESU Blocks again before applying.";
+            if (_blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact)
+            {
+                _blockLoweringStatus = "Native exact ESU layout changed. Save to keep this imported layout; vanilla Breadboard behavior is not rewritten.";
+                _automationNativeDirty = false;
+            }
+            else
+            {
+                _blockLoweringStatus = "Block stack changed; Check ESU Blocks again before applying.";
+                _automationNativeDirty = true;
+            }
+            _confirmNativeRefreshFromNative = false;
+            PersistSelectedAutomationWorkspaceState(saveProfile: false);
         }
 
         private void InvalidateAutomationLinksChanged(string status)
         {
             _blockLoweringPlan = null;
             _blockLoweringStatus = "Linked targets changed; Check ESU Blocks again before applying.";
+            _automationNativeDirty = true;
             CloseAutomationPropertyPicker();
+            CloseAutomationTargetPicker();
             if (_blockWorkspace != null)
             {
                 _blockWorkspace.ReplaceTargets(
@@ -8297,11 +9966,20 @@ namespace DecoLimitLifter.AutomationEditMode
             _status = string.IsNullOrWhiteSpace(status)
                 ? _blockLoweringStatus
                 : status;
+            PersistSelectedAutomationWorkspaceState(saveProfile: false);
         }
 
         private bool CheckEsuBlocks()
         {
             EnsureBlockWorkspace();
+            if (_blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact)
+            {
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = "Native exact import already mirrors vanilla Breadboard nodes. Use Refresh from native or Advanced Graph for native edits; semantic Check/Apply is disabled for imported graphs.";
+                _status = _blockLoweringStatus;
+                return false;
+            }
+
             if (!IsBreadboardController(_selectedController?.Controller))
             {
                 _blockLoweringStatus = "ESU Blocks currently require a Breadboard controller.";
@@ -8382,6 +10060,14 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private void ApplyEsuBlocks()
         {
+            if (_blockWorkspace?.Mode == AutomationBlockWorkspaceMode.NativeExact)
+            {
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = "Native exact imports preserve manual vanilla Breadboard work and are not rewritten by Apply blocks.";
+                _status = _blockLoweringStatus;
+                return;
+            }
+
             if (_blockLoweringPlan == null && !CheckEsuBlocks())
                 return;
 
@@ -8415,6 +10101,8 @@ namespace DecoLimitLifter.AutomationEditMode
                 bool nativeApplied = TryApplyNativeComponentBlocks(_blockLoweringPlan, out string nativeComponentMessage);
                 if (nativeApplied)
                 {
+                    _automationNativeDirty = false;
+                    PersistSelectedAutomationWorkspaceState(saveProfile: true);
                     _blockLoweringStatus = inputBindingOk
                         ? "Applied ESU Blocks to native Breadboard nodes. Revert blocks can remove the generated component ids." +
                           (string.IsNullOrWhiteSpace(inputBindingMessage) ? string.Empty : " " + inputBindingMessage) +
@@ -8809,7 +10497,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_systemBlockHostNodeSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear System Block graph-node search."),
+                    new GUIContent("clear", "Clear System Block graph-node search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -9380,7 +11068,7 @@ namespace DecoLimitLifter.AutomationEditMode
                 "Apply template saves ESU-only metadata: name, comments, breadcrumbs, named ports, and internal graph notes. Check validates the signature without native controller mutation.",
                 DecorationEditorTheme.MiniWrap);
             GUILayout.Label(
-                "Port rebinding is current-workspace based today: Suggest ports reads linked Inputs/Outputs on the selected controller. Re-check ports after save/reload or cross-craft reuse until stable target identity and portable rebinding land.",
+                "Port rebinding uses the selected controller's saved linked Inputs/Outputs. Re-check ports only when duplicated unnamed blocks make portable target keys ambiguous.",
                 DecorationEditorTheme.MiniWrap);
             GUILayout.EndVertical();
         }
@@ -9555,7 +11243,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_systemBlockTemplateSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear reusable System Block template search."),
+                    new GUIContent("clear", "Clear reusable System Block template search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -10043,13 +11731,434 @@ namespace DecoLimitLifter.AutomationEditMode
             _systemBlockInternalDirty = false;
         }
 
-        private void ClearAutomationBlockWorkspace()
+        private void ClearAutomationBlockWorkspace(bool persistCurrent = true)
         {
+            if (persistCurrent)
+                PersistSelectedAutomationWorkspaceState(saveProfile: false);
+
             _blockWorkspace = null;
             _blockLoweringPlan = null;
             _blockWorkspaceControllerKey = string.Empty;
             _blockLoweringStatus = string.Empty;
             CloseAutomationPropertyPicker();
+            CloseAutomationTargetPicker();
+        }
+
+        private void RestoreSelectedAutomationWorkspaceState()
+        {
+            if (_selectedController == null)
+                return;
+
+            SerializationHudProfile.AutomationWorkspaceData stored =
+                StoredAutomationWorkspaceFor(_selectedController);
+            if (stored == null)
+                return;
+
+            string controllerKey = _selectedController.StableKey;
+            _links.RemoveAll(link =>
+                string.Equals(link.ControllerKey, controllerKey, StringComparison.Ordinal));
+
+            int restoredLinks = 0;
+            foreach (SerializationHudProfile.AutomationLinkData linkData in stored.Links ?? new List<SerializationHudProfile.AutomationLinkData>())
+            {
+                AutomationTarget target = ResolvePersistedAutomationTarget(
+                    linkData.TargetKey,
+                    linkData.TargetPersistenceKey);
+                if (target == null)
+                    continue;
+
+                AutomationLinkDirection direction = Enum.IsDefined(typeof(AutomationLinkDirection), linkData.Direction)
+                    ? (AutomationLinkDirection)linkData.Direction
+                    : AutomationLinkDirection.Output;
+                if (_links.Any(link =>
+                        string.Equals(link.ControllerKey, controllerKey, StringComparison.Ordinal) &&
+                        string.Equals(link.TargetKey, target.StableKey, StringComparison.Ordinal) &&
+                        link.Direction == direction))
+                {
+                    continue;
+                }
+
+                _links.Add(new AutomationLink(_selectedController, target, direction));
+                restoredLinks++;
+            }
+
+            if (stored.Blocks != null && (stored.Blocks.Nodes?.Count ?? 0) > 0)
+            {
+                _blockWorkspace = AutomationBlockWorkspace.FromProfileData(
+                    controllerKey,
+                    _selectedController.Label,
+                    SelectedLinks.Select(link => link.Target).Where(target => target != null).ToArray(),
+                    stored.Blocks);
+                _blockWorkspaceControllerKey = controllerKey;
+                _blockLoweringPlan = null;
+                _blockLoweringStatus = _blockWorkspace.Mode == AutomationBlockWorkspaceMode.NativeExact
+                    ? "Restored native exact ESU layout for " +
+                      _selectedController.Label +
+                      ". Vanilla behavior is stored in the native Breadboard."
+                    : "Restored saved ESU Blocks workspace for " +
+                      _selectedController.Label +
+                      ". Check ESU Blocks before applying native changes.";
+                RefreshDirectionalBlockTargets();
+            }
+
+            if (restoredLinks > 0 || _blockWorkspace != null)
+            {
+                _status =
+                    "Restored " +
+                    restoredLinks.ToString(CultureInfo.InvariantCulture) +
+                    " linked target(s)" +
+                    (_blockWorkspace == null ? "." : " and saved ESU Blocks.");
+            }
+        }
+
+        private void PersistSelectedAutomationWorkspaceState(
+            bool saveProfile,
+            bool preserveMissingWorkspace = true)
+        {
+            if (_selectedController == null)
+                return;
+
+            try
+            {
+                SerializationHudProfile.ProfileData profile = SerializationHudProfile.Data;
+                if (profile == null)
+                    return;
+
+                if (!saveProfile)
+                    MarkAutomationWorkspaceDirty();
+
+                if (profile.AutomationWorkspaces == null)
+                    profile.AutomationWorkspaces = new List<SerializationHudProfile.AutomationWorkspaceData>();
+
+                int existingIndex = FindStoredAutomationWorkspaceIndex(
+                    profile.AutomationWorkspaces,
+                    _selectedController);
+                SerializationHudProfile.AutomationWorkspaceData existing =
+                    existingIndex >= 0 ? profile.AutomationWorkspaces[existingIndex] : null;
+
+                SerializationHudProfile.AutomationBlockWorkspaceData blocks =
+                    _blockWorkspace != null &&
+                    string.Equals(_blockWorkspaceControllerKey, _selectedController.StableKey, StringComparison.Ordinal)
+                        ? _blockWorkspace.ToProfileData()
+                        : preserveMissingWorkspace
+                            ? existing?.Blocks
+                            : null;
+
+                var stored = new SerializationHudProfile.AutomationWorkspaceData
+                {
+                    ControllerKey = _selectedController.StableKey,
+                    ControllerPersistenceKey = _selectedController.PersistenceKey,
+                    ControllerLabel = _selectedController.Label,
+                    Links = SelectedLinks
+                        .Where(link => link != null)
+                        .Select(LinkToProfileData)
+                        .ToList(),
+                    Blocks = blocks
+                };
+
+                bool empty =
+                    stored.Links.Count == 0 &&
+                    (stored.Blocks == null || (stored.Blocks.Nodes?.Count ?? 0) == 0);
+                if (existingIndex >= 0)
+                    profile.AutomationWorkspaces.RemoveAt(existingIndex);
+                if (!empty)
+                    profile.AutomationWorkspaces.Add(stored);
+
+                while (profile.AutomationWorkspaces.Count > AutomationWorkspaceProfileLimit)
+                    profile.AutomationWorkspaces.RemoveAt(0);
+
+                if (saveProfile)
+                {
+                    ProfileManager.Instance.Save(module => module is SerializationHudProfile);
+                    _automationWorkspaceSnapshots.Clear();
+                }
+            }
+            catch (Exception exception)
+            {
+                EsuRuntimeLog.Exception(
+                    "Automation Editor",
+                    exception,
+                    "Automation workspace persistence failed");
+            }
+        }
+
+        private SerializationHudProfile.AutomationWorkspaceData StoredAutomationWorkspaceFor(
+            AutomationTarget controller)
+        {
+            if (controller == null)
+                return null;
+
+            try
+            {
+                List<SerializationHudProfile.AutomationWorkspaceData> stored =
+                    SerializationHudProfile.Data?.AutomationWorkspaces;
+                if (stored == null || stored.Count == 0)
+                    return null;
+
+                int index = FindStoredAutomationWorkspaceIndex(stored, controller);
+                return index >= 0 ? stored[index] : null;
+            }
+            catch (Exception exception)
+            {
+                EsuRuntimeLog.Exception(
+                    "Automation Editor",
+                    exception,
+                    "Automation workspace restore lookup failed");
+                return null;
+            }
+        }
+
+        private static int FindStoredAutomationWorkspaceIndex(
+            IList<SerializationHudProfile.AutomationWorkspaceData> stored,
+            AutomationTarget controller)
+        {
+            if (stored == null || controller == null)
+                return -1;
+
+            string controllerKey = controller.StableKey;
+            string persistenceKey = controller.PersistenceKey;
+            for (int index = stored.Count - 1; index >= 0; index--)
+            {
+                SerializationHudProfile.AutomationWorkspaceData data = stored[index];
+                if (data == null)
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(controllerKey) &&
+                    string.Equals(data.ControllerKey, controllerKey, StringComparison.Ordinal))
+                {
+                    return index;
+                }
+
+                if (!string.IsNullOrWhiteSpace(persistenceKey) &&
+                    string.Equals(data.ControllerPersistenceKey, persistenceKey, StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private static SerializationHudProfile.AutomationLinkData LinkToProfileData(
+            AutomationLink link)
+        {
+            return new SerializationHudProfile.AutomationLinkData
+            {
+                TargetKey = link.TargetKey,
+                TargetPersistenceKey = link.TargetPersistenceKey,
+                TargetLabel = link.TargetLabel,
+                Direction = (int)link.Direction
+            };
+        }
+
+        private static string AutomationWorkspaceStorageKey(AutomationTarget controller)
+        {
+            return controller == null
+                ? string.Empty
+                : AutomationWorkspaceStorageKey(controller.PersistenceKey, controller.StableKey);
+        }
+
+        private static string AutomationWorkspaceStorageKey(
+            SerializationHudProfile.AutomationWorkspaceData data)
+        {
+            return data == null
+                ? string.Empty
+                : AutomationWorkspaceStorageKey(data.ControllerPersistenceKey, data.ControllerKey);
+        }
+
+        private static string AutomationWorkspaceStorageKey(
+            string persistenceKey,
+            string stableKey)
+        {
+            return !string.IsNullOrWhiteSpace(persistenceKey)
+                ? "p:" + persistenceKey
+                : "k:" + (stableKey ?? string.Empty);
+        }
+
+        private static void RestoreAutomationWorkspaceProfileSnapshot(
+            SerializationHudProfile.ProfileData profile,
+            string storageKey,
+            SerializationHudProfile.AutomationWorkspaceData snapshot)
+        {
+            if (profile == null || string.IsNullOrWhiteSpace(storageKey))
+                return;
+
+            if (profile.AutomationWorkspaces == null)
+                profile.AutomationWorkspaces = new List<SerializationHudProfile.AutomationWorkspaceData>();
+
+            for (int index = profile.AutomationWorkspaces.Count - 1; index >= 0; index--)
+            {
+                if (string.Equals(
+                        AutomationWorkspaceStorageKey(profile.AutomationWorkspaces[index]),
+                        storageKey,
+                        StringComparison.Ordinal))
+                {
+                    profile.AutomationWorkspaces.RemoveAt(index);
+                }
+            }
+
+            if (snapshot != null)
+                profile.AutomationWorkspaces.Add(CloneAutomationWorkspaceData(snapshot));
+        }
+
+        private static SerializationHudProfile.AutomationWorkspaceData CloneAutomationWorkspaceData(
+            SerializationHudProfile.AutomationWorkspaceData data)
+        {
+            if (data == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationWorkspaceData
+            {
+                ControllerKey = data.ControllerKey,
+                ControllerPersistenceKey = data.ControllerPersistenceKey,
+                ControllerLabel = data.ControllerLabel,
+                Links = (data.Links ?? new List<SerializationHudProfile.AutomationLinkData>())
+                    .Select(CloneAutomationLinkData)
+                    .Where(link => link != null)
+                    .ToList(),
+                Blocks = CloneAutomationBlockWorkspaceData(data.Blocks)
+            };
+        }
+
+        private static SerializationHudProfile.AutomationLinkData CloneAutomationLinkData(
+            SerializationHudProfile.AutomationLinkData data)
+        {
+            if (data == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationLinkData
+            {
+                TargetKey = data.TargetKey,
+                TargetPersistenceKey = data.TargetPersistenceKey,
+                TargetLabel = data.TargetLabel,
+                Direction = data.Direction
+            };
+        }
+
+        private static SerializationHudProfile.AutomationBlockWorkspaceData CloneAutomationBlockWorkspaceData(
+            SerializationHudProfile.AutomationBlockWorkspaceData data)
+        {
+            if (data == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationBlockWorkspaceData
+            {
+                Mode = data.Mode,
+                CanvasPanX = data.CanvasPanX,
+                CanvasPanY = data.CanvasPanY,
+                CanvasZoom = data.CanvasZoom,
+                NativeImportStatus = data.NativeImportStatus,
+                SelectedNodeId = data.SelectedNodeId,
+                Nodes = (data.Nodes ?? new List<SerializationHudProfile.AutomationBlockNodeData>())
+                    .Select(CloneAutomationBlockNodeData)
+                    .Where(node => node != null)
+                    .ToList(),
+                Links = (data.Links ?? new List<SerializationHudProfile.AutomationBlockLinkData>())
+                    .Select(CloneAutomationBlockLinkData)
+                    .Where(link => link != null)
+                    .ToList()
+            };
+        }
+
+        private static SerializationHudProfile.AutomationBlockNodeData CloneAutomationBlockNodeData(
+            SerializationHudProfile.AutomationBlockNodeData data)
+        {
+            if (data == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationBlockNodeData
+            {
+                Id = data.Id,
+                Kind = data.Kind,
+                Label = data.Label,
+                IconKey = data.IconKey,
+                Category = data.Category,
+                PaletteTemplateId = data.PaletteTemplateId,
+                ParentNodeId = data.ParentNodeId,
+                CanvasOrder = data.CanvasOrder,
+                CanvasX = data.CanvasX,
+                CanvasY = data.CanvasY,
+                SnappedToStack = data.SnappedToStack,
+                TargetKey = data.TargetKey,
+                TargetPersistenceKey = data.TargetPersistenceKey,
+                TargetLabel = data.TargetLabel,
+                LinkDirection = data.LinkDirection,
+                Operator = data.Operator,
+                NumericValue = data.NumericValue,
+                SecondaryNumericValue = data.SecondaryNumericValue,
+                Comment = data.Comment,
+                Expression = data.Expression,
+                PropertySelection = CloneAutomationProxyPropertySelectionData(data.PropertySelection),
+                NativeComponentTypeName = data.NativeComponentTypeName,
+                NativeComponentLabel = data.NativeComponentLabel,
+                NativeComponentDescription = data.NativeComponentDescription,
+                NativeComponentId = data.NativeComponentId,
+                NativeComponentTypeId = data.NativeComponentTypeId,
+                NativeComponentFingerprint = data.NativeComponentFingerprint,
+                NativeImported = data.NativeImported,
+                NativeEsuOwned = data.NativeEsuOwned,
+                NativeX = data.NativeX,
+                NativeY = data.NativeY,
+                NativeWidth = data.NativeWidth,
+                NativeHeight = data.NativeHeight,
+                NativeSettingsSummary = data.NativeSettingsSummary,
+                NativeInputPortLabels = (data.NativeInputPortLabels ?? new List<string>()).ToList(),
+                NativeOutputPortLabels = (data.NativeOutputPortLabels ?? new List<string>()).ToList()
+            };
+        }
+
+        private static SerializationHudProfile.AutomationBlockLinkData CloneAutomationBlockLinkData(
+            SerializationHudProfile.AutomationBlockLinkData data)
+        {
+            if (data == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationBlockLinkData
+            {
+                FromNodeId = data.FromNodeId,
+                FromPortId = data.FromPortId,
+                ToNodeId = data.ToNodeId,
+                ToPortId = data.ToPortId,
+                FromNativeComponentId = data.FromNativeComponentId,
+                FromNativePortIndex = data.FromNativePortIndex,
+                ToNativeComponentId = data.ToNativeComponentId,
+                ToNativePortIndex = data.ToNativePortIndex
+            };
+        }
+
+        private static SerializationHudProfile.AutomationProxyPropertySelectionData CloneAutomationProxyPropertySelectionData(
+            SerializationHudProfile.AutomationProxyPropertySelectionData data)
+        {
+            if (data == null)
+                return null;
+
+            return new SerializationHudProfile.AutomationProxyPropertySelectionData
+            {
+                Label = data.Label,
+                Tooltip = data.Tooltip,
+                IsGetter = data.IsGetter,
+                IsClear = data.IsClear,
+                IsGetterReadable = data.IsGetterReadable,
+                ReadableAttributeId = data.ReadableAttributeId,
+                BlockPropertyId = data.BlockPropertyId,
+                BlockSetId = data.BlockSetId
+            };
+        }
+
+        private AutomationTarget ResolvePersistedAutomationTarget(
+            string stableKey,
+            string persistenceKey)
+        {
+            AutomationTarget target = _targets.FirstOrDefault(item =>
+                string.Equals(item.StableKey, stableKey, StringComparison.Ordinal));
+            if (target != null || string.IsNullOrWhiteSpace(persistenceKey))
+                return target;
+
+            AutomationTarget[] matches = _targets
+                .Where(item => string.Equals(item.PersistenceKey, persistenceKey, StringComparison.Ordinal))
+                .Take(2)
+                .ToArray();
+            return matches.Length == 1 ? matches[0] : null;
         }
 
         private void RemoveSystemBlockTemplateAt(int index)
@@ -10578,7 +12687,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_automationCodeOutputTargetSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear Code output target search."),
+                    new GUIContent("clear", "Clear Code output target search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -10672,7 +12781,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_automationCodeRecipeSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear code recipe search."),
+                    new GUIContent("clear", "Clear code recipe search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -10864,7 +12973,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_automationCodeIdentifierSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear linked identifier search."),
+                    new GUIContent("clear", "Clear linked identifier search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -11235,7 +13344,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_acbControllerButtonSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear ACB Controller button search."),
+                    new GUIContent("clear", "Clear ACB Controller button search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -11698,7 +13807,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_breadboardProxySearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear linked target proxy search."),
+                    new GUIContent("clear", "Clear linked target proxy search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -12717,7 +14826,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_storedComponentSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear stored component search."),
+                    new GUIContent("clear", "Clear stored component search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -13063,7 +15172,7 @@ namespace DecoLimitLifter.AutomationEditMode
             bool previous = GUI.enabled;
             GUI.enabled = previous && !string.IsNullOrWhiteSpace(_nativeWirePortSearch);
             if (AutomationGUILayoutButton(
-                    new GUIContent("clear", DecorationEditorIconCatalog.Get("close"), "Clear selected native port search."),
+                    new GUIContent("clear", "Clear selected native port search."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -13188,6 +15297,25 @@ namespace DecoLimitLifter.AutomationEditMode
             return descriptor.Kind == AutomationControllerKind.Breadboard ||
                    descriptor.Kind == AutomationControllerKind.AiBreadboard ||
                    descriptor.Kind == AutomationControllerKind.MissileBreadboard;
+        }
+
+        private sealed class AutomationBlockLiveValueSnapshot
+        {
+            internal AutomationBlockLiveValueSnapshot(
+                string text,
+                string tooltip,
+                float refreshAfter)
+            {
+                Text = string.IsNullOrWhiteSpace(text) ? "unavailable" : text;
+                Tooltip = tooltip ?? string.Empty;
+                RefreshAfter = refreshAfter;
+            }
+
+            internal string Text { get; }
+
+            internal string Tooltip { get; }
+
+            internal float RefreshAfter { get; }
         }
 
         private sealed class AutomationBreadboardCanvasNode
@@ -14001,16 +16129,7 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private static string ExpectedProxyBlockFilter(AutomationTarget target)
         {
-            if (target == null || string.IsNullOrWhiteSpace(target.Label))
-                return string.Empty;
-
-            if (target.Controller != null)
-                return string.Empty;
-
-            string runtimeType = target.RuntimeType ?? string.Empty;
-            return string.Equals(target.Label, runtimeType, StringComparison.OrdinalIgnoreCase)
-                ? string.Empty
-                : target.Label;
+            return AutomationBreadboardInspector.TargetBlockNameFilter(target);
         }
 
         private bool CanRevertLastAutomationCompile()
@@ -14615,7 +16734,8 @@ namespace DecoLimitLifter.AutomationEditMode
             _links.RemoveAll(link => link.ControllerKey == key);
             _selectedLinkTargetKey = string.Empty;
             _automationCodeOutputTargetKey = string.Empty;
-            ClearAutomationBlockWorkspace();
+            ClearAutomationBlockWorkspace(persistCurrent: false);
+            PersistSelectedAutomationWorkspaceState(saveProfile: false);
             _status = "Cleared links for " + _selectedController.Label + ".";
         }
 
@@ -15092,6 +17212,8 @@ namespace DecoLimitLifter.AutomationEditMode
 
         private bool IsMouseOverAnyUi(Vector2 mouse)
         {
+            if (_automationClosePromptOpen)
+                return true;
             if (IsAutomationContextMenuAt(mouse))
                 return true;
             if (_editorOpen)
@@ -15106,6 +17228,31 @@ namespace DecoLimitLifter.AutomationEditMode
             if (_editorOpen && _editorRect.Contains(mouse))
                 return true;
             return _statusRect.Contains(mouse);
+        }
+
+        private bool ShouldSuppressAutomationBackgroundInput(
+            Event current,
+            bool foregroundOpenBeforeBackground) =>
+            _automationClosePromptOpen ||
+            foregroundOpenBeforeBackground && ShouldConsumeGuiEvent(current);
+
+        private bool IsAutomationForegroundPopupOpen()
+        {
+            if (_contextMenuKind != AutomationContextMenuKind.None)
+                return true;
+            if (!string.IsNullOrWhiteSpace(_targetPickerNodeId) &&
+                _targetPickerRect.width > 1f &&
+                _targetPickerRect.height > 1f)
+            {
+                return true;
+            }
+            if (!string.IsNullOrWhiteSpace(_propertyPickerNodeId) &&
+                _propertyPickerRect.width > 1f &&
+                _propertyPickerRect.height > 1f)
+            {
+                return true;
+            }
+            return false;
         }
 
         private static bool ShouldConsumeGuiEvent(Event current)
@@ -15272,8 +17419,10 @@ namespace DecoLimitLifter.AutomationEditMode
                 AutomationLinkDirection direction = AutomationLinkDirection.Output)
             {
                 ControllerKey = controller?.StableKey ?? string.Empty;
+                ControllerPersistenceKey = controller?.PersistenceKey ?? string.Empty;
                 ControllerLabel = controller?.Label ?? "Controller";
                 TargetKey = target?.StableKey ?? string.Empty;
+                TargetPersistenceKey = target?.PersistenceKey ?? string.Empty;
                 TargetLabel = target?.Label ?? "Target";
                 Target = target;
                 Direction = direction;
@@ -15281,9 +17430,13 @@ namespace DecoLimitLifter.AutomationEditMode
 
             internal string ControllerKey { get; }
 
+            internal string ControllerPersistenceKey { get; }
+
             internal string ControllerLabel { get; }
 
-            internal string TargetKey { get; }
+            internal string TargetKey { get; private set; }
+
+            internal string TargetPersistenceKey { get; private set; }
 
             internal AutomationLinkDirection Direction { get; }
 
@@ -15303,7 +17456,11 @@ namespace DecoLimitLifter.AutomationEditMode
             {
                 Target = target;
                 if (target != null)
+                {
+                    TargetKey = target.StableKey;
+                    TargetPersistenceKey = target.PersistenceKey;
                     TargetLabel = target.Label;
+                }
             }
         }
     }

@@ -55,9 +55,9 @@ same native component graph a player would build by hand in FtD.
   as not lowerable through the safe starter compiler instead of being silently
   applied.
 - The left linked-target list and ESU Blocks linked-signal panel now state that
-  link identity uses live-session target keys today. Users are prompted to
-  re-check linked Inputs/Outputs after save/reload or cross-craft reuse until
-  stable target identity lands.
+  link identity is saved per controller with portable target keys. Users only
+  need to re-check linked Inputs/Outputs when duplicated unnamed blocks at the
+  same cell/type make a restored target ambiguous.
 - The left linked-target list now has a local selected-controller link search.
   It filters Inputs/Outputs by direction, target label, category, role, runtime
   type, cell, controller, or target key, reports matching/total counts, shows
@@ -116,8 +116,8 @@ same native component graph a player would build by hand in FtD.
 - The System Block signature page now has a scope/rebinding guide. It states
   that Apply template saves ESU-only metadata, Check validates without native
   controller mutation, Suggest ports reads the current selected controller's
-  linked Inputs/Outputs, and users should re-check ports after save/reload or
-  cross-craft reuse until stable target identity and portable rebinding land.
+  linked Inputs/Outputs, and users should re-check ports only when duplicated
+  unnamed blocks make portable rebinding ambiguous.
 - The System Block signature port preview now shows normalized input/output
   ports as explicit ports/nubs before Check or Apply. Duplicate names are
   surfaced in the HUD and validation preserves duplicates long enough to reject
@@ -356,10 +356,10 @@ graph compilation.
 
 ## Code Review Findings
 
-- **P1 - Target identity is not save/reload stable.**
-  `AutomationTarget.StableKey` uses `construct.GetHashCode()`. That is usable
-  for a live session but weak for persisted links, reusable templates, and
-  save/reload validation.
+- **P1 - Portable identity is still heuristic for duplicate unnamed blocks.**
+  ESU now stores controller workspaces with portable block type/cell/name keys
+  in the profile, but identical unnamed blocks at the same local cell/type can
+  still make restored links ambiguous.
 - **P1 - ESU Blocks are still recipe-lowered.**
   `CheckBlocksToNative` recognizes the current Read/Compare/Constant/Set flow
   and native component requests. It does not yet traverse arbitrary connected
