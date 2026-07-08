@@ -1,4 +1,5 @@
 using System;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.SmartBuildMode;
 using UnityEngine;
 
@@ -58,7 +59,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private void OnGUI()
         {
             if (DecorationEditorInputScope.Active ||
-                SmartBuildInputScope.Active)
+                SmartBuildInputScope.Active ||
+                AutomationBuilderInputScope.Active)
             {
                 return;
             }

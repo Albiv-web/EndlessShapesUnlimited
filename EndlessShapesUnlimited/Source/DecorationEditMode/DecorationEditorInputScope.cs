@@ -7,6 +7,7 @@ using BrilliantSkies.Ftd.Avatar.HUD;
 using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ui.Displayer;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.SmartBuildMode;
 using HarmonyLib;
 using UnityEngine;
@@ -133,7 +134,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static bool SuppressBuildHud() =>
             _active ||
             DecoLimitLifter.EsuModeSwitchHandoff.Active ||
-            SmartBuildInputScope.SuppressBuildHud();
+            SmartBuildInputScope.SuppressBuildHud() ||
+            AutomationBuilderInputScope.SuppressBuildHud();
 
         internal static bool SuppressBuildInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
@@ -141,13 +143,15 @@ namespace DecoLimitLifter.DecorationEditMode
             OwnsBuildInputThisFrame ||
             (_active && DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()) ||
             ScrollWheelOverEditorUi ||
-            SmartBuildInputScope.SuppressBuildInput();
+            SmartBuildInputScope.SuppressBuildInput() ||
+            AutomationBuilderInputScope.SuppressBuildInput();
 
         internal static bool SuppressCameraInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             OwnsCameraInputThisFrame ||
             ScrollWheelOverEditorUi ||
-            SmartBuildInputScope.SuppressCameraInput();
+            SmartBuildInputScope.SuppressCameraInput() ||
+            AutomationBuilderInputScope.SuppressCameraInput();
 
         internal static bool IsPaintHoverMessage(object[] arguments)
         {

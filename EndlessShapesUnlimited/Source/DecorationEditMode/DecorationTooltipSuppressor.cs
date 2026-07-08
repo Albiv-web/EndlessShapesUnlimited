@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
 using BrilliantSkies.Core.Logger;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.SmartBuildMode;
 using HarmonyLib;
 
@@ -18,7 +19,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool EsuOwnsEditorView =>
             DecorationEditorInputScope.Active ||
-            SmartBuildInputScope.Active;
+            SmartBuildInputScope.Active ||
+            AutomationBuilderInputScope.Active;
 
         internal static MethodBase ResolveBlockGetToolTipTarget()
         {

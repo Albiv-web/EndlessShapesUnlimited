@@ -11,6 +11,13 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Added
 
+- Added Automation Builder as a fourth ESU editor mode, focused on FtD
+  breadboard workflows with AI/basic breadboard placement, input/output block
+  linking, a Decoration-style HUD, view controls, number-key shortcuts, panel
+  splitters, close prompts, and a Tinkercad-style native block graph.
+- Added Automation Builder graph palette/workspace support for native
+  breadboard-backed Read, Set, control, math, logic, threshold, constant,
+  random, clamp, smooth, forever/comment, and starter-flow blocks.
 - Added Smart Builder camera-facing symmetry toggling from the build cursor and
   fixed-geometry face picking/highlighting for non-cuboid preview pieces.
 - Added a Smart Builder `Mat only` preview mode that shows material-family
@@ -36,6 +43,16 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Changed
 
+- Automation Builder now treats the selected native breadboard board as the
+  source of truth: links and graph nodes are rebuilt from vanilla
+  `GenericBlockGetter` / `GenericBlockSetter` and native board components
+  instead of temporary session-only state.
+- Automation Builder Apply now validates the visible native graph and connects
+  recognized snapped/stacked components idempotently without appending duplicate
+  packages.
+- Automation Builder only imports and lowers native breadboard components it
+  understands, leaving unsupported vanilla breadboard components intact instead
+  of guessing a visual block type.
 - ESU editor panels now share more of the same responsive top/bottom layout
   limits across Decoration Edit, Surface Builder, and Smart Builder.
 - Smart Builder down-slope scale handles can stretch along the cardinal ramp
@@ -74,6 +91,24 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Fixed
 
+- Fixed Automation Builder links not persisting through mode exits by creating
+  vanilla-compatible getter/setter components immediately on the selected
+  breadboard.
+- Fixed Automation Builder graph blocks being invisible or failing to drag/drop
+  on an empty graph by adding native components directly at click/drop time and
+  hardening drag cleanup.
+- Fixed exact block targeting by auto-naming unnamed or ambiguous linked blocks
+  with stable `ESU_AB_*` names and rejecting generated-name collisions.
+- Fixed broad/type-only vanilla getter/setter targets being treated as missing
+  targets when their native component still resolves a live block.
+- Fixed unsupported vanilla evaluator/components being misclassified as ESU math
+  blocks during graph sync and Apply.
+- Fixed the global floating ESU notification overlay showing inside Automation
+  Builder; messages now stay in the shared toolbar/log while the editor is
+  active.
+- Fixed the Automation Builder apply-and-close prompt so stale breadboards or
+  readiness failures keep the prompt open instead of silently discarding dirty
+  graph state.
 - Fixed a fast blueprint load crash when optional timing patches encountered
   generic construct modules such as module external linkup handlers, and stopped
   installing the optional per-module linkup patch during boot.

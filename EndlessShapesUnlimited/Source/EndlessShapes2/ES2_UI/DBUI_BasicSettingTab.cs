@@ -9,6 +9,7 @@ using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Texts;
 using BrilliantSkies.Ui.Consoles.Segments;
 using BrilliantSkies.Ui.Displayer;
 using BrilliantSkies.Ui.Layouts.DropDowns;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using EndlessShapes2.Polygon;
 using UnityEngine;
@@ -100,6 +101,11 @@ namespace EndlessShapes2.UI
                 "Decoration Edit Mode",
                 null,
                 I => DecorationEditModeRegistration.ToggleFromUi()));
+            screenSegment_0.AddInterpretter(SubjectiveButton<DecorationBuilder>.Quick(
+                _focus,
+                "Automation Builder",
+                null,
+                I => AutomationBuilderModeRegistration.ToggleFromUi()));
             screenSegment_0.AddInterpretter(new Blank(20f));
 
             foreach (OBJ_Mesh meshes in _focus.Meshes)

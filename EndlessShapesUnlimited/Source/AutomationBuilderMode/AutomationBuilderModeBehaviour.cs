@@ -2,19 +2,16 @@ using System;
 using BrilliantSkies.Core.Constants;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
-using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
-using DecoLimitLifter.SerializationHud;
 using UnityEngine;
 
-namespace DecoLimitLifter.SmartBuildMode
+namespace DecoLimitLifter.AutomationBuilderMode
 {
-    internal sealed class SmartBuildModeBehaviour : MonoBehaviour
+    internal sealed class AutomationBuilderModeBehaviour : MonoBehaviour
     {
-        private SmartBuildSession _session;
-        private SmartBuildSession _handoffGuiSession;
+        private AutomationBuilderSession _session;
+        private AutomationBuilderSession _handoffGuiSession;
         private int _handoffGuiFrame = -1;
 
         internal bool Active => _session != null && _session.Active;
@@ -23,13 +20,13 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (Active)
             {
-                Close();
+                Close("toggle pressed");
                 return;
             }
 
-            if (!SmartBuildModeRegistration.CanOpenNow(out string reason))
+            if (!AutomationBuilderModeRegistration.CanOpenNow(out string reason))
             {
-                EsuRuntimeLog.Warning("Smart Builder", reason);
+                EsuRuntimeLog.Warning("Automation Builder", reason);
                 InfoStore.Add(reason);
                 return;
             }
@@ -42,9 +39,9 @@ namespace DecoLimitLifter.SmartBuildMode
             if (Active)
                 return true;
 
-            if (!SmartBuildModeRegistration.CanOpenFromModeSwitch(out string reason))
+            if (!AutomationBuilderModeRegistration.CanOpenFromModeSwitch(out string reason))
             {
-                EsuRuntimeLog.Warning("Smart Builder", reason);
+                EsuRuntimeLog.Warning("Automation Builder", reason);
                 InfoStore.Add(reason);
                 return false;
             }
@@ -53,7 +50,7 @@ namespace DecoLimitLifter.SmartBuildMode
             return true;
         }
 
-        internal bool TrySwitchToAutomationBuilder()
+        internal bool TrySwitchToDecorationEdit()
         {
             if (!Active)
                 return false;
@@ -61,14 +58,14 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_session != null &&
                 !_session.CanSwitchToDecorationEdit(out string reason))
             {
-                EsuRuntimeLog.Warning("Smart Builder", reason);
+                EsuRuntimeLog.Warning("Automation Builder", reason);
                 InfoStore.Add(reason);
                 return true;
             }
 
-            if (!AutomationBuilderModeRegistration.CanOpenFromModeSwitch(out reason))
+            if (!DecorationEditModeRegistration.CanOpenFromModeSwitch(out reason))
             {
-                EsuRuntimeLog.Warning("Smart Builder", reason);
+                EsuRuntimeLog.Warning("Automation Builder", reason);
                 InfoStore.Add(reason);
                 return true;
             }
@@ -79,12 +76,13 @@ namespace DecoLimitLifter.SmartBuildMode
                 notifyClose: false,
                 preserveSharedHud: true,
                 keepModeSwitchHandoffGui: true);
-            if (!AutomationBuilderModeRegistration.OpenFromModeSwitch())
+            if (!DecorationEditModeRegistration.OpenFromModeSwitch())
             {
                 ClearModeSwitchHandoffGui();
                 Open(modeSwitch: true);
-                InfoStore.Add("Automation Builder failed to open; Smart Block Builder restored.");
+                InfoStore.Add("Decoration Edit Mode failed to open; Automation Builder restored.");
             }
+
             return true;
         }
 
@@ -99,21 +97,28 @@ namespace DecoLimitLifter.SmartBuildMode
             try
             {
                 bool toggleDown = DecoLimitLifter.EsuBuildModeInputGate
-                    .ConsumeSmartBuildToggleDown();
+                    .ConsumeAutomationBuilderToggleDown();
 
                 if (Active)
                     DecoLimitLifter.EsuVanillaInputBridge.Tick();
 
                 if (Active && toggleDown)
                 {
-                    Close("toggle pressed");
+                    _session?.RequestClose();
+                    if (_session?.CloseRequested == true)
+                        Close("toggle pressed");
                     return;
                 }
 
                 if (Active && Input.GetKeyDown(KeyCode.Escape))
                 {
+                    if (_session != null && _session.DismissCanvas())
+                        return;
+
                     DecoLimitLifter.EsuEscapeCloseGuard.Arm();
-                    Close("Escape pressed");
+                    _session?.RequestClose();
+                    if (_session?.CloseRequested == true)
+                        Close("Escape pressed");
                     return;
                 }
 
@@ -122,13 +127,13 @@ namespace DecoLimitLifter.SmartBuildMode
                     _session.SwitchToDecorationEditRequested)
                 {
                     _session.ClearSwitchToDecorationEditRequest();
-                    TrySwitchToAutomationBuilder();
+                    TrySwitchToDecorationEdit();
                     return;
                 }
 
                 if (Active && ReadSwitchModeKeyDown())
                 {
-                    TrySwitchToAutomationBuilder();
+                    TrySwitchToDecorationEdit();
                     return;
                 }
 
@@ -143,9 +148,9 @@ namespace DecoLimitLifter.SmartBuildMode
                     if (DecoLimitLifter.EsuModeSwitchHandoff.ConsumeInactiveCleanupFrame())
                         return;
 
-                    SmartBuildInputScope.ForceResetIfActive("no active smart build session");
+                    AutomationBuilderInputScope.ForceResetIfActive("no active automation builder session");
                     DecoLimitLifter.EsuInputFocusGuard.TickPostExitRepair(
-                        "Smart Block Builder inactive");
+                        "Automation Builder inactive");
                     return;
                 }
 
@@ -165,9 +170,9 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             catch (Exception exception)
             {
-                EsuRuntimeLog.Exception("Smart Builder", exception, "Smart Block Builder update failed");
+                EsuRuntimeLog.Exception("Automation Builder", exception, "Automation Builder update failed");
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Smart Block Builder update failed",
+                    "[EndlessShapes Unlimited] Automation Builder update failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
                 Close();
@@ -203,9 +208,9 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             catch (Exception exception)
             {
-                EsuRuntimeLog.Exception("Smart Builder", exception, "Smart Block Builder GUI failed");
+                EsuRuntimeLog.Exception("Automation Builder", exception, "Automation Builder GUI failed");
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Smart Block Builder GUI failed",
+                    "[EndlessShapes Unlimited] Automation Builder GUI failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
                 Close();
@@ -216,11 +221,11 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             ClearModeSwitchHandoffGui();
             cBuild build = cBuild.GetSingleton();
-            _session = new SmartBuildSession(build);
+            _session = new AutomationBuilderSession(build);
             _session.Begin();
-            EsuRuntimeLog.Info("Smart Builder", modeSwitch ? "Smart Block Builder opened from mode switch." : "Smart Block Builder opened.");
+            EsuRuntimeLog.Info("Automation Builder", modeSwitch ? "Automation Builder opened from mode switch." : "Automation Builder opened.");
             if (!modeSwitch)
-                InfoStore.Add("Smart Block Builder opened. Click the focused construct grid to create a runtime preview, then Apply to place blocks.");
+                InfoStore.Add("Automation Builder opened. Pick a breadboard on the right, place it, then link blocks or open its graph.");
         }
 
         private void Close(
@@ -229,7 +234,7 @@ namespace DecoLimitLifter.SmartBuildMode
             bool preserveSharedHud = false,
             bool keepModeSwitchHandoffGui = false)
         {
-            SmartBuildSession session = _session;
+            AutomationBuilderSession session = _session;
             _session = null;
             if (keepModeSwitchHandoffGui && session != null)
             {
@@ -244,23 +249,21 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             if (notifyClose)
-                DecoLimitLifter.EsuSymmetry.Clear();
-            if (notifyClose)
             {
                 EsuRuntimeLog.Info(
-                    "Smart Builder",
+                    "Automation Builder",
                     string.IsNullOrWhiteSpace(reason)
-                        ? "Smart Block Builder closed."
-                        : "Smart Block Builder closed: " + reason + ".");
+                        ? "Automation Builder closed."
+                        : "Automation Builder closed: " + reason + ".");
                 InfoStore.Add(string.IsNullOrWhiteSpace(reason)
-                    ? "Smart Block Builder closed."
-                    : "Smart Block Builder closed: " + reason + ".");
+                    ? "Automation Builder closed."
+                    : "Automation Builder closed: " + reason + ".");
             }
         }
 
         private void ClearModeSwitchHandoffGui()
         {
-            SmartBuildSession session = _handoffGuiSession;
+            AutomationBuilderSession session = _handoffGuiSession;
             _handoffGuiSession = null;
             _handoffGuiFrame = -1;
             session?.End(preserveSharedHud: true);

@@ -19,6 +19,7 @@ using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Ftd.Constructs.UI;
 using BrilliantSkies.Modding;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
 using DecoLimitLifter.SmartBuildMode;
@@ -61,6 +62,8 @@ namespace DecoLimitLifter
                 DecorationEditModeRegistration.Register();
                 startup.TrackRollback(SmartBuildModeRegistration.Unregister);
                 SmartBuildModeRegistration.Register();
+                startup.TrackRollback(AutomationBuilderModeRegistration.Unregister);
+                AutomationBuilderModeRegistration.Register();
                 startup.TrackRollback(EsuHudNotificationOverlayRegistration.Unregister);
                 EsuHudNotificationOverlayRegistration.Register();
                 startup.Commit();
@@ -112,7 +115,7 @@ namespace DecoLimitLifter
             {
                 AdvLogger.LogInfo(
                     $"[EndlessShapes Unlimited] v{version.ToString(3)} loaded. " +
-                    $"Decoration limit={DecoLimits.MaxDecorations}; OBJ tools, serialization HUD, decoration edit mode, and Smart Block Builder active.");
+                    $"Decoration limit={DecoLimits.MaxDecorations}; OBJ tools, serialization HUD, decoration edit mode, Smart Block Builder, and Automation Builder active.");
             }
             catch
             {

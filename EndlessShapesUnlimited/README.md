@@ -4,7 +4,7 @@
 
 EndlessShapes Unlimited is a builder-focused mod for From The Depths.
 
-It adds Blender-like editing tools for decorations, surfaces, and block previews, while also raising the decoration limit for players who want to build far beyond vanilla.
+It adds Blender-like editing tools for decorations, surfaces, block previews, and breadboard automation workflows, while also raising the decoration limit for players who want to build far beyond vanilla.
 
 The goal is simple:
 more control, better editing tools, bigger decoration builds, and fewer painful manual steps.
@@ -23,6 +23,9 @@ Create decoration surfaces, paths, circles, cones, spheres, partial shapes, and 
 
 [b]Smart Block Builder[/b]
 Preview block shapes before placing them. Move, rotate, scale, change materials, and apply when ready.
+
+[b]Automation Builder[/b]
+Place breadboards, link blocks as inputs or outputs, and build readable top-to-bottom breadboard graphs.
 
 [b]OBJ Tools[/b]
 Import OBJ models and convert mesh groups into FtD decorations.
@@ -59,6 +62,7 @@ If a craft uses ESU sentinel / extended decoration data, vanilla From The Depths
 
 Ctrl+D - Open Decoration Edit Mode
 Ctrl+Shift+B - Open Smart Block Builder
+Ctrl+Shift+A - Open Automation Builder
 Tab - Cycle ESU modes when clean
 Escape - Close / cancel active ESU mode
 Ctrl+Z / Ctrl+Y - Undo / redo ESU edits

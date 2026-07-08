@@ -4,18 +4,18 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationBuilderMode;
-using DecoLimitLifter.SmartBuildMode;
+using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
+using DecoLimitLifter.SmartBuildMode;
 using UnityEngine;
 
-namespace DecoLimitLifter.DecorationEditMode
+namespace DecoLimitLifter.AutomationBuilderMode
 {
-    internal static class DecorationEditModeRegistration
+    internal static class AutomationBuilderModeRegistration
     {
-        private const string BehaviourName = "EndlessShapesUnlimited.DecorationEditMode";
+        private const string BehaviourName = "EndlessShapesUnlimited.AutomationBuilderMode";
         private static GameObject _host;
-        private static DecorationEditModeBehaviour _behaviour;
+        private static AutomationBuilderModeBehaviour _behaviour;
         private static bool _registered;
 
         internal static bool Active => _behaviour != null && _behaviour.Active;
@@ -28,7 +28,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _ = SerializationHudKeyMap.Instance;
             _host = new GameObject(BehaviourName);
             UnityEngine.Object.DontDestroyOnLoad(_host);
-            _behaviour = _host.AddComponent<DecorationEditModeBehaviour>();
+            _behaviour = _host.AddComponent<AutomationBuilderModeBehaviour>();
             _registered = true;
         }
 
@@ -69,36 +69,18 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 if (_behaviour == null)
                 {
-                    InfoStore.Add("Decoration Edit Mode is not registered.");
+                    InfoStore.Add("Automation Builder is not registered.");
                     return;
                 }
+
                 _behaviour.ToggleFromUi();
             }
             catch (Exception exception)
             {
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Decoration Edit Mode toggle failed",
+                    "[EndlessShapes Unlimited] Automation Builder toggle failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
-            }
-        }
-
-        internal static bool TrySwitchToSmartBuild()
-        {
-            try
-            {
-                if (_behaviour == null || !_behaviour.Active)
-                    return false;
-
-                return _behaviour.TrySwitchToSmartBuild();
-            }
-            catch (Exception exception)
-            {
-                AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Decoration Edit Mode switch failed",
-                    exception,
-                    LogOptions._AlertDevAndCustomerInGame);
-                return true;
             }
         }
 
@@ -108,7 +90,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 if (_behaviour == null)
                 {
-                    InfoStore.Add("Decoration Edit Mode is not registered.");
+                    InfoStore.Add("Automation Builder is not registered.");
                     return false;
                 }
 
@@ -117,7 +99,7 @@ namespace DecoLimitLifter.DecorationEditMode
             catch (Exception exception)
             {
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Decoration Edit Mode switch-open failed",
+                    "[EndlessShapes Unlimited] Automation Builder switch-open failed",
                     exception,
                     LogOptions._AlertDevAndCustomerInGame);
                 return false;
@@ -127,35 +109,35 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static bool CanOpenFromModeSwitch(out string reason) =>
             CanOpenNow(
                 out reason,
+                ignoreDecorationEditMode: true,
                 ignoreSmartBuildMode: true,
-                ignoreAutomationBuilderMode: true,
                 modeSwitch: true);
 
         internal static bool CanOpenNow(out string reason) =>
             CanOpenNow(
                 out reason,
+                ignoreDecorationEditMode: false,
                 ignoreSmartBuildMode: false,
-                ignoreAutomationBuilderMode: false,
                 modeSwitch: false);
 
         private static bool CanOpenNow(
             out string reason,
+            bool ignoreDecorationEditMode,
             bool ignoreSmartBuildMode,
-            bool ignoreAutomationBuilderMode,
             bool modeSwitch)
         {
             reason = null;
-            if (!ignoreSmartBuildMode &&
-                SmartBuildModeRegistration.Active)
+            if (!ignoreDecorationEditMode &&
+                DecorationEditModeRegistration.Active)
             {
-                reason = "Close Smart Block Builder before opening Decoration Edit Mode.";
+                reason = "Close Decoration Edit Mode before opening Automation Builder.";
                 return false;
             }
 
-            if (!ignoreAutomationBuilderMode &&
-                AutomationBuilderModeRegistration.Active)
+            if (!ignoreSmartBuildMode &&
+                SmartBuildModeRegistration.Active)
             {
-                reason = "Close Automation Builder before opening Decoration Edit Mode.";
+                reason = "Close Smart Block Builder before opening Automation Builder.";
                 return false;
             }
 
@@ -166,7 +148,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 reason = modeSwitch
                     ? "Close text input before switching ESU modes."
-                    : "Close text input or blocking UI before opening Decoration Edit Mode.";
+                    : "Close text input or blocking UI before opening Automation Builder.";
                 return false;
             }
 
@@ -177,7 +159,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 build.GetC() == null ||
                 build.GetCC() == null)
             {
-                reason = "Enter build mode on a craft before opening Decoration Edit Mode.";
+                reason = "Enter build mode on a craft before opening Automation Builder.";
                 return false;
             }
 

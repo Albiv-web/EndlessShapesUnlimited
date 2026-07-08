@@ -4598,6 +4598,12 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuHudNotifications.cs"));
+        string notificationOverlaySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotificationOverlayRegistration.cs"));
         string overlaySource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -7277,6 +7283,12 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuHudNotifications.cs"));
+        string automationNotificationOverlaySource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudNotificationOverlayRegistration.cs"));
         string inputScopeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -7299,6 +7311,47 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuModeSwitchHandoff.cs"));
+        string modProjectSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EndlessShapesUnlimited.csproj"));
+        string automationRegistrationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderModeRegistration.cs"));
+        string automationBehaviourSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderModeBehaviour.cs"));
+        string automationInputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderInputScope.cs"));
+        string automationSessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderSession.cs"));
+        string automationNativeBridgeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderSession.NativeBridge.cs"));
+        string automationBreadboardCatalogSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBreadboardCatalog.cs"));
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string smartBuilderHudDocSource = ReadDocumentationText(
@@ -7307,31 +7360,708 @@ f 0 2 3
         string readFreezeDownSource = ExtractMethodSource(vanillaInputBridgeSource, "ReadFreezeDown").Replace("\r\n", "\n");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
+               profileSource.Contains("ToggleAutomationBuilderMode") &&
+               profileSource.Contains("Q(Key.Control, Key.Shift, Key.A)") &&
                profileSource.Contains("SwitchEsuBuildMode") &&
                profileSource.Contains("Q(Key.Tab)") &&
                pluginSource.Contains("SmartBuildModeRegistration.Register") &&
+               pluginSource.Contains("AutomationBuilderModeRegistration.Register") &&
                registrationSource.Contains("DecorationEditModeRegistration.Active") &&
+               registrationSource.Contains("AutomationBuilderModeRegistration.Active") &&
+               automationRegistrationSource.Contains("DecorationEditModeRegistration.Active") &&
+               automationRegistrationSource.Contains("SmartBuildModeRegistration.Active") &&
+               automationRegistrationSource.Contains("CanOpenFromModeSwitch") &&
                registrationSource.Contains("CanOpenFromModeSwitch") &&
                registrationSource.Contains("ignoreDecorationEditMode") &&
                registrationSource.Contains("modeSwitch: true") &&
                registrationSource.Contains("CanSwitchEsuModes") &&
-               behaviourSource.Contains("TrySwitchToDecorationEdit") &&
-               behaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
-               behaviourSource.Contains("DecorationEditModeRegistration.OpenFromModeSwitch") &&
+               behaviourSource.Contains("TrySwitchToAutomationBuilder") &&
+               behaviourSource.Contains("AutomationBuilderModeRegistration.CanOpenFromModeSwitch") &&
+               behaviourSource.Contains("AutomationBuilderModeRegistration.OpenFromModeSwitch") &&
+               automationBehaviourSource.Contains("TrySwitchToDecorationEdit") &&
+               automationBehaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
+               automationBehaviourSource.Contains("DecorationEditModeRegistration.OpenFromModeSwitch") &&
+               !behaviourSource.Contains("InfoStore.Add(\"ESU mode: Automation Builder.\")") &&
+               !automationBehaviourSource.Contains("InfoStore.Add(\"ESU mode: Decoration Edit.\")") &&
                behaviourSource.Contains("ConsumeSmartBuildToggleDown") &&
                behaviourSource.Contains("ConsumeSwitchModeDown") &&
+               automationBehaviourSource.Contains("ConsumeAutomationBuilderToggleDown") &&
+               automationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
                decorationBehaviourSource.Contains("ConsumeDecorationEditToggleDown") &&
                decorationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
                buildModeInputGateSource.Contains("_switchModeRequiresRelease") &&
                buildModeInputGateSource.Contains("_decorationEditToggleRequiresRelease") &&
                buildModeInputGateSource.Contains("_smartBuildToggleRequiresRelease") &&
+               buildModeInputGateSource.Contains("_automationBuilderToggleRequiresRelease") &&
                buildModeInputGateSource.Contains("Time.frameCount") &&
                buildModeInputGateSource.Contains("ReadSwitchModeHeld") &&
                buildModeInputGateSource.Contains("ReadDecorationEditToggleHeld") &&
                buildModeInputGateSource.Contains("ReadSmartBuildToggleHeld") &&
+               buildModeInputGateSource.Contains("ReadAutomationBuilderToggleHeld") &&
                buildModeInputGateSource.Contains("ReadProfileKey(") &&
-               buildModeInputGateSource.Contains("KeyInputEventType.Held"),
-            "Smart Builder registers at startup, defaults to Ctrl+Shift+B, and shares one-press profiled input gates for Tab, Ctrl+D, and Ctrl+Shift+B handoffs.");
+               buildModeInputGateSource.Contains("KeyInputEventType.Held") &&
+               inputScopeSource.Contains("AutomationBuilderInputScope.SuppressBuildHud") &&
+               inputScopeSource.Contains("AutomationBuilderInputScope.SuppressBuildInput") &&
+               inputScopeSource.Contains("AutomationBuilderInputScope.SuppressCameraInput") &&
+               automationInputScopeSource.Contains("BeginEditor(\"Automation Builder\")") &&
+               modeSwitchHandoffSource.Contains("AutomationBuilderModeRegistration.Active"),
+            "Smart Builder and Automation Builder register at startup, default to Ctrl+Shift+B/Ctrl+Shift+A, and share one-press profiled input gates for Tab handoffs.");
+        Assert(modProjectSource.Contains("<Reference Include=\"Breadboards\">") &&
+               modProjectSource.Contains("Breadboards.dll") &&
+               automationSessionSource.Contains("ApplyGraphToNativeBoard()") &&
+               automationSessionSource.Contains("DrawGraphNodeCard") &&
+               !automationSessionSource.Contains("GUI.Window(_nodeWindowIdBase") &&
+               automationSessionSource.Contains("AutomationPaletteCategory") &&
+               automationSessionSource.Contains("AutomationBlockShape") &&
+               automationSessionSource.Contains("DrawBlockPalettePanel") &&
+               automationSessionSource.Contains("DrawStarterFlowAction") &&
+               automationSessionSource.Contains("\"Starter Flow\"") &&
+               automationSessionSource.Contains("\"Create a native Read -> Below Threshold -> If True -> Set starter program from the single linked input and output.\"") &&
+               !automationSessionSource.Contains("\"Create a native Read -> If < threshold -> Set starter program") &&
+               automationSessionSource.Contains("TryAddNativeStarterFlow(out string message)") &&
+               automationSessionSource.Contains("DrawLinkedHardwareQuickBlocks") &&
+               automationSessionSource.Contains("DrawLinkedHardwareQuickBlockGroup") &&
+               automationSessionSource.Contains("DrawLinkedHardwareQuickBlock") &&
+               automationSessionSource.Contains("GraphNodeForNativeLink") &&
+               automationSessionSource.Contains("FocusLinkedHardwareGraphNode") &&
+               automationSessionSource.Contains("\"Linked Hardware\"") &&
+               automationSessionSource.Contains("\"Link input/output craft blocks in world view first.\"") &&
+               automationSessionSource.Contains("_linkedHardwareScroll") &&
+               automationSessionSource.Contains("OrderBy(link => link.Source?.Name)") &&
+               automationSessionSource.Contains("OrderBy(link => link.Target?.Name)") &&
+               automationSessionSource.Contains("Mathf.Min(") &&
+               automationSessionSource.Contains("EsuHudLayout.Scale(168f)") &&
+               !automationSessionSource.Contains("\"more linked target\"") &&
+               automationSessionSource.Contains("\"Jump to native graph block for this linked craft target.\"") &&
+               automationSessionSource.Contains("node.Id == link.Id") &&
+               automationSessionSource.Contains("ReferenceEquals(node.NativeComponent, link.NativeComponent)") &&
+               automationSessionSource.Contains("graph.SelectedNodeId = node.Id") &&
+               automationSessionSource.Contains("_graphScroll = new Vector2(") &&
+               automationSessionSource.Contains("DrawPaletteCategoryButtons") &&
+               automationSessionSource.Contains("HandlePaletteBlockDrop") &&
+               automationSessionSource.Contains("_paletteDragMoved") &&
+               automationSessionSource.Contains("_paletteDropPending") &&
+               automationSessionSource.Contains("PaletteDragWindowMouse") &&
+               automationSessionSource.Contains("CompleteGraphNodeDragIfReleased(graph)") &&
+               automationSessionSource.Contains("VisibleWorkspaceDropGraphRect") &&
+               automationSessionSource.Contains("_lastCanvasWorkspaceRect = canvasRect") &&
+               automationSessionSource.Contains("\"Click to place \" + NodeTitle(kind) + \" in the visible workspace, or drag it to a precise spot.\"") &&
+               automationSessionSource.Contains("DrawPaletteSnapPreview(canvasRect)") &&
+               automationSessionSource.Contains("DrawPaletteSnapPreview") &&
+               automationSessionSource.Contains("PaletteDropGraphRect") &&
+               automationSessionSource.Contains("AddGraphNode(_draggingPaletteKind, hasPreferredRect: true, preferredRect: preferred)") &&
+               automationSessionSource.Contains("GraphToWorkspaceRect") &&
+               automationSessionSource.Contains("GraphToWorkspacePoint") &&
+               automationSessionSource.Contains("DrawWorkspaceSnapPreviewTarget") &&
+               automationSessionSource.Contains("DrawWorkspaceCanvasFlow") &&
+               automationSessionSource.Contains("List<List<AutomationGraphNode>> executionChains = OrderedGraphFlowChains(graph)") &&
+               automationSessionSource.Contains("List<AutomationGraphNode> executionFlow = executionChains.SelectMany(chain => chain).ToList()") &&
+               automationSessionSource.Contains("DrawGraphConnections(graph, executionChains)") &&
+               automationSessionSource.Contains("DrawGraphNodeCard(graph, node, executionFlow, executionChains)") &&
+               automationSessionSource.Contains("PreviousSnappedStackNode") &&
+               automationSessionSource.Contains("NextSnappedStackNode") &&
+               automationSessionSource.Contains("AreStackNodesSnapped") &&
+               automationSessionSource.Contains("Mathf.Abs(to.Rect.y - expectedY) <= EsuHudLayout.Scale(14f)") &&
+               automationSessionSource.Contains("DrawExecutionOrderBadge") &&
+               automationSessionSource.Contains("DrawReadinessBadge") &&
+               automationSessionSource.Contains("NativeNodeReadinessIssues(graph, executionChains, node).ToList()") &&
+               automationSessionSource.Contains("EsuCursorTooltip.Register(badge, tooltip)") &&
+               automationSessionSource.Contains("compact ? 4f : 114f") &&
+               automationSessionSource.Contains("FlowNodeIndex(executionFlow, node)") &&
+               automationSessionSource.Contains("\"#\" + (index + 1).ToString(CultureInfo.InvariantCulture)") &&
+               automationSessionSource.Contains("\"drop into \" + ValueSlotLabel(hostKind, slotKind)") &&
+               automationSessionSource.Contains("\"drop into body\"") &&
+               automationSessionSource.Contains("snapBelow ? \"drop below\" : \"drop above\"") &&
+               automationSessionSource.Contains("DrawAutomationBlockShape") &&
+               automationSessionSource.Contains("TrySnapNewGraphNode") &&
+               automationSessionSource.Contains("if (hasPreferredRect)") &&
+               automationSessionSource.Contains("TrySnapNewGraphNode(graph, nativeId)") &&
+               automationSessionSource.Contains("AutomationGraphNode node = graph?.Nodes.FirstOrDefault(candidate => candidate.Id == nativeId)") &&
+               automationSessionSource.Contains("TrySnapGraphNode") &&
+               automationSessionSource.Contains("TrySnapValueNode") &&
+               automationSessionSource.Contains("GraphNodeWidthForKind") &&
+               automationSessionSource.Contains("ValueSlotRect") &&
+               automationSessionSource.Contains("AcceptsValueSlot") &&
+               automationSessionSource.Contains("AutomationValueSlotKind") &&
+               automationSessionSource.Contains("AutomationGraphSlotMenuKind") &&
+               automationSessionSource.Contains("ValueSlotKinds") &&
+               automationSessionSource.Contains("ValueSlotLabel") &&
+               automationSessionSource.Contains("AutomationNodeKind.IfCondition") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Threshold") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Amount") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Factor") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Min") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Max") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Seconds") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.Else") &&
+               automationSessionSource.Contains("SnappedValueSlotKind") &&
+               automationSessionSource.Contains("DrawValueSocketHint") &&
+               automationSessionSource.Contains("DrawControlBodyHint") &&
+               automationSessionSource.Contains("ControlBodyLabel(node.Kind)") &&
+               automationSessionSource.Contains("\"driven actions\"") &&
+               automationSessionSource.Contains("DrawGraphSnapPreview") &&
+               automationSessionSource.Contains("DrawGraphSlotDropdown(graph, viewRect)") &&
+               automationSessionSource.Contains("ArrangeNativeGraphForReadability") &&
+               automationSessionSource.Contains("ArrangeGraphNodes") &&
+               automationSessionSource.Contains("CaptureSocketValues(graph)") &&
+               automationSessionSource.Contains("CaptureBodyChildren") &&
+               automationSessionSource.Contains("CaptureBodyLayoutChains") &&
+               automationSessionSource.Contains("OrderedLayoutChainsFromCandidates") &&
+               automationSessionSource.Contains("AppendLayoutChain") &&
+               automationSessionSource.Contains("ArrangeLayoutChain") &&
+               automationSessionSource.Contains("ArrangeLayoutNode") &&
+               automationSessionSource.Contains("ArrangeControlBodyChains") &&
+               automationSessionSource.Contains("ArrangeSocketValuesForHosts") &&
+               automationSessionSource.Contains("SetGraphNodeRect") &&
+               automationSessionSource.Contains("\"Arrange\"") &&
+               automationSessionSource.Contains("Lay out native-wired visual blocks into readable top-to-bottom chains") &&
+               automationSessionSource.Contains("\"Automation Builder arranged {0:N0} native visual block{1}.\"") &&
+               automationSessionSource.Contains("Dictionary<Tuple<AutomationGraphNode, AutomationValueSlotKind>, AutomationGraphNode> socketValues") &&
+               automationSessionSource.Contains("Dictionary<AutomationGraphNode, List<AutomationGraphNode>> bodyChildren") &&
+               automationSessionSource.Contains("Dictionary<AutomationGraphNode, List<List<AutomationGraphNode>>> bodyChains") &&
+               automationSessionSource.Contains("bodyChildNodes.Contains(node)") &&
+               automationSessionSource.Contains("Rect body = ControlBodyRect(host.Rect, host.Kind)") &&
+               automationSessionSource.Contains("float childX = body.x + EsuHudLayout.Scale(14f)") &&
+               automationSessionSource.Contains("expanded.height = requiredHeight") &&
+               automationSessionSource.Contains("SyncNativeNodeRect(node)") &&
+               automationSessionSource.Contains("CanProduceValueBlock(node.Kind) && IsValueFootprint(rect)") &&
+               automationSessionSource.Contains("TryFindValueSnapPreview") &&
+               automationSessionSource.Contains("TryFindBodySnapPreview") &&
+               automationSessionSource.Contains("TryFindStackSnapPreview") &&
+               automationSessionSource.Contains("CanStackSnapNode") &&
+               automationSessionSource.Contains("!CanStackSnapNode(other) || ReferenceEquals(other, node)") &&
+               automationSessionSource.Contains("DrawSnapPreviewTarget") &&
+               automationSessionSource.Contains("\"snap \" + ValueSlotLabel(hostKind, slotKind)") &&
+               automationSessionSource.Contains("\"snap into body\"") &&
+               automationSessionSource.Contains("snapBelow ? \"snap below\" : \"snap above\"") &&
+               automationSessionSource.Contains("SnappedValueForHost") &&
+               automationSessionSource.Contains("ValueSlotCandidateNodes") &&
+               automationSessionSource.Contains("NativeValueConnectionExists(node, host, slotKind)") &&
+               automationSessionSource.Contains("NativePropertyValueMatchesSocket(node, host, slotKind)") &&
+               automationSessionSource.Contains("List<AutomationGraphNode> propertyMatches") &&
+               automationSessionSource.Contains("propertyMatches.Count == 1") &&
+               automationSessionSource.Contains("ValueSlotAssignments") &&
+               automationSessionSource.Contains("SnappedValueHost") &&
+               automationSessionSource.Contains("SnappedBodyParent") &&
+               automationSessionSource.Contains("BodyChildrenForHost") &&
+               automationSessionSource.Contains("TrySnapBodyNode") &&
+               automationSessionSource.Contains("OrderedGraphFlowNodes") &&
+               automationSessionSource.Contains("AppendGraphFlowNode") &&
+               automationSessionSource.Contains("AcceptsControlBody") &&
+               automationSessionSource.Contains("ControlBodyRect") &&
+               automationSessionSource.Contains("IsBodyFlowNode") &&
+               automationSessionSource.Contains("IsStackFlowNode") &&
+               automationSessionSource.Contains("(IsStackFlowNode(node) || AcceptsControlBody(node.Kind))") &&
+               automationSessionSource.Contains("yield return \"body: \" + NativePlanSentence(bodyNode)") &&
+               automationSessionSource.Contains(" inside ") &&
+               automationSessionSource.Contains("SyncNativeNodeRect(best)") &&
+               automationSessionSource.Contains("yield return ValueSlotLabel(node.Kind, slotKind) + \" socket: \" + NativePlanSentence(value)") &&
+               automationSessionSource.Contains("yield return \"switch output: then/else value drives the next stack action\"") &&
+               automationSessionSource.Contains("plugged into") &&
+               automationSessionSource.Contains("ValueSlotLabel(snappedHost.Kind, slotKind)") &&
+               automationSessionSource.Contains("ValueSlotLabel(host.Kind, slotKind)") &&
+               automationSessionSource.Contains("\"Apply: connect snapped/native-wired stack chains top-to-bottom and socketed value blocks into native inputs\"") &&
+               automationSessionSource.Contains("BlockProgramLines") &&
+               automationSessionSource.Contains("OrderedBlockProgramChains") &&
+               automationSessionSource.Contains("AppendBlockProgramChain") &&
+               automationSessionSource.Contains("foreach (List<AutomationGraphNode> chain in chains)") &&
+               automationSessionSource.Contains("PreviousSnappedStackNode(graph, stackRoots, node) == null") &&
+               automationSessionSource.Contains("NextSnappedStackNode(graph, candidates, current, visited)") &&
+               automationSessionSource.Contains("BlockProgramNodeLines") &&
+               automationSessionSource.Contains("BlockProgramBodyLines") &&
+               automationSessionSource.Contains("BlockProgramSentence") &&
+               automationSessionSource.Contains("BlockValueText") &&
+               automationSessionSource.Contains("IsBlockProgramRoot") &&
+               automationSessionSource.Contains("CanSnapIntoValueSlot") &&
+               automationSessionSource.Contains("CanFeedSignalValueSlot") &&
+               automationSessionSource.Contains("IsConstantOnlyValueSlot") &&
+               automationSessionSource.Contains("CanProduceValueBlock") &&
+               automationSessionSource.Contains("DrawsAsValueBlock") &&
+               automationSessionSource.Contains("IsValueFootprint") &&
+               automationSessionSource.Contains("CanProduceValueBlock(node.Kind) &&") &&
+               automationSessionSource.Contains("slotKind == AutomationValueSlotKind.Pass") &&
+               automationSessionSource.Contains("node.Kind == AutomationNodeKind.Constant &&") &&
+               automationSessionSource.Contains("IsConstantOnlyValueSlot(hostKind, slotKind)") &&
+               automationSessionSource.Contains("CanSnapIntoValueSlot(node, host.Kind, slotKind)") &&
+               automationSessionSource.Contains("SnappedValueHost(graph, node) == null") &&
+               automationSessionSource.Contains("DrawBlockSentence(rect, node, compact: false, graph)") &&
+               automationSessionSource.Contains("AutomationGraphNode outputValue") &&
+               automationSessionSource.Contains("AutomationGraphNode thenValue") &&
+               automationSessionSource.Contains("AutomationGraphNode elseValue") &&
+               automationSessionSource.Contains("AutomationGraphNode conditionThenValue") &&
+               automationSessionSource.Contains("ConditionInputBlockText(graph, node)") &&
+               automationSessionSource.Contains("BlockValueText(outputValue)") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, \"current\", OutputSetterCurrentValueText(node))") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, \"source\", OutputSetterSourceText(graph, node, outputValue))") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, \"input\", IncomingSignalText(graph, node))") &&
+               automationSessionSource.Contains("IncomingSignalCurrentText(graph, node)") &&
+               automationSessionSource.Contains("BlockValueText(thenValue)") &&
+               automationSessionSource.Contains("BlockValueText(elseValue)") &&
+               automationSessionSource.Contains("AutomationGraphNode operandValue") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, MathOperandLabel(node.Kind), BlockValueText(operandValue))") &&
+               automationSessionSource.Contains("AutomationGraphNode clampSourceValue") &&
+               automationSessionSource.Contains("AutomationGraphNode minValue") &&
+               automationSessionSource.Contains("AutomationGraphNode maxValue") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, ValueSlotLabel(node.Kind, AutomationValueSlotKind.Min), BlockValueText(minValue))") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, ValueSlotLabel(node.Kind, AutomationValueSlotKind.Max), BlockValueText(maxValue))") &&
+               automationSessionSource.Contains("AutomationGraphNode smoothSourceValue") &&
+               automationSessionSource.Contains("AutomationGraphNode secondsValue") &&
+               automationSessionSource.Contains("DrawBlockSlot(ref y, inner, ValueSlotLabel(node.Kind, AutomationValueSlotKind.Seconds), BlockValueText(secondsValue))") &&
+               automationSessionSource.Contains("CycleLinkedTarget") &&
+               automationSessionSource.Contains("CycleNativeProperty") &&
+               automationSessionSource.Contains("DrawGraphNodeQuickChoices") &&
+               automationSessionSource.Contains("\"Block Choices\"") &&
+               automationSessionSource.Contains("TargetChoicesForNode(node).Take(3)") &&
+               automationSessionSource.Contains("NativePropertyOptionsForNode(node)") &&
+               automationSessionSource.Contains("DecorationEditorTheme.ToolButton(selected)") &&
+               automationSessionSource.Contains("TryApplyNativeLinkTarget(node, link") &&
+               automationSessionSource.Contains("DrawEditableValueSlot") &&
+               automationSessionSource.Contains("DrawCompactBlockSlot") &&
+               automationSessionSource.Contains("valueFootprint &&") &&
+               automationSessionSource.Contains("DrawCompactReadValueSentence(inner, node, selected)") &&
+               automationSessionSource.Contains("DrawCompactReadValueField(currentRect, \"now \" + ShortText(InputGetterCurrentValueText(node), 9))") &&
+               automationSessionSource.Contains("OpenGraphSlotMenu(node, AutomationGraphSlotMenuKind.Target, targetRect)") &&
+               automationSessionSource.Contains("OpenGraphSlotMenu(node, AutomationGraphSlotMenuKind.Property, propertyRect)") &&
+               automationSessionSource.Contains("\"Choose linked input target.\"") &&
+               automationSessionSource.Contains("\"Choose native readable property.\"") &&
+               automationSessionSource.Contains("MarkGraphSlotInputIfMouseInside") &&
+               automationSessionSource.Contains("_graphSlotConsumedInput") &&
+               automationSessionSource.Contains("BlockTargetLabel") &&
+               automationSessionSource.Contains("LinkChoiceTargetName") &&
+               automationSessionSource.Contains("IsSelectedGraphNode") &&
+               automationSessionSource.Contains("OpenGraphSlotMenu") &&
+               automationSessionSource.Contains("CloseGraphSlotMenu") &&
+               automationSessionSource.Contains("DrawTargetSlotDropdown") &&
+               automationSessionSource.Contains("DrawPropertySlotDropdown") &&
+               automationSessionSource.Contains("GraphSlotDropdownRect") &&
+               automationSessionSource.Contains("_graphSlotMenuAnchorRect") &&
+               automationSessionSource.Contains("_graphSlotMenuScroll") &&
+               automationSessionSource.Contains("AutomationGraphSlotMenuKind.Target") &&
+               automationSessionSource.Contains("AutomationGraphSlotMenuKind.Property") &&
+               automationSessionSource.Contains("\"Choose linked input target.\"") &&
+               automationSessionSource.Contains("\"Choose native readable property.\"") &&
+               automationSessionSource.Contains("\"Choose linked output target.\"") &&
+               automationSessionSource.Contains("\"Choose native writable property.\"") &&
+               automationSessionSource.Contains("GUI.TextField(valueRect") &&
+               automationSessionSource.Contains("ApplyNativeNodeEdits(node, node.Label, node.Property, nextValue)") &&
+               automationSessionSource.Contains("InputGetterCurrentValueText(node)") &&
+               automationSessionSource.Contains("OutputSetterCurrentValueText(node)") &&
+               automationSessionSource.Contains("OutputSetterSourceText(") &&
+               automationSessionSource.Contains("ApplySwitchThresholdSlotEdit") &&
+               automationSessionSource.Contains("ApplySwitchFailValueSlotEdit") &&
+               automationSessionSource.Contains("ApplyMathAddAmountSlotEdit") &&
+               automationSessionSource.Contains("ApplyMathOperandSlotEdit") &&
+               automationSessionSource.Contains("ApplyClampMinSlotEdit") &&
+               automationSessionSource.Contains("ApplyClampMaxSlotEdit") &&
+               automationSessionSource.Contains("ApplySmoothSecondsSlotEdit") &&
+               automationSessionSource.Contains("SwitchThresholdSlotText") &&
+               automationSessionSource.Contains("MathOperandBlockText(graph, node)") &&
+               automationSessionSource.Contains("MathInputBlockText(graph, node)") &&
+               automationSessionSource.Contains("MathAddAmountSlotText") &&
+               automationSessionSource.Contains("MathBlockProgramSentence") &&
+               automationSessionSource.Contains("MathNativePlanSentence") &&
+               automationSessionSource.Contains("MathOperandSlotKind") &&
+               automationSessionSource.Contains("MathOperandLabel") &&
+               automationSessionSource.Contains("MathExpressionText") &&
+               automationSessionSource.Contains("MathOperandFromExpression") &&
+               automationSessionSource.Contains("ClampInputBlockText(graph, node)") &&
+               automationSessionSource.Contains("ClampMinBlockText(graph, node)") &&
+               automationSessionSource.Contains("ClampMaxBlockText(graph, node)") &&
+               automationSessionSource.Contains("ClampRangeSlotText") &&
+               automationSessionSource.Contains("ClampValueText") &&
+               automationSessionSource.Contains("SmoothInputBlockText(graph, node)") &&
+               automationSessionSource.Contains("SmoothSecondsBlockText(graph, node)") &&
+               automationSessionSource.Contains("SmoothSecondsSlotText") &&
+               automationSessionSource.Contains("SmoothSecondsValueText") &&
+               automationSessionSource.Contains("IncomingSignalText(") &&
+               automationSessionSource.Contains("IncomingSignalCurrentText(") &&
+               automationSessionSource.Contains("ValueSignalCurrentText") &&
+               automationSessionSource.Contains("SwitchFailValueSlotText") &&
+               automationSessionSource.Contains("ParseSwitchSlotValues") &&
+               automationSessionSource.Contains("SwitchValueText") &&
+               automationSessionSource.Contains("FormatGraphFloat") &&
+               automationSessionSource.Contains("Edit native ConstantInput value.") &&
+               automationSessionSource.Contains("Edit native Switch constant threshold.") &&
+               automationSessionSource.Contains("Edit native Switch constant fail value.") &&
+               automationSessionSource.Contains("Edit native FuzzyThreshold constant threshold.") &&
+               automationSessionSource.Contains("\"Edit native Evaluator \" + operandLabel") &&
+               automationSessionSource.Contains("Edit native Clamp constant minimum.") &&
+               automationSessionSource.Contains("Edit native Clamp constant maximum.") &&
+               automationSessionSource.Contains("Edit native Delay constant seconds.") &&
+               automationSessionSource.Contains("Edit native Comment text.") &&
+               automationSessionSource.Contains("ValueSlotLabel(node.Kind, AutomationValueSlotKind.Threshold)") &&
+               automationSessionSource.Contains("ValueSlotLabel(node.Kind, AutomationValueSlotKind.Else)") &&
+               automationSessionSource.Contains("ValueSlotLabel(node.Kind, AutomationValueSlotKind.Min)") &&
+               automationSessionSource.Contains("ValueSlotLabel(node.Kind, AutomationValueSlotKind.Seconds)") &&
+               automationSessionSource.Contains("TryApplyNativeLinkTarget(node, next") &&
+               automationSessionSource.Contains("ApplyNativeNodeEdits(node, node.Label, next, node.ValueText)") &&
+               automationSessionSource.Contains("DecorationEditorTheme.ToolButton(false)") &&
+               automationSessionSource.Contains("\"Block Program\"") &&
+               automationSessionSource.Contains("\"Native Lowering\"") &&
+               automationSessionSource.Contains("\"forever (native breadboard evaluation)\"") &&
+               automationSessionSource.Contains("\"  threshold value \" + (thresholdValue == null") &&
+               automationSessionSource.Contains("\"  then value \" + BlockValueText") &&
+               automationSessionSource.Contains("\"  else value \" + (elseValue == null") &&
+               automationSessionSource.Contains("\"  emits selected value to stack actions below\"") &&
+               automationSessionSource.Contains("\"if incoming signal > \" + SwitchThresholdBlockText(graph, node)") &&
+               automationSessionSource.Contains("SwitchThresholdBlockText(graph, node)") &&
+               automationSessionSource.Contains("\"constant \" + SwitchFailValueSlotText(node)") &&
+               automationSessionSource.Contains("\"Apply: validates this block program and writes vanilla breadboard connections\"") &&
+               automationSessionSource.Contains("DrawLinkedTargetSuggestions") &&
+               automationSessionSource.Contains("TargetChoicesForNode") &&
+               automationSessionSource.Contains("DrawNativePropertySuggestions") &&
+               automationSessionSource.Contains("MatchesPropertyText") &&
+               automationSessionSource.Contains("DrawGeneratedNativePlanPanel") &&
+               automationSessionSource.Contains("DrawNativeGraphReadiness") &&
+               automationSessionSource.Contains("DrawGraphLiveValues(graph)") &&
+               automationSessionSource.Contains("GraphLiveValueLines") &&
+               automationSessionSource.Contains("GraphNodeTargetProperty") &&
+               automationSessionSource.Contains("\"Readiness\"") &&
+               automationSessionSource.Contains("\"Live Values\"") &&
+               automationSessionSource.Contains("\"Add a Read or Set block with a linked target to see current native property values.\"") &&
+               automationSessionSource.Contains("\"read \" + GraphNodeTargetProperty(node) + \" = \" + InputGetterCurrentValueText(node)") &&
+               automationSessionSource.Contains("\"set \" + GraphNodeTargetProperty(node) + \" currently \" + OutputSetterCurrentValueText(node) + \" <- \" + OutputSetterSourceText(graph, node, outputValue)") &&
+               automationSessionSource.Contains("\"OK: visual blocks are backed by native breadboard components") &&
+               automationSessionSource.Contains("\"Needs: \" + issue") &&
+               automationSessionSource.Contains("NativePlanLines") &&
+               automationSessionSource.Contains("\"Snapped / Native-Wired Stack Chains\"") &&
+               automationSessionSource.Contains("\"Native Component Inventory\"") &&
+               automationSessionSource.Contains("NativePlanNodeDetailLines") &&
+               automationSessionSource.Contains("\"   chain {0:N0}\"") &&
+               automationSessionSource.Contains("\"   (no snapped or native-wired action chains yet)\"") &&
+               automationSessionSource.Contains("NativeConnectionPreviewLines") &&
+               automationSessionSource.Contains("\"Apply Preview\"") &&
+               automationSessionSource.Contains("\"   stack: \" + NativePlanSentence(flow[index])") &&
+               automationSessionSource.Contains("\"   condition: \" + NativePlanSentence(flow[index])") &&
+               automationSessionSource.Contains("\"   value: \" + NativePlanSentence(value)") &&
+               automationSessionSource.Contains("\"   value: native Switch else/fail = constant \" + SwitchFailValueSlotText(host)") &&
+               automationSessionSource.Contains("\" constant threshold property\"") &&
+               automationSessionSource.Contains("\" constant minimum property\"") &&
+               automationSessionSource.Contains("\" constant maximum property\"") &&
+               automationSessionSource.Contains("\" constant seconds property\"") &&
+               automationSessionSource.Contains("\" native b input\"") &&
+               automationSessionSource.Contains("MathExpressionInputText") &&
+               automationSessionSource.Contains("\"   switch output: selected then/else value feeds the next stack action\"") &&
+               automationSessionSource.Contains("yield return \"switch output: then/else value drives the next stack action\"") &&
+               automationSessionSource.Contains("\"then/else value drives next action\"") &&
+               automationSessionSource.Contains("\"if signal is true\"") &&
+               automationSessionSource.Contains("DrawComponentButton(AutomationNodeKind.Forever, \"Forever\"") &&
+               automationSessionSource.Contains("\"Native continuous evaluation container for action stacks.\"") &&
+               automationSessionSource.Contains("\"If True\"") &&
+               automationSessionSource.Contains("\"pass when signal > threshold\"") &&
+               automationSessionSource.Contains("\"Switch > Threshold\"") &&
+               automationSessionSource.Contains("\"threshold const\"") &&
+               automationSessionSource.Contains("\"else const\"") &&
+               automationSessionSource.Contains("\"min const\"") &&
+               automationSessionSource.Contains("\"seconds const\"") &&
+               automationSessionSource.Contains("\"native switch pass when switcher > \" + SwitchThresholdSlotText(node)") &&
+               !automationSessionSource.Contains("\"If < Threshold\"") &&
+               !automationSessionSource.Contains("\"if signal < threshold\"") &&
+               !automationSessionSource.Contains("\"if incoming signal < \" + SwitchThresholdBlockText(graph, node)") &&
+               !automationSessionSource.Contains("\"If incoming value < threshold\"") &&
+               automationSessionSource.Contains("\"snap a signal block above\"") &&
+               automationSessionSource.Contains("return 366f") &&
+               automationSessionSource.Contains("return 432f") &&
+               automationSessionSource.Contains("return 214f") &&
+               automationSessionSource.Contains("return 282f") &&
+               automationSessionSource.Contains("Scale(324f)") &&
+               automationSessionSource.Contains("Scale(348f)") &&
+               automationSessionSource.Contains("Scale(258f)") &&
+               automationSessionSource.Contains("Scale(282f)") &&
+               automationSessionSource.Contains("Scale(144f)") &&
+               automationSessionSource.Contains("Scale(142f)") &&
+               automationSessionSource.Contains("Scale(y)") &&
+               automationSessionSource.Contains("Scale(76f)") &&
+               automationSessionSource.Contains("\"snap value block or stack above\"") &&
+               automationSessionSource.Contains("\"ambiguous: stack + socket\"") &&
+               automationSessionSource.Contains("\"   (no stack or value connections to apply yet)\"") &&
+               automationSessionSource.Contains("AutomationNodeKind.Forever") &&
+               automationSessionSource.Contains("Continuous breadboard evaluation") &&
+               automationSessionSource.Contains("\"forever: native breadboard evaluates continuously\"") &&
+               automationSessionSource.Contains("PaletteKinds") &&
+               automationSessionSource.Contains("AutomationNodeKind.MathSubtract") &&
+               automationSessionSource.Contains("AutomationNodeKind.MathMultiply") &&
+               automationSessionSource.Contains("AutomationNodeKind.MathMax") &&
+               automationSessionSource.Contains("AutomationNodeKind.MathMin") &&
+               automationSessionSource.Contains("AutomationNodeKind.Random") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicAnd") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicOr") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicNot") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicXor") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicNand") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicNor") &&
+               automationSessionSource.Contains("AutomationNodeKind.LogicXnor") &&
+               automationSessionSource.Contains("AutomationNodeKind.CompareAboveThreshold") &&
+               automationSessionSource.Contains("AutomationNodeKind.CompareBelowThreshold") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.LogicB") &&
+               automationSessionSource.Contains("AutomationValueSlotKind.MathB") &&
+               automationSessionSource.Contains("LogicBlockProgramSentence") &&
+               automationSessionSource.Contains("LogicNativePlanSentence") &&
+               automationSessionSource.Contains("IsLogicGateKind") &&
+               automationSessionSource.Contains("IsMathEvaluatorKind(hostKind) && slotKind == MathOperandSlotKind(hostKind)") &&
+               automationSessionSource.Contains("ThresholdBlockProgramSentence") &&
+               automationSessionSource.Contains("ThresholdNativePlanSentence") &&
+               automationSessionSource.Contains("IsFuzzyThresholdKind") &&
+               automationSessionSource.Contains("ApplyThresholdSlotEdit") &&
+               automationSessionSource.Contains("MaxMinBlockProgramSentence") &&
+               automationSessionSource.Contains("MaxMinNativePlanSentence") &&
+               automationSessionSource.Contains("IsMaxMinKind") &&
+               automationSessionSource.Contains("\"Subtract\"") &&
+               automationSessionSource.Contains("\"Multiply\"") &&
+               automationSessionSource.Contains("\"Max\"") &&
+               automationSessionSource.Contains("\"Min\"") &&
+               automationSessionSource.Contains("\"Random\"") &&
+               automationSessionSource.Contains("\"And\"") &&
+               automationSessionSource.Contains("\"Or\"") &&
+               automationSessionSource.Contains("\"Xor\"") &&
+               automationSessionSource.Contains("\"Above Threshold\"") &&
+               automationSessionSource.Contains("\"Below Threshold\"") &&
+               automationSessionSource.Contains("RandomRangeSlotText") &&
+               automationSessionSource.Contains("ApplyRandomRangeSlotEdit") &&
+               automationSessionSource.Contains("DrawLinkListBox") &&
+               automationSessionSource.Contains("\"Input Links\"") &&
+               automationSessionSource.Contains("\"Output Links\"") &&
+               automationSessionSource.Contains("SplitAutomationVerticalStack") &&
+               automationSessionSource.Contains("AutomationPanelDivider") &&
+               automationSessionSource.Contains("DecorationEditorViewModeController") &&
+               automationSessionSource.Contains("DrawViewModeMenu") &&
+               automationSessionSource.Contains("\"visibility\"") &&
+               automationSessionSource.Contains("\"View\"") &&
+               automationSessionSource.Contains("IsEsuNumberShortcutDown(1)") &&
+               automationSessionSource.Contains("IsEsuNumberShortcutDown(2)") &&
+               automationSessionSource.Contains("IsEsuNumberShortcutDown(3)") &&
+               automationSessionSource.Contains("RequestClose()") &&
+               automationSessionSource.Contains("DrawAutomationClosePrompt") &&
+               automationSessionSource.Contains("HasUnappliedAutomationChanges") &&
+               automationSessionSource.Contains("MarkAutomationDirty()") &&
+               automationSessionSource.Contains("ClearAutomationDirty()") &&
+               automationSessionSource.Contains("AutomationBreadboardVariant.Ai") &&
+               automationSessionSource.Contains("AutomationBreadboardVariant.Basic") &&
+               automationSessionSource.Contains("RefreshNativeAutomationCache();") &&
+               automationSessionSource.Contains("TryGetBlock(out Block block)") &&
+               automationNativeBridgeSource.Contains("NativeBreadBoard") &&
+               automationNativeBridgeSource.Contains("NativeBreadBoard = BrilliantSkies.Blocks.FtdBoard") &&
+               automationNativeBridgeSource.Contains("NativeBasicBreadBoardBlock = BrilliantSkies.Blocks.BreadBoard") &&
+               automationNativeBridgeSource.Contains("NativeAiBreadBoardBlock = BrilliantSkies.Blocks.BreadBoards.AiBreadboard") &&
+               automationNativeBridgeSource.Contains("TryResolveNativeBreadboardBoard") &&
+               automationNativeBridgeSource.Contains("block is NativeBasicBreadBoardBlock basicBreadboard") &&
+               automationNativeBridgeSource.Contains("block is NativeAiBreadBoardBlock aiBreadboard") &&
+               automationNotificationOverlaySource.Contains("AutomationBuilderInputScope.Active") &&
+               automationNativeBridgeSource.Contains("TryCreateNativeLink") &&
+               automationNativeBridgeSource.Contains("BuildNativeLinks") &&
+               automationNativeBridgeSource.Contains("SyncGraphFromNativeBreadboard") &&
+               automationNativeBridgeSource.Contains("ValidateAndConnectNativeGraph") &&
+               automationNativeBridgeSource.Contains("NativeGraphReadinessIssues(graph).ToList()") &&
+               automationNativeBridgeSource.Contains("\"Apply blocked: fix {0:N0} automation readiness issue{1} first.\"") &&
+               automationNativeBridgeSource.Contains("readinessIssues.Take(12)") &&
+               automationNativeBridgeSource.Contains("result.Kind == EsuHudNotificationKind.Info") &&
+               automationNativeBridgeSource.Contains("NativeGraphReadinessIssues") &&
+               automationNativeBridgeSource.Contains("ValueSocketConflictIssues") &&
+               automationNativeBridgeSource.Contains("ValueSlotLabel(host.Kind, slotKind)") &&
+               automationNativeBridgeSource.Contains("socket has multiple nearby value blocks") &&
+               automationNativeBridgeSource.Contains("is close enough to feed multiple value sockets") &&
+               automationNativeBridgeSource.Contains("NativeNodeReadinessIssues") &&
+               automationNativeBridgeSource.Contains("HasNativeBlockTarget") &&
+               automationNativeBridgeSource.Contains("GetterHasNativeProperty") &&
+               automationNativeBridgeSource.Contains("SetterHasNativeProperty") &&
+               automationNativeBridgeSource.Contains("PreviousFlowNode") &&
+               automationNativeBridgeSource.Contains("NextFlowNode") &&
+               automationNativeBridgeSource.Contains("FlowNodeIndex") &&
+               automationNativeBridgeSource.Contains("has no linked input target") &&
+               automationNativeBridgeSource.Contains("has no readable native property selected") &&
+               automationNativeBridgeSource.Contains("has no linked output target") &&
+               automationNativeBridgeSource.Contains("has no incoming signal or snapped/native-wired value block") &&
+               automationNativeBridgeSource.Contains("has no then value in the switch pass socket") &&
+               automationNativeBridgeSource.Contains("has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.") &&
+               automationNativeBridgeSource.Contains("has both a stack signal and an input socket signal") &&
+               automationNativeBridgeSource.Contains("switch output does not drive any action block yet") &&
+               automationNativeBridgeSource.Contains("IsNativeConnected") &&
+               automationNativeBridgeSource.Contains("NativeStackConnectionExists") &&
+               automationNativeBridgeSource.Contains("NativeValueConnectionExists") &&
+               automationNativeBridgeSource.Contains("NativePropertyValueMatchesSocket") &&
+               automationNativeBridgeSource.Contains("TryGetNativePropertySocketValue") &&
+               automationNativeBridgeSource.Contains("hostComponent is NativeSwitch switchComponent") &&
+               automationNativeBridgeSource.Contains("slotKind == AutomationValueSlotKind.Threshold") &&
+               automationNativeBridgeSource.Contains("slotKind == AutomationValueSlotKind.Else") &&
+               automationNativeBridgeSource.Contains("hostComponent is FuzzyThreshold fuzzyThreshold") &&
+               automationNativeBridgeSource.Contains("hostComponent is Clamp clamp") &&
+               automationNativeBridgeSource.Contains("hostComponent is Delay delay") &&
+               automationNativeBridgeSource.Contains("NearlyEqual(constantValue, socketValue)") &&
+               automationNativeBridgeSource.Contains("IsNativeConnectedToInputAt") &&
+               automationSessionSource.Contains("if (NativeStackConnectionExists(from, to))") &&
+               automationNativeBridgeSource.Contains("if (IsNativeConnected(from, to))") &&
+               automationNativeBridgeSource.Contains("GenericBlockGetter") &&
+               automationNativeBridgeSource.Contains("GenericBlockSetter") &&
+               automationNativeBridgeSource.Contains("ConstantInput") &&
+               automationNativeBridgeSource.Contains("Evaluator") &&
+               automationNativeBridgeSource.Contains("RandomInput") &&
+               automationNativeBridgeSource.Contains("CreateNativeRandom") &&
+               automationNativeBridgeSource.Contains("random.RandomLimits.Lower") &&
+               automationNativeBridgeSource.Contains("random.RandomLimits.Upper") &&
+               automationNativeBridgeSource.Contains("LogicGate") &&
+               automationNativeBridgeSource.Contains("CreateNativeLogicGate") &&
+               automationNativeBridgeSource.Contains("LogicGateType") &&
+               automationNativeBridgeSource.Contains("NativeLogicGateKind") &&
+               automationNativeBridgeSource.Contains("FuzzyThreshold") &&
+               automationNativeBridgeSource.Contains("CreateNativeFuzzyThreshold") &&
+               automationNativeBridgeSource.Contains("ApplyFuzzyThresholdEdits") &&
+               automationNativeBridgeSource.Contains("NativeFuzzyThresholdKind") &&
+               automationNativeBridgeSource.Contains("TryApplyFuzzyThresholdValue") &&
+               automationNativeBridgeSource.Contains("fuzzyThreshold.Above.Us") &&
+               automationNativeBridgeSource.Contains("fuzzyThreshold.ThresholdLimits.Us = new Vector2") &&
+               automationNativeBridgeSource.Contains("MaxMin") &&
+               automationNativeBridgeSource.Contains("CreateNativeMaxMin") &&
+               automationNativeBridgeSource.Contains("MaxMinOpType") &&
+               automationNativeBridgeSource.Contains("NativeMaxMinKind") &&
+               automationNativeBridgeSource.Contains("OpType.Max") &&
+               automationNativeBridgeSource.Contains("OpType.Min") &&
+               automationNativeBridgeSource.Contains("TryConnectComponentToInputAt") &&
+               automationNativeBridgeSource.Contains("logicGate.SelectedGate.Us") &&
+               automationNativeBridgeSource.Contains("TrueType.GreaterZero") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.LogicB") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.MathB") &&
+               automationNativeBridgeSource.Contains("TryConnectComponentToInputAt(breadboard, from, switchTo, 1") &&
+               automationNativeBridgeSource.Contains("using NativeSwitch = BrilliantSkies.Common.Circuits.ComponentTypes.Switch") &&
+               automationNativeBridgeSource.Contains("case AutomationNodeKind.IfCondition:") &&
+               automationNativeBridgeSource.Contains("CreateNativeSwitch(DefaultValue(kind))") &&
+               automationNativeBridgeSource.Contains("NativeSwitchKind") &&
+               automationNativeBridgeSource.Contains("Mathf.Abs(switchComponent.Threshold.Us - 0.5f)") &&
+               automationNativeBridgeSource.Contains("switchComponent.Threshold.Us = 0.5f") &&
+               automationNativeBridgeSource.Contains("\"Switch > \" + switchComponent.Threshold.Us.ToString") &&
+               automationNativeBridgeSource.Contains("FindSnappedValueComponent") &&
+               automationNativeBridgeSource.Contains("TryConnectComponentToInput") &&
+               automationNativeBridgeSource.Contains("switchComponent.Pass") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.Threshold") &&
+               automationNativeBridgeSource.Contains("MathOperandSlotKind(evaluatorKind)") &&
+               automationNativeBridgeSource.Contains("MathExpressionInputText(evaluatorKind)") &&
+               automationNativeBridgeSource.Contains("TryConnectComponentToInputAt(breadboard, operandValue, evaluator, 1") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.Min") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.Max") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.Seconds") &&
+               automationNativeBridgeSource.Contains("AutomationValueSlotKind.Else") &&
+               automationNativeBridgeSource.Contains("TryApplySwitchThresholdValue") &&
+               automationNativeBridgeSource.Contains("switchComponent.Threshold.Us = value") &&
+               automationNativeBridgeSource.Contains("TryApplySwitchElseValue") &&
+               automationNativeBridgeSource.Contains("switchComponent.FailValue.Us = value") &&
+               automationNativeBridgeSource.Contains("CircuitComponent sourceValue = FindSnappedValueComponent(host, ordered, AutomationValueSlotKind.Pass)") &&
+               automationNativeBridgeSource.Contains("CircuitComponent secondValue = FindSnappedValueComponent(host, ordered, AutomationValueSlotKind.MathB)") &&
+               automationNativeBridgeSource.Contains("TryConnectComponentToInputAt(breadboard, secondValue, maxMin, 1") &&
+               automationNativeBridgeSource.Contains("EnsureNativeInputCount(to, inputIndex + 1)") &&
+               automationNativeBridgeSource.Contains("component.CreateInput(sync: true)") &&
+               automationNativeBridgeSource.Contains("CircuitComponent minValue = FindSnappedValueComponent(host, ordered, AutomationValueSlotKind.Min)") &&
+               automationNativeBridgeSource.Contains("CircuitComponent maxValue = FindSnappedValueComponent(host, ordered, AutomationValueSlotKind.Max)") &&
+               automationNativeBridgeSource.Contains("CircuitComponent secondsValue = FindSnappedValueComponent(host, ordered, AutomationValueSlotKind.Seconds)") &&
+               automationNativeBridgeSource.Contains("TryConnectComponentToHost(breadboard, sourceValue, host") &&
+               automationNativeBridgeSource.Contains("TryApplyEvaluatorAddAmount") &&
+               automationNativeBridgeSource.Contains("TryApplyEvaluatorMathOperand") &&
+               automationNativeBridgeSource.Contains("evaluator.Expression.Us = MathExpressionText(kind, FormatGraphFloat(value))") &&
+               automationNativeBridgeSource.Contains("NativeEvaluatorKind") &&
+               automationNativeBridgeSource.Contains("return CreateNativeEvaluator(\"a - 0\")") &&
+               automationNativeBridgeSource.Contains("return CreateNativeEvaluator(\"a * 1\")") &&
+               automationNativeBridgeSource.Contains("TryApplyClampMinimum") &&
+               automationNativeBridgeSource.Contains("TryApplyClampMaximum") &&
+               automationNativeBridgeSource.Contains("clamp.MinMax.Lower") &&
+               automationNativeBridgeSource.Contains("clamp.MinMax.Upper") &&
+               automationNativeBridgeSource.Contains("TryApplyDelaySeconds") &&
+               automationNativeBridgeSource.Contains("delay.DelayTime.Us = Mathf.Max(0f, value)") &&
+               automationNativeBridgeSource.Contains("TryReadValueComponentFloat") &&
+               automationNativeBridgeSource.Contains("ParseIfSwitchValue") &&
+               automationNativeBridgeSource.Contains("IsStackFlowComponent") &&
+               automationNativeBridgeSource.Contains("OrderedNativeFlowComponents") &&
+               automationNativeBridgeSource.Contains("OrderedNativeFlowChains") &&
+               automationNativeBridgeSource.Contains("PreviousSnappedNativeStackComponent") &&
+               automationNativeBridgeSource.Contains("NextSnappedNativeStackComponent") &&
+               automationNativeBridgeSource.Contains("AreNativeStackComponentsSnapped") &&
+               automationNativeBridgeSource.Contains("List<List<CircuitComponent>> flowChains = OrderedNativeFlowChains(ordered)") &&
+               automationNativeBridgeSource.Contains("AppendNativeFlowComponent") &&
+               automationNativeBridgeSource.Contains("NativeBodyChildrenForHost") &&
+               automationNativeBridgeSource.Contains("NativeBodyParent") &&
+               automationNativeBridgeSource.Contains("IsBodyFlowComponent") &&
+               automationNativeBridgeSource.Contains("NativeComponentUsesValueFootprint") &&
+               automationNativeBridgeSource.Contains("CanNativeComponentFeedValueSlot") &&
+               automationNativeBridgeSource.Contains("CanFeedSignalValueSlot(hostKind, slotKind)") &&
+               automationNativeBridgeSource.Contains("IsConstantOnlyValueSlot(hostKind, slotKind)") &&
+               automationNativeBridgeSource.Contains("NativeValueHost") &&
+               automationNativeBridgeSource.Contains("rect.width = GraphNodeWidthForKind(kind)") &&
+               automationNativeBridgeSource.Contains("GraphNodeWidthForKind(kind)") &&
+               automationNativeBridgeSource.Contains("component.Width.Us > 1f") &&
+               automationNativeBridgeSource.Contains("CanProduceValueBlock(NativeKind(component))") &&
+               automationNativeBridgeSource.Contains("component is ConstantInput &&") &&
+               automationNativeBridgeSource.Contains("NativeValueHost(components, component) == null") &&
+               automationNativeBridgeSource.Contains("!CanNativeComponentFeedValueSlot(candidate, hostKind, slotKind)") &&
+               automationNativeBridgeSource.Contains("TryConfigureGetterProperty") &&
+               automationNativeBridgeSource.Contains("TryConfigureSetterProperty") &&
+               automationNativeBridgeSource.Contains("TryApplyNativeLinkTarget") &&
+               automationNativeBridgeSource.Contains("NativePropertyOptionsForNode") &&
+               automationNativeBridgeSource.Contains("TryAutoBindNewNativeGraphComponent") &&
+               automationNativeBridgeSource.Contains("AutoBindNativeLinkChoices") &&
+               automationNativeBridgeSource.Contains("AutoBindLinkChoiceKey") &&
+               automationNativeBridgeSource.Contains("\"Read block auto-filled from linked input \"") &&
+               automationNativeBridgeSource.Contains("\"Set block auto-filled from linked output \"") &&
+               automationNativeBridgeSource.Contains("TryAddNativeStarterFlow") &&
+               automationNativeBridgeSource.Contains("StarterNativeLinkChoices") &&
+               automationNativeBridgeSource.Contains("\"Starter Flow needs exactly one linked input and one linked output") &&
+               automationNativeBridgeSource.Contains("inputLink.NativeComponent is GenericBlockGetter getter") &&
+               automationNativeBridgeSource.Contains("outputLink.NativeComponent is GenericBlockSetter setter") &&
+               automationNativeBridgeSource.Contains("\"Starter Flow could not resolve the linked native Read/Set components.\"") &&
+               automationNativeBridgeSource.Contains("\"Starter Flow starts from a clean linked graph") &&
+               automationNativeBridgeSource.Contains("!ReferenceEquals(component, getter)") &&
+               automationNativeBridgeSource.Contains("!ReferenceEquals(component, setter)") &&
+               !automationNativeBridgeSource.Contains("breadboard.Board.NewPackage(getter);") &&
+               !automationNativeBridgeSource.Contains("breadboard.Board.NewPackage(setter);") &&
+               automationNativeBridgeSource.Contains("CreateNativeFuzzyThreshold(") &&
+               automationNativeBridgeSource.Contains("AutomationNodeKind.CompareBelowThreshold") &&
+               automationNativeBridgeSource.Contains("CreateNativeSwitch(DefaultValue(AutomationNodeKind.IfCondition))") &&
+               automationNativeBridgeSource.Contains("CreateNativeConstant(\"10\")") &&
+               automationNativeBridgeSource.Contains("CreateNativeConstant(\"45\")") &&
+               automationNativeBridgeSource.Contains("ValueSlotRect(thresholdComponentRect, AutomationNodeKind.CompareBelowThreshold, AutomationValueSlotKind.Threshold)") &&
+               automationNativeBridgeSource.Contains("ValueSlotRect(switchRect, AutomationNodeKind.IfCondition, AutomationValueSlotKind.Pass)") &&
+               automationNativeBridgeSource.Contains("below 10, if true") &&
+               automationNativeBridgeSource.Contains("\"Starter Flow created: read \"") &&
+               automationSessionSource.Contains("if (!string.IsNullOrWhiteSpace(message))") &&
+               automationNativeBridgeSource.Contains("EnumerateGetterPropertyLabels") &&
+               automationNativeBridgeSource.Contains("EnumerateSetterPropertyLabels") &&
+               automationNativeBridgeSource.Contains("EnumerateReadableLabels") &&
+               automationNativeBridgeSource.Contains("TryGetNativeGetterPreview") &&
+               automationNativeBridgeSource.Contains("TryResolveGetterPreviewTarget") &&
+               automationNativeBridgeSource.Contains("TryReadGetterLiveValue") &&
+               automationNativeBridgeSource.Contains("TryGetNativeSetterPreview") &&
+               automationNativeBridgeSource.Contains("TryResolveSetterPreviewTarget") &&
+               automationNativeBridgeSource.Contains("TryReadSetterLiveValue") &&
+               automationNativeBridgeSource.Contains("TryGetReadablePropertyInfo") &&
+               automationNativeBridgeSource.Contains("TryGetNativeVariablePropertyInfo") &&
+               automationNativeBridgeSource.Contains("FormatNativePreviewValue") &&
+               automationNativeBridgeSource.Contains("\"live \" + FormatNativePreviewValue(value)") &&
+               automationNativeBridgeSource.Contains("TryGetReadableLabel") &&
+               automationNativeBridgeSource.Contains("TryGetVariableLabel") &&
+               automationNativeBridgeSource.Contains("CandidateLabel") &&
+               automationNativeBridgeSource.Contains("\"native signal: \" + NativePropertyLabel(getter)") &&
+               automationNativeBridgeSource.Contains("IsForeverComment") &&
+               automationNativeBridgeSource.Contains("CreateNativeComment(\"Forever: native breadboard evaluates continuously\")") &&
+               automationNativeBridgeSource.Contains("PotentiallyAffectedBlocks.Add(target)") &&
+               automationNativeBridgeSource.Contains("PotentiallyAffectedBlocks.Add(new BlockStub(target))") &&
+               automationNativeBridgeSource.Contains("IdSet.Name.Us") &&
+               automationNativeBridgeSource.Contains("AutoNamePrefix") &&
+               automationNativeBridgeSource.Contains("Apply is idempotent") &&
+               automationNativeBridgeSource.Contains("IsSupportedAutomationNativeComponent") &&
+               automationNativeBridgeSource.Contains(".Where(IsSupportedAutomationNativeComponent)") &&
+               automationNativeBridgeSource.Contains("IsSupportedNativeEvaluator") &&
+               automationNativeBridgeSource.Contains("!ReferenceEquals(block, target)") &&
+               automationNativeBridgeSource.Contains("return matches == 0;") &&
+               automationNativeBridgeSource.Contains("private bool ApplyGraphToNativeBoard()") &&
+               automationSessionSource.Contains("Automation Builder close blocked until Apply succeeds") &&
+               automationSessionSource.Contains("bool enabled = CanOpenCanvas;") &&
+               automationNativeBridgeSource.Contains("hasPreferredRect ? preferredRect : NativeAppendRect(breadboard)") &&
+               automationSessionSource.Contains("kind == AutomationNodeKind.OutputSetter") &&
+               automationNativeBridgeSource.Contains("GraphNodeHeightForKind(AutomationNodeKind.Constant)") &&
+               automationNativeBridgeSource.Contains("ClearAutomationDirty();") &&
+               !automationNativeBridgeSource.Contains("InfoStore.Add(message);") &&
+               automationBreadboardCatalogSource.Contains("internal enum AutomationBreadboardVariant") &&
+               automationBreadboardCatalogSource.Contains("TryResolveBreadboard(") &&
+               automationBreadboardCatalogSource.Contains("IsAiBreadboardDefinition") &&
+               automationBreadboardCatalogSource.Contains("Basic breadboard") &&
+               automationBreadboardCatalogSource.Contains("block.IdSet?.Name"),
+            "Automation Builder syncs links and graph nodes through native breadboard components, auto-names exact filters, draws a Tinkercad-style block palette/workspace/native-plan graph without nested GUI windows, snaps and arranges value blocks into labeled host sockets, preserves control-block mouths while arranging body actions, uses native wires and property-backed constants as reopened block relationships, snaps action blocks into visible control mouths, lowers control blocks to native Switch components with then/else sockets backed by Pass and FailValue, exposes native-linked target and property suggestion controls, persists forever/native-evaluation blocks as vanilla comments, splits input/output link panels, supports view modes/number shortcuts/AI-basic breadboards, prompts on unapplied graph close, and applies idempotent top-to-bottom connections without duplicate vanilla popups.");
         Assert(selectionSource.Contains("build.BuildingWith?.Item") &&
                catalogSource.Contains("internal enum SmartBuildMaterial") &&
                catalogSource.Contains("BasicMaterials") &&
@@ -7844,7 +8574,7 @@ f 0 2 3
                smartStatusRightLabelSource.Contains("text = \"Blocked\"") &&
                !smartStatusRightLabelSource.Contains("_plan.FailureReason") &&
                sessionSource.Contains("\"Smart Block Builder\"") &&
-               sessionSource.Contains("\"Mode: Smart | Tab to Deco when clean\""),
+               sessionSource.Contains("\"Mode: Smart | Tab to Automation when clean\""),
             "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm, keeps plan warnings in the shared notification/log flow, and does not clip full failure reasons into the status label.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&

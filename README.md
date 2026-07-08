@@ -37,8 +37,8 @@ License.
 - Converts OBJ groups into FTD decorations with bounded geometry and texture
   validation.
 - Exports construct geometry as OBJ/MTL with only referenced textures.
-- Adds Decoration Edit Mode, Surface Builder, and Smart Block Builder as modal
-  ESU editor surfaces.
+- Adds Decoration Edit Mode, Surface Builder, Smart Block Builder, and
+  Automation Builder as modal ESU editor surfaces.
 - Adds shared X/Y/Z symmetry planes for decoration placement, generated
   surfaces, generator paths/circles, and Smart Builder commits.
 - Adds a Deco character item for moving tether blocks with linked decorations
@@ -69,7 +69,8 @@ where exposed.
 | --- | --- | --- |
 | `Ctrl+D` | Build mode | Open Decoration Edit Mode. |
 | `Ctrl+Shift+B` | Build mode | Open Smart Block Builder. |
-| `Tab` | ESU editor, clean state | Cycle Decoration Edit Mode -> Surface Builder -> Smart Block Builder -> Decoration Edit Mode. Dirty previews must be applied or canceled first. |
+| `Ctrl+Shift+A` | Build mode | Open Automation Builder. |
+| `Tab` | ESU editor, clean state | Cycle Decoration Edit Mode -> Surface Builder -> Smart Block Builder -> Automation Builder -> Decoration Edit Mode. Dirty previews must be applied or canceled first. |
 | `Escape` | ESU editor | Close/cancel the active ESU mode and guard the same keypress from vanilla. |
 | `Ctrl+Z` / `Ctrl+Y` | ESU editor | Undo/redo un-applied editor actions. |
 | `1` | ESU editor | Create/select cycle. Decoration: Select Single/Box. Surface: Draw/Path/Circle. Smart Builder: Block/Down slope and arm Add. |
@@ -282,6 +283,25 @@ Input notes:
   movement remains live unless a Smart Builder handle is being dragged.
 - Right click cancels context/menu selection instead of clearing the whole scene.
 
+## Automation Builder
+
+Open with `Ctrl+Shift+A`, from the Decoration Builder item, or via `Tab` from
+Smart Block Builder while clean.
+
+Automation Builder is a breadboard-focused workflow editor:
+
+- The right panel can arm breadboard placement. The pending breadboard follows
+  the mouse over craft surfaces and places through the normal block command
+  path.
+- Selecting a breadboard and then a target block creates an output/setter link
+  from the breadboard to that block.
+- Selecting a target block and then a breadboard creates an input/getter link
+  from that block into the breadboard.
+- Linked blocks draw animated colored world lines so signal direction is easy
+  to read.
+- Opening the selected breadboard's graph shows a large canvas with draggable
+  top-to-bottom component blocks and a right-side breadboard component palette.
+
 ## Symmetry
 
 ESU symmetry planes are construct-local X/Y/Z grid planes. They can combine into
@@ -343,6 +363,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
   Surface Builder UI/planning/session code.
 - `EndlessShapesUnlimited/Source/SmartBuildMode`: Smart Block Builder runtime
   scene, planning, and commit code.
+- `EndlessShapesUnlimited/Source/AutomationBuilderMode`: Automation Builder
+  breadboard placement, linking, HUD, and graph canvas code.
 - `EndlessShapesUnlimited/Source/Patches`: Harmony patches and serializer
   integration.
 - `tools/EndlessShapesUnlimited.Verification`: non-Unity verifier and regression

@@ -1,4 +1,5 @@
 using System;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.SmartBuildMode;
 using UnityEngine;
 
@@ -90,7 +91,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static bool TryCaptureInfoStore(object[] arguments)
         {
             if (!DecorationEditorInputScope.Active &&
-                !SmartBuildInputScope.Active)
+                !SmartBuildInputScope.Active &&
+                !AutomationBuilderInputScope.Active)
             {
                 return false;
             }
