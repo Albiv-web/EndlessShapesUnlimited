@@ -7796,6 +7796,76 @@ f 0 2 3
                automationInputScopeSource.Contains("ProbeMouseOverUi()") &&
                automationInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()"),
             "Automation Builder claims mouse-wheel input over all ESU panels before child scroll views consume the event, while preserving graph-canvas zoom.");
+        Assert(automationSessionSource.Contains("private sealed class AutomationHudSummary") &&
+               automationSessionSource.Contains("BuildAutomationHudSummary()") &&
+               automationSessionSource.Contains("ScopedHudLinks(AutomationLinkKind.InputToBreadboard") &&
+               automationSessionSource.Contains("ScopedHudLinks(AutomationLinkKind.BreadboardToOutput") &&
+               automationSessionSource.Contains("DrawSelectionSummary(summary);") &&
+               automationSessionSource.Contains("\"Selected Breadboard\"") &&
+               automationSessionSource.Contains("DrawLinkListBox(inputRect, \"Input Links\", summary.InputLinks") &&
+               automationSessionSource.Contains("DrawLinkListBox(outputRect, \"Output Links\", summary.OutputLinks") &&
+               automationSessionSource.Contains("HudLinkDirectionLabel(link)") &&
+               automationSessionSource.Contains("HudLinkStatusLabel(link)") &&
+               automationSessionSource.Contains("\"Focus Link\"") &&
+               automationSessionSource.Contains("FocusSelectedLinkInGraph()") &&
+               automationSessionSource.Contains("DrawPanelHeader(\"Automation Tools\"") &&
+               automationSessionSource.Contains("DrawSectionHeader(\"Breadboards\"") &&
+               automationSessionSource.Contains("DrawBreadboardVariantCard(AutomationBreadboardVariant.Ai") &&
+               automationSessionSource.Contains("DrawBreadboardVariantCard(AutomationBreadboardVariant.Basic") &&
+               automationSessionSource.Contains("AI fallback") &&
+               automationSessionSource.Contains("\"Place Breadboard\"") &&
+               automationSessionSource.Contains("\"Link Tools\"") &&
+               automationSessionSource.Contains("\"Input: block -> board\"") &&
+               automationSessionSource.Contains("\"Output: board -> block\"") &&
+               automationSessionSource.Contains("DrawGraphActionsSection(summary);") &&
+               automationSessionSource.Contains("CheckNativeGraphPlan") &&
+               automationSessionSource.Contains("ApplyGraphToNativeBoard") &&
+               automationSessionSource.Contains("RevertEsuOwnedNativeGraph") &&
+               automationSessionSource.Contains("ArrangeNativeGraphForReadability") &&
+               automationSessionSource.Contains("ToolButton(AutomationBuilderTool.PlaceBreadboard, \"gear\", \"Place\"") &&
+               automationSessionSource.Contains("StatusSummary(summary)") &&
+               automationSessionSource.Contains("DrawBottomStateChips") &&
+               automationSessionSource.Contains("DrawStateChip(chip, \"Tool\"") &&
+               automationSessionSource.Contains("\"Automation Builder | {0}") &&
+               !automationSessionSource.Contains("ESU mode: Smart Builder."),
+            "Automation Builder world HUD is a compact cockpit: selected breadboard/link map on the left, breadboard/link/graph actions on the right, and an Automation Builder state bar without stale Smart Builder labels.");
+        Assert(automationSessionSource.Contains("private enum AutomationLinkRemovalResult") &&
+               automationSessionSource.Contains("private AutomationLink ResolveCurrentLinkForAction(AutomationLink link)") &&
+               automationSessionSource.Contains("AutomationLink link = ResolveCurrentLinkForAction(_selectedLink);") &&
+               automationSessionSource.Contains("AutomationLink link = ResolveCurrentLinkForAction(_contextLink);") &&
+               automationSessionSource.Contains("GUIStyle style = IsSelectedLink(link)") &&
+               automationSessionSource.Contains("bool selected = IsSelectedLink(link);") &&
+               automationSessionSource.Contains("private void ClearSelectedLinkIfMatches(AutomationLink link)") &&
+               automationSessionSource.Contains("private AutomationLinkRemovalResult RemoveAutomationLink(AutomationLink link)") &&
+               automationSessionSource.Contains("RemoveLinkBoundGraphNodes(currentLink);") &&
+               automationSessionSource.Contains("RemoveMatchingStagedLinksFromList(currentLink)") &&
+               automationSessionSource.Contains("RemoveMatchingLinksFromList(currentLink, stagedOnly: false)") &&
+               automationSessionSource.Contains("RemoveMatchingStagedLinksFromList(link);") &&
+               automationSessionSource.Contains("private static bool LinkRemovalNeedsNativeRefresh(AutomationLinkRemovalResult result)") &&
+               automationSessionSource.Contains("result == AutomationLinkRemovalResult.NativeRemovalStaged ||") &&
+               automationSessionSource.Contains("result == AutomationLinkRemovalResult.Blocked;") &&
+               !automationSessionSource.Contains("result == AutomationLinkRemovalResult.StagedRemoved") &&
+               automationNativeBridgeSource.Contains("_pendingNativeNodeRemovals.Add(component.UniqueId)") &&
+               automationNativeBridgeSource.Contains("Imported native links are read-only"),
+            "Automation Builder Remove Link resolves stale selected/context links, highlights equivalent rows and wires, removes staged read/set graph nodes without a native refresh resurrection, and preserves ESU-owned/imported native behavior.");
+        Assert(automationSessionSource.Contains("private sealed class AutomationGraphDragState") &&
+               automationSessionSource.Contains("private sealed class AutomationSnapCandidate") &&
+               automationSessionSource.Contains("private static class AutomationGraphLayout") &&
+               automationSessionSource.Contains("ResolveGraphSnapCandidate(") &&
+               automationSessionSource.Contains("ApplySnapCandidate(") &&
+               automationSessionSource.Contains("CollectGraphDragGroup(") &&
+               automationSessionSource.Contains("AutomationGraphDragState.Capture") &&
+               automationSessionSource.Contains("RefreshGraphConnectionsCore") &&
+               automationSessionSource.Contains("AutoPanGraphDuringDrag") &&
+               automationSessionSource.Contains("SnapPlacementHasBlockingOverlap") &&
+               automationSessionSource.Contains("if (snap.IsMagnetic &&") &&
+               automationSessionSource.Contains("if (!snap.IsMagnetic)") &&
+               automationSessionSource.Contains("Vector2 windowMouse = CurrentCanvasWindowMousePosition();") &&
+               automationSessionSource.Contains("DrawGraphSnapStatus") &&
+               automationSessionSource.Contains("FitSelectedGraphToWorkspace") &&
+               automationSessionSource.Contains("CenterSelectedGraphNode") &&
+               !automationSessionSource.Contains("AutomationGraphInteractionIssuesForVerification"),
+            "Automation Builder graph uses shared snap candidates, drag transactions, layout normalization, magnetic-snap overlap guards, unified drag coordinates, edge auto-pan, and fit/center actions without a non-executable verifier hook.");
         Assert(CurrentAutomationBuilderSourceContract(
                    modProjectSource,
                    automationSessionSource,
