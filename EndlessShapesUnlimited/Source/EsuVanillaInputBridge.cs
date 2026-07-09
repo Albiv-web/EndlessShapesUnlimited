@@ -17,6 +17,8 @@ namespace DecoLimitLifter
 
         internal static void Tick()
         {
+            EsuVanillaHudVisibilityScope.Tick("ESU editor input tick");
+
             if (!DecorationEditModeRegistration.Active &&
                 !SmartBuildModeRegistration.Active &&
                 !AutomationBuilderModeRegistration.Active)

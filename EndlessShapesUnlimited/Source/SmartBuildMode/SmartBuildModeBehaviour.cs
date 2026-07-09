@@ -243,6 +243,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 session?.End(preserveSharedHud);
             }
 
+            SmartBuildInputScope.ForceResetIfActive("smart builder closed");
+            DecoLimitLifter.EsuHudDiagnostics.WarnIfEditorScopeActive(
+                "smart builder closed",
+                "Smart Builder",
+                () => SmartBuildInputScope.Active);
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
@@ -264,6 +269,11 @@ namespace DecoLimitLifter.SmartBuildMode
             _handoffGuiSession = null;
             _handoffGuiFrame = -1;
             session?.End(preserveSharedHud: true);
+            SmartBuildInputScope.ForceResetIfActive("smart builder handoff gui cleared");
+            DecoLimitLifter.EsuHudDiagnostics.WarnIfEditorScopeActive(
+                "smart builder handoff gui cleared",
+                "Smart Builder",
+                () => SmartBuildInputScope.Active);
         }
     }
 }

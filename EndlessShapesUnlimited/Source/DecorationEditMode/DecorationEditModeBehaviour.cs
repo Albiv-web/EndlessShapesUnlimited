@@ -281,6 +281,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 session?.End(apply, notifySession, preserveSharedHud);
             }
 
+            DecorationEditorInputScope.ForceResetIfActive("decoration editor closed");
+            DecoLimitLifter.EsuHudDiagnostics.WarnIfEditorScopeActive(
+                "decoration editor closed",
+                "Decoration Edit",
+                () => DecorationEditorInputScope.Active);
             if (notifyClose)
                 DecoLimitLifter.EsuSymmetry.Clear();
             if (notifyClose)
@@ -296,6 +301,11 @@ namespace DecoLimitLifter.DecorationEditMode
             _handoffGuiSession = null;
             _handoffGuiFrame = -1;
             session?.End(apply: false, notify: false, preserveSharedHud: true);
+            DecorationEditorInputScope.ForceResetIfActive("decoration editor handoff gui cleared");
+            DecoLimitLifter.EsuHudDiagnostics.WarnIfEditorScopeActive(
+                "decoration editor handoff gui cleared",
+                "Decoration Edit",
+                () => DecorationEditorInputScope.Active);
         }
     }
 }

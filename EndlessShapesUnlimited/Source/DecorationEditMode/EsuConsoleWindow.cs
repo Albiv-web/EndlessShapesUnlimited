@@ -39,13 +39,22 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static void Toggle()
         {
             if (_open)
+            {
                 Close();
+            }
             else
+            {
                 _open = true;
+                DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("ESU Console opened");
+            }
         }
 
-        internal static void Open() =>
+        internal static void Open()
+        {
+            if (!_open)
+                DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("ESU Console opened");
             _open = true;
+        }
 
         internal static void Close()
         {

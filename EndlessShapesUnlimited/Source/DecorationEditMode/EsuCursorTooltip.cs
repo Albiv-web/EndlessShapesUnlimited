@@ -19,12 +19,17 @@ namespace DecoLimitLifter.DecorationEditMode
         private static Vector2 _hoverMouse;
         private static Vector2 _screenMouse;
         private static bool _suppress;
+        private static bool _allowGuiTooltipFallback = true;
 
-        internal static void BeginFrame(Vector2 screenMouse, bool suppress = false)
+        internal static void BeginFrame(
+            Vector2 screenMouse,
+            bool suppress = false,
+            bool allowGuiTooltipFallback = true)
         {
             _screenMouse = screenMouse;
             _manualTooltip = null;
             _suppress = suppress;
+            _allowGuiTooltipFallback = allowGuiTooltipFallback;
         }
 
         internal static void RegisterLast(string tooltip) =>
@@ -62,6 +67,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 ? _manualTooltip
                 : _suppress
                     ? string.Empty
+                    : !_allowGuiTooltipFallback
+                        ? string.Empty
                 : (GUI.tooltip ?? string.Empty).Trim();
 
             if (string.IsNullOrWhiteSpace(tooltip))

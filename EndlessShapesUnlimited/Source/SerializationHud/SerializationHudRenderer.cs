@@ -3,7 +3,6 @@ using System.Globalization;
 using BrilliantSkies.Ftd.Avatar.HUD;
 using BrilliantSkies.Ui.Consoles.Styles;
 using DecoLimitLifter.DecorationEditMode;
-using DecoLimitLifter.SmartBuildMode;
 using HarmonyLib;
 using UnityEngine;
 
@@ -36,8 +35,7 @@ namespace DecoLimitLifter.SerializationHud
                 _cachedConstruct = C;
 
             if (!SerializationHudRegistration.Enabled ||
-                DecorationEditorInputScope.Active ||
-                SmartBuildInputScope.Active ||
+                DecoLimitLifter.EsuEditorScope.ShouldHideVanillaHud ||
                 C == null ||
                 R == null)
             {

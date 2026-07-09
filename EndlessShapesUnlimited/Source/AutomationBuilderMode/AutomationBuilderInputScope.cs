@@ -39,6 +39,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         internal static void Begin()
         {
             _active = true;
+            DecoLimitLifter.EsuVanillaHudVisibilityScope.Begin("Automation Builder begin");
             DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Automation Builder");
             _mouseOverUi = false;
             _ownsGraphPointerInput = false;
@@ -56,6 +57,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _cameraInputClaimUntilFrame = -1;
             if (wasActive)
                 DecoLimitLifter.EsuInputFocusGuard.EndEditor("Automation Builder");
+            if (wasActive)
+                DecoLimitLifter.EsuVanillaHudVisibilityScope.End("Automation Builder end");
         }
 
         internal static void ForceResetIfActive(string reason)

@@ -355,6 +355,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private int _lastNativeRefreshLinkCount;
         private string _lastNativeAutomationError;
         private float _nextNativeDiagnosticsLogTime;
+        private float _nextStaleLinkPruneLogTime;
         private bool _automationDisplayCacheDirty = true;
         private int _displayCacheNativeVersion = -1;
         private string _displayCacheGraphKey;
@@ -405,6 +406,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             Active = true;
             AutomationBuilderInputScope.Begin();
+            DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("Automation Builder opened");
             ApplyFocusView();
             RefreshSelectionFromPointer();
             ForceRefreshSelectedBreadboardNativeState();
@@ -554,7 +556,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             DecorationEditorTheme.Ensure();
             if (interactive)
-                EsuCursorTooltip.BeginFrame(Event.current.mousePosition, TooltipInputSuppressed());
+                EsuCursorTooltip.BeginFrame(
+                    Event.current.mousePosition,
+                    TooltipInputSuppressed(),
+                    allowGuiTooltipFallback: false);
             if (Event.current.type == EventType.Repaint)
                 DecorationEditorOverlay.Render();
 
@@ -9647,38 +9652,159 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (link == null)
                 return false;
 
-            if (link.NativeComponent != null)
+            if (link.NativeComponent != null &&
+                !RemoveNativeLink(link))
             {
-                return RemoveNativeLink(link);
+                return false;
             }
-            else
-            {
-                RemoveStagedLinkGraphNodes(link);
-                _links.Remove(link);
-                return true;
-            }
+
+            RemoveLinkBoundGraphNodes(link);
+            RemoveLinkFromList(link);
+            PruneStaleLinkBoundGraphNodesForSelectedBreadboard();
+            return true;
         }
 
-        private void RemoveStagedLinkGraphNodes(AutomationLink link)
+        private void RemoveLinkBoundGraphNodes(AutomationLink link)
         {
             AutomationBlockRef breadboard = BreadboardForLink(link);
             if (breadboard == null)
                 return;
 
             AutomationGraph graph = GraphFor(breadboard);
+            int stagedRemoved = 0;
+            int nativeRemoved = 0;
+            int importedCleared = 0;
             foreach (AutomationGraphNode node in graph.Nodes
-                         .Where(node => node?.IsStaged == true && NodeBindingMatchesLink(node, link))
+                         .Where(node => IsLinkBoundReadSetNode(node) &&
+                                        NodeBindingMatchesLink(node, link))
                          .ToList())
             {
-                RemoveGraphNode(graph, node);
+                if (node.IsStaged)
+                {
+                    RemoveGraphNode(graph, node);
+                    stagedRemoved++;
+                    continue;
+                }
+
+                if (IsEsuOwnedNativeNode(node))
+                {
+                    RemoveGraphNode(graph, node);
+                    nativeRemoved++;
+                    continue;
+                }
+
+                ClearImportedStaleLinkBinding(node);
+                importedCleared++;
             }
 
+            if (stagedRemoved + nativeRemoved + importedCleared <= 0)
+                return;
+
+            graph.RebindConnectionsToCurrentNodes();
+            RefreshGraphConnections(graph);
+            MarkAutomationDirty();
+            MaybeLogStaleLinkPrune(stagedRemoved, nativeRemoved, importedCleared);
+        }
+
+        private void PruneStaleLinkBoundGraphNodesForSelectedBreadboard()
+        {
+            if (_selectedBreadboard == null ||
+                !_graphs.TryGetValue(_selectedBreadboard.StableKey, out AutomationGraph graph))
+            {
+                return;
+            }
+
+            PruneStaleLinkBoundGraphNodes(graph);
+        }
+
+        private void PruneStaleLinkBoundGraphNodes(AutomationGraph graph)
+        {
+            if (graph == null)
+                return;
+
+            int stagedRemoved = 0;
+            int nativeRemoved = 0;
+            int importedCleared = 0;
             foreach (AutomationGraphNode node in graph.Nodes
-                         .Where(node => node != null && !node.IsStaged && NodeBindingMatchesLink(node, link))
+                         .Where(IsLinkBoundReadSetNode)
                          .ToList())
             {
-                ClearStagedLinkTargetBinding(node);
+                if (HasLiveLinkForGraphNode(node))
+                    continue;
+
+                if (node.IsStaged)
+                {
+                    RemoveGraphNode(graph, node);
+                    stagedRemoved++;
+                    continue;
+                }
+
+                if (IsEsuOwnedNativeNode(node))
+                {
+                    RemoveGraphNode(graph, node);
+                    nativeRemoved++;
+                    continue;
+                }
+
+                ClearImportedStaleLinkBinding(node);
+                importedCleared++;
             }
+
+            if (stagedRemoved + nativeRemoved + importedCleared <= 0)
+                return;
+
+            graph.RebindConnectionsToCurrentNodes();
+            RefreshGraphConnections(graph);
+            MarkAutomationDirty();
+            MaybeLogStaleLinkPrune(stagedRemoved, nativeRemoved, importedCleared);
+        }
+
+        private bool HasLiveLinkForGraphNode(AutomationGraphNode node)
+        {
+            if (!IsLinkBoundReadSetNode(node))
+                return false;
+
+            return _links.Any(link => NodeBindingMatchesLink(node, link));
+        }
+
+        private static bool IsLinkBoundReadSetNode(AutomationGraphNode node)
+        {
+            return node != null &&
+                   node.TargetBinding != null &&
+                   (node.Kind == AutomationNodeKind.InputGetter ||
+                    node.Kind == AutomationNodeKind.OutputSetter);
+        }
+
+        private static void ClearImportedStaleLinkBinding(AutomationGraphNode node)
+        {
+            node?.BindTarget((AutomationGraphTargetBinding)null);
+        }
+
+        private void RemoveLinkFromList(AutomationLink link)
+        {
+            int index = _links.FindIndex(existing => ReferenceEquals(existing, link));
+            if (index < 0)
+                index = _links.FindIndex(existing => LinksMatch(existing, link));
+            if (index >= 0)
+                _links.RemoveAt(index);
+        }
+
+        private void MaybeLogStaleLinkPrune(
+            int stagedRemoved,
+            int nativeRemoved,
+            int importedCleared)
+        {
+            float now = Time.unscaledTime;
+            if (now < _nextStaleLinkPruneLogTime)
+                return;
+
+            _nextStaleLinkPruneLogTime = now + NativeDiagnosticsLogCooldownSeconds;
+            EsuRuntimeLog.Info(
+                "Automation Builder",
+                "Pruned stale link-bound graph nodes.",
+                "staged_removed=" + stagedRemoved.ToString(CultureInfo.InvariantCulture) +
+                "\nesu_native_removed=" + nativeRemoved.ToString(CultureInfo.InvariantCulture) +
+                "\nimported_cleared=" + importedCleared.ToString(CultureInfo.InvariantCulture));
         }
 
         private static AutomationBlockRef BreadboardForLink(AutomationLink link)

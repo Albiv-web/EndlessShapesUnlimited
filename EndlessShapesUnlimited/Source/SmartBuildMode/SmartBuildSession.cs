@@ -230,6 +230,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             Active = true;
             SmartBuildInputScope.Begin();
+            DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("Smart Builder opened");
             _itemPreviewRenderer = new SmartBlockItemPreviewRenderer();
             ApplyFocusView();
             RefreshSelection();

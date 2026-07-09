@@ -36,6 +36,7 @@ namespace DecoLimitLifter.SmartBuildMode
         internal static void Begin()
         {
             _active = true;
+            DecoLimitLifter.EsuVanillaHudVisibilityScope.Begin("Smart Builder begin");
             DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Smart Block Builder");
             _mouseOverUi = false;
             _buildInputClaimUntilFrame = -1;
@@ -51,6 +52,8 @@ namespace DecoLimitLifter.SmartBuildMode
             _cameraInputClaimUntilFrame = -1;
             if (wasActive)
                 DecoLimitLifter.EsuInputFocusGuard.EndEditor("Smart Block Builder");
+            if (wasActive)
+                DecoLimitLifter.EsuVanillaHudVisibilityScope.End("Smart Builder end");
         }
 
         internal static void ForceResetIfActive(string reason)

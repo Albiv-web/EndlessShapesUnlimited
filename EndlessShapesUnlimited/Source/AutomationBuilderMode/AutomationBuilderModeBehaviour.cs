@@ -249,6 +249,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
 
             AutomationBuilderInputScope.ForceResetIfActive("automation builder closed");
+            DecoLimitLifter.EsuHudDiagnostics.WarnIfEditorScopeActive(
+                "automation builder closed",
+                "Automation Builder",
+                () => AutomationBuilderInputScope.Active);
 
             if (notifyClose)
             {
@@ -270,6 +274,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _handoffGuiFrame = -1;
             session?.End(preserveSharedHud: true);
             AutomationBuilderInputScope.ForceResetIfActive("automation builder handoff gui cleared");
+            DecoLimitLifter.EsuHudDiagnostics.WarnIfEditorScopeActive(
+                "automation builder handoff gui cleared",
+                "Automation Builder",
+                () => AutomationBuilderInputScope.Active);
         }
 
         private void OnDisable()

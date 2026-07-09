@@ -154,7 +154,7 @@ namespace AdvancedMimicUi
                 isFocused = false;
             }
 
-            if (GUI.tooltip == base.ToolTipCode)
+            if (string.Equals(GUI.tooltip, base.ToolTipCode, StringComparison.Ordinal))
             {
                 TipDisplayer.Instance.SetTip(this.GetToolTip);
             }

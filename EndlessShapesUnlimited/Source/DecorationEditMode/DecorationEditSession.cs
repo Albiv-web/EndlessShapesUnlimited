@@ -455,6 +455,7 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             Active = true;
             DecorationEditorInputScope.Begin();
+            DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("Decoration Edit opened");
             ApplyFocusView();
             _previewRenderer = new DecorationMeshPreviewRenderer();
             _meshCatalog.AddRange(DecorationMeshCatalog.Build());

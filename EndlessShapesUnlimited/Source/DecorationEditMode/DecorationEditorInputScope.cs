@@ -48,6 +48,7 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static void Begin()
         {
             _active = true;
+            DecoLimitLifter.EsuVanillaHudVisibilityScope.Begin("Decoration Edit begin");
             DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Decoration Edit Mode");
             _mouseOverEditorUi = false;
             _buildInputClaimUntilFrame = -1;
@@ -63,6 +64,8 @@ namespace DecoLimitLifter.DecorationEditMode
             _cameraInputClaimUntilFrame = -1;
             if (wasActive)
                 DecoLimitLifter.EsuInputFocusGuard.EndEditor("Decoration Edit Mode");
+            if (wasActive)
+                DecoLimitLifter.EsuVanillaHudVisibilityScope.End("Decoration Edit end");
         }
 
         internal static void ForceResetIfActive(string reason)
@@ -130,10 +133,7 @@ namespace DecoLimitLifter.DecorationEditMode
         }
 
         internal static bool SuppressBuildHud() =>
-            _active ||
-            DecoLimitLifter.EsuModeSwitchHandoff.Active ||
-            SmartBuildInputScope.SuppressBuildHud() ||
-            AutomationBuilderInputScope.SuppressBuildHud();
+            DecoLimitLifter.EsuEditorScope.ShouldHideVanillaHud;
 
         internal static bool SuppressBuildInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
@@ -153,7 +153,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool IsPaintHoverMessage(object[] arguments)
         {
-            return DecorationTooltipSuppressor.IsLegacyPaintHoverMessage(arguments);
+            return false;
         }
 
         internal static bool IsMouseOver(params Rect[] rects)

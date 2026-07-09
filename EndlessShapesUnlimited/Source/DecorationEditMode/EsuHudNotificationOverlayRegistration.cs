@@ -58,9 +58,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void OnGUI()
         {
-            if (DecorationEditorInputScope.Active ||
-                SmartBuildInputScope.Active ||
-                AutomationBuilderInputScope.Active)
+            DecoLimitLifter.EsuVanillaHudVisibilityScope.Tick("global ESU overlay gui");
+
+            if (DecoLimitLifter.EsuEditorScope.AnyEditorActive)
             {
                 return;
             }

@@ -180,6 +180,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 SyncSelectedGraphFromNativeIfLoaded(force: false);
             }
 
+            PruneStaleLinkBoundGraphNodesForSelectedBreadboard();
+
             RecordNativeRefreshDiagnostics(
                 force,
                 timer,

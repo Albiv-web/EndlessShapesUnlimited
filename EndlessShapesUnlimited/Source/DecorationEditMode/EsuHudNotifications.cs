@@ -90,9 +90,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool TryCaptureInfoStore(object[] arguments)
         {
-            if (!DecorationEditorInputScope.Active &&
-                !SmartBuildInputScope.Active &&
-                !AutomationBuilderInputScope.Active)
+            if (!DecoLimitLifter.EsuEditorScope.AnyEditorActive)
             {
                 return false;
             }
@@ -104,6 +102,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_silentCaptureDepth > 0)
                 return true;
 
+            DecoLimitLifter.EsuHudDiagnostics.RecordInfoStoreCaptured(message);
             EsuHudNotificationKind kind = Classify(message);
             Show(message, kind);
             EsuRuntimeLog.FromNotification(_activeSource, kind, message);
