@@ -25,12 +25,15 @@ namespace DecoLimitLifter.DecorationEditMode
     {
         private static bool _active;
         private static bool _mouseOverEditorUi;
+        private static Func<bool> _mouseOverEditorUiProbe;
         private static int _buildInputClaimUntilFrame = -1;
         private static int _cameraInputClaimUntilFrame = -1;
 
         internal static bool Active => _active;
 
-        internal static bool MouseOverEditorUi => _active && _mouseOverEditorUi;
+        internal static bool MouseOverEditorUi =>
+            _active &&
+            (_mouseOverEditorUi || ProbeMouseOverEditorUi());
 
         internal static bool OwnsBuildInputThisFrame =>
             _active && Time.frameCount <= _buildInputClaimUntilFrame;
@@ -51,6 +54,7 @@ namespace DecoLimitLifter.DecorationEditMode
             DecoLimitLifter.EsuVanillaHudVisibilityScope.Begin("Decoration Edit begin");
             DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Decoration Edit Mode");
             _mouseOverEditorUi = false;
+            _mouseOverEditorUiProbe = null;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
         }
@@ -60,6 +64,7 @@ namespace DecoLimitLifter.DecorationEditMode
             bool wasActive = _active;
             _active = false;
             _mouseOverEditorUi = false;
+            _mouseOverEditorUiProbe = null;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
             if (wasActive)
@@ -94,6 +99,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static void SetMouseOverEditorUi(bool value) =>
             _mouseOverEditorUi = _active && value;
+
+        internal static void SetMouseOverEditorUiProbe(Func<bool> probe) =>
+            _mouseOverEditorUiProbe = _active ? probe : null;
 
         internal static void ClaimBuildInputForFrames(int frames = 2)
         {
@@ -169,6 +177,21 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             return false;
+        }
+
+        private static bool ProbeMouseOverEditorUi()
+        {
+            if (_mouseOverEditorUiProbe == null)
+                return false;
+
+            try
+            {
+                return _mouseOverEditorUiProbe();
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 

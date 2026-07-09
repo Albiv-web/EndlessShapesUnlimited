@@ -455,6 +455,8 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             Active = true;
             DecorationEditorInputScope.Begin();
+            DecorationEditorInputScope.SetMouseOverEditorUiProbe(IsCurrentMouseOverEditorUi);
+            DecoLimitLifter.EsuPanelUiHitTestRegistry.Register(this, HitTestEditorUi);
             DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("Decoration Edit opened");
             ApplyFocusView();
             _previewRenderer = new DecorationMeshPreviewRenderer();
@@ -591,6 +593,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             finally
             {
+                DecoLimitLifter.EsuPanelUiHitTestRegistry.Unregister(this);
                 DecorationEditorInputScope.End();
                 Active = false;
                 CloseRequested = false;
@@ -657,6 +660,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal void SuspendForModeSwitchHandoff()
         {
+            DecoLimitLifter.EsuPanelUiHitTestRegistry.Unregister(this);
             DecorationEditorInputScope.End();
             Active = false;
             CloseRequested = false;
@@ -942,6 +946,7 @@ namespace DecoLimitLifter.DecorationEditMode
             bool rightStackVisible = IsRightPanelStackVisible();
             Vector2 mouse = Event.current.mousePosition;
             _mouseOverWindow = toolbarRect.Contains(mouse) ||
+                               EsuConsoleWindow.ContainsMouse(mouse) ||
                                EsuHudNotifications.ContainsMouse(mouse) ||
                                (_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse)) ||
                                (_viewModeMenuOpen && ViewModeMenuRect(toolbarRect).Contains(mouse)) ||
@@ -952,7 +957,10 @@ namespace DecoLimitLifter.DecorationEditMode
                                bottomRect.Contains(mouse) ||
                                (leftStackVisible && meshRect.Contains(mouse));
             if (interactive)
+            {
                 DecorationEditorInputScope.SetMouseOverEditorUi(_mouseOverWindow);
+                ClaimMouseWheelOverEditorUi(Event.current, _mouseOverWindow);
+            }
 
             if (interactive && leftStackVisible)
             {
@@ -1167,17 +1175,58 @@ namespace DecoLimitLifter.DecorationEditMode
                 ? _showSurfaceToolsPanel
                 : _showOutlinerPanel || _showAnchorPanel;
 
+        private EsuPanelUiHit HitTestEditorUi(Vector2 mouse)
+        {
+            if (!Active)
+                return EsuPanelUiHit.Miss(mouse);
+
+            string editor = CurrentModeLogSource();
+            if (ToolbarRect().Contains(mouse))
+                return EsuPanelUiHit.Found(editor, "toolbar", mouse);
+            if (EsuConsoleWindow.ContainsMouse(mouse))
+                return EsuPanelUiHit.Found(editor, "console", mouse);
+            if (EsuHudNotifications.ContainsMouse(mouse))
+                return EsuPanelUiHit.Found(editor, "notification", mouse);
+            if (_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse))
+                return EsuPanelUiHit.Found(editor, "prompt", mouse);
+            if (_viewModeMenuOpen && ViewModeMenuRect(ToolbarRect()).Contains(mouse))
+                return EsuPanelUiHit.Found(editor, "view_mode_menu", mouse);
+            if (_anchorMenuOpen && AnchorMenuRect().Contains(mouse))
+                return EsuPanelUiHit.Found(editor, "anchor_menu", mouse);
+            if (IsSurfaceContextMenuAt(mouse))
+                return EsuPanelUiHit.Found(editor, "surface_context_menu", mouse);
+            if (IsDecorationContextMenuAt(mouse))
+                return EsuPanelUiHit.Found(editor, "decoration_context_menu", mouse);
+            if (IsRightPanelStackVisible() && RightPanelRect().Contains(mouse))
+                return EsuPanelUiHit.Found(editor, IsSurfaceMode ? "surface_right_panel" : "right_panel", mouse);
+            if (StatusRect(RightPanelRect()).Contains(mouse))
+                return EsuPanelUiHit.Found(editor, "status", mouse);
+            if (IsLeftPanelStackVisible() && MeshPaletteRect().Contains(mouse))
+                return EsuPanelUiHit.Found(editor, IsSurfaceMode ? "surface_left_panel" : "left_panel", mouse);
+
+            return EsuPanelUiHit.Miss(mouse);
+        }
+
         private bool IsMouseOverEditorUi(Vector2 mouse) =>
-            ToolbarRect().Contains(mouse) ||
-            EsuHudNotifications.ContainsMouse(mouse) ||
-            (_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse)) ||
-            (_viewModeMenuOpen && ViewModeMenuRect(ToolbarRect()).Contains(mouse)) ||
-            (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
-            IsSurfaceContextMenuAt(mouse) ||
-            IsDecorationContextMenuAt(mouse) ||
-            (IsRightPanelStackVisible() && RightPanelRect().Contains(mouse)) ||
-            StatusRect(RightPanelRect()).Contains(mouse) ||
-            (IsLeftPanelStackVisible() && MeshPaletteRect().Contains(mouse));
+            HitTestEditorUi(mouse).IsHit;
+
+        private bool IsCurrentMouseOverEditorUi() =>
+            IsMouseOverEditorUi(MouseGuiPosition());
+
+        private static Vector2 MouseGuiPosition() =>
+            new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+
+        private static void ClaimMouseWheelOverEditorUi(Event current, bool overUi)
+        {
+            if (!overUi ||
+                current == null ||
+                current.type != EventType.ScrollWheel)
+            {
+                return;
+            }
+
+            DecorationEditorInputScope.ClaimMouseWheelInputForFrames();
+        }
 
         private Rect UnappliedClosePromptRect()
         {

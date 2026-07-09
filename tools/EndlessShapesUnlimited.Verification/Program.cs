@@ -162,7 +162,9 @@ internal static class Program
             "DecoLimitLifter.SerializationHud.BlueprintConverter_SaveTelemetry_Patch",
             "DecoLimitLifter.SerializationHud.BlueprintConverter_LoadTelemetry_Patch",
             "DecoLimitLifter.SerializationHud.Decoration_SaveTelemetry_Patch",
-            "DecoLimitLifter.SerializationHud.DecorationManager_LoadTelemetry_Patch"
+            "DecoLimitLifter.SerializationHud.DecorationManager_LoadTelemetry_Patch",
+            "DecoLimitLifter.EsuPanelWheelZoomGate_HybridZoom_Update_Patch",
+            "DecoLimitLifter.EsuPanelWheelZoomGate_HybridZoom_UpdateCurrentValue_Patch"
         };
 
         Assembly modAssembly = typeof(ExtendedSuperSaver).Assembly;
@@ -188,6 +190,8 @@ internal static class Program
         requiredMethods.Add(Plugin.ResolveBlueprintLoadTarget());
         requiredMethods.Add(Plugin.ResolveDecorationSaveTarget());
         requiredMethods.Add(Plugin.ResolveDecorationLoadTarget());
+        requiredMethods.Add(Plugin.ResolveHybridZoomUpdateTarget());
+        requiredMethods.Add(Plugin.ResolveHybridZoomUpdateCurrentValueTarget());
         InterfaceMapping writeMap = typeof(SuperSaver).GetInterfaceMap(typeof(IVariableWriteHelp));
         for (int i = 0; i < writeMap.InterfaceMethods.Length; i++)
         {
@@ -249,6 +253,25 @@ internal static class Program
                 typeof(BlueprintConverter_LoadTelemetry_Patch),
                 nameof(BlueprintConverter_LoadTelemetry_Patch.Finalizer)),
             "Blueprint load telemetry finalizer is the exact required method.");
+        MethodBase getZoomTarget = Plugin.ResolveFtdKeyMapGetZoomTarget();
+        Assert(getZoomTarget?.DeclaringType?.Assembly.GetName().Name == "PlayerProfiles",
+            "FtdKeyMap.GetZoom resolves from PlayerProfiles.dll.");
+        Assert(AccessTools.Method(typeof(EsuPanelWheelZoomGate_FtdKeyMap_GetZoom_Patch), "Postfix") != null,
+            "FtdKeyMap.GetZoom input gate postfix method resolves without running the FtD keymap static constructor.");
+        VerifyExactPatch(
+            Plugin.ResolveHybridZoomUpdateTarget(),
+            AccessTools.Method(
+                typeof(EsuPanelWheelZoomGate_HybridZoom_Update_Patch),
+                "Prefix"),
+            prefix: true,
+            "HybridZoom.Update(float, bool) input gate prefix is the exact required method.");
+        VerifyExactPatch(
+            Plugin.ResolveHybridZoomUpdateCurrentValueTarget(),
+            AccessTools.Method(
+                typeof(EsuPanelWheelZoomGate_HybridZoom_UpdateCurrentValue_Patch),
+                "Prefix"),
+            prefix: true,
+            "HybridZoom.Update(float, float, bool) input gate prefix is the exact required method.");
         Assert(Plugin.ResolveBlueprintFileJsonSaveTarget() != null &&
                AccessTools.Method(
                    typeof(BlueprintFile_Save_BlueprintJsonStreaming_Patch),
@@ -271,8 +294,11 @@ internal static class Program
                Plugin.ResolveDecorationEditorHudTarget("DrawWeaponInfo") != null &&
                Plugin.ResolveDecorationEditorHudTarget("DisplayCorrectToolBar") != null &&
                Plugin.ResolveDecorationEditorBuildUpdateTarget() != null &&
-               Plugin.ResolveDecorationEditorCameraUpdateTarget() != null,
-            "Decoration editor HUD/input Harmony targets resolve without installing UI patches in the non-Unity verifier.");
+               Plugin.ResolveDecorationEditorCameraUpdateTarget() != null &&
+               Plugin.ResolveFtdKeyMapGetZoomTarget() != null &&
+               Plugin.ResolveHybridZoomUpdateTarget() != null &&
+               Plugin.ResolveHybridZoomUpdateCurrentValueTarget() != null,
+            "Decoration editor HUD/input and HybridZoom wheel-gate Harmony targets resolve without installing UI patches in the non-Unity verifier.");
     }
 
     private static void VerifyExactPatch(
@@ -2947,6 +2973,11 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuHudDiagnostics.cs"));
+        string panelWheelZoomGateSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuPanelWheelZoomGate.cs"));
         string pluginSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3246,16 +3277,78 @@ f 0 2 3
                sessionSource.Contains("return current.type == EventType.MouseDown &&") &&
                sessionSource.Contains("PlaceSelectedMeshAtPointer") &&
                inputScopeSource.Contains("ScrollWheelOverEditorUi") &&
+               inputScopeSource.Contains("ProbeMouseOverEditorUi()") &&
+               inputScopeSource.Contains("SetMouseOverEditorUiProbe") &&
                inputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&
                inputScopeSource.Contains("OwnsCameraInputThisFrame") &&
                inputScopeSource.Contains("ClaimCameraInputForFrames") &&
                !inputScopeSource.Contains("MouseOverEditorUi || SmartBuildInputScope.SuppressCameraInput()"),
             "Decoration Edit Mode keeps camera input alive during idle hover/mesh placement, but claims FTD mouse-wheel/camera input for ESU-owned panel scrolls.");
         Assert(sessionSource.Contains("DecorationEditorInputScope.SetMouseOverEditorUi(IsMouseOverEditorUi(_lastMouseGui))") &&
+               sessionSource.Contains("DecorationEditorInputScope.SetMouseOverEditorUiProbe(IsCurrentMouseOverEditorUi)") &&
+               sessionSource.Contains("EsuPanelUiHitTestRegistry.Register(this, HitTestEditorUi)") &&
+               sessionSource.Contains("EsuPanelUiHitTestRegistry.Unregister(this)") &&
+               sessionSource.Contains("private EsuPanelUiHit HitTestEditorUi(Vector2 mouse)") &&
                sessionSource.Contains("private bool IsMouseOverEditorUi(Vector2 mouse)") &&
+               sessionSource.Contains("private bool IsCurrentMouseOverEditorUi()") &&
+               sessionSource.Contains("ToolbarRect().Contains(mouse)") &&
+               sessionSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
                sessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
+               sessionSource.Contains("_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse)") &&
+               sessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(ToolbarRect()).Contains(mouse)") &&
+               sessionSource.Contains("_anchorMenuOpen && AnchorMenuRect().Contains(mouse)") &&
+               sessionSource.Contains("IsSurfaceContextMenuAt(mouse)") &&
+               sessionSource.Contains("IsDecorationContextMenuAt(mouse)") &&
+               sessionSource.Contains("IsRightPanelStackVisible() && RightPanelRect().Contains(mouse)") &&
+               sessionSource.Contains("StatusRect(RightPanelRect()).Contains(mouse)") &&
+               sessionSource.Contains("IsLeftPanelStackVisible() && MeshPaletteRect().Contains(mouse)") &&
+               sessionSource.Contains("\"surface_left_panel\"") &&
+               sessionSource.Contains("\"surface_right_panel\"") &&
+               notificationSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
+               drawEditorShellSource.Contains("ClaimMouseWheelOverEditorUi(Event.current, _mouseOverWindow)") &&
+               sessionSource.Contains("private static void ClaimMouseWheelOverEditorUi") &&
                sessionSource.Contains("DecorationEditorInputScope.ClaimMouseWheelInputForFrames();"),
             "Decoration Edit Mode treats the shared notification/log overlay as ESU-owned UI before camera zoom handles mouse wheel input.");
+        Assert(panelWheelZoomGateSource.Contains("using BrilliantSkies.PlayerProfiles;") &&
+               panelWheelZoomGateSource.Contains("using BrilliantSkies.Ui.Displayer;") &&
+               panelWheelZoomGateSource.Contains("internal struct EsuPanelUiHit") &&
+               panelWheelZoomGateSource.Contains("internal static class EsuPanelUiHitTestRegistry") &&
+               panelWheelZoomGateSource.Contains("Register(object owner, Func<Vector2, EsuPanelUiHit> hitTest)") &&
+               panelWheelZoomGateSource.Contains("Unregister(object owner)") &&
+               panelWheelZoomGateSource.Contains("HitTestCurrentMouse()") &&
+               panelWheelZoomGateSource.Contains("Input.mousePosition.x, Screen.height - Input.mousePosition.y") &&
+               panelWheelZoomGateSource.Contains("[HarmonyPatch(typeof(FtdKeyMap), nameof(FtdKeyMap.GetZoom), new[] { typeof(float), typeof(float), typeof(float) })]") &&
+               panelWheelZoomGateSource.Contains("internal static class EsuPanelWheelZoomGate_FtdKeyMap_GetZoom_Patch") &&
+               panelWheelZoomGateSource.Contains("private static void Postfix(ref float __result)") &&
+               panelWheelZoomGateSource.Contains("float rawZoom = __result;") &&
+               panelWheelZoomGateSource.Contains("EsuPanelWheelZoomGate.ApplyGetZoomGate(rawZoom, ref __result);") &&
+               panelWheelZoomGateSource.Contains("zoom = 0f;") &&
+               panelWheelZoomGateSource.Contains("GuiDisplayBase.MouseWheelInUse.Now();") &&
+               panelWheelZoomGateSource.Contains("[HarmonyPatch(typeof(HybridZoom), nameof(HybridZoom.Update), new[] { typeof(float), typeof(bool) })]") &&
+               panelWheelZoomGateSource.Contains("[HarmonyPatch(typeof(HybridZoom), nameof(HybridZoom.Update), new[] { typeof(float), typeof(float), typeof(bool) })]") &&
+               panelWheelZoomGateSource.Contains("private static bool Prefix(ref bool ignoreInput)") &&
+               panelWheelZoomGateSource.Contains("EsuPanelWheelZoomGate.ApplyHybridZoomInputGate(ref ignoreInput);") &&
+               panelWheelZoomGateSource.Contains("if (ignoreInput)") &&
+               panelWheelZoomGateSource.Contains("ignoreInput = true;") &&
+               panelWheelZoomGateSource.Contains("return true;") &&
+               panelWheelZoomGateSource.Contains("DecorationEditorInputScope.MouseOverEditorUi") &&
+               panelWheelZoomGateSource.Contains("SmartBuildInputScope.MouseOverUi") &&
+               panelWheelZoomGateSource.Contains("AutomationBuilderInputScope.MouseOverUi") &&
+               !panelWheelZoomGateSource.Contains("Event.Use(") &&
+               pluginSource.Contains("ResolveFtdKeyMapGetZoomTarget") &&
+               pluginSource.Contains("ResolveHybridZoomUpdateTarget") &&
+               pluginSource.Contains("ResolveHybridZoomUpdateCurrentValueTarget") &&
+               pluginSource.Contains("typeof(EsuPanelWheelZoomGate_FtdKeyMap_GetZoom_Patch)") &&
+               pluginSource.Contains("typeof(EsuPanelWheelZoomGate_HybridZoom_Update_Patch)") &&
+               pluginSource.Contains("typeof(EsuPanelWheelZoomGate_HybridZoom_UpdateCurrentValue_Patch)") &&
+               hudDiagnosticsSource.Contains("wheel_over_esu_ui_gate_count") &&
+               hudDiagnosticsSource.Contains("hybrid_zoom_input_ignored_count") &&
+               hudDiagnosticsSource.Contains("get_zoom_seen") &&
+               hudDiagnosticsSource.Contains("get_zoom_blocked") &&
+               hudDiagnosticsSource.Contains("hybrid_zoom_blocked") &&
+               hudDiagnosticsSource.Contains("zoom_leak_candidate") &&
+               hudDiagnosticsSource.Contains("assembly_location"),
+            "ESU blocks FtD camera zoom at FtdKeyMap.GetZoom with live ESU UI hit-tests, while HybridZoom prefixes remain secondary non-consuming protection for panel scroll and graph zoom behavior.");
 
         var definitions = DecorationEditorIconCatalog.Definitions;
         string iconCatalogSource = File.ReadAllText(Path.Combine(
@@ -4148,7 +4241,8 @@ f 0 2 3
                decorationDrawGuiSource.Contains("GUI.enabled = false") &&
                drawEditorShellSource.Contains("DrawEditorShell(bool interactive)") &&
                drawEditorShellSource.Contains("if (interactive)\n                EsuCursorTooltip.BeginFrame") &&
-               drawEditorShellSource.Contains("if (interactive)\n                DecorationEditorInputScope.SetMouseOverEditorUi") &&
+               drawEditorShellSource.Contains("DecorationEditorInputScope.SetMouseOverEditorUi(_mouseOverWindow)") &&
+               drawEditorShellSource.Contains("ClaimMouseWheelOverEditorUi(Event.current, _mouseOverWindow)") &&
                decorationSuspendHandoffSource.Contains("DecorationEditorInputScope.End()") &&
                decorationSuspendHandoffSource.Contains("CloseSurfacePointContextMenu()") &&
                decorationSuspendHandoffSource.Contains("CloseDecorationContextMenu()") &&
@@ -4460,7 +4554,7 @@ f 0 2 3
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
                 smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
                 smartBuildSessionSource.Contains("EsuHudNotifications.DrawExpandedPopup()") &&
-               smartBuildSessionSource.Contains("EsuHudNotifications.ContainsMouse(Event.current.mousePosition)") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
                inGameTestPlanSource.Contains("slot stays fixed-height") &&
                inGameTestPlanSource.Contains("no icon") &&
                inGameTestPlanSource.Contains("Details") &&
@@ -4885,12 +4979,38 @@ f 0 2 3
                SurfacePlacementsMatchDraftNormal(flippedScalene, plan.Placements) &&
                SurfacePlacementCentersSitBehindDraftNormal(flippedScalene, plan.Placements),
             "Surface planner keeps normal-flipped split surface centers on the committed side of the source plane.");
+        AssertFlippedSurfaceMirrorsBaseline(
+            "right triangle",
+            SurfaceDraftForTests(
+                new Vector3(0f, 0f, 0f),
+                new Vector3(1f, 0f, 0f),
+                new Vector3(0f, 1f, 0f)),
+            resolver);
+        AssertFlippedSurfaceMirrorsBaseline(
+            "isosceles triangle",
+            SurfaceDraftForTests(
+                new Vector3(-0.5f, 0f, 0f),
+                new Vector3(0.5f, 0f, 0f),
+                new Vector3(0f, 1f, 0f)),
+            resolver);
+        AssertFlippedSurfaceMirrorsBaseline(
+            "scalene split triangle",
+            SurfaceDraftForTests(
+                new Vector3(0f, 0f, 0f),
+                new Vector3(2f, 0f, 0f),
+                new Vector3(0.25f, 1.1f, 0f)),
+            resolver,
+            requireCoplanarSplit: true);
 
         SurfaceDraft slantedSeparateTriangles = SlantedTwoTriangleSurfaceDraftForTests();
         Assert(SurfaceDecorationPlanner.TryPlan(slantedSeparateTriangles, resolver, out plan, out message) &&
                slantedSeparateTriangles.Faces.Count == 2 &&
                SurfacePlacementsMatchAnyDraftFaceNormal(slantedSeparateTriangles, plan.Placements),
             "Surface planner previews two separate non-axis-aligned triangles from six points.");
+        AssertFlippedSurfaceMirrorsBaseline(
+            "slanted separate triangles",
+            SlantedTwoTriangleSurfaceDraftForTests(),
+            resolver);
 
         SurfaceDraft slantedManualFace = SlantedTwoTriangleSurfaceDraftForTests();
         Assert(slantedManualFace.ToggleManualFacePoint(1, out message) &&
@@ -4901,6 +5021,16 @@ f 0 2 3
                SurfaceDecorationPlanner.TryPlan(slantedManualFace, resolver, out plan, out message) &&
                SurfacePlacementsMatchAnyDraftFaceNormal(slantedManualFace, plan.Placements),
             "Surface planner previews a non-axis-aligned face created from Shift-selected points between two triangles.");
+        SurfaceDraft flippedSlantedManualFace = SlantedTwoTriangleSurfaceDraftForTests();
+        Assert(flippedSlantedManualFace.ToggleManualFacePoint(1, out message) &&
+               flippedSlantedManualFace.ToggleManualFacePoint(2, out message) &&
+               flippedSlantedManualFace.ToggleManualFacePoint(3, out message) &&
+               flippedSlantedManualFace.TryCreateFaceFromManualSelection(out message),
+            "Surface draft flipped manual-face test setup creates the connected slanted face.");
+        AssertFlippedSurfaceMirrorsBaseline(
+            "slanted connected manual face",
+            flippedSlantedManualFace,
+            resolver);
 
         SurfaceDraft slantedBridge = SlantedTwoTriangleSurfaceDraftForTests();
         Assert(slantedBridge.ToggleBridgeEdge(new SurfaceEdge(1, 2), out message) &&
@@ -4911,6 +5041,15 @@ f 0 2 3
                SurfaceDecorationPlanner.TryPlan(slantedBridge, resolver, out plan, out message) &&
                SurfacePlacementsMatchAnyDraftFaceNormal(slantedBridge, plan.Placements),
             "Surface planner previews a non-axis-aligned bridge between two selected triangle edges.");
+        SurfaceDraft flippedSlantedBridge = SlantedTwoTriangleSurfaceDraftForTests();
+        Assert(flippedSlantedBridge.ToggleBridgeEdge(new SurfaceEdge(1, 2), out message) &&
+               flippedSlantedBridge.ToggleBridgeEdge(new SurfaceEdge(3, 4), out message) &&
+               flippedSlantedBridge.TryBridgeSelectedEdges(out message),
+            "Surface draft flipped bridge test setup creates the non-axis-aligned bridge.");
+        AssertFlippedSurfaceMirrorsBaseline(
+            "slanted bridge",
+            flippedSlantedBridge,
+            resolver);
 
         AssertMirroredSurfaceNormals(
             "right triangle",
@@ -5575,6 +5714,7 @@ f 0 2 3
                plannerSource.Contains("CreateRightTrianglePolygon") &&
                plannerSource.Contains("IntendedFaceNormal") &&
                plannerSource.Contains("AlignChildVerticesToParentNormal") &&
+               plannerSource.Contains("AlignChildVerticesToParentNormal(vertices, parentNormal)") &&
                plannerSource.Contains("AlignAxisWithIntendedNormal") &&
                plannerSource.Contains("ShouldReversePolygonForConverter") &&
                plannerSource.Contains("normal did not match the source face normal") &&
@@ -6211,6 +6351,195 @@ f 0 2 3
         left != Vector3.zero &&
         right != Vector3.zero &&
         Vector3.Dot(left, right) >= 0.999f;
+
+    private static void AssertFlippedSurfaceMirrorsBaseline(
+        string shapeName,
+        SurfaceDraft draft,
+        ISurfaceAnchorResolver resolver,
+        bool requireCoplanarSplit = false)
+    {
+        draft.Settings.NormalReversal = false;
+        bool baselinePlanned = SurfaceDecorationPlanner.TryPlan(
+            draft,
+            resolver,
+            out SurfaceDecorationPlan baseline,
+            out string baselineMessage);
+        draft.Settings.NormalReversal = true;
+        bool flippedPlanned = SurfaceDecorationPlanner.TryPlan(
+            draft,
+            resolver,
+            out SurfaceDecorationPlan flipped,
+            out string flippedMessage);
+        bool countMatches = baselinePlanned &&
+                            flippedPlanned &&
+                            baseline.DecorationCount == flipped.DecorationCount;
+        bool normalsMatch = flippedPlanned &&
+                            SurfacePlacementsMatchAnyDraftFaceNormal(draft, flipped.Placements);
+        bool finitePositiveGeometry = flippedPlanned &&
+                                      SurfacePlacementsHaveFinitePositiveGeometry(flipped.Placements);
+        bool mirroredCenters = baselinePlanned &&
+                               flippedPlanned &&
+                               SurfaceFlippedPlacementsMirrorBaseline(draft, baseline.Placements, flipped.Placements);
+        bool coplanarSplit = !requireCoplanarSplit ||
+                             (flippedPlanned && SurfacePlacementTransformPlanesAreCoherent(flipped.Placements));
+
+        Assert(baselinePlanned &&
+               flippedPlanned &&
+               countMatches &&
+               normalsMatch &&
+               finitePositiveGeometry &&
+               mirroredCenters &&
+               coplanarSplit,
+            "Surface planner mirrors normal-flipped " +
+            shapeName +
+            " geometry through the source face plane without corrupting placement scale. Baseline said: " +
+            baselineMessage +
+            " Flipped said: " +
+            flippedMessage +
+            " Count=" +
+            countMatches +
+            " Normals=" +
+            normalsMatch +
+            " FiniteScale=" +
+            finitePositiveGeometry +
+            " Mirrored=" +
+            mirroredCenters +
+            " Coplanar=" +
+            coplanarSplit);
+    }
+
+    private static bool SurfacePlacementsHaveFinitePositiveGeometry(
+        IReadOnlyList<SurfaceDecorationPlacement> placements)
+    {
+        if (placements == null || placements.Count == 0)
+            return false;
+
+        for (int index = 0; index < placements.Count; index++)
+        {
+            SurfaceDecorationPlacement placement = placements[index];
+            if (placement == null ||
+                !DecorationEditMath.IsFinite(placement.Positioning) ||
+                !DecorationEditMath.IsFinite(placement.Scaling) ||
+                !DecorationEditMath.IsFinite(placement.Orientation) ||
+                !DecorationEditMath.IsFinite(placement.ThicknessAxis) ||
+                !DecorationEditMath.IsFinite(placement.TransformThicknessAxis) ||
+                placement.Scaling.x <= 0.000001f ||
+                placement.Scaling.y <= 0.000001f ||
+                placement.Scaling.z <= 0.000001f ||
+                placement.ThicknessAxis.sqrMagnitude < 0.999f ||
+                placement.TransformThicknessAxis.sqrMagnitude < 0.999f)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SurfaceFlippedPlacementsMirrorBaseline(
+        SurfaceDraft draft,
+        IReadOnlyList<SurfaceDecorationPlacement> baseline,
+        IReadOnlyList<SurfaceDecorationPlacement> flipped)
+    {
+        if (draft == null ||
+            baseline == null ||
+            flipped == null ||
+            baseline.Count != flipped.Count)
+        {
+            return false;
+        }
+
+        var matched = new bool[baseline.Count];
+        for (int flippedIndex = 0; flippedIndex < flipped.Count; flippedIndex++)
+        {
+            SurfaceDecorationPlacement flippedPlacement = flipped[flippedIndex];
+            Vector3 flippedCenter = PlacementCenter(flippedPlacement);
+            bool found = false;
+            for (int baselineIndex = 0; baselineIndex < baseline.Count; baselineIndex++)
+            {
+                if (matched[baselineIndex])
+                    continue;
+
+                SurfaceDecorationPlacement baselinePlacement = baseline[baselineIndex];
+                Vector3 baselineAxis = baselinePlacement.TransformThicknessAxis;
+                if (baselineAxis.sqrMagnitude < 0.999f ||
+                    Vector3.Dot(baselineAxis.normalized, flippedPlacement.TransformThicknessAxis.normalized) > -0.999f ||
+                    baselinePlacement.MeshGuid != flippedPlacement.MeshGuid ||
+                    !SameScaleComponentsUnordered(baselinePlacement.Scaling, flippedPlacement.Scaling) ||
+                    !TrySurfaceFacePlaneForNormal(draft, baselineAxis.normalized, out float plane))
+                {
+                    continue;
+                }
+
+                Vector3 expected = ReflectAcrossPlane(
+                    PlacementCenter(baselinePlacement),
+                    baselineAxis.normalized,
+                    plane);
+                if (!VectorApproximately(expected, flippedCenter, 0.003f))
+                    continue;
+
+                matched[baselineIndex] = true;
+                found = true;
+                break;
+            }
+
+            if (!found)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool SameScaleComponentsUnordered(Vector3 left, Vector3 right)
+    {
+        float[] leftValues = { left.x, left.y, left.z };
+        float[] rightValues = { right.x, right.y, right.z };
+        Array.Sort(leftValues);
+        Array.Sort(rightValues);
+        for (int index = 0; index < leftValues.Length; index++)
+        {
+            if (Mathf.Abs(leftValues[index] - rightValues[index]) > 0.0001f)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TrySurfaceFacePlaneForNormal(
+        SurfaceDraft draft,
+        Vector3 normal,
+        out float plane)
+    {
+        plane = 0f;
+        if (draft == null || normal.sqrMagnitude < 0.999f)
+            return false;
+
+        normal.Normalize();
+        foreach (SurfaceFace face in draft.Faces)
+        {
+            Vector3 axis = Vector3.Cross(
+                draft.Points[face.B] - draft.Points[face.A],
+                draft.Points[face.C] - draft.Points[face.A]);
+            if (!DecorationEditMath.IsFinite(axis) || axis.sqrMagnitude <= 0.000000000001f)
+                continue;
+
+            axis.Normalize();
+            if (Vector3.Dot(axis, normal) < 0.999f)
+                continue;
+
+            plane = Vector3.Dot(axis, draft.Points[face.A]);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Vector3 ReflectAcrossPlane(Vector3 point, Vector3 normal, float plane)
+    {
+        normal.Normalize();
+        float distance = Vector3.Dot(normal, point) - plane;
+        return point - normal * (distance * 2f);
+    }
 
     private static void AssertSurfacePlanCount(
         SurfaceDraft draft,
@@ -7444,6 +7773,29 @@ f 0 2 3
                automationInputScopeSource.Contains("BeginEditor(\"Automation Builder\")") &&
                modeSwitchHandoffSource.Contains("AutomationBuilderModeRegistration.Active"),
             "Smart Builder and Automation Builder register at startup, default to Ctrl+Shift+B/Ctrl+Shift+A, and share one-press profiled input gates for Tab handoffs.");
+        Assert(automationSessionSource.Contains("IsMouseOverAutomationUi(MouseGuiPosition())") &&
+               automationSessionSource.Contains("AutomationBuilderInputScope.SetMouseOverUiProbe(IsCurrentMouseOverAutomationUi)") &&
+               automationSessionSource.Contains("EsuPanelUiHitTestRegistry.Register(this, HitTestAutomationUi)") &&
+               automationSessionSource.Contains("EsuPanelUiHitTestRegistry.Unregister(this)") &&
+               automationSessionSource.Contains("private EsuPanelUiHit HitTestAutomationUi(Vector2 mouse)") &&
+               automationSessionSource.Contains("private bool IsCurrentMouseOverAutomationUi()") &&
+               automationSessionSource.Contains("ClaimMouseWheelOverAutomationUi(Event.current, overUi)") &&
+               automationSessionSource.Contains("private static void ClaimMouseWheelOverAutomationUi") &&
+               automationSessionSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
+               automationSessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
+               automationSessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse)") &&
+               automationSessionSource.Contains("_contextBlock != null && _contextMenuRect.Contains(mouse)") &&
+               automationSessionSource.Contains("_canvasOpen && canvas.Contains(mouse)") &&
+               automationSessionSource.Contains("toolbar.Contains(mouse)") &&
+               automationSessionSource.Contains("status.Contains(mouse)") &&
+               automationSessionSource.Contains("leftPanel.Contains(mouse)") &&
+               automationSessionSource.Contains("rightPanel.Contains(mouse)") &&
+               automationSessionSource.Contains("\"automation_canvas\"") &&
+               automationSessionSource.Contains("HandleGraphCanvasZoom(canvasRect)") &&
+               automationInputScopeSource.Contains("SetMouseOverUiProbe") &&
+               automationInputScopeSource.Contains("ProbeMouseOverUi()") &&
+               automationInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()"),
+            "Automation Builder claims mouse-wheel input over all ESU panels before child scroll views consume the event, while preserving graph-canvas zoom.");
         Assert(CurrentAutomationBuilderSourceContract(
                    modProjectSource,
                    automationSessionSource,
@@ -7969,6 +8321,8 @@ f 0 2 3
             "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm, keeps plan warnings in the shared notification/log flow, and does not clip full failure reasons into the status label.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
+               smartInputScopeSource.Contains("SetMouseOverUiProbe") &&
+               smartInputScopeSource.Contains("ProbeMouseOverUi()") &&
                smartInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()") &&
                smartInputScopeSource.Contains("SuppressCameraInput() =>") &&
                !smartInputScopeSource.Contains("MouseOverUi ||") &&
@@ -7976,8 +8330,22 @@ f 0 2 3
                !sessionSource.Contains("if (_draft != null)\r\n                SmartBuildInputScope.ClaimBuildInputForFrames") &&
                sessionSource.Contains("RefreshMouseOverUiFromCurrentPointer();") &&
                sessionSource.Contains("private void RefreshMouseOverUiFromCurrentPointer()") &&
+               sessionSource.Contains("IsMouseOverSmartUi(MouseGuiPosition())") &&
+               sessionSource.Contains("SmartBuildInputScope.SetMouseOverUiProbe(IsCurrentMouseOverSmartUi)") &&
+               sessionSource.Contains("EsuPanelUiHitTestRegistry.Register(this, HitTestSmartUi)") &&
+               sessionSource.Contains("EsuPanelUiHitTestRegistry.Unregister(this)") &&
+               sessionSource.Contains("private EsuPanelUiHit HitTestSmartUi(Vector2 mouse)") &&
+               sessionSource.Contains("private bool IsCurrentMouseOverSmartUi()") &&
+               sessionSource.Contains("ClaimMouseWheelOverSmartUi(Event.current, overUi)") &&
+               sessionSource.Contains("private static void ClaimMouseWheelOverSmartUi") &&
+               sessionSource.Contains("toolbar.Contains(mouse)") &&
+               sessionSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
                sessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
-               sessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(mouse)") &&
+               sessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse)") &&
+               sessionSource.Contains("_showLeftPanel && leftPanel.Contains(mouse)") &&
+               sessionSource.Contains("_showRightPanel && rightPanel.Contains(mouse)") &&
+               sessionSource.Contains("status.Contains(mouse)") &&
+               sessionSource.Contains("_contextMenuOpen && _contextMenuRect.Contains(mouse)") &&
                sessionSource.Contains("SmartBuildInputScope.ClaimMouseWheelInputForFrames();") &&
                sessionSource.Contains("ShouldConsumeGuiEvent(Event.current)") &&
                sessionSource.Contains("SwitchToDecorationEditRequested") &&
@@ -8146,10 +8514,16 @@ f 0 2 3
                deployScript.Contains("'Character Items'") &&
                deployScript.Contains("'Items'") &&
                deployScript.Contains("'Meshes'") &&
+               deployScript.Contains("[Environment]::GetFolderPath('MyDocuments')") &&
+               deployScript.Contains("OneDrive\\Dokumenter\\From The Depths\\Mods") &&
+               deployScript.Contains("Deploy-ToModsRoot") &&
                deployScript.Contains("Get-ChildItem -LiteralPath $destinationFull -Recurse -Filter '*.dll'") &&
+               deployScript.Contains("Get-FileHash -Algorithm SHA256") &&
+               deployScript.Contains("plugin.json version") &&
+               deployScript.Contains("All deployed EndlessShapesUnlimited runtime folders match.") &&
                deployScript.Contains("$esuDlls.Count -ne 1") &&
                deployScript.Contains("Clean runtime deploy must not contain the development Source folder"),
-            "Clean deployment replaces the destination with runtime-only files and rejects nested or unexpected DLLs.");
+            "Clean deployment replaces every discovered ESU Mods runtime folder, detects OneDrive duplicate roots, hash-checks deployed DLLs, and rejects nested or unexpected DLLs.");
         var workshopHeader = new FileInfo(Path.Combine(package, "header.jpg"));
         Assert(workshopHeader.Exists &&
                workshopHeader.Length > 0 &&

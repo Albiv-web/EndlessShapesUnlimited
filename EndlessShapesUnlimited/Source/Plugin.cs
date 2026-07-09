@@ -19,6 +19,7 @@ using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Ftd.Constructs.UI;
 using BrilliantSkies.Modding;
+using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Displayer;
 using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
@@ -169,6 +170,9 @@ namespace DecoLimitLifter
                 ResolveDecorationEditorHudTarget("DisplayCorrectToolBar"),
                 ResolveDecorationEditorBuildUpdateTarget(),
                 ResolveDecorationEditorCameraUpdateTarget(),
+                ResolveFtdKeyMapGetZoomTarget(),
+                ResolveHybridZoomUpdateTarget(),
+                ResolveHybridZoomUpdateCurrentValueTarget(),
                 ResolveBuildFreezeTarget(),
                 ResolveVanillaHudLateUpdateTarget()
             };
@@ -470,6 +474,24 @@ namespace DecoLimitLifter
                     "Prefix"),
                 prefix: true);
             VerifyExactPatch(
+                ResolveFtdKeyMapGetZoomTarget(),
+                AccessTools.Method(
+                    typeof(EsuPanelWheelZoomGate_FtdKeyMap_GetZoom_Patch),
+                    "Postfix"),
+                prefix: false);
+            VerifyExactPatch(
+                ResolveHybridZoomUpdateTarget(),
+                AccessTools.Method(
+                    typeof(EsuPanelWheelZoomGate_HybridZoom_Update_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveHybridZoomUpdateCurrentValueTarget(),
+                AccessTools.Method(
+                    typeof(EsuPanelWheelZoomGate_HybridZoom_UpdateCurrentValue_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
                 ResolveBuildFreezeTarget(),
                 AccessTools.Method(
                     typeof(EsuVanillaInputBridge_cBuild_ToggleFreeze_Patch),
@@ -584,6 +606,24 @@ namespace DecoLimitLifter
 
         internal static MethodBase ResolveDecorationEditorCameraUpdateTarget() =>
             AccessTools.Method(typeof(BuildCameraMode), nameof(BuildCameraMode.RunUpdate));
+
+        internal static MethodBase ResolveFtdKeyMapGetZoomTarget() =>
+            AccessTools.Method(
+                typeof(FtdKeyMap),
+                nameof(FtdKeyMap.GetZoom),
+                new[] { typeof(float), typeof(float), typeof(float) });
+
+        internal static MethodBase ResolveHybridZoomUpdateTarget() =>
+            AccessTools.Method(
+                typeof(HybridZoom),
+                nameof(HybridZoom.Update),
+                new[] { typeof(float), typeof(bool) });
+
+        internal static MethodBase ResolveHybridZoomUpdateCurrentValueTarget() =>
+            AccessTools.Method(
+                typeof(HybridZoom),
+                nameof(HybridZoom.Update),
+                new[] { typeof(float), typeof(float), typeof(bool) });
 
         internal static MethodBase ResolveBuildFreezeTarget() =>
             AccessTools.Method(typeof(cBuild), nameof(cBuild.ToggleFreeze));

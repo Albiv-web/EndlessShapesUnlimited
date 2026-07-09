@@ -1,3 +1,4 @@
+using System;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ui.Displayer;
 using UnityEngine;
@@ -13,12 +14,15 @@ namespace DecoLimitLifter.SmartBuildMode
     {
         private static bool _active;
         private static bool _mouseOverUi;
+        private static Func<bool> _mouseOverUiProbe;
         private static int _buildInputClaimUntilFrame = -1;
         private static int _cameraInputClaimUntilFrame = -1;
 
         internal static bool Active => _active;
 
-        internal static bool MouseOverUi => _active && _mouseOverUi;
+        internal static bool MouseOverUi =>
+            _active &&
+            (_mouseOverUi || ProbeMouseOverUi());
 
         internal static bool OwnsBuildInputThisFrame =>
             _active && Time.frameCount <= _buildInputClaimUntilFrame;
@@ -39,6 +43,7 @@ namespace DecoLimitLifter.SmartBuildMode
             DecoLimitLifter.EsuVanillaHudVisibilityScope.Begin("Smart Builder begin");
             DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Smart Block Builder");
             _mouseOverUi = false;
+            _mouseOverUiProbe = null;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
         }
@@ -48,6 +53,7 @@ namespace DecoLimitLifter.SmartBuildMode
             bool wasActive = _active;
             _active = false;
             _mouseOverUi = false;
+            _mouseOverUiProbe = null;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
             if (wasActive)
@@ -82,6 +88,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal static void SetMouseOverUi(bool value) =>
             _mouseOverUi = _active && value;
+
+        internal static void SetMouseOverUiProbe(Func<bool> probe) =>
+            _mouseOverUiProbe = _active ? probe : null;
 
         internal static void ClaimBuildInputForFrames(int frames = 2)
         {
@@ -133,5 +142,20 @@ namespace DecoLimitLifter.SmartBuildMode
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             OwnsCameraInputThisFrame ||
             ScrollWheelOverUi;
+
+        private static bool ProbeMouseOverUi()
+        {
+            if (_mouseOverUiProbe == null)
+                return false;
+
+            try
+            {
+                return _mouseOverUiProbe();
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

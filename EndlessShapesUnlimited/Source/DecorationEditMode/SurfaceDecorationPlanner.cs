@@ -1772,15 +1772,15 @@ namespace DecoLimitLifter.DecorationEditMode
             if (parentNormal == Vector3.zero)
                 throw SurfaceGeometryError(faceIndex, "has no valid normal");
 
-            List<PolygonData> polygons = BuildSurfacePolygons(vertices, faceIndex, parentNormal);
+            List<Vector3> polygonVertices = AlignChildVerticesToParentNormal(vertices, parentNormal);
+            List<PolygonData> polygons = BuildSurfacePolygons(polygonVertices, faceIndex, parentNormal);
 
             foreach (PolygonData polygon in polygons)
             {
                 Vector3 thicknessAxis = DecorationThicknessAxis(polygon, parentNormal);
                 bool converterNormalReversal = ShouldReversePolygonForConverter(
                     polygon,
-                    parentNormal,
-                    draft.Settings.NormalReversal);
+                    parentNormal);
                 var data = new MimicAndDecorationCommonData();
                 MADCD_PolygonInput.Start(
                     data,
@@ -1852,15 +1852,13 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static bool ShouldReversePolygonForConverter(
             PolygonData polygon,
-            Vector3 intendedNormal,
-            bool normalReversal)
+            Vector3 intendedNormal)
         {
-            if (!normalReversal ||
-                polygon == null ||
+            if (polygon == null ||
                 intendedNormal == Vector3.zero ||
                 polygon.NormalVector == Vector3.zero)
             {
-                return normalReversal;
+                return false;
             }
 
             return Vector3.Dot(polygon.NormalVector, intendedNormal) < 0f;
@@ -1926,9 +1924,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 parentNormal != Vector3.zero &&
                 Vector3.Dot(childNormal, parentNormal) < 0f)
             {
-                Vector3 swap = child[1];
-                child[1] = child[2];
-                child[2] = swap;
+                // ES2's triangle converters use side 0 as a placement reference.
+                // Reverse winding without moving that side's midpoint.
+                Vector3 swap = child[0];
+                child[0] = child[1];
+                child[1] = swap;
             }
 
             return child;

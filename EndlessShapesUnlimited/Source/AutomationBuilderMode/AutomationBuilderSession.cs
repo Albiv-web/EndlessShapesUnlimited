@@ -407,6 +407,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             Active = true;
             AutomationBuilderInputScope.Begin();
+            AutomationBuilderInputScope.SetMouseOverUiProbe(IsCurrentMouseOverAutomationUi);
+            EsuPanelUiHitTestRegistry.Register(this, HitTestAutomationUi);
             DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("Automation Builder opened");
             ApplyFocusView();
             RefreshSelectionFromPointer();
@@ -416,6 +418,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         internal void End(bool preserveSharedHud = false)
         {
             RestoreFocusView();
+            EsuPanelUiHitTestRegistry.Unregister(this);
             AutomationBuilderInputScope.End();
             if (!preserveSharedHud)
                 DecorationEditorOverlay.Clear();
@@ -443,6 +446,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         internal void SuspendForModeSwitchHandoff()
         {
             RestoreFocusView();
+            EsuPanelUiHitTestRegistry.Unregister(this);
             AutomationBuilderInputScope.End();
             Active = false;
             _placementArmed = false;
@@ -629,6 +633,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                         HandleRightPanelDrag();
                     }
                 }
+
+                bool overUi = IsMouseOverAutomationUi(MouseGuiPosition());
+                AutomationBuilderInputScope.SetMouseOverUi(overUi);
+                ClaimMouseWheelOverAutomationUi(Event.current, overUi);
             }
 
             GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
@@ -698,17 +706,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!interactive)
                 return;
 
-            bool overUi = _closePromptOpen ||
-                          ContainsMouse(_toolbarRect) ||
-                          ContainsMouse(_statusRect) ||
-                          EsuHudNotifications.ContainsMouse(Event.current.mousePosition) ||
-                          (_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(Event.current.mousePosition)) ||
-                          (_contextBlock != null && _contextMenuRect.Contains(Event.current.mousePosition)) ||
-                          (_canvasOpen && ContainsMouse(_canvasRect)) ||
-                          (!_canvasOpen && _showLeftPanel && ContainsMouse(_leftPanelRect)) ||
-                          (!_canvasOpen && _showRightPanel && ContainsMouse(_rightPanelRect));
-            AutomationBuilderInputScope.SetMouseOverUi(overUi);
-            if (overUi && ShouldConsumeGuiEvent(Event.current))
+            bool mouseOverUiAfterControls = IsMouseOverAutomationUi(MouseGuiPosition());
+            AutomationBuilderInputScope.SetMouseOverUi(mouseOverUiAfterControls);
+            if (mouseOverUiAfterControls && ShouldConsumeGuiEvent(Event.current))
             {
                 if (Event.current.type == EventType.ScrollWheel)
                     AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
@@ -10094,21 +10094,76 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private void RefreshMouseOverUiFromCurrentPointer()
         {
             Vector2 mouse = MouseGuiPosition();
-            bool overUi = _closePromptOpen ||
-                          _toolbarRect.Contains(mouse) ||
-                          _statusRect.Contains(mouse) ||
-                          EsuHudNotifications.ContainsMouse(mouse) ||
-                          (_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(mouse)) ||
-                          (_contextBlock != null && _contextMenuRect.Contains(mouse)) ||
-                          (_canvasOpen && _canvasRect.Contains(mouse)) ||
-                          (!_canvasOpen && _showLeftPanel && _leftPanelRect.Contains(mouse)) ||
-                          (!_canvasOpen && _showRightPanel && _rightPanelRect.Contains(mouse));
+            bool overUi = IsMouseOverAutomationUi(mouse);
             AutomationBuilderInputScope.SetMouseOverUi(overUi);
             if (overUi &&
                 Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
             {
                 AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
             }
+        }
+
+        private EsuPanelUiHit HitTestAutomationUi(Vector2 mouse)
+        {
+            if (!Active)
+                return EsuPanelUiHit.Miss(mouse);
+
+            Rect toolbar = _toolbarRect.width > 1f && _toolbarRect.height > 1f
+                ? _toolbarRect
+                : EsuHudLayout.ToolbarRect(ToolbarHeight);
+            Rect status = _statusRect.width > 1f && _statusRect.height > 1f
+                ? _statusRect
+                : EsuHudLayout.BottomStripRect(StatusHeightScaled());
+            Rect leftPanel = _leftPanelRect.width > 1f && _leftPanelRect.height > 1f
+                ? _leftPanelRect
+                : DefaultLeftPanelRect();
+            Rect rightPanel = _rightPanelRect.width > 1f && _rightPanelRect.height > 1f
+                ? _rightPanelRect
+                : DefaultRightPanelRect();
+            Rect canvas = _canvasRect.width > 1f && _canvasRect.height > 1f
+                ? _canvasRect
+                : DefaultCanvasRect();
+
+            if (_closePromptOpen)
+                return EsuPanelUiHit.Found("Automation Builder", "prompt", mouse);
+            if (toolbar.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "toolbar", mouse);
+            if (status.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "status", mouse);
+            if (EsuConsoleWindow.ContainsMouse(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "console", mouse);
+            if (EsuHudNotifications.ContainsMouse(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "notification", mouse);
+            if (_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "view_mode_menu", mouse);
+            if (_contextBlock != null && _contextMenuRect.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "context_menu", mouse);
+            if (_canvasOpen && canvas.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "automation_canvas", mouse);
+            if (!_canvasOpen && _showLeftPanel && leftPanel.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "left_panel", mouse);
+            if (!_canvasOpen && _showRightPanel && rightPanel.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "right_panel", mouse);
+
+            return EsuPanelUiHit.Miss(mouse);
+        }
+
+        private bool IsMouseOverAutomationUi(Vector2 mouse) =>
+            HitTestAutomationUi(mouse).IsHit;
+
+        private bool IsCurrentMouseOverAutomationUi() =>
+            IsMouseOverAutomationUi(MouseGuiPosition());
+
+        private static void ClaimMouseWheelOverAutomationUi(Event current, bool overUi)
+        {
+            if (!overUi ||
+                current == null ||
+                current.type != EventType.ScrollWheel)
+            {
+                return;
+            }
+
+            AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
         }
 
         private void DrawWorldPreview()

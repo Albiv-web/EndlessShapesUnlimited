@@ -230,6 +230,8 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             Active = true;
             SmartBuildInputScope.Begin();
+            SmartBuildInputScope.SetMouseOverUiProbe(IsCurrentMouseOverSmartUi);
+            EsuPanelUiHitTestRegistry.Register(this, HitTestSmartUi);
             DecoLimitLifter.EsuHudDiagnostics.LogGateStatus("Smart Builder opened");
             _itemPreviewRenderer = new SmartBlockItemPreviewRenderer();
             ApplyFocusView();
@@ -240,6 +242,7 @@ namespace DecoLimitLifter.SmartBuildMode
         internal void End(bool preserveSharedHud = false)
         {
             RestoreFocusView();
+            EsuPanelUiHitTestRegistry.Unregister(this);
             SmartBuildInputScope.End();
             if (!preserveSharedHud)
                 DecorationEditorOverlay.Clear();
@@ -272,6 +275,7 @@ namespace DecoLimitLifter.SmartBuildMode
         internal void SuspendForModeSwitchHandoff()
         {
             RestoreFocusView();
+            EsuPanelUiHitTestRegistry.Unregister(this);
             SmartBuildInputScope.End();
             Active = false;
             _dragging = false;
@@ -354,6 +358,10 @@ namespace DecoLimitLifter.SmartBuildMode
                     HandleLeftPanelResize();
                 if (_showRightPanel)
                     HandleRightPanelResize();
+
+                bool overUi = IsMouseOverSmartUi(MouseGuiPosition());
+                SmartBuildInputScope.SetMouseOverUi(overUi);
+                ClaimMouseWheelOverSmartUi(Event.current, overUi);
             }
 
             GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
@@ -405,15 +413,9 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!interactive)
                 return;
 
-            bool overUi = ContainsMouse(_toolbarRect) ||
-                          EsuHudNotifications.ContainsMouse(Event.current.mousePosition) ||
-                          (_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(Event.current.mousePosition)) ||
-                          (_showLeftPanel && ContainsMouse(_leftPanelRect)) ||
-                          (_showRightPanel && ContainsMouse(_rightPanelRect)) ||
-                          ContainsMouse(_statusRect) ||
-                          (_contextMenuOpen && _contextMenuRect.Contains(Event.current.mousePosition));
-            SmartBuildInputScope.SetMouseOverUi(overUi);
-            if (overUi && ShouldConsumeGuiEvent(Event.current))
+            bool mouseOverUiAfterControls = IsMouseOverSmartUi(MouseGuiPosition());
+            SmartBuildInputScope.SetMouseOverUi(mouseOverUiAfterControls);
+            if (mouseOverUiAfterControls && ShouldConsumeGuiEvent(Event.current))
             {
                 if (Event.current.type == EventType.ScrollWheel)
                     SmartBuildInputScope.ClaimMouseWheelInputForFrames();
@@ -7815,19 +7817,69 @@ namespace DecoLimitLifter.SmartBuildMode
         private void RefreshMouseOverUiFromCurrentPointer()
         {
             Vector2 mouse = MouseGuiPosition();
-            bool overUi = _toolbarRect.Contains(mouse) ||
-                          EsuHudNotifications.ContainsMouse(mouse) ||
-                          (_viewModeMenuOpen && ViewModeMenuRect(_toolbarRect).Contains(mouse)) ||
-                          (_showLeftPanel && _leftPanelRect.Contains(mouse)) ||
-                          (_showRightPanel && _rightPanelRect.Contains(mouse)) ||
-                          _statusRect.Contains(mouse) ||
-                          (_contextMenuOpen && _contextMenuRect.Contains(mouse));
+            bool overUi = IsMouseOverSmartUi(mouse);
             SmartBuildInputScope.SetMouseOverUi(overUi);
             if (overUi &&
                 Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
             {
                 SmartBuildInputScope.ClaimMouseWheelInputForFrames();
             }
+        }
+
+        private EsuPanelUiHit HitTestSmartUi(Vector2 mouse)
+        {
+            if (!Active)
+                return EsuPanelUiHit.Miss(mouse);
+
+            Rect toolbar = _toolbarRect.width > 1f && _toolbarRect.height > 1f
+                ? _toolbarRect
+                : EsuHudLayout.ToolbarRect(ToolbarHeight);
+            Rect status = _statusRect.width > 1f && _statusRect.height > 1f
+                ? _statusRect
+                : EsuHudLayout.BottomStripRect(StatusHeightScaled());
+            Rect leftPanel = _leftPanelRect.width > 1f && _leftPanelRect.height > 1f
+                ? _leftPanelRect
+                : DefaultLeftPanelRect();
+            Rect rightPanel = _rightPanelRect.width > 1f && _rightPanelRect.height > 1f
+                ? _rightPanelRect
+                : DefaultRightPanelRect();
+
+            if (toolbar.Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "toolbar", mouse);
+            if (EsuConsoleWindow.ContainsMouse(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "console", mouse);
+            if (EsuHudNotifications.ContainsMouse(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "notification", mouse);
+            if (_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "view_mode_menu", mouse);
+            if (_showLeftPanel && leftPanel.Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "left_panel", mouse);
+            if (_showRightPanel && rightPanel.Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "right_panel", mouse);
+            if (status.Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "status", mouse);
+            if (_contextMenuOpen && _contextMenuRect.Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "context_menu", mouse);
+
+            return EsuPanelUiHit.Miss(mouse);
+        }
+
+        private bool IsMouseOverSmartUi(Vector2 mouse) =>
+            HitTestSmartUi(mouse).IsHit;
+
+        private bool IsCurrentMouseOverSmartUi() =>
+            IsMouseOverSmartUi(MouseGuiPosition());
+
+        private static void ClaimMouseWheelOverSmartUi(Event current, bool overUi)
+        {
+            if (!overUi ||
+                current == null ||
+                current.type != EventType.ScrollWheel)
+            {
+                return;
+            }
+
+            SmartBuildInputScope.ClaimMouseWheelInputForFrames();
         }
 
         private static bool ShouldConsumeGuiEvent(Event current)
