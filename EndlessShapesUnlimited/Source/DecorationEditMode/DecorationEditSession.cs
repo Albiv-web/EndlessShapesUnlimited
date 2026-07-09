@@ -682,6 +682,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!Active)
                 return;
 
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership(CurrentModeLogSource() + " update");
             EsuHudNotifications.SetActiveSource(CurrentModeLogSource());
             _lastMouseGui = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
             DecorationEditorInputScope.SetMouseOverEditorUi(IsMouseOverEditorUi(_lastMouseGui));
@@ -728,11 +729,13 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!Active)
                 return;
 
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership(CurrentModeLogSource() + " OnGUI");
             DrawGui(interactive: true);
         }
 
         internal void DrawModeSwitchHandoffGui()
         {
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership(CurrentModeLogSource() + " handoff GUI");
             DrawGui(interactive: false);
         }
 

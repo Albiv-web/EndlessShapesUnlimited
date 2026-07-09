@@ -13,6 +13,7 @@ namespace DecoLimitLifter.SerializationHud
         {
             public bool Enabled { get; set; }
             public bool EnforceVanillaCompatibility { get; set; } = true;
+            public bool DeveloperMode { get; set; }
             public bool EsuEditorAutoScale { get; set; } = true;
             public float EsuEditorScale { get; set; } = 1f;
             public bool DecorationEditPromptBeforeHotkeyClose { get; set; } = true;
@@ -34,6 +35,15 @@ namespace DecoLimitLifter.SerializationHud
 
         internal static ProfileData Data =>
             ProfileManager.Instance.GetModule<SerializationHudProfile>().GetInternalData();
+
+        internal static bool DeveloperModeEnabled
+        {
+            get
+            {
+                try { return Data.DeveloperMode; }
+                catch { return false; }
+            }
+        }
 
         public override ModuleType ModuleType => ModuleType.Options;
 

@@ -288,6 +288,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!Active)
                 return;
 
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership("Smart Builder update");
             EsuHudNotifications.SetActiveSource("Smart Builder");
             RefreshMouseOverUiFromCurrentPointer();
             RefreshSelection();
@@ -302,11 +303,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!Active)
                 return;
 
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership("Smart Builder OnGUI");
             DrawGui(interactive: true);
         }
 
         internal void DrawModeSwitchHandoffGui()
         {
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership("Smart Builder handoff GUI");
             DrawGui(interactive: false);
         }
 

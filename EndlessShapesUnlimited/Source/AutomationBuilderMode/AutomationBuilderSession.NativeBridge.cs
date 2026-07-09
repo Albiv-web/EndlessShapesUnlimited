@@ -15,6 +15,7 @@ using BrilliantSkies.Common.Circuits.ComponentTypes.Inputs;
 using BrilliantSkies.Common.Circuits.Ui.UndoRedo;
 using BrilliantSkies.Core.Types;
 using DecoLimitLifter.DecorationEditMode;
+using DecoLimitLifter.SerializationHud;
 using UnityEngine;
 using CircuitComponent = BrilliantSkies.Common.Circuits.Component;
 using NativeAiBreadBoardBlock = BrilliantSkies.Blocks.BreadBoards.AiBreadboard;
@@ -468,6 +469,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             bool force,
             double elapsedMs)
         {
+            if (!SerializationHudProfile.DeveloperModeEnabled)
+                return;
+
             if (elapsedMs < NativeDiagnosticsSlowThresholdMs)
                 return;
 
@@ -2665,6 +2669,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             string blockTypeName,
             string filter)
         {
+            if (!SerializationHudProfile.DeveloperModeEnabled)
+                return;
+
             float now = Time.unscaledTime;
             if (now < _nextNativeDiagnosticsLogTime)
                 return;

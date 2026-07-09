@@ -70,6 +70,20 @@ namespace DecoLimitLifter.SerializationHud
                     profile => profile.EnforceVanillaCompatibility));
 
             CreateHeader(
+                "Developer mode",
+                new ToolTip(
+                    "Low-level diagnostics for ESU development and bug reports."));
+            var developer = CreateTableSegment(2, 1);
+            developer.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Developer diagnostics",
+                    new ToolTip(
+                        "When enabled, ESU writes detailed HUD and editor diagnostics to the ESU log. Leave off for normal play."),
+                    (profile, value) => profile.DeveloperMode = value,
+                    profile => profile.DeveloperMode));
+
+            CreateHeader(
                 "Blueprint saving",
                 new ToolTip(
                     "Optional streamed saving for very large blueprint JSON files."));

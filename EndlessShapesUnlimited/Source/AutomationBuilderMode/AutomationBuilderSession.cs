@@ -10,6 +10,7 @@ using BrilliantSkies.Modding.Types;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
 using DecoLimitLifter.DecorationEditMode;
+using DecoLimitLifter.SerializationHud;
 using UnityEngine;
 
 namespace DecoLimitLifter.AutomationBuilderMode
@@ -468,6 +469,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!Active)
                 return;
 
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership("Automation Builder update");
             EsuHudNotifications.SetActiveSource("Automation Builder");
             RefreshMouseOverUiFromCurrentPointer();
             UpdateActiveCanvasPointerInteraction();
@@ -500,11 +502,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!Active)
                 return;
 
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership("Automation Builder OnGUI");
             DrawGui(interactive: true);
         }
 
         internal void DrawModeSwitchHandoffGui()
         {
+            DecoLimitLifter.EsuEditorScope.ClaimGuiOwnership("Automation Builder handoff GUI");
             DrawGui(interactive: false);
         }
 
@@ -3992,6 +3996,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         private void MaybeLogGraphDragRawUpdateStall(string reason)
         {
+            if (!SerializationHudProfile.DeveloperModeEnabled)
+                return;
+
             _nodeDragStalledFrames++;
             if (_nodeDragStalledFrames < GraphDragStalledFrameThreshold)
                 return;
@@ -9794,6 +9801,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             int nativeRemoved,
             int importedCleared)
         {
+            if (!SerializationHudProfile.DeveloperModeEnabled)
+                return;
+
             float now = Time.unscaledTime;
             if (now < _nextStaleLinkPruneLogTime)
                 return;

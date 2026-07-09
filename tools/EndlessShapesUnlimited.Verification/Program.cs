@@ -1449,6 +1449,16 @@ f 0 2 3
                     Type.GetType("BrilliantSkies.Ftd.Avatar.HUD.Rectum, FtD", throwOnError: true)
                 }),
             "Serialization HUD verification selects the intended overloads, not name-only matches.");
+
+        MethodBase[] renderGateTargets = EsuVanillaHudRenderGate.ResolveCoreTargets();
+        Assert(
+            Plugin.ResolveVanillaHudLateUpdateTarget() != null &&
+            AccessTools.Method(
+                typeof(EsuVanillaHudVisibilityScope_GuiDisplayer_LateUpdate_Patch),
+                "Postfix") != null &&
+            renderGateTargets.Length == 14 &&
+            renderGateTargets.All(target => target != null),
+            "Vanilla HUD F9 late-update and core render-gate targets resolve in the verifier harness.");
     }
 
     private static void VerifySerializationTelemetryAggregation()
@@ -1795,6 +1805,8 @@ f 0 2 3
             "Vanilla compatibility mode is enabled by default for a new profile.");
         Assert(!data.StreamLargeBlueprintJsonSaves,
             "Large blueprint JSON streaming saves are disabled by default for a new profile.");
+        Assert(!data.DeveloperMode,
+            "Developer diagnostics are disabled by default for a new profile.");
         Assert(data.FastBlueprintLoadTier == FastBlueprintLoadTier.Off &&
                !data.FastBlueprintLoadDiagnostics &&
                !data.FastBlueprintLoadSmallBlueprintTesting &&
@@ -1842,6 +1854,8 @@ f 0 2 3
                profileSource.Contains("MeasureUsage") &&
                profileSource.Contains("Q(Key.Shift, Key.F8)") &&
                profileSource.Contains("EnforceVanillaCompatibility") &&
+               profileSource.Contains("DeveloperMode") &&
+               profileSource.Contains("DeveloperModeEnabled") &&
                profileSource.Contains("StreamLargeBlueprintJsonSaves") &&
                profileSource.Contains("EsuEditorAutoScale") &&
                profileSource.Contains("EsuEditorScale") &&
@@ -1865,7 +1879,7 @@ f 0 2 3
                profileSource.Contains("SkipV3ColliderLinkup") &&
                profileSource.Contains("SkipV3ShellLinkup") &&
                profileSource.Contains("SkipV3SkinCalc"),
-            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/load/transform snap/close-warning settings are profiled.");
+            "The configurable serialization HUD toggle defaults to F8, exact measurement defaults to Shift+F8, and ESU editor/blueprint save/load/transform snap/close-warning/developer-mode settings are profiled.");
         string optionsSource = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
             "EndlessShapesUnlimited",
@@ -1874,6 +1888,9 @@ f 0 2 3
             "SerializationHudOptionsScreen.cs"));
         Assert(optionsSource.Contains("Vanilla compatibility mode") &&
                optionsSource.Contains("ESU extended decoration data") &&
+               optionsSource.Contains("Developer mode") &&
+               optionsSource.Contains("Developer diagnostics") &&
+               optionsSource.Contains("Leave off for normal play") &&
                optionsSource.Contains("Blueprint saving") &&
                optionsSource.Contains("Stream large blueprint JSON saves") &&
                optionsSource.Contains("64 MiB") &&
@@ -1888,7 +1905,7 @@ f 0 2 3
                optionsSource.Contains("do_not_save=true") &&
                optionsSource.Contains("UnsafeProbeCycle") &&
                optionsSource.Contains("var blueprintLoading = CreateTableSegment(2, 4);"),
-            "The ESU options screen exposes vanilla compatibility mode and the streamed large-blueprint JSON saving and opt-in huge-craft loading controls without clipping Blueprint loading rows.");
+            "The ESU options screen exposes vanilla compatibility mode, developer diagnostics, streamed large-blueprint JSON saving, and opt-in huge-craft loading controls without clipping Blueprint loading rows.");
         Assert(optionsSource.Contains("Warn before Ctrl+D auto-applies") &&
                optionsSource.Contains("asks before applying the preview and closing") &&
                optionsSource.Contains("DecorationEditPromptBeforeHotkeyClose"),
@@ -2142,8 +2159,7 @@ f 0 2 3
                overlaySource.Contains("EsuHudNotifications.DrawToolbarSlot") &&
                overlaySource.Contains("EsuHudNotifications.DrawExpandedPopup") &&
                overlaySource.Contains("EsuConsoleWindow.Draw") &&
-               overlaySource.Contains("DecorationEditorInputScope.Active") &&
-               overlaySource.Contains("SmartBuildInputScope.Active") &&
+               overlaySource.Contains("EsuEditorScope.AnyEditorActive") &&
                overlaySource.Contains("EsuRuntimeLog.Exception"),
             "Plugin startup registers a rollback-safe global ESU notification overlay that draws outside ESU editor modes.");
         Assert(layoutSource.Contains("headerLength <= ushort.MaxValue && dataBytes <= MaximumLegacyDataBytes") &&
@@ -2890,6 +2906,11 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuModeSwitchHandoff.cs"));
+        string editorScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuEditorScope.cs"));
         string escapeCloseGuardSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -2911,6 +2932,26 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
+        string vanillaHudVisibilityScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuVanillaHudVisibilityScope.cs"));
+        string vanillaHudRenderGateSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuVanillaHudRenderGate.cs"));
+        string hudDiagnosticsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuHudDiagnostics.cs"));
+        string pluginSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
         string focusGuardSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3161,8 +3202,42 @@ f 0 2 3
         Assert(inputScopeSource.Contains("DrawRhs") &&
                inputScopeSource.Contains("DrawInteractionIcon") &&
                inputScopeSource.Contains("DrawWeaponInfo") &&
-               serializationHudSource.Contains("DecorationEditorInputScope.Active"),
+               serializationHudSource.Contains("EsuEditorScope.ShouldHideVanillaHud"),
             "Decoration Edit Mode suppresses the native RHS HUD, hovered-block paint/interaction hints, weapon HUD, and ESU serialization HUD while active.");
+        Assert(vanillaHudVisibilityScopeSource.Contains("GuiDisplayer_LateUpdate") &&
+               vanillaHudVisibilityScopeSource.Contains("GuiDisplayer LateUpdate") &&
+               vanillaHudVisibilityScopeSource.Contains("last_hud_force_context") &&
+               vanillaHudVisibilityScopeSource.Contains("last_hud_restore_context") &&
+               editorScopeSource.Contains("decoration_editor_active") &&
+               editorScopeSource.Contains("AnyRegisteredEditorActive") &&
+               editorScopeSource.Contains("DecorationEditModeRegistration.Active") &&
+               editorScopeSource.Contains("SmartBuildModeRegistration.Active") &&
+               editorScopeSource.Contains("AutomationBuilderModeRegistration.Active") &&
+               editorScopeSource.Contains("ClaimGuiOwnership") &&
+               editorScopeSource.Contains("gui_lease_owner") &&
+               editorScopeSource.Contains("mode_switch_handoff_active") &&
+               editorScopeSource.Contains("should_hide_vanilla_hud") &&
+               vanillaHudVisibilityScopeSource.Contains("EsuEditorScope.ShouldHideVanillaHud") &&
+               vanillaHudVisibilityScopeSource.Contains("SerializationHudProfile.DeveloperModeEnabled") &&
+               hudDiagnosticsSource.Contains("assembly_location") &&
+               hudDiagnosticsSource.Contains("duplicate_esu_dll_warning") &&
+               hudDiagnosticsSource.Contains("SerializationHudProfile.DeveloperModeEnabled") &&
+               vanillaHudRenderGateSource.Contains("ResolveCoreTargets") &&
+               vanillaHudRenderGateSource.Contains("HudBuildCommands") &&
+               vanillaHudRenderGateSource.Contains("\"DisplayMessage\"") &&
+               vanillaHudRenderGateSource.Contains("DrawButtons") &&
+               vanillaHudRenderGateSource.Contains("DrawPlayerData") &&
+               vanillaHudRenderGateSource.Contains("HudVehicleInfo") &&
+               vanillaHudRenderGateSource.Contains("DrawExtraVehicleInfo") &&
+               vanillaHudRenderGateSource.Contains("DrawTeamData") &&
+               vanillaHudRenderGateSource.Contains("HudCameraControl") &&
+               vanillaHudRenderGateSource.Contains("Priority.First") &&
+               vanillaHudRenderGateSource.Contains("render_gate_core_targets_missing") &&
+               vanillaHudRenderGateSource.Contains("render_gate_targets_missing_list") &&
+               vanillaHudRenderGateSource.Contains("SerializationHudProfile.DeveloperModeEnabled") &&
+               pluginSource.Contains("ResolveVanillaHudLateUpdateTarget") &&
+               pluginSource.Contains("EsuVanillaHudRenderGate.ResolveCoreTargets()"),
+            "ESU HUD diagnostics and startup checks cover F9 late-update enforcement, editor state, handoff state, and core render-gate drift.");
         Assert(builderUiSource.Contains("Decoration Edit Mode") &&
                builderUiSource.Contains("DecorationEditModeRegistration.ToggleFromUi"),
             "Decoration Builder exposes a visible Decoration Edit Mode button.");
@@ -3277,17 +3352,6 @@ f 0 2 3
             "Source",
             "SerializationHud",
             "SerializationHudOptionsScreen.cs"));
-        string pluginSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "Plugin.cs"));
-        string tooltipSuppressorSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "DecorationEditMode",
-            "DecorationTooltipSuppressor.cs"));
         string cursorTooltipSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -4057,7 +4121,7 @@ f 0 2 3
                modeSwitchHandoffSource.Contains("s_lastConsumedFrame") &&
                modeSwitchHandoffSource.Contains("s_lastConsumedFrame != Time.frameCount") &&
                modeSwitchHandoffSource.Contains("s_lastConsumedFrame = Time.frameCount") &&
-               inputScopeSource.Contains("EsuModeSwitchHandoff.Active") &&
+               editorScopeSource.Contains("EsuModeSwitchHandoff.Active") &&
                decorationBehaviourSource.Contains("EsuModeSwitchHandoff.Begin()") &&
                decorationBehaviourSource.Contains("preserveSharedHud: true") &&
                decorationBehaviourSource.Contains("keepModeSwitchHandoffGui: true") &&
@@ -4331,53 +4395,29 @@ f 0 2 3
                sessionSource.Contains("float width = _anchorDragAxis == axis && _anchorDragSign == sign ? 4f : 2.5f"),
             "Decoration Edit Mode transform and anchor axes use ESU unlit overlay drawing with stable RGB hues across native view modes.");
 
-        Assert(inputScopeSource.Contains("DecorationTooltipSuppressor.IsLegacyPaintHoverMessage") &&
-               inputScopeSource.Contains("InfoStore") &&
+        Assert(inputScopeSource.Contains("InfoStore") &&
+               inputScopeSource.Contains("IsPaintHoverMessage") &&
                inputScopeSource.Contains("EsuHudNotifications.TryCaptureInfoStore") &&
-               tooltipSuppressorSource.Contains("ResolveBlockGetToolTipTarget") &&
-               tooltipSuppressorSource.Contains("\"Block\"") &&
-               tooltipSuppressorSource.Contains("\"IInteractionSettings\"") &&
-               tooltipSuppressorSource.Contains("\"GetToolTip\"") &&
-               tooltipSuppressorSource.Contains("ShouldIncludeVanillaPaintTooltipLine") &&
-               tooltipSuppressorSource.Contains("Tip_Colored") &&
-               tooltipSuppressorSource.Contains("PatchedBlockTooltipColorCheckCount") &&
-               tooltipSuppressorSource.Contains("outerChecks != 1 || innerChecks != 1") &&
-               tooltipSuppressorSource.Contains("OpCodes.Brtrue") &&
-               tooltipSuppressorSource.Contains("OpCodes.Cgt_Un") &&
-               tooltipSuppressorSource.Contains("return color != 0 &&") &&
-               tooltipSuppressorSource.Contains("StaticOptionsManager.ShowMouseCursor") &&
-               tooltipSuppressorSource.Contains("!EsuOwnsEditorView;") &&
-               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active") &&
-               tooltipSuppressorSource.Contains("SmartBuildInputScope.Active") &&
-               tooltipSuppressorSource.Contains("return false;") &&
-               !tooltipSuppressorSource.Contains("harmony.Patch(method, prefix: patch)") &&
-               !tooltipSuppressorSource.Contains("LogSuppressedCall(__originalMethod, __args);") &&
-               !tooltipSuppressorSource.Contains("TipDisplayer") &&
-               !tooltipSuppressorSource.Contains("ForceTip") &&
-               !tooltipSuppressorSource.Contains("TooltipGUI") &&
-               !tooltipSuppressorSource.Contains("ProTip.Add") &&
-               !tooltipSuppressorSource.Contains("StaticOptionsManager.SetMouseCursorActive") &&
-               !tooltipSuppressorSource.Contains("SetGameControlOptions") &&
-               !tooltipSuppressorSource.Contains("PlayerWantsMouseLookInUi") &&
-               !tooltipSuppressorSource.Contains("GUI.tooltip") &&
-               !tooltipSuppressorSource.Contains("tooltipOverride") &&
-               !tooltipSuppressorSource.Contains("ClearStaleTooltipStateAfterEditorExit") &&
-               !tooltipSuppressorSource.Contains("PostExitRepairActive") &&
-               !tooltipSuppressorSource.Contains("LogPostExitTooltipCandidate") &&
+               vanillaHudRenderGateSource.Contains("BrilliantSkies.Ui.Tips.TipDisplayer") &&
+               vanillaHudRenderGateSource.Contains("\"TooltipGUI\"") &&
+               vanillaHudRenderGateSource.Contains("\"RenderPhase\"") &&
+               vanillaHudRenderGateSource.Contains("\"DoMyWindow\"") &&
+               vanillaHudRenderGateSource.Contains("BrilliantSkies.Ui.Special.InfoStore.InfoStore") &&
+               vanillaHudRenderGateSource.Contains("\"DisplayInfo\"") &&
+               vanillaHudRenderGateSource.Contains("EsuEditorScope.ShouldHideVanillaHud") &&
+               !vanillaHudRenderGateSource.Contains("TipDisplayer.SetTip") &&
+               !vanillaHudRenderGateSource.Contains("GUI.tooltip =") &&
+               !vanillaHudRenderGateSource.Contains("tooltipOverride") &&
                !focusGuardSource.Contains("ClearStaleTooltipStateAfterEditorExit") &&
                decorationBehaviourSource.Contains("EsuInputFocusGuard.TickPostExitRepair") &&
                smartBuildSessionSource.Contains("SmartBuildInputScope.End();") &&
                smartInputScopeSource.Contains("EsuInputFocusGuard.BeginEditor") &&
                smartInputScopeSource.Contains("EsuInputFocusGuard.EndEditor") &&
-               pluginSource.Contains("DecorationTooltipSuppressor.Install(harmony)") &&
-               pluginSource.Contains("VerifyExactTranspiler") &&
-               pluginSource.Contains("DecorationTooltipSuppressor.ResolveBlockGetToolTipTarget()") &&
-               pluginSource.Contains("PatchedBlockTooltipColorCheckCount != 2") &&
-               !pluginSource.Contains("PatchedTipSetterCount <= 0") &&
+               pluginSource.Contains("EsuVanillaHudRenderGate.Install(harmony)") &&
+               pluginSource.Contains("EsuVanillaHudRenderGate.ResolveCoreTargets()") &&
+               !pluginSource.Contains("DecorationTooltipSuppressor.Install(harmony)") &&
                !sessionSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState();") &&
-               inputScopeSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState(force: true)") &&
                !smartBuildSessionSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState();") &&
-               smartInputScopeSource.Contains("DecorationTooltipSuppressor.ClearActiveTooltipState(force: true)") &&
                notificationSource.Contains("TryCaptureInfoStore") &&
                notificationSource.Contains("DrawToolbarSlot") &&
                notificationSource.Contains("fallbackMessage") &&
@@ -4385,8 +4425,7 @@ f 0 2 3
                 notificationSource.Contains("Vector2 screenOrigin") &&
                notificationSource.Contains("screenOrigin.x + rect.x") &&
                notificationSource.Contains("screenOrigin.y + rect.y") &&
-               notificationSource.Contains("DecorationEditorInputScope.Active") &&
-               notificationSource.Contains("SmartBuildInputScope.Active") &&
+               notificationSource.Contains("EsuEditorScope.AnyEditorActive") &&
                notificationSource.Contains("BeginSilentInfoStoreCapture") &&
                notificationSource.Contains("DisplaySeconds = 6f") &&
                notificationSource.Contains("ToolbarHeightScaled") &&
@@ -4427,7 +4466,7 @@ f 0 2 3
                inGameTestPlanSource.Contains("Details") &&
                inGameTestPlanSource.Contains("no `Colored with paint #N` tooltip") &&
                inGameTestPlanSource.Contains("without changing top-panel padding"),
-            "ESU modal build tools suppress only FTD Block.GetToolTip paint-hover text while preserving vanilla cursor state and route native InfoStore popups into a fixed-height, text-only ESU toolbar slot with expandable details while active.");
+            "ESU modal build tools gate vanilla HUD/tooltips without mutating tooltip state and route native InfoStore popups into a fixed-height, text-only ESU toolbar slot with expandable details while active.");
         Assert(toolbarAttentionSource.Contains("PulseSeconds = 2.5f") &&
                toolbarAttentionSource.Contains("DrawLastButtonPulse") &&
                toolbarAttentionSource.Contains("GUILayoutUtility.GetLastRect()") &&
@@ -7295,17 +7334,16 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "DecorationEditorInputScope.cs"));
-        string tooltipSuppressorSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "DecorationEditMode",
-            "DecorationTooltipSuppressor.cs"));
         string vanillaInputBridgeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaInputBridge.cs"));
+        string vanillaHudRenderGateSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "EsuVanillaHudRenderGate.cs"));
         string modeSwitchHandoffSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -7400,7 +7438,7 @@ f 0 2 3
                buildModeInputGateSource.Contains("ReadAutomationBuilderToggleHeld") &&
                buildModeInputGateSource.Contains("ReadProfileKey(") &&
                buildModeInputGateSource.Contains("KeyInputEventType.Held") &&
-               inputScopeSource.Contains("AutomationBuilderInputScope.SuppressBuildHud") &&
+               inputScopeSource.Contains("EsuEditorScope.ShouldHideVanillaHud") &&
                inputScopeSource.Contains("AutomationBuilderInputScope.SuppressBuildInput") &&
                inputScopeSource.Contains("AutomationBuilderInputScope.SuppressCameraInput") &&
                automationInputScopeSource.Contains("BeginEditor(\"Automation Builder\")") &&
@@ -7846,7 +7884,7 @@ f 0 2 3
                automationNativeBridgeSource.Contains("TryResolveNativeBreadboardBoard") &&
                automationNativeBridgeSource.Contains("block is NativeBasicBreadBoardBlock basicBreadboard") &&
                automationNativeBridgeSource.Contains("block is NativeAiBreadBoardBlock aiBreadboard") &&
-               automationNotificationOverlaySource.Contains("AutomationBuilderInputScope.Active") &&
+               automationNotificationOverlaySource.Contains("EsuEditorScope.AnyEditorActive") &&
                automationNativeBridgeSource.Contains("TryCreateNativeLink") &&
                automationNativeBridgeSource.Contains("BuildNativeLinks") &&
                automationNativeBridgeSource.Contains("SyncGraphFromNativeBreadboard") &&
@@ -8333,8 +8371,8 @@ f 0 2 3
                sceneSource.Contains("selectedId >= 0"),
             "Smart Builder right-click cancels active edits before deselecting pieces, preserves no-selection preview scenes, and only then opens context menus for pointed pieces.");
         Assert(inputScopeSource.Contains("SmartBuildInputScope.SuppressBuildHud") &&
-               tooltipSuppressorSource.Contains("DecorationEditorInputScope.Active") &&
-               tooltipSuppressorSource.Contains("SmartBuildInputScope.Active") &&
+               vanillaHudRenderGateSource.Contains("EsuEditorScope.ShouldHideVanillaHud") &&
+               vanillaHudRenderGateSource.Contains("BrilliantSkies.Ui.Tips.TipDisplayer") &&
                vanillaInputBridgeSource.Contains("cBuild.ToggleFreeze") &&
                vanillaInputBridgeSource.Contains("KeyInputsFtd.Freeze") &&
                readFreezeDownSource.Contains("return FtdKeyMap.Instance.Bool(") &&
@@ -8632,6 +8670,10 @@ f 0 2 3
         string root = FindRepositoryRoot();
         string package = Path.Combine(root, "EndlessShapesUnlimited");
         string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
+        string deployScript = File.ReadAllText(Path.Combine(
+            root,
+            "tools",
+            "Deploy-EndlessShapesUnlimited.ps1"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
                manifest.Contains("\"version\": \"1.0.7\"") &&
                manifest.Contains("\"workshop_id\": 3755667314") &&
@@ -8639,6 +8681,17 @@ f 0 2 3
                manifest.Contains("\"DecoLimitLifter\"") &&
                manifest.Contains("\"EndlessShapes2\""),
             "Package manifest has the combined identity and standalone-mod conflicts.");
+        Assert(deployScript.Contains("Remove-Item -LiteralPath $destinationFull -Recurse -Force") &&
+               deployScript.Contains("'EndlessShapesUnlimited.dll'") &&
+               deployScript.Contains("'0Harmony.dll'") &&
+               deployScript.Contains("'Assets'") &&
+               deployScript.Contains("'Character Items'") &&
+               deployScript.Contains("'Items'") &&
+               deployScript.Contains("'Meshes'") &&
+               deployScript.Contains("Get-ChildItem -LiteralPath $destinationFull -Recurse -Filter '*.dll'") &&
+               deployScript.Contains("$esuDlls.Count -ne 1") &&
+               deployScript.Contains("Clean runtime deploy must not contain the development Source folder"),
+            "Clean deployment replaces the destination with runtime-only files and rejects nested or unexpected DLLs.");
         var workshopHeader = new FileInfo(Path.Combine(package, "header.jpg"));
         Assert(workshopHeader.Exists &&
                workshopHeader.Length > 0 &&

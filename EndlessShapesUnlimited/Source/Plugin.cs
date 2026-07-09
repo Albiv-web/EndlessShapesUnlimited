@@ -19,6 +19,7 @@ using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Ftd.Constructs.UI;
 using BrilliantSkies.Modding;
+using BrilliantSkies.Ui.Displayer;
 using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
@@ -44,6 +45,7 @@ namespace DecoLimitLifter
             {
                 harmony = new Harmony(HarmonyId);
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
+                EsuVanillaHudRenderGate.Install(harmony);
                 Patches.FastBlueprintLoadRouter.InstallOptionalV3BlockStatePatch(harmony);
                 Patches.FastBlueprintLoadRouter.InstallOptionalV3DColliderInternalTimingPatch(harmony);
 
@@ -167,8 +169,10 @@ namespace DecoLimitLifter
                 ResolveDecorationEditorHudTarget("DisplayCorrectToolBar"),
                 ResolveDecorationEditorBuildUpdateTarget(),
                 ResolveDecorationEditorCameraUpdateTarget(),
-                ResolveBuildFreezeTarget()
+                ResolveBuildFreezeTarget(),
+                ResolveVanillaHudLateUpdateTarget()
             };
+            required.AddRange(EsuVanillaHudRenderGate.ResolveCoreTargets());
 
             required.AddRange(typeof(SuperLoader)
                 .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -471,6 +475,21 @@ namespace DecoLimitLifter
                     typeof(EsuVanillaInputBridge_cBuild_ToggleFreeze_Patch),
                     "Postfix"),
                 prefix: false);
+            VerifyExactPatch(
+                ResolveVanillaHudLateUpdateTarget(),
+                AccessTools.Method(
+                    typeof(EsuVanillaHudVisibilityScope_GuiDisplayer_LateUpdate_Patch),
+                    "Postfix"),
+                prefix: false);
+
+            MethodInfo renderGatePrefix = AccessTools.Method(typeof(EsuVanillaHudRenderGate), "Prefix");
+            foreach (MethodBase target in EsuVanillaHudRenderGate.ResolveCoreTargets())
+            {
+                VerifyExactPatch(
+                    target,
+                    renderGatePrefix,
+                    prefix: true);
+            }
         }
 
         internal static MethodBase ResolveBlueprintSaveTarget() =>
@@ -568,6 +587,9 @@ namespace DecoLimitLifter
 
         internal static MethodBase ResolveBuildFreezeTarget() =>
             AccessTools.Method(typeof(cBuild), nameof(cBuild.ToggleFreeze));
+
+        internal static MethodBase ResolveVanillaHudLateUpdateTarget() =>
+            AccessTools.Method(typeof(GuiDisplayer), nameof(GuiDisplayer.LateUpdate));
 
         private static void VerifyExactPatch(MethodBase target, MethodInfo patchMethod, bool prefix)
         {

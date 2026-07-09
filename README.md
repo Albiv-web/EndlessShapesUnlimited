@@ -48,7 +48,9 @@ License.
 
 1. Remove standalone `DecoLimitLifter` and `EndlessShapes2` from the FTD `Mods`
    directory.
-2. Copy the complete `EndlessShapesUnlimited` runtime folder into FTD `Mods`.
+2. Deploy the clean `EndlessShapesUnlimited` runtime folder into FTD `Mods`.
+   From the repository root, run:
+   `powershell -ExecutionPolicy Bypass -File tools\Deploy-EndlessShapesUnlimited.ps1`
 3. Start FTD and confirm the Alerts panel reports
    `EndlessShapes Unlimited v1.0.7 Active!`.
 
@@ -59,6 +61,10 @@ The runtime package must contain only:
 - `plugin.json`, `header.header`, `header.jpg`, `releases`, `README.md`,
   license files
 - `Assets`, `Character Items`, `Items`, and `Meshes`
+
+Do not copy `Source`, `bin`, or `obj` into the FTD Mods folder. Nested
+`EndlessShapesUnlimited.dll` copies can leave stale assemblies visible to the
+game and make HUD diagnostics lie about which ESU instance owns the editor.
 
 ## Keybinds
 
