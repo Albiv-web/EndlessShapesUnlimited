@@ -4,7 +4,7 @@ namespace EndlessShapes2.Polygon
 {
     public struct StructureBlockGUID
     {
-        private static StructureBlockGUID[] _SBGUIDs = new StructureBlockGUID[]
+        private static readonly StructureBlockGUID[] StructureBlockGuids =
         {
             new StructureBlockGUID(
                 "2d519ca8-1f12-4a8e-9340-aa6648b5e799",
@@ -50,10 +50,8 @@ namespace EndlessShapes2.Polygon
 
         public static StructureBlockGUID GetSBGUID(StructureBlockType structureBlockType)
         {
-            return _SBGUIDs[(int)structureBlockType];
+            return StructureBlockGuids[(int)structureBlockType];
         }
-
-
 
         public Guid Block;
 

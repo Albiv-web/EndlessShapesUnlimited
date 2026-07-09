@@ -9,10 +9,6 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="Patches\DebugPatches.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- Always present -->
     <Reference Include="0Harmony">
       <HintPath>..\0Harmony.dll</HintPath>

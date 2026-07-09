@@ -51,10 +51,5 @@ namespace EndlessShapes2.Polygon
             }
             return normal.normalized;
         }
-
-        public PolygonData EasyClone()
-        {
-            return (PolygonData)MemberwiseClone();
-        }
     }
 }

@@ -7,30 +7,6 @@ namespace EndlessShapes2.Polygon
 {
     public static class MADCD_PolygonInput
     {
-        public static bool NormalReversal { get; set; }
-
-        public static float FaceThickness { get; set; } = 0.05f;
-
-        public static float LineThickness { get; set; } = 0.05f;
-
-        public static StructureBlockType SBType { get; set; } = StructureBlockType.Metal;
-
-        public static Func<PolygonData, int> ColorSetting { get; set; }
-
-        public static void Start(MimicAndDecorationCommonData madcd, PolygonData polygonData)
-        {
-            int colorIndex = ColorSetting?.Invoke(polygonData) ?? -1;
-            Start(
-                madcd,
-                polygonData,
-                new PolygonDecorationSettings(
-                    NormalReversal,
-                    FaceThickness,
-                    LineThickness,
-                    SBType),
-                colorIndex);
-        }
-
         internal static void Start(
             MimicAndDecorationCommonData madcd,
             PolygonData polygonData,

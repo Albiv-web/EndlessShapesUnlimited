@@ -222,19 +222,6 @@ namespace DecoLimitLifter.SmartBuildMode
             "d62bca2a-ffe5-4316-8c43-269e5393db6e",
             "2a31679e-2d6e-4598-95e2-4016ed834e9c");
 
-        private static readonly Guid[][] ArmorFamilies =
-        {
-            AlloyFamily,
-            HeavyArmourFamily,
-            LeadFamily,
-            MetalFamily,
-            ReinforcedWoodFamily,
-            StoneFamily,
-            WoodFamily,
-            GlassFamily,
-            RubberFamily
-        };
-
         internal static string LastStructuralDiscoveryReport { get; private set; } = string.Empty;
 
         internal static IReadOnlyList<SmartBuildMaterial> BasicMaterials => BasicMaterialOrder;
@@ -416,53 +403,6 @@ namespace DecoLimitLifter.SmartBuildMode
                 default:
                     return "Wood";
             }
-        }
-
-        internal static SmartBlockFamily FromSelected(
-            ItemDefinition selected,
-            Guid selectedGuid,
-            string displayName,
-            Vector3i dimensions)
-        {
-            if (selected == null)
-                return SmartBlockFamily.Unsupported(displayName, "No selected build item is available.");
-
-            Guid[] family = FindArmorFamily(selectedGuid);
-            if (family != null)
-            {
-                List<SmartBlockCandidate> candidates = ResolveFamilyCandidates(family);
-                if (candidates.Count > 0)
-                    return new SmartBlockFamily(displayName, candidates);
-            }
-
-            if (dimensions.x == 1 && dimensions.y == 1 && dimensions.z == 1)
-            {
-                return new SmartBlockFamily(
-                    displayName,
-                    new[]
-                    {
-                        new SmartBlockCandidate(displayName, 1, selected)
-                    });
-            }
-
-            return SmartBlockFamily.Unsupported(
-                displayName,
-                "V1 only supports 1x1x1 seeds and known armor beam families.");
-        }
-
-        private static Guid[] FindArmorFamily(Guid guid)
-        {
-            for (int familyIndex = 0; familyIndex < ArmorFamilies.Length; familyIndex++)
-            {
-                Guid[] family = ArmorFamilies[familyIndex];
-                for (int index = 0; index < family.Length; index++)
-                {
-                    if (family[index] == guid)
-                        return family;
-                }
-            }
-
-            return null;
         }
 
         private static Guid[] FamilyForMaterial(SmartBuildMaterial material)

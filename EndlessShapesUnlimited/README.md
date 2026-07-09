@@ -74,7 +74,7 @@ F8 - Toggle Serialization HUD
 
 Number keys only affect ESU while an ESU editor is open. Outside ESU, vanilla controls work normally.
 
-[b]There are actually a lot more controls and shortcuts, these can be viewed in the Discord as![/b]
+[b]There are more controls and shortcuts; the full list is available in Discord.[/b]
 
 
 [h2]BEFORE USING[/h2]

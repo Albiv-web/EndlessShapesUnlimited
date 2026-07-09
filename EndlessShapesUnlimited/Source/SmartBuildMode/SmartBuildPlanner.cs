@@ -381,7 +381,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (family == null || !family.IsSupported)
                 return SmartBuildPlan.Failed(
                     referenceVolume,
-                    family?.UnsupportedReason ?? "The selected item cannot be used by Smart Block Builder.");
+                    family?.UnsupportedReason ?? "The selected material or shape cannot be used by Smart Block Builder.");
             if (!family.HasSingleCell)
                 return SmartBuildPlan.Failed(
                     referenceVolume,

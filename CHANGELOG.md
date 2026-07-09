@@ -40,6 +40,14 @@ GitHub history, but short enough that it can be copied into release notes.
   Edit Selected anchor list.
 - Added Decoration Edit multi-selection primary switching, so clicking an
   already selected decoration promotes it without clearing the selected group.
+- Added a Developer diagnostics setting in the serialization/editor settings
+  screen. It is off by default and gates low-level HUD/editor/render-gate
+  diagnostic entries so normal players do not fill the ESU log with bug-report
+  data.
+- Added richer ESU HUD diagnostics for development mode, including active
+  editor registrations, input scopes, GUI-frame ownership, last HUD
+  force/restore contexts, render-gate coverage, assembly location, and duplicate
+  deployed DLL detection.
 
 ### Changed
 
@@ -88,6 +96,22 @@ GitHub history, but short enough that it can be copied into release notes.
   wireframe cost across Decoration Edit, Surface Builder, and Smart Builder.
 - Updated the ESU change-test checklist with a focused v1.0.7 smoke course for
   Decoration Edit, Surface Builder, Smart Builder generators, and packaging.
+- ESU editor vanilla-HUD ownership now follows actual editor registrations and
+  per-frame GUI ownership, not only the input scope booleans. Visible ESU editor
+  panels therefore keep owning the screen during mode handoffs and passive UI
+  frames.
+- The scoped vanilla HUD render gate now covers the visible FtD HUD families
+  that can draw outside `GuiDisplayBase.displayGUIs`, including build command
+  prompts/messages, vanilla toolbar buttons, player/vehicle/resource/status
+  rows, camera controls, tooltips, hints, and cHud draw roots.
+- ESU now reapplies the hidden vanilla-HUD state after
+  `GuiDisplayer.LateUpdate`, matching vanilla F9 ordering while preserving the
+  player's original HUD visibility when ESU closes.
+- Smart Builder no longer talks about an unsupported selected item when the
+  active material or shape family cannot be used.
+- Legacy EndlessShapes2 UI source was cleaned up to replace decompiler-style
+  names such as numbered console windows and screen segments with descriptive
+  local names.
 
 ### Fixed
 
@@ -157,6 +181,39 @@ GitHub history, but short enough that it can be copied into release notes.
   group in one undoable batch instead of only the primary decoration.
 - Fixed Decoration Edit box-selection overlays so selected decorations sharing
   the same anchor also draw their anchor-to-decoration guide lines.
+- Fixed vanilla HUD leakage under Decoration Edit, Surface Builder, Smart
+  Builder, and Automation Builder. Holding or pressing F9 while an ESU editor is
+  visible should no longer reveal the vanilla left key prompt stack, build
+  messages, paint tooltip, toolbar, right-side vehicle/resource/status rows, or
+  other vanilla HUD roots behind ESU panels.
+- Fixed the specific state where ESU panels remained visible while
+  `should_hide_vanilla_hud=false` because the editor input scope had ended or
+  moved through a mode-switch handoff.
+- Fixed ESU HUD diagnostics and render-gate startup checks so future FtD HUD
+  draw-root renames fail loudly in verification instead of silently leaking a
+  vanilla layer in-game.
+
+### Removed
+
+- Removed obsolete development-only debug code: the old loader debug gate, the
+  one-off header logger, and the temporary Harmony debug patch file.
+- Removed the unused Smart Builder selected-item resolver and its stale catalog
+  helpers now that Smart Builder uses the material/shape source pipeline.
+- Removed unused EndlessShapes2 polygon helper/proxy members that were no longer
+  called by ESU's importer or editor flows.
+
+### Packaging
+
+- Clean deploy now replaces the destination mod folder and copies only runtime
+  files: top-level ESU/Harmony DLLs, manifests/readmes/licenses, assets,
+  character items, items, and meshes.
+- Runtime package verification now rejects nested ESU DLLs, unexpected DLLs,
+  `Source`, `bin`, `obj`, PDBs, and other build/development artifacts in the
+  deployed mod package.
+- Removed the stale packaged `Version 1.1.0` release-list entry while keeping
+  the active release line at `1.0.7`.
+- Added a local `*.log` ignore rule so verifier logs do not show up as
+  accidental repository changes.
 
 ## 1.0.6 - 2026-07-04
 

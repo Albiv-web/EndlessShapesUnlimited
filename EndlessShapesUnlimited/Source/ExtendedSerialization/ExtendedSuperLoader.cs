@@ -84,13 +84,6 @@ namespace DecoLimitLifter.ExtendedSerialization
 
             startFrom = cursor;
 
-            if (DclDebug.Enabled)
-            {
-                DclDebug.Log(
-                    $"Loader path={(sentinel ? "SENTINEL" : "LEGACY")} id={objectId} " +
-                    $"headers={headerBytes / 7U} data={dataBytes} next={startFrom}");
-            }
-
             SerializationTelemetry.RecordLoadedContainer(
                 self,
                 sentinel,

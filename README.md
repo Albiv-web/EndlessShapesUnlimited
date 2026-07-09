@@ -284,7 +284,6 @@ Core workflow:
 
 Input notes:
 
-- Middle mouse may show the FTD cursor without closing Smart Builder.
 - Middle mouse may show the FTD cursor without closing Smart Builder, and camera
   movement remains live unless a Smart Builder handle is being dragged.
 - Right click cancels context/menu selection instead of clearing the whole scene.
