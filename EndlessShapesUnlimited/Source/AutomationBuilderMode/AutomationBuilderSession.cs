@@ -302,6 +302,29 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Stack
         }
 
+        private readonly struct PaletteDropPreview
+        {
+            internal PaletteDropPreview(
+                AutomationNodeKind kind,
+                Rect freeGraphRect,
+                Rect intendedGraphRect,
+                AutomationSnapCandidate snap)
+            {
+                Kind = kind;
+                FreeGraphRect = freeGraphRect;
+                IntendedGraphRect = intendedGraphRect;
+                Snap = snap ?? AutomationSnapCandidate.None;
+            }
+
+            internal AutomationNodeKind Kind { get; }
+
+            internal Rect FreeGraphRect { get; }
+
+            internal Rect IntendedGraphRect { get; }
+
+            internal AutomationSnapCandidate Snap { get; }
+        }
+
         private static Rect s_leftPanelRect = Rect.zero;
         private static Rect s_rightPanelRect = Rect.zero;
         private static Rect s_canvasRect = Rect.zero;
@@ -2804,19 +2827,15 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private void DrawPaletteBlock(AutomationNodeKind kind)
         {
             bool enabled = CanOpenCanvas;
-            Rect rect = GUILayoutUtility.GetRect(
+            Rect row = GUILayoutUtility.GetRect(
                 1f,
-                EsuHudLayout.Scale(GraphNodeHeightForKind(kind) * 0.72f),
+                PaletteBlockRowHeight(kind),
                 GUILayout.ExpandWidth(true));
-            rect = new Rect(
-                rect.x + EsuHudLayout.Scale(4f),
-                rect.y + EsuHudLayout.Scale(4f),
-                rect.width - EsuHudLayout.Scale(8f),
-                rect.height - EsuHudLayout.Scale(8f));
+            Rect rect = PaletteBlockThumbnailRect(row, kind);
             Color oldColor = GUI.color;
             if (!enabled)
                 GUI.color = new Color(1f, 1f, 1f, 0.45f);
-            DrawAutomationBlockShape(rect, kind, selected: false, compact: true);
+            DrawPaletteNodePreview(kind, rect, 1f, compact: true);
             DrawPaletteBlockText(rect, kind);
             GUI.color = oldColor;
 
@@ -2846,7 +2865,110 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private void DrawPaletteBlockText(Rect rect, AutomationNodeKind kind)
         {
             Rect label = new Rect(rect.x + EsuHudLayout.Scale(12f), rect.y + EsuHudLayout.Scale(8f), rect.width - EsuHudLayout.Scale(24f), rect.height - EsuHudLayout.Scale(16f));
-            GUI.Label(label, PaletteBlockSentence(kind), DecorationEditorTheme.BodyWrap);
+            GUI.Label(
+                label,
+                PaletteBlockSentence(kind),
+                rect.height < EsuHudLayout.Scale(86f)
+                    ? DecorationEditorTheme.MiniWrap
+                    : DecorationEditorTheme.BodyWrap);
+        }
+
+        private float PaletteBlockRowHeight(AutomationNodeKind kind)
+        {
+            Vector2 size = PaletteNodeScreenSize(kind, PaletteListAvailableWidth());
+            return Mathf.Max(EsuHudLayout.Scale(34f), size.y + EsuHudLayout.Scale(8f));
+        }
+
+        private Rect PaletteBlockThumbnailRect(Rect row, AutomationNodeKind kind)
+        {
+            float inset = EsuHudLayout.Scale(4f);
+            float availableWidth = Mathf.Max(1f, row.width - inset * 2f);
+            Vector2 size = PaletteNodeScreenSize(kind, availableWidth);
+            return new Rect(
+                row.x + inset,
+                row.y + Mathf.Max(inset, (row.height - size.y) * 0.5f),
+                size.x,
+                size.y);
+        }
+
+        private float PaletteListAvailableWidth() =>
+            Mathf.Max(1f, _lastCanvasPaletteRect.width - EsuHudLayout.Scale(42f));
+
+        private Vector2 PaletteNodeScreenSize(
+            AutomationNodeKind kind,
+            float availableWidth)
+        {
+            float zoom = PaletteNodeScreenZoom(kind, availableWidth);
+            return new Vector2(
+                GraphNodeWidthForKind(kind) * zoom,
+                GraphNodeHeightForKind(kind) * zoom);
+        }
+
+        private float PaletteNodeScreenZoom(
+            AutomationNodeKind kind,
+            float availableWidth)
+        {
+            float graphWidth = Mathf.Max(1f, GraphNodeWidthForKind(kind));
+            float widthLimitedZoom = Mathf.Max(0.001f, availableWidth) / graphWidth;
+            return Mathf.Min(Mathf.Max(0.001f, _graphZoom), widthLimitedZoom);
+        }
+
+        private void DrawPaletteNodePreview(
+            AutomationNodeKind kind,
+            Rect screenRect,
+            float alpha,
+            bool compact)
+        {
+            Rect graphRect = new Rect(
+                0f,
+                0f,
+                GraphNodeWidthForKind(kind),
+                GraphNodeHeightForKind(kind));
+            DrawPaletteNodePreview(kind, graphRect, screenRect, alpha, compact);
+        }
+
+        private void DrawPaletteNodePreview(
+            AutomationNodeKind kind,
+            Rect graphRect,
+            Rect screenRect,
+            float alpha,
+            bool compact)
+        {
+            if (screenRect.width <= 1f ||
+                screenRect.height <= 1f ||
+                graphRect.width <= 1f ||
+                graphRect.height <= 1f)
+            {
+                return;
+            }
+
+            float zoom = Mathf.Min(
+                screenRect.width / Mathf.Max(1f, graphRect.width),
+                screenRect.height / Mathf.Max(1f, graphRect.height));
+            Matrix4x4 previousMatrix = GUI.matrix;
+            Color previousColor = GUI.color;
+            GUI.matrix = previousMatrix * Matrix4x4.TRS(
+                new Vector3(
+                    screenRect.x - graphRect.x * zoom,
+                    screenRect.y - graphRect.y * zoom,
+                    0f),
+                Quaternion.identity,
+                new Vector3(zoom, zoom, 1f));
+            try
+            {
+                GUI.color = new Color(
+                    previousColor.r,
+                    previousColor.g,
+                    previousColor.b,
+                    previousColor.a * alpha);
+                DrawAutomationBlockShape(graphRect, kind, selected: false, compact: compact);
+                DrawBlockSentence(graphRect, TemporaryPaletteNode(kind), compact: true);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+                GUI.matrix = previousMatrix;
+            }
         }
 
         private void DrawPaletteDragGhost(Rect workspaceRect)
@@ -2855,17 +2977,35 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
 
             Vector2 mouse = PaletteDragWindowMouse();
-            Rect ghost = new Rect(
-                mouse.x - EsuHudLayout.Scale(GraphNodeWidthForKind(_draggingPaletteKind) * 0.5f),
-                mouse.y - EsuHudLayout.Scale(34f),
-                EsuHudLayout.Scale(GraphNodeWidthForKind(_draggingPaletteKind)),
-                EsuHudLayout.Scale(GraphNodeHeightForKind(_draggingPaletteKind)));
+            Rect ghostGraphRect;
+            Rect ghost;
+            bool overWorkspace = workspaceRect.Contains(mouse);
+            if (overWorkspace)
+            {
+                PaletteDropPreview preview = ResolvePaletteDropPreview(workspaceRect, mouse);
+                ghostGraphRect = preview.IntendedGraphRect;
+                ghost = GraphToWorkspaceRect(workspaceRect, ghostGraphRect);
+            }
+            else
+            {
+                ghostGraphRect = new Rect(
+                    0f,
+                    0f,
+                    GraphNodeWidthForKind(_draggingPaletteKind),
+                    GraphNodeHeightForKind(_draggingPaletteKind));
+                Vector2 size = PaletteNodeScreenSize(_draggingPaletteKind, float.MaxValue);
+                ghost = new Rect(
+                    mouse.x - size.x * 0.5f,
+                    mouse.y - GraphPaletteFloatingGhostTopOffset(),
+                    size.x,
+                    size.y);
+            }
+
             Color previous = GUI.color;
-            GUI.color = workspaceRect.Contains(mouse)
+            GUI.color = overWorkspace
                 ? new Color(1f, 1f, 1f, 0.82f)
                 : new Color(1f, 1f, 1f, 0.38f);
-            DrawAutomationBlockShape(ghost, _draggingPaletteKind, selected: false, compact: false);
-            DrawBlockSentence(ghost, TemporaryPaletteNode(_draggingPaletteKind), compact: true);
+            DrawPaletteNodePreview(_draggingPaletteKind, ghostGraphRect, ghost, 1f, compact: false);
             GUI.color = previous;
         }
 
@@ -2881,15 +3021,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
             }
 
-            AutomationGraph graph = SyncedGraphFor(_selectedBreadboard);
-            AutomationGraphNode preview = TemporaryPaletteNode(_draggingPaletteKind);
-            preview.Rect = PaletteDropGraphRect(workspaceRect, _paletteDragLastWindowMouse);
-            AutomationSnapCandidate snap = ResolveGraphSnapCandidate(
-                graph,
-                preview,
-                _graphZoom,
-                movingNodeIds: null,
-                allowFree: false);
+            PaletteDropPreview preview = ResolvePaletteDropPreview(workspaceRect, _paletteDragLastWindowMouse);
+            AutomationSnapCandidate snap = preview.Snap;
             _activeSnapCandidate = snap;
             SetGraphSnapStatus(snap);
 
@@ -2898,10 +3031,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 DrawWorkspaceSnapPreviewTarget(workspaceRect, snap.TargetRect, snap.Label, NodeColor(preview.Kind));
                 DrawWorkspaceCanvasFlow(
                     workspaceRect,
-                    new Vector2(preview.Rect.xMax, preview.Rect.center.y),
+                    new Vector2(preview.FreeGraphRect.xMax, preview.FreeGraphRect.center.y),
                     new Vector2(snap.TargetRect.x, snap.TargetRect.center.y),
                     NodeColor(preview.Kind),
-                    preview.Id);
+                    0);
                 return;
             }
 
@@ -2926,6 +3059,49 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 width,
                 GraphNodeHeightForKind(_draggingPaletteKind));
         }
+
+        private PaletteDropPreview ResolvePaletteDropPreview(
+            Rect workspaceRect,
+            Vector2 windowMouse)
+        {
+            Rect freeGraphRect = PaletteDropGraphRect(workspaceRect, windowMouse);
+            AutomationSnapCandidate snap = AutomationSnapCandidate.None;
+            Rect intendedGraphRect = freeGraphRect;
+            if (_selectedBreadboard != null &&
+                workspaceRect.Contains(windowMouse))
+            {
+                AutomationGraph graph = SyncedGraphFor(_selectedBreadboard);
+                AutomationGraphNode preview = TemporaryPaletteNode(_draggingPaletteKind);
+                preview.Rect = freeGraphRect;
+                snap = ResolveGraphSnapCandidate(
+                    graph,
+                    preview,
+                    _graphZoom,
+                    movingNodeIds: null,
+                    allowFree: false);
+                if (snap.IsMagnetic)
+                {
+                    bool valueFootprint = snap.Kind == AutomationSnapKind.Value ||
+                                          CanProduceValueBlock(_draggingPaletteKind) &&
+                                          IsValueFootprint(snap.TargetRect);
+                    intendedGraphRect = NormalizeGraphNodeRect(
+                        _draggingPaletteKind,
+                        snap.TargetRect,
+                        valueFootprint);
+                }
+            }
+
+            return new PaletteDropPreview(
+                _draggingPaletteKind,
+                freeGraphRect,
+                intendedGraphRect,
+                snap);
+        }
+
+        private float GraphPaletteFloatingGhostTopOffset() =>
+            Mathf.Min(
+                GraphNodeHeightForKind(_draggingPaletteKind) * Mathf.Max(0.001f, _graphZoom) * 0.5f,
+                EsuHudLayout.Scale(34f));
 
         private Rect VisibleWorkspaceDropGraphRect(AutomationNodeKind kind)
         {
@@ -4693,7 +4869,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             bool moved = _canvasInteractionMoved || _paletteDragMoved;
             if (workspaceRect.Contains(mouse))
             {
-                AddGraphNode(_draggingPaletteKind, hasPreferredRect: true, preferredRect: PaletteDropGraphRect(workspaceRect, mouse));
+                PaletteDropPreview preview = ResolvePaletteDropPreview(workspaceRect, mouse);
+                AddGraphNode(_draggingPaletteKind, hasPreferredRect: true, preferredRect: preview.IntendedGraphRect);
             }
             else if (!moved)
             {
@@ -9780,7 +9957,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node == null)
                 return;
 
-            if (TrySnapGraphNode(graph, node))
+            AutomationSnapCandidate snap = ResolveGraphSnapCandidate(
+                graph,
+                node,
+                _graphZoom,
+                movingNodeIds: new[] { node.Id },
+                allowFree: true);
+            if (ApplySnapCandidate(graph, node, snap, dragState: null))
             {
                 RefreshGraphConnections(graph);
                 SyncGraphNodeRects(graph);
@@ -13552,7 +13735,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     nodeRect.width = GraphNodeWidthForKind(kind);
                 if (nodeRect.height <= 0f)
                     nodeRect.height = GraphNodeHeightForKind(kind);
-                nodeRect = NormalizeGraphNodeRect(kind, nodeRect);
+                nodeRect = NormalizeGraphNodeRect(
+                    kind,
+                    nodeRect,
+                    CanProduceValueBlock(kind) && IsValueFootprint(nodeRect));
 
                 var node = new AutomationGraphNode(
                     _nextStagedNodeId--,

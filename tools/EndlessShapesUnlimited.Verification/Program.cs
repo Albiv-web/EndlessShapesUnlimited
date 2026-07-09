@@ -7866,6 +7866,20 @@ f 0 2 3
                automationSessionSource.Contains("CenterSelectedGraphNode") &&
                !automationSessionSource.Contains("AutomationGraphInteractionIssuesForVerification"),
             "Automation Builder graph uses shared snap candidates, drag transactions, layout normalization, magnetic-snap overlap guards, unified drag coordinates, edge auto-pan, and fit/center actions without a non-executable verifier hook.");
+        Assert(automationSessionSource.Contains("private readonly struct PaletteDropPreview") &&
+               automationSessionSource.Contains("PaletteNodeScreenSize(") &&
+               automationSessionSource.Contains("PaletteNodeScreenZoom(") &&
+               automationSessionSource.Contains("Mathf.Min(Mathf.Max(0.001f, _graphZoom), widthLimitedZoom)") &&
+               automationSessionSource.Contains("DrawPaletteNodePreview(") &&
+               automationSessionSource.Contains("GraphToWorkspaceRect(workspaceRect, ghostGraphRect)") &&
+               automationSessionSource.Contains("ResolvePaletteDropPreview(workspaceRect, mouse)") &&
+               automationSessionSource.Contains("ResolvePaletteDropPreview(workspaceRect, _paletteDragLastWindowMouse)") &&
+               automationSessionSource.Contains("preferredRect: preview.IntendedGraphRect") &&
+               automationSessionSource.Contains("movingNodeIds: new[] { node.Id }") &&
+               automationSessionSource.Contains("CanProduceValueBlock(kind) && IsValueFootprint(nodeRect)") &&
+               !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeWidthForKind(_draggingPaletteKind)") &&
+               !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeHeightForKind(_draggingPaletteKind)"),
+            "Automation Builder palette thumbnails, drag ghosts, snap previews, and final palette drops share graph-zoom sizing instead of HUD-scaled ghost dimensions.");
         Assert(CurrentAutomationBuilderSourceContract(
                    modProjectSource,
                    automationSessionSource,
