@@ -1,6 +1,5 @@
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ui.Displayer;
-using DecoLimitLifter.DecorationEditMode;
 using UnityEngine;
 
 namespace DecoLimitLifter.SmartBuildMode
@@ -41,14 +40,11 @@ namespace DecoLimitLifter.SmartBuildMode
             _mouseOverUi = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
-            DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
         }
 
         internal static void End()
         {
             bool wasActive = _active;
-            if (_active)
-                DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
             _active = false;
             _mouseOverUi = false;
             _buildInputClaimUntilFrame = -1;

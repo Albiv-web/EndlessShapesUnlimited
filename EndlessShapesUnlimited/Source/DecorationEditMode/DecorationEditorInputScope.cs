@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using BrilliantSkies.Core;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.Ftd.Avatar.HUD;
 using BrilliantSkies.Ftd.Cameras;
@@ -51,14 +52,11 @@ namespace DecoLimitLifter.DecorationEditMode
             _mouseOverEditorUi = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
-            DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
         }
 
         internal static void End()
         {
             bool wasActive = _active;
-            if (_active)
-                DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
             _active = false;
             _mouseOverEditorUi = false;
             _buildInputClaimUntilFrame = -1;

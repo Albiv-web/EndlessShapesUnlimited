@@ -248,6 +248,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 session?.End(preserveSharedHud);
             }
 
+            AutomationBuilderInputScope.ForceResetIfActive("automation builder closed");
+
             if (notifyClose)
             {
                 EsuRuntimeLog.Info(
@@ -267,6 +269,18 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _handoffGuiSession = null;
             _handoffGuiFrame = -1;
             session?.End(preserveSharedHud: true);
+            AutomationBuilderInputScope.ForceResetIfActive("automation builder handoff gui cleared");
+        }
+
+        private void OnDisable()
+        {
+            if (!Active)
+                AutomationBuilderInputScope.ForceResetIfActive("automation builder behaviour disabled");
+        }
+
+        private void OnDestroy()
+        {
+            AutomationBuilderInputScope.ForceResetIfActive("automation builder behaviour destroyed");
         }
     }
 }

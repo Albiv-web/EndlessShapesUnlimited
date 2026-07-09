@@ -25,11 +25,6 @@ namespace DecoLimitLifter.DecorationEditMode
             _screenMouse = screenMouse;
             _manualTooltip = null;
             _suppress = suppress;
-            if (Event.current != null &&
-                Event.current.type == EventType.Repaint)
-            {
-                GUI.tooltip = string.Empty;
-            }
         }
 
         internal static void RegisterLast(string tooltip) =>
@@ -65,10 +60,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
             string tooltip = !string.IsNullOrWhiteSpace(_manualTooltip)
                 ? _manualTooltip
+                : _suppress
+                    ? string.Empty
                 : (GUI.tooltip ?? string.Empty).Trim();
 
-            if (_suppress ||
-                string.IsNullOrWhiteSpace(tooltip))
+            if (string.IsNullOrWhiteSpace(tooltip))
             {
                 ClearHover();
                 return;

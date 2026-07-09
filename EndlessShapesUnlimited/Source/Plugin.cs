@@ -168,8 +168,7 @@ namespace DecoLimitLifter
                 ResolveDecorationEditorHudTarget("DisplayCorrectToolBar"),
                 ResolveDecorationEditorBuildUpdateTarget(),
                 ResolveDecorationEditorCameraUpdateTarget(),
-                ResolveBuildFreezeTarget(),
-                DecorationTooltipSuppressor.ResolveBlockGetToolTipTarget()
+                ResolveBuildFreezeTarget()
             };
 
             required.AddRange(typeof(SuperLoader)
@@ -473,16 +472,6 @@ namespace DecoLimitLifter
                     typeof(EsuVanillaInputBridge_cBuild_ToggleFreeze_Patch),
                     "Postfix"),
                 prefix: false);
-            VerifyExactTranspiler(
-                DecorationTooltipSuppressor.ResolveBlockGetToolTipTarget(),
-                AccessTools.Method(
-                    typeof(DecorationTooltipSuppressor),
-                    "Transpiler"));
-            if (DecorationTooltipSuppressor.PatchedBlockTooltipColorCheckCount != 2)
-                throw new InvalidOperationException(
-                    "Required Block.GetToolTip paint-tooltip transpiler patched " +
-                    DecorationTooltipSuppressor.PatchedBlockTooltipColorCheckCount.ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                    " color checks instead of 2.");
         }
 
         internal static MethodBase ResolveBlueprintSaveTarget() =>

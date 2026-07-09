@@ -1,6 +1,5 @@
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ui.Displayer;
-using DecoLimitLifter.DecorationEditMode;
 using UnityEngine;
 
 namespace DecoLimitLifter.AutomationBuilderMode
@@ -13,6 +12,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
     {
         private static bool _active;
         private static bool _mouseOverUi;
+        private static bool _ownsGraphPointerInput;
         private static int _buildInputClaimUntilFrame = -1;
         private static int _cameraInputClaimUntilFrame = -1;
 
@@ -26,6 +26,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
         internal static bool OwnsCameraInputThisFrame =>
             _active && Time.frameCount <= _cameraInputClaimUntilFrame;
 
+        internal static bool OwnsGraphPointerInput =>
+            _active && _ownsGraphPointerInput;
+
         internal static bool ScrollWheelOverUi =>
             MouseOverUi &&
             Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f;
@@ -38,18 +41,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _active = true;
             DecoLimitLifter.EsuInputFocusGuard.BeginEditor("Automation Builder");
             _mouseOverUi = false;
+            _ownsGraphPointerInput = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
-            DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
         }
 
         internal static void End()
         {
             bool wasActive = _active;
-            if (_active)
-                DecorationTooltipSuppressor.ClearActiveTooltipState(force: true);
             _active = false;
             _mouseOverUi = false;
+            _ownsGraphPointerInput = false;
             _buildInputClaimUntilFrame = -1;
             _cameraInputClaimUntilFrame = -1;
             if (wasActive)
@@ -60,6 +62,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             if (!_active &&
                 !_mouseOverUi &&
+                !_ownsGraphPointerInput &&
                 _buildInputClaimUntilFrame < 0 &&
                 _cameraInputClaimUntilFrame < 0)
             {
@@ -82,6 +85,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         internal static void SetMouseOverUi(bool value) =>
             _mouseOverUi = _active && value;
+
+        internal static void SetGraphPointerInputOwned(bool value)
+        {
+            _ownsGraphPointerInput = _active && value;
+        }
 
         internal static void ClaimBuildInputForFrames(int frames = 2)
         {
@@ -125,12 +133,14 @@ namespace DecoLimitLifter.AutomationBuilderMode
         internal static bool SuppressBuildInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
             ControlHeldWhileActive ||
+            OwnsGraphPointerInput ||
             OwnsBuildInputThisFrame ||
             (_active && DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()) ||
             ScrollWheelOverUi;
 
         internal static bool SuppressCameraInput() =>
             DecoLimitLifter.EsuEscapeCloseGuard.Active ||
+            OwnsGraphPointerInput ||
             OwnsCameraInputThisFrame ||
             ScrollWheelOverUi;
     }

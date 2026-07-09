@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -27,9 +28,12 @@ namespace DecoLimitLifter.AutomationBuilderMode
     internal sealed partial class AutomationBuilderSession
     {
         private const uint NativeUnselectedCode = 999999u;
-        private const string AutoNamePrefix = "EsuAutomation";
+        private const string AutoNamePrefix = "Esu";
+        private const string RetiredAutoNamePrefix = "EsuAutomation";
         private const string LegacyAutoNamePrefix = "ESU_AB_";
         private const string NativeOwnerMarkerPrefix = "ESU_AB_OWNER|";
+        private const int AutoNameMaxLength = 30;
+        private const int AutoNameTokenLength = 8;
 
         private static readonly Dictionary<string, Type> s_typeByNameCache =
             new Dictionary<string, Type>(StringComparer.Ordinal);
@@ -46,21 +50,59 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private void RefreshNativeAutomationCache(bool force = false)
         {
             string selectedKey = _selectedBreadboard?.StableKey;
-            if (!string.Equals(_nativeAutomationCacheKey, selectedKey, StringComparison.Ordinal))
+            if (!force &&
+                string.Equals(_nativeAutomationCacheKey, selectedKey, StringComparison.Ordinal) &&
+                !_nativeAutomationCacheDirty &&
+                Time.unscaledTime < _nextNativeAutomationRefreshTime)
             {
-                force = true;
-                _nativeAutomationCacheKey = selectedKey;
-                _nativeSnapshot = null;
+                _nativeRefreshSkippedCount++;
+                return;
             }
+
+            Stopwatch timer = Stopwatch.StartNew();
+            List<AutomationLink> previousLinks = _links.ToList();
+            AutomationLink previousSelectedLink = _selectedLink;
+            AutomationBlockRef previousSelectedBlock = _selectedBlock;
+            NativeBreadboardSnapshot previousSnapshot = _nativeSnapshot;
+            string previousCacheKey = _nativeAutomationCacheKey;
+            int previousCacheVersion = _nativeAutomationCacheVersion;
+
+            try
+            {
+                RefreshNativeAutomationCacheCore(force, timer);
+            }
+            catch (Exception exception)
+            {
+                _links.Clear();
+                _links.AddRange(previousLinks);
+                _selectedLink = previousSelectedLink;
+                _selectedBlock = previousSelectedBlock;
+                _nativeSnapshot = previousSnapshot;
+                _nativeAutomationCacheKey = previousCacheKey;
+                _nativeAutomationCacheVersion = previousCacheVersion;
+                _nativeAutomationCacheDirty = false;
+                _nextNativeAutomationRefreshTime = Time.unscaledTime + NativeRefreshIntervalSeconds;
+                RecordNativeAutomationException("refresh", false, timer, force, exception);
+            }
+        }
+
+        private void RefreshNativeAutomationCacheCore(bool force, Stopwatch timer)
+        {
+            string selectedKey = _selectedBreadboard?.StableKey;
+            bool selectedKeyChanged = !string.Equals(_nativeAutomationCacheKey, selectedKey, StringComparison.Ordinal);
+            if (selectedKeyChanged)
+                force = true;
 
             float now = Time.unscaledTime;
             if (!force &&
                 !_nativeAutomationCacheDirty &&
                 now < _nextNativeAutomationRefreshTime)
             {
+                _nativeRefreshSkippedCount++;
                 return;
             }
 
+            _nativeRefreshCount++;
             _nextNativeAutomationRefreshTime = now + NativeRefreshIntervalSeconds;
             _nativeAutomationCacheDirty = false;
             List<AutomationLink> stagedLinks = _links
@@ -68,18 +110,36 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 .ToList();
             if (!TryGetSelectedNativeBreadboard(out NativeBreadBoard breadboard))
             {
-                bool hadNative = _nativeSnapshot != null || _links.Any(link => link?.NativeComponent != null);
-                _nativeSnapshot = null;
-                _links.Clear();
-                _links.AddRange(stagedLinks);
-                _selectedLink = null;
-                if (hadNative)
+                bool shouldClearNativeState = selectedKeyChanged ||
+                                              _selectedBreadboard == null ||
+                                              !_selectedBreadboard.IsStillValidBreadboard;
+                if (shouldClearNativeState)
                 {
-                    _nativeAutomationCacheVersion++;
-                    InvalidateAutomationDisplayCache();
+                    bool hadNative = _nativeSnapshot != null || _links.Any(link => link?.NativeComponent != null);
+                    _nativeAutomationCacheKey = selectedKey;
+                    _nativeSnapshot = null;
+                    _links.Clear();
+                    _links.AddRange(stagedLinks);
+                    _selectedLink = null;
+                    if (hadNative)
+                    {
+                        _nativeAutomationCacheVersion++;
+                        InvalidateAutomationDisplayCache();
+                    }
+                }
+                else
+                {
+                    _nativeAutomationCacheDirty = true;
                 }
 
+                RecordNativeRefreshDiagnostics(force, timer, 0, 0, _links.Count);
                 return;
+            }
+
+            if (selectedKeyChanged)
+            {
+                _nativeAutomationCacheKey = selectedKey;
+                _nativeSnapshot = null;
             }
 
             NativeBreadboardSnapshot snapshot = NativeBreadboardSnapshot.Create(breadboard);
@@ -89,17 +149,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _nativeSnapshot = snapshot;
             object selectedNative = _selectedLink?.NativeComponent;
             List<AutomationLink> rebuilt = BuildNativeLinks(snapshot);
-            bool linksChanged = NativeLinksChanged(rebuilt, stagedLinks);
+            List<AutomationLink> mergedLinks = MergeNativeAndStagedLinks(rebuilt, stagedLinks);
+            bool linksChanged = NativeLinksChanged(mergedLinks);
             _links.Clear();
-            _links.AddRange(rebuilt);
-            foreach (AutomationLink stagedLink in stagedLinks)
-            {
-                if (stagedLink != null &&
-                    !_links.Any(link => LinksMatch(link, stagedLink)))
-                {
-                    _links.Add(stagedLink);
-                }
-            }
+            _links.AddRange(mergedLinks);
 
             _nextLinkId = Math.Max(_nextLinkId, _links.Count + 1);
             if (_selectedLink?.NativeComponent == null &&
@@ -126,35 +179,99 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 SyncSelectedGraphFromNativeIfLoaded(force: false);
             }
+
+            RecordNativeRefreshDiagnostics(
+                force,
+                timer,
+                snapshot.Components.Count,
+                SelectedGraphNodeCount(),
+                _links.Count);
         }
 
-        private bool NativeLinksChanged(
-            IReadOnlyList<AutomationLink> rebuiltNativeLinks,
-            IReadOnlyList<AutomationLink> stagedLinks)
+        private bool NativeLinksChanged(IReadOnlyList<AutomationLink> nextLinks)
         {
-            int currentNativeCount = _links.Count(link => link?.NativeComponent != null);
-            if (currentNativeCount != (rebuiltNativeLinks?.Count ?? 0))
+            if (_links.Count != (nextLinks?.Count ?? 0))
                 return true;
 
-            foreach (AutomationLink link in rebuiltNativeLinks ?? Array.Empty<AutomationLink>())
+            foreach (AutomationLink link in nextLinks ?? Array.Empty<AutomationLink>())
             {
                 if (!_links.Any(existing =>
-                        existing?.NativeComponent != null &&
-                        ReferenceEquals(existing.NativeComponent, link.NativeComponent) &&
-                        LinksMatch(existing, link) &&
-                        string.Equals(existing.NativeStatus, link.NativeStatus, StringComparison.Ordinal)))
+                        LinksSameForRefresh(existing, link)))
                 {
                     return true;
                 }
             }
 
-            foreach (AutomationLink stagedLink in stagedLinks ?? Array.Empty<AutomationLink>())
+            return false;
+        }
+
+        private static List<AutomationLink> MergeNativeAndStagedLinks(
+            IReadOnlyList<AutomationLink> nativeLinks,
+            IReadOnlyList<AutomationLink> stagedLinks)
+        {
+            var merged = new List<AutomationLink>();
+            foreach (AutomationLink nativeLink in nativeLinks ?? Array.Empty<AutomationLink>())
             {
-                if (stagedLink != null && !_links.Any(link => ReferenceEquals(link, stagedLink)))
-                    return true;
+                if (nativeLink != null &&
+                    !merged.Any(existing => LinksRepresentSameUserLink(existing, nativeLink)))
+                {
+                    merged.Add(nativeLink);
+                }
             }
 
-            return false;
+            foreach (AutomationLink stagedLink in stagedLinks ?? Array.Empty<AutomationLink>())
+            {
+                if (stagedLink != null &&
+                    !merged.Any(existing => LinksRepresentSameUserLink(existing, stagedLink)))
+                {
+                    merged.Add(stagedLink);
+                }
+            }
+
+            return merged;
+        }
+
+        private static bool LinksSameForRefresh(
+            AutomationLink left,
+            AutomationLink right)
+        {
+            if (left == null || right == null)
+                return false;
+
+            return ReferenceEquals(left.NativeComponent, right.NativeComponent) &&
+                   LinksRepresentSameUserLink(left, right) &&
+                   string.Equals(left.NativeStatus, right.NativeStatus, StringComparison.Ordinal);
+        }
+
+        private static bool LinksRepresentSameUserLink(
+            AutomationLink left,
+            AutomationLink right)
+        {
+            if (LinksMatch(left, right))
+                return true;
+
+            return left != null &&
+                   right != null &&
+                   left.Kind == right.Kind &&
+                   LinkBlockRefsMatch(left.Source, right.Source) &&
+                   LinkBlockRefsMatch(left.Target, right.Target) &&
+                   string.Equals(
+                       CanonicalLinkProperty(left.Property),
+                       CanonicalLinkProperty(right.Property),
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string CanonicalLinkProperty(string property)
+        {
+            string text = (property ?? string.Empty).Trim();
+            if (text.EndsWith("(float)", StringComparison.OrdinalIgnoreCase))
+                text = text.Substring(0, text.Length - "(float)".Length).Trim();
+            if (text.EndsWith("[number]", StringComparison.OrdinalIgnoreCase))
+                text = text.Substring(0, text.Length - "[number]".Length).Trim();
+            const string angleControlPrefix = "AngleControl:";
+            if (text.StartsWith(angleControlPrefix, StringComparison.OrdinalIgnoreCase))
+                text = text.Substring(angleControlPrefix.Length).Trim();
+            return text;
         }
 
         private void SyncSelectedGraphFromNativeIfLoaded(bool force)
@@ -197,6 +314,39 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (graph == null)
                 return;
 
+            Stopwatch timer = Stopwatch.StartNew();
+            List<AutomationGraphNode> previousNodes = graph.Nodes.ToList();
+            List<AutomationGraphConnection> previousConnections = graph.Connections.ToList();
+            List<AutomationGraphConnection> previousImportedConnections = graph.ImportedNativeConnections.ToList();
+            int previousSelectedNodeId = graph.SelectedNodeId;
+            int previousNativeSyncVersion = graph.NativeSyncVersion;
+
+            try
+            {
+                SyncGraphFromNativeBreadboardCore(breadboardRef, graph, timer);
+            }
+            catch (Exception exception)
+            {
+                graph.Nodes.Clear();
+                graph.Nodes.AddRange(previousNodes);
+                graph.Connections.Clear();
+                graph.Connections.AddRange(previousConnections);
+                graph.ImportedNativeConnections.Clear();
+                graph.ImportedNativeConnections.AddRange(previousImportedConnections);
+                graph.SelectedNodeId = previousSelectedNodeId;
+                graph.NativeSyncVersion = previousNativeSyncVersion;
+                RecordNativeAutomationException("graph sync", true, timer, false, exception);
+            }
+        }
+
+        private void SyncGraphFromNativeBreadboardCore(
+            AutomationBlockRef breadboardRef,
+            AutomationGraph graph,
+            Stopwatch timer)
+        {
+            if (graph == null)
+                return;
+
             if (!TryResolveNativeBreadboard(
                     breadboardRef,
                     out NativeBreadBoard breadboard,
@@ -206,6 +356,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 if (!graph.ConnectionsInitialized)
                     graph.RebuildConnections(Array.Empty<AutomationGraphConnection>());
                 graph.NativeSyncVersion = _nativeAutomationCacheVersion;
+                RecordNativeGraphSyncDiagnostics(timer, 0, graph.Nodes.Count, _links.Count);
                 return;
             }
 
@@ -222,8 +373,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!graph.ConnectionsInitialized)
                 graph.RebuildConnections(Array.Empty<AutomationGraphConnection>());
             graph.NativeSyncVersion = _nativeAutomationCacheVersion;
-            RefreshImportedNativeConnections(graph);
+            RefreshNativeGraphConnections(graph);
             InvalidateAutomationDisplayCache();
+            RecordNativeGraphSyncDiagnostics(timer, snapshot.Components.Count, nodes.Count, _links.Count);
         }
 
         private void SyncGraphFromNativeBreadboardIfNeeded(
@@ -239,6 +391,121 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
 
             SyncGraphFromNativeBreadboard(breadboardRef, graph);
+        }
+
+        private int SelectedGraphNodeCount()
+        {
+            return _selectedBreadboard != null &&
+                   _graphs.TryGetValue(_selectedBreadboard.StableKey, out AutomationGraph graph)
+                ? graph.Nodes.Count
+                : 0;
+        }
+
+        private void RecordNativeRefreshDiagnostics(
+            bool force,
+            Stopwatch timer,
+            int componentCount,
+            int nodeCount,
+            int linkCount)
+        {
+            _lastNativeRefreshElapsedMs = StopAndGetElapsedMs(timer);
+            _lastNativeRefreshComponentCount = componentCount;
+            _lastNativeRefreshNodeCount = nodeCount;
+            _lastNativeRefreshLinkCount = linkCount;
+            _lastNativeAutomationError = null;
+            MaybeLogSlowNativeAutomation("native refresh", force, _lastNativeRefreshElapsedMs);
+        }
+
+        private void RecordNativeGraphSyncDiagnostics(
+            Stopwatch timer,
+            int componentCount,
+            int nodeCount,
+            int linkCount)
+        {
+            _nativeGraphSyncCount++;
+            _lastNativeGraphSyncElapsedMs = StopAndGetElapsedMs(timer);
+            _lastNativeRefreshComponentCount = componentCount;
+            _lastNativeRefreshNodeCount = nodeCount;
+            _lastNativeRefreshLinkCount = linkCount;
+            _lastNativeAutomationError = null;
+            MaybeLogSlowNativeAutomation("graph sync", false, _lastNativeGraphSyncElapsedMs);
+        }
+
+        private void RecordNativeAutomationException(
+            string phase,
+            bool sync,
+            Stopwatch timer,
+            bool force,
+            Exception exception)
+        {
+            double elapsedMs = StopAndGetElapsedMs(timer);
+            if (sync)
+                _lastNativeGraphSyncElapsedMs = elapsedMs;
+            else
+                _lastNativeRefreshElapsedMs = elapsedMs;
+
+            _lastNativeAutomationError = exception == null
+                ? "unknown"
+                : exception.GetType().Name + ": " + exception.Message;
+
+            float now = Time.unscaledTime;
+            if (now < _nextNativeDiagnosticsLogTime)
+                return;
+
+            _nextNativeDiagnosticsLogTime = now + NativeDiagnosticsLogCooldownSeconds;
+            EsuRuntimeLog.Error(
+                "Automation Builder",
+                "Automation Builder " + phase + " failed; keeping the last cached HUD state.",
+                NativeDiagnosticsDetail(phase, force) +
+                "\nexception=" +
+                (exception?.ToString() ?? "unknown"));
+        }
+
+        private void MaybeLogSlowNativeAutomation(
+            string phase,
+            bool force,
+            double elapsedMs)
+        {
+            if (elapsedMs < NativeDiagnosticsSlowThresholdMs)
+                return;
+
+            float now = Time.unscaledTime;
+            if (now < _nextNativeDiagnosticsLogTime)
+                return;
+
+            _nextNativeDiagnosticsLogTime = now + NativeDiagnosticsLogCooldownSeconds;
+            EsuRuntimeLog.Warning(
+                "Automation Builder",
+                "Automation Builder " + phase + " took " + elapsedMs.ToString("0.0", CultureInfo.InvariantCulture) + " ms.",
+                NativeDiagnosticsDetail(phase, force));
+        }
+
+        private string NativeDiagnosticsDetail(
+            string phase,
+            bool force)
+        {
+            return "phase=" + phase +
+                   "\nforced=" + (force ? "true" : "false") +
+                   "\nrefreshes=" + _nativeRefreshCount.ToString(CultureInfo.InvariantCulture) +
+                   "\nskipped_refreshes=" + _nativeRefreshSkippedCount.ToString(CultureInfo.InvariantCulture) +
+                   "\ngraph_syncs=" + _nativeGraphSyncCount.ToString(CultureInfo.InvariantCulture) +
+                   "\nrefresh_ms=" + _lastNativeRefreshElapsedMs.ToString("0.0", CultureInfo.InvariantCulture) +
+                   "\nsync_ms=" + _lastNativeGraphSyncElapsedMs.ToString("0.0", CultureInfo.InvariantCulture) +
+                   "\ncomponents=" + _lastNativeRefreshComponentCount.ToString(CultureInfo.InvariantCulture) +
+                   "\nnodes=" + _lastNativeRefreshNodeCount.ToString(CultureInfo.InvariantCulture) +
+                   "\nlinks=" + _lastNativeRefreshLinkCount.ToString(CultureInfo.InvariantCulture) +
+                   (string.IsNullOrWhiteSpace(_lastNativeAutomationError)
+                       ? string.Empty
+                       : "\nlast_error=" + _lastNativeAutomationError);
+        }
+
+        private static double StopAndGetElapsedMs(Stopwatch timer)
+        {
+            if (timer == null)
+                return 0d;
+
+            timer.Stop();
+            return timer.Elapsed.TotalMilliseconds;
         }
 
         private void SyncNativeNodeRect(AutomationGraphNode node)
@@ -297,6 +564,19 @@ namespace DecoLimitLifter.AutomationBuilderMode
                    IsEsuOwnedNativeComponent(component);
         }
 
+        private static int NativeGraphNodeId(CircuitComponent component)
+        {
+            if (component == null)
+                return 0;
+
+            uint shifted = component.UniqueId + 1u;
+            if (shifted == 0u)
+                return int.MaxValue;
+
+            int graphId = unchecked((int)shifted);
+            return graphId == 0 ? int.MaxValue : graphId;
+        }
+
         private static bool TryGetNativeComponentId(
             AutomationGraphNode node,
             out uint componentId)
@@ -305,7 +585,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node?.NativeComponent is CircuitComponent component)
             {
                 componentId = component.UniqueId;
-                return componentId != 0u;
+                return true;
             }
 
             return false;
@@ -543,7 +823,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
 
             node.Label = label ?? string.Empty;
-            node.Property = NormalizeNodeProperty(node.Kind, property);
+            node.Property = ResolveNodePropertyForEdit(node, property);
             node.SetBindingProperty(node.Property);
             SyncStagedLinkPropertyForNode(node);
             node.ValueText = value ?? string.Empty;
@@ -715,6 +995,35 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 link.SetProperty(node.Property);
             }
+        }
+
+        private string ResolveNodePropertyForEdit(
+            AutomationGraphNode node,
+            string property)
+        {
+            if (node == null)
+                return NormalizeNodeProperty(AutomationNodeKind.Comment, property);
+
+            string normalized = NormalizeNodeProperty(node.Kind, property);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return normalized;
+
+            if (TryGetBoundTargetBlock(node, out Block targetBlock) &&
+                TryResolveNativePropertyLabel(node.Kind, targetBlock.GetType(), normalized, out string resolvedFromTarget))
+            {
+                return resolvedFromTarget;
+            }
+
+            Type blockType = null;
+            if (node.NativeComponent is GenericBlockGetter getter)
+                blockType = getter.BlockType ?? FindBlockTypeByName(getter.BlockTypeName.Us);
+            else if (node.NativeComponent is GenericBlockSetter setter)
+                blockType = setter.BlockType ?? FindBlockTypeByName(setter.BlockTypeName.Us);
+
+            return blockType != null &&
+                   TryResolveNativePropertyLabel(node.Kind, blockType, normalized, out string resolvedFromNative)
+                ? resolvedFromNative
+                : normalized;
         }
 
         private IEnumerable<string> NativePropertyOptionsForNode(AutomationGraphNode node)
@@ -1259,6 +1568,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraphNode host,
             AutomationValueSlotKind slotKind)
         {
+            if (IsStackFedPrimaryValueSlot(graph, host, slotKind))
+                return null;
+
             AutomationGraphConnection connection = GraphValueConnection(graph, host, slotKind);
             return TryGetNativeComponent(
                 connection?.From,
@@ -1298,6 +1610,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 RefreshNativeAutomationCache(force: true);
                 graph = _selectedBreadboard == null ? null : SyncedGraphFor(_selectedBreadboard, force: true);
+                graph?.RebindConnectionsToCurrentNodes();
             }
 
             int removedNodes = ApplyPendingNativeNodeRemovalsToNative(breadboard);
@@ -1306,7 +1619,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 RefreshNativeAutomationCache(force: true);
                 graph = _selectedBreadboard == null ? null : SyncedGraphFor(_selectedBreadboard, force: true);
+                graph?.RebindConnectionsToCurrentNodes();
             }
+
+            graph?.RebindConnectionsToCurrentNodes();
 
             List<AutomationGraphNode> nativeNodes = graph?.Nodes
                 .Where(node => node?.NativeComponent is CircuitComponent component &&
@@ -1564,7 +1880,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                         out string warningDetail))
                 {
                     loweredIds.Add(node.Id);
-                    loweredIdMap[node.Id] = unchecked((int)component.UniqueId);
+                    loweredIdMap[node.Id] = NativeGraphNodeId(component);
                     result.AddCreated(
                         "Lowered " +
                         NativePlanSentence(node) +
@@ -1663,12 +1979,14 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
             }
 
+            Rect normalizedRect = NormalizeGraphNodeRect(node.Kind, node.Rect);
+            node.Rect = normalizedRect;
             component.OutlineColor.Us = NodeColor(node.Kind);
-            ApplyNativeNodeRect(component, node.Rect);
+            ApplyNativeNodeRect(component, normalizedRect);
             var nativeNode = new AutomationGraphNode(
-                unchecked((int)component.UniqueId),
+                NativeGraphNodeId(component),
                 node.Kind,
-                node.Rect,
+                normalizedRect,
                 node.Label,
                 node.Property,
                 node.ValueText,
@@ -1805,7 +2123,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             foreach (AutomationGraphNode host in graph.Nodes.Where(node => node != null && AcceptsValueSlot(node.Kind)))
             {
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
                 {
                     List<AutomationGraphNode> candidates = ValueSlotCandidateNodes(graph, host, slotKind);
                     if (candidates.Count > 1)
@@ -1863,7 +2181,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node.NativeComponent is GenericBlockSetter setter)
             {
                 bool hasIncomingSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedValue = GraphValueNode(graph, node) != null;
+                bool hasSnappedValue = !hasIncomingSignal && GraphValueNode(graph, node) != null;
                 if (IsEsuOwnedNativeNode(node))
                 {
                     if (!TryGetBoundTargetBlock(node, out _))
@@ -1880,9 +2198,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 }
 
                 if (!hasIncomingSignal && !hasSnappedValue)
-                    yield return nodeName + " has no incoming signal or visual socket value block.";
-                if (hasIncomingSignal && hasSnappedValue)
-                    yield return nodeName + " has both a stack signal and a value socket input; remove one input path for clearer lowering.";
+                    yield return nodeName + " has no incoming signal. Snap a value block into the value socket or place a readable block directly above this setter.";
                 yield break;
             }
 
@@ -1901,7 +2217,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsLogicGateKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first boolean input; place a read/value-producing block above it or snap/wire one into its " + LogicFirstInputLabel(node.Kind) + " socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -1918,7 +2234,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsFuzzyThresholdKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no signal to compare; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -1930,7 +2246,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsMaxMinKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first numeric input; place a read/value-producing block above it or snap/wire one into its a socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -1944,7 +2260,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsMathEvaluatorKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -1955,7 +2271,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node.NativeComponent is Clamp)
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -1967,7 +2283,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 node.Kind == AutomationNodeKind.Smooth)
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2005,15 +2321,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node.Kind == AutomationNodeKind.OutputSetter)
             {
                 bool hasIncomingSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedValue = GraphValueNode(graph, node) != null;
+                bool hasSnappedValue = !hasIncomingSignal && GraphValueNode(graph, node) != null;
                 if (!TryGetBoundTargetBlock(node, out _))
                     yield return nodeName + " has no staged output target binding.";
                 if (!StagedNodeHasResolvedProperty(node))
                     yield return nodeName + " has no writable native property selected.";
                 if (!hasIncomingSignal && !hasSnappedValue)
-                    yield return nodeName + " has no incoming signal or visual socket value block.";
-                if (hasIncomingSignal && hasSnappedValue)
-                    yield return nodeName + " has both a stack signal and a value socket input; remove one input path for clearer lowering.";
+                    yield return nodeName + " has no incoming signal. Snap a value block into the value socket or place a readable block directly above this setter.";
                 yield break;
             }
 
@@ -2032,7 +2346,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (IsLogicGateKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first boolean input; place a read/value-producing block above it or snap/wire one into its " + LogicFirstInputLabel(node.Kind) + " socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2048,7 +2362,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (IsFuzzyThresholdKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no signal to compare; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2059,7 +2373,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (IsMaxMinKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first numeric input; place a read/value-producing block above it or snap/wire one into its a socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2074,7 +2388,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 node.Kind == AutomationNodeKind.Smooth)
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2146,6 +2460,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraphNode host,
             AutomationValueSlotKind slotKind = AutomationValueSlotKind.Pass)
         {
+            if (IsStackFedPrimaryValueSlot(graph, host, slotKind))
+                return null;
+
             return GraphValueConnection(graph, host, slotKind)?.From;
         }
 
@@ -2242,7 +2559,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 {
                     AutomationBlockRef target = ResolveNativeTargetBlock(snapshot, getter, getter.BlockTypeName.Us, getter.BlockFilter.Us, out string status);
                     if (target == null)
+                    {
+                        MaybeLogUnresolvedNativeLink(component, "input/getter", getter.BlockTypeName.Us, getter.BlockFilter.Us);
+                        links.Add(CreateUnresolvedNativeLink(
+                            component,
+                            AutomationLinkKind.InputToBreadboard,
+                            NativePropertyLabel(getter),
+                            getter.BlockTypeName.Us,
+                            getter.BlockFilter.Us,
+                            status));
                         continue;
+                    }
 
                     links.Add(new AutomationLink(
                         unchecked((int)component.UniqueId),
@@ -2258,7 +2585,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 {
                     AutomationBlockRef target = ResolveNativeTargetBlock(snapshot, setter, setter.BlockTypeName.Us, setter.BlockFilter.Us, out string status);
                     if (target == null)
+                    {
+                        MaybeLogUnresolvedNativeLink(component, "output/setter", setter.BlockTypeName.Us, setter.BlockFilter.Us);
+                        links.Add(CreateUnresolvedNativeLink(
+                            component,
+                            AutomationLinkKind.BreadboardToOutput,
+                            NativePropertyLabel(setter),
+                            setter.BlockTypeName.Us,
+                            setter.BlockFilter.Us,
+                            status));
                         continue;
+                    }
 
                     links.Add(new AutomationLink(
                         unchecked((int)component.UniqueId),
@@ -2275,6 +2612,70 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return links;
         }
 
+        private AutomationLink CreateUnresolvedNativeLink(
+            CircuitComponent component,
+            AutomationLinkKind kind,
+            string property,
+            string blockTypeName,
+            string filter,
+            string status)
+        {
+            string targetLabel = UnresolvedNativeTargetLabel(blockTypeName, filter);
+            string stableKey =
+                "native-unresolved:" +
+                (component?.UniqueId.ToString(CultureInfo.InvariantCulture) ?? "unknown") +
+                ":" +
+                kind.ToString();
+            AutomationBlockRef unresolved = AutomationBlockRef.Unresolved(targetLabel, stableKey);
+            return new AutomationLink(
+                unchecked((int)(component?.UniqueId ?? 0u)),
+                kind == AutomationLinkKind.InputToBreadboard ? unresolved : _selectedBreadboard,
+                kind == AutomationLinkKind.InputToBreadboard ? _selectedBreadboard : unresolved,
+                kind,
+                property,
+                new Color(1f, 0.48f, 0.12f, 1f),
+                component,
+                UnresolvedNativeStatus(status));
+        }
+
+        private static string UnresolvedNativeTargetLabel(
+            string blockTypeName,
+            string filter)
+        {
+            string label = HumanizeTypeName(blockTypeName);
+            string suffix = GeneratedAutomationBlockSuffix(filter);
+            if (!string.IsNullOrWhiteSpace(suffix))
+                label += " " + suffix;
+            return label + " (unresolved)";
+        }
+
+        private static string UnresolvedNativeStatus(string status)
+        {
+            return string.IsNullOrWhiteSpace(status) ||
+                   status.IndexOf("unresolved", StringComparison.OrdinalIgnoreCase) < 0
+                ? "native unresolved"
+                : status.Trim();
+        }
+
+        private void MaybeLogUnresolvedNativeLink(
+            CircuitComponent component,
+            string direction,
+            string blockTypeName,
+            string filter)
+        {
+            float now = Time.unscaledTime;
+            if (now < _nextNativeDiagnosticsLogTime)
+                return;
+
+            _nextNativeDiagnosticsLogTime = now + NativeDiagnosticsLogCooldownSeconds;
+            EsuRuntimeLog.Warning(
+                "Automation Builder",
+                "Native automation " + direction + " link could not resolve its target block.",
+                "component=" + (component?.UniqueId.ToString(CultureInfo.InvariantCulture) ?? "unknown") +
+                "\ntype=" + (blockTypeName ?? string.Empty) +
+                "\nfilter=" + (filter ?? string.Empty));
+        }
+
         private AutomationGraphNode NativeComponentToNode(
             AutomationBlockRef breadboardRef,
             NativeBreadBoard breadboard,
@@ -2289,9 +2690,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             CircuitComponent component)
         {
             AutomationNodeKind kind = NativeKind(component);
-            Rect rect = NativeComponentRect(component);
+            Rect rect = NormalizeGraphNodeRect(kind, NativeComponentRect(component));
             var node = new AutomationGraphNode(
-                (int)component.UniqueId,
+                NativeGraphNodeId(component),
                 kind,
                 rect,
                 NativeNodeLabel(component),
@@ -2729,6 +3130,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!string.IsNullOrWhiteSpace(existing) &&
                 IsSafeTextOnlyBlockFilterName(existing) &&
                 !IsLegacyAutoGeneratedBlockName(existing) &&
+                string.Equals(CurrentCustomName(target), existing, StringComparison.Ordinal) &&
                 IsUniqueBlockName(snapshot, target, existing))
             {
                 return existing;
@@ -2738,8 +3140,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
             int suffix = 0;
             string candidate = generated;
             while (!IsUniqueBlockName(snapshot, target, candidate))
-                candidate = generated + AlphabeticSuffix(suffix++);
+                candidate = ComposeAutoBlockName(generated, AlphabeticSuffix(suffix++));
 
+            string previousName = string.IsNullOrWhiteSpace(existing)
+                ? AutomationBreadboardCatalog.BlockName(target)
+                : existing;
             try
             {
                 target.IdSet.Name.Us = candidate;
@@ -2750,8 +3155,20 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return existing ?? string.Empty;
             }
 
-            context.Warn("Auto-named linked block '" + AutomationBreadboardCatalog.BlockName(target) + "' as " + candidate + " for exact vanilla filtering.");
-            return candidate;
+            string stored = CurrentCustomName(target);
+            if (string.IsNullOrWhiteSpace(stored))
+            {
+                context.Warn("Could not auto-name linked block for exact vanilla filtering: the stored block name was blank after assignment.");
+                return existing ?? string.Empty;
+            }
+
+            if (!string.Equals(stored, candidate, StringComparison.Ordinal))
+            {
+                context.Warn("Auto-name was normalized by vanilla from " + candidate + " to " + stored + "; using stored name for exact filtering.");
+            }
+
+            context.Warn("Auto-named linked block '" + previousName + "' as " + stored + " for exact vanilla filtering.");
+            return stored;
         }
 
         private static string CurrentCustomName(Block block)
@@ -2776,9 +3193,23 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 cell.x.ToString(CultureInfo.InvariantCulture) + "|" +
                 cell.y.ToString(CultureInfo.InvariantCulture) + "|" +
                 cell.z.ToString(CultureInfo.InvariantCulture);
-            return AutoNamePrefix +
-                   LettersOnly(target.GetType().Name) +
-                   AlphabeticToken(StableNameHash(hashInput), 8);
+            return ComposeAutoBlockName(
+                LettersOnly(target.GetType().Name),
+                AlphabeticToken(StableNameHash(hashInput), AutoNameTokenLength));
+        }
+
+        private static string ComposeAutoBlockName(
+            string baseText,
+            string suffix)
+        {
+            string safeBase = LettersOnly(baseText);
+            string safeSuffix = LettersOnly(suffix);
+            if (safeBase.StartsWith(AutoNamePrefix, StringComparison.Ordinal))
+                safeBase = safeBase.Substring(AutoNamePrefix.Length);
+            int maxBaseLength = Math.Max(1, AutoNameMaxLength - AutoNamePrefix.Length - safeSuffix.Length);
+            if (safeBase.Length > maxBaseLength)
+                safeBase = safeBase.Substring(0, maxBaseLength);
+            return AutoNamePrefix + safeBase + safeSuffix;
         }
 
         private static int ConstructIdentityHash(Block target)
@@ -2805,7 +3236,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private static bool IsLegacyAutoGeneratedBlockName(string name)
         {
             return !string.IsNullOrWhiteSpace(name) &&
-                   name.Trim().StartsWith(LegacyAutoNamePrefix, StringComparison.Ordinal);
+                   (name.Trim().StartsWith(LegacyAutoNamePrefix, StringComparison.Ordinal) ||
+                    name.Trim().StartsWith(RetiredAutoNamePrefix, StringComparison.Ordinal));
         }
 
         private static string LettersOnly(string text)
@@ -3023,7 +3455,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     !block.IsDeleted &&
                     MatchesNativeFilter(block, filter))
                 .ToList();
-            status = candidates.Count == 1 ? "native exact" : "native broad";
+            status = candidates.Count == 1
+                ? "native exact"
+                : candidates.Count == 0
+                    ? "native unresolved"
+                    : "native broad";
             Block target = candidates.FirstOrDefault();
             return target == null ? null : BlockRefFromBlock(target);
         }
@@ -3063,7 +3499,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Block target,
             string filter)
         {
-            return !string.IsNullOrWhiteSpace(filter) && IsUniqueBlockName(snapshot, target, filter)
+            return !string.IsNullOrWhiteSpace(filter) &&
+                   string.Equals(CurrentCustomName(target), filter, StringComparison.Ordinal) &&
+                   IsUniqueBlockName(snapshot, target, filter)
                 ? "native exact"
                 : "native broad";
         }
@@ -3113,11 +3551,15 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 : GraphNodeHeightForKind(kind);
             float width = Mathf.Max(minWidth, component.Width.Us);
             float height = Mathf.Max(minHeight, component.Height.Us);
-            return new Rect(
+            return NormalizeGraphNodeRect(
+                kind,
+                new Rect(
                 component.X.Us - width * 0.5f,
                 component.Y.Us - height * 0.5f,
                 width,
-                height);
+                    height),
+                valueFootprint,
+                preserveCenter: true);
         }
 
         private static void ApplyNativeNodeRect(
@@ -4013,12 +4455,27 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                 foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(NativeKind(host)))
                 {
+                    if (IsNativeStackFedPrimaryValueSlot(components, host, slotKind))
+                        continue;
+
                     if (ReferenceEquals(FindSnappedValueComponent(host, components, slotKind), valueComponent))
                         return host;
                 }
             }
 
             return null;
+        }
+
+        private static bool IsNativeStackFedPrimaryValueSlot(
+            IReadOnlyList<CircuitComponent> components,
+            CircuitComponent host,
+            AutomationValueSlotKind slotKind)
+        {
+            return components != null &&
+                   host != null &&
+                   slotKind == AutomationValueSlotKind.Pass &&
+                   UsesStackAsPrimaryInput(NativeKind(host)) &&
+                   PreviousSnappedNativeStackComponent(components, components, host) != null;
         }
 
         private static IEnumerable<CircuitComponent> NativeBodyChildrenForHost(

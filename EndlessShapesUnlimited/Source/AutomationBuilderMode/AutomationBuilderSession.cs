@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.Modding.Types;
@@ -26,17 +27,43 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private const float CanvasLeftPaletteWidth = 292f;
         private const float CanvasPlanWidth = 330f;
         private const float LinkRowHeight = 28f;
-        private const float GraphNodeWidth = 272f;
-        private const float GraphValueNodeWidth = 186f;
+        private const float GraphNodeWidth = 330f;
+        private const float GraphValueNodeWidth = 206f;
         private const float GraphNodeHeight = 104f;
+        private const float GraphSlotLabelWidth = 58f;
+        private const int GraphSlotValueTextMaxCharacters = 56;
+        private const int GraphCompactSlotValueTextMaxCharacters = 34;
+        private const float GraphSlotDropdownWidth = 360f;
+        private const float GraphSlotDropdownMaxHeight = 340f;
+        private const float GraphPropertyPickerWidth = 360f;
+        private const float GraphPropertyPickerMaxHeight = 340f;
+        private const float GraphReadinessPopoverWidth = 334f;
+        private const float GraphReadinessPopoverMaxHeight = 220f;
         private const float GraphZoomMin = 0.55f;
         private const float GraphZoomMax = 1.6f;
         private const float CanvasDragThreshold = 4f;
         private const float NativeRefreshIntervalSeconds = 0.75f;
         private const float LivePreviewIntervalSeconds = 0.25f;
+        private const float NativeDiagnosticsLogCooldownSeconds = 5f;
+        private const double NativeDiagnosticsSlowThresholdMs = 25d;
+        private const float GraphInteractionDiagnosticsLogCooldownSeconds = 5f;
+        private const int GraphDragStalledFrameThreshold = 8;
         private const float PanelDividerHeight = 8f;
         private const float PanelSectionMinHeight = 72f;
         private const int ViewModeMenuButtonCount = 9;
+
+        private static readonly DecorationEditorViewMode[] s_viewModeCycle =
+        {
+            DecorationEditorViewMode.Mixed,
+            DecorationEditorViewMode.Wireframe,
+            DecorationEditorViewMode.DecorationOnly,
+            DecorationEditorViewMode.Mass,
+            DecorationEditorViewMode.Drag,
+            DecorationEditorViewMode.Cost,
+            DecorationEditorViewMode.Surface,
+            DecorationEditorViewMode.Important,
+            DecorationEditorViewMode.Normal
+        };
 
         private enum AutomationBuilderTool
         {
@@ -100,8 +127,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private enum AutomationPanelDivider
         {
             None,
-            LeftInputOutput,
-            RightTopComponents
+            LeftInputOutput
         }
 
         private enum AutomationPaletteCategory
@@ -181,6 +207,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private enum AutomationGraphWireOrigin
         {
             EsuSnap,
+            EsuNative,
             NativeImported
         }
 
@@ -192,9 +219,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private static bool s_showRightPanel = true;
         private static bool s_showLinksSection = true;
         private static bool s_showBreadboardSection = true;
-        private static bool s_showComponentSection = true;
         private static float s_leftInputOutputRatio = 0.48f;
-        private static float s_rightTopComponentsRatio = 0.36f;
         private static AutomationBreadboardVariant s_selectedBreadboardVariant = AutomationBreadboardVariant.Ai;
 
         private readonly cBuild _build;
@@ -244,7 +269,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private bool _showRightPanel = s_showRightPanel;
         private bool _showLinksSection = s_showLinksSection;
         private bool _showBreadboardSection = s_showBreadboardSection;
-        private bool _showComponentSection = s_showComponentSection;
         private AutomationBuilderTool _tool = AutomationBuilderTool.Select;
         private AutomationBlockRef _selectedBlock;
         private AutomationBlockRef _selectedBreadboard;
@@ -265,7 +289,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private AutomationBreadboardVariant _selectedBreadboardVariant = s_selectedBreadboardVariant;
         private Vector2 _inputLinksScroll;
         private Vector2 _outputLinksScroll;
-        private Vector2 _componentScroll;
         private Vector2 _graphScroll;
         private float _graphZoom = 1.08f;
         private Vector2 _graphEventMousePosition;
@@ -274,7 +297,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private Vector2 _linkedHardwareScroll;
         private Vector2 _nativePlanScroll;
         private float _leftInputOutputRatio = s_leftInputOutputRatio;
-        private float _rightTopComponentsRatio = s_rightTopComponentsRatio;
         private AutomationPanelDivider _draggingPanelDivider = AutomationPanelDivider.None;
         private AutomationPaletteCategory _selectedPaletteCategory = AutomationPaletteCategory.Output;
         private bool _draggingPaletteBlock;
@@ -291,12 +313,22 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private int _draggingNodeId;
         private Vector2 _nodeDragStartMouse;
         private Rect _nodeDragStartRect;
+        private Vector2 _nodeDragLastRawMouse;
+        private int _nodeDragStalledFrames;
+        private float _nextGraphInteractionDiagnosticsLogTime;
         private AutomationCanvasInteractionKind _canvasInteraction = AutomationCanvasInteractionKind.None;
         private int _canvasInteractionButton = -1;
         private Vector2 _canvasInteractionStartMouse;
         private bool _canvasInteractionMoved;
         private Rect _graphContextMenuRect;
         private int _graphContextMenuNodeId;
+        private Rect _graphReadinessPopoverRect;
+        private Rect _graphReadinessPopoverAnchorRect;
+        private int _graphReadinessPopoverNodeId;
+        private Vector2 _graphReadinessPopoverScroll;
+        private Rect _graphPropertyPickerRect;
+        private int _graphPropertyPickerNodeId;
+        private Vector2 _graphPropertyPickerScroll;
         private bool _suppressNextCanvasRightClick;
         private bool _graphSlotConsumedInput;
         private AutomationGraphSlotMenuKind _graphSlotMenuKind = AutomationGraphSlotMenuKind.None;
@@ -313,6 +345,16 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private bool _nativeAutomationCacheDirty = true;
         private float _nextNativeAutomationRefreshTime;
         private int _nativeAutomationCacheVersion;
+        private int _nativeRefreshCount;
+        private int _nativeRefreshSkippedCount;
+        private int _nativeGraphSyncCount;
+        private double _lastNativeRefreshElapsedMs;
+        private double _lastNativeGraphSyncElapsedMs;
+        private int _lastNativeRefreshComponentCount;
+        private int _lastNativeRefreshNodeCount;
+        private int _lastNativeRefreshLinkCount;
+        private string _lastNativeAutomationError;
+        private float _nextNativeDiagnosticsLogTime;
         private bool _automationDisplayCacheDirty = true;
         private int _displayCacheNativeVersion = -1;
         private string _displayCacheGraphKey;
@@ -365,6 +407,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationBuilderInputScope.Begin();
             ApplyFocusView();
             RefreshSelectionFromPointer();
+            ForceRefreshSelectedBreadboardNativeState();
         }
 
         internal void End(bool preserveSharedHud = false)
@@ -386,6 +429,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ResetCanvasInteractionState();
             CloseGraphSlotMenu();
             CloseGraphContextMenu();
+            CloseGraphPropertyPicker();
             _graphEventMousePositionValid = false;
             _viewModeMenuOpen = false;
             CloseAutomationContextMenu();
@@ -409,6 +453,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ResetCanvasInteractionState();
             CloseGraphSlotMenu();
             CloseGraphContextMenu();
+            CloseGraphPropertyPicker();
             _graphEventMousePositionValid = false;
             _viewModeMenuOpen = false;
             CloseAutomationContextMenu();
@@ -423,9 +468,12 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             EsuHudNotifications.SetActiveSource("Automation Builder");
             RefreshMouseOverUiFromCurrentPointer();
+            UpdateActiveCanvasPointerInteraction();
+            ClaimActiveCanvasInteractionInput();
             RefreshNativeAutomationCache();
             HandleKeyboard();
             HandleMouse();
+            CompleteCanvasInteractionIfReleased();
             if (_canvasOpen &&
                 (_canvasInteraction == AutomationCanvasInteractionKind.PaletteDrag || _draggingPaletteBlock) &&
                 !Input.GetMouseButton(0))
@@ -481,6 +529,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             CancelActiveCanvasInteraction(CurrentSelectedGraph(), restoreNode: true);
             CloseGraphSlotMenu();
             CloseGraphContextMenu();
+            CloseGraphPropertyPicker();
             _canvasOpen = false;
         }
 
@@ -634,9 +683,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             s_showRightPanel = _showRightPanel;
             s_showLinksSection = _showLinksSection;
             s_showBreadboardSection = _showBreadboardSection;
-            s_showComponentSection = _showComponentSection;
             s_leftInputOutputRatio = _leftInputOutputRatio;
-            s_rightTopComponentsRatio = _rightTopComponentsRatio;
             s_selectedBreadboardVariant = _selectedBreadboardVariant;
 
             if (!interactive)
@@ -672,6 +719,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _draggingPanelDivider != AutomationPanelDivider.None ||
             _panningGraphCanvas ||
             _draggingNodeId != 0 ||
+            GraphPointerInputActive() ||
             _closePromptOpen;
 
         private float StatusHeightScaled() =>
@@ -1166,6 +1214,15 @@ namespace DecoLimitLifter.AutomationBuilderMode
             InfoStore.Add("Automation Builder view: " + ViewModeDisplayName(_viewMode));
         }
 
+        private void CycleAutomationViewMode()
+        {
+            int index = Array.IndexOf(s_viewModeCycle, _viewMode);
+            if (index < 0)
+                index = 0;
+
+            SelectViewMode(s_viewModeCycle[(index + 1) % s_viewModeCycle.Length]);
+        }
+
         private string ViewModeShortName()
         {
             switch (_viewMode)
@@ -1432,6 +1489,15 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _liveValuePreviewCache.Clear();
         }
 
+        private void ForceRefreshSelectedBreadboardNativeState()
+        {
+            if (_selectedBreadboard == null)
+                return;
+
+            RefreshNativeAutomationCache(force: true);
+            SyncSelectedGraphFromNativeIfLoaded(force: true);
+        }
+
         private void ToolButton(
             AutomationBuilderTool tool,
             string icon,
@@ -1465,9 +1531,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
             }
 
-            RefreshNativeAutomationCache(force: true);
-            AutomationGraph graph = SyncedGraphFor(_selectedBreadboard);
-            SyncGraphFromNativeBreadboardIfNeeded(_selectedBreadboard, graph, force: true);
+            ForceRefreshSelectedBreadboardNativeState();
+            AutomationGraph graph = SyncedGraphFor(_selectedBreadboard, force: true);
             EnsureStarterGraph(graph, _selectedBreadboard);
             _canvasOpen = true;
             _viewModeMenuOpen = false;
@@ -1616,6 +1681,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _selectedBlock = link.Kind == AutomationLinkKind.InputToBreadboard
                 ? link.Source
                 : link.Target;
+            if (_selectedBlock?.IsResolved != true)
+                _selectedBlock = BreadboardForLink(link);
             if (link.Source?.IsBreadboard == true)
                 _selectedBreadboard = link.Source;
             else if (link.Target?.IsBreadboard == true)
@@ -1630,8 +1697,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             string prefix = link.Kind == AutomationLinkKind.InputToBreadboard
                 ? "IN "
                 : "OUT";
-            string source = link.Source?.Name ?? "[unresolved]";
-            string target = link.Target?.Name ?? "[unresolved]";
+            string source = BlockRefCurrentName(link.Source);
+            string target = BlockRefCurrentName(link.Target);
             string native = string.IsNullOrWhiteSpace(link.NativeStatus)
                 ? "native"
                 : link.NativeStatus;
@@ -1760,41 +1827,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             DrawPanelHeader("Breadboard Blocks", "build", ref _showRightPanel);
             GUILayout.EndArea();
 
-            Rect stackRect = new Rect(inner.x, inner.y + headerHeight + gap, inner.width, inner.height - headerHeight - gap);
-            SplitAutomationVerticalStack(
-                stackRect,
-                _rightTopComponentsRatio,
-                AutomationDividerGap(),
-                AutomationDividerMinimumPanelHeight(),
-                out Rect topRect,
-                out Rect dividerRect,
-                out Rect bottomRect,
-                out _rightTopComponentsRatio);
-            HandleAutomationDividerDrag(
-                AutomationPanelDivider.RightTopComponents,
-                stackRect,
-                dividerRect,
-                AutomationDividerGap(),
-                ref _rightTopComponentsRatio);
-
-            GUI.Box(topRect, GUIContent.none, DecorationEditorTheme.Panel);
-            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(topRect, 5f));
+            Rect bodyRect = new Rect(inner.x, inner.y + headerHeight + gap, inner.width, inner.height - headerHeight - gap);
+            GUI.Box(bodyRect, GUIContent.none, DecorationEditorTheme.Panel);
+            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(bodyRect, 5f));
             if (DrawSectionHeader("Place", ref _showBreadboardSection, "Show or hide breadboard placement tools."))
                 DrawBreadboardPlacementSection();
             DecorationEditorTheme.Separator();
             DrawLinkModeSection();
-            GUILayout.EndArea();
-
-            DrawAutomationDividerGrip(dividerRect, AutomationPanelDivider.RightTopComponents);
-
-            GUI.Box(bottomRect, GUIContent.none, DecorationEditorTheme.Panel);
-            GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(bottomRect, 5f));
-            _componentScroll = GUILayout.BeginScrollView(_componentScroll);
-            if (DrawSectionHeader("Graph Components", ref _showComponentSection, "Show or hide breadboard graph components."))
-                DrawComponentPaletteButtons(inGraphCanvas: _selectedBreadboard != null);
-            DecorationEditorTheme.Separator();
-            DrawSelectedNodeInspector();
-            GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
 
@@ -2016,6 +2055,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 paletteRect.height);
 
             GUI.Box(canvasRect, GUIContent.none, DecorationEditorTheme.Panel);
+            AutomationGraph foregroundGraph = _selectedBreadboard == null ? null : GraphFor(_selectedBreadboard);
+            RefreshGraphPropertyPickerRect(foregroundGraph, canvasRect, planRect);
+            ConsumeGraphPropertyPickerOutsideMouseDown();
             DrawGraphWorkspace(canvasRect);
             GUI.Box(paletteRect, GUIContent.none, DecorationEditorTheme.Panel);
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(paletteRect, 6f));
@@ -2025,6 +2067,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(planRect, 6f));
             DrawGeneratedNativePlanPanel();
             GUILayout.EndArea();
+            DrawGraphPropertyPicker(foregroundGraph, canvasRect, planRect);
             DrawPaletteSnapPreview(canvasRect);
             DrawPaletteDragGhost(canvasRect);
             HandlePaletteBlockDrop(canvasRect);
@@ -2197,7 +2240,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             graph.RebuildConnections(connections);
             graph.SelectedNodeId = switchNode.Id;
 
-            message = "Starter Flow staged: read " + inputLink.Source.Name + ", below 10, if true, set " + outputLink.Target.Name + " to 45 else 0. Press Apply to create native components and connections.";
+            message = "Starter Flow staged: read " + BlockRefCurrentName(inputLink.Source) + ", below 10, if true, set " + BlockRefCurrentName(outputLink.Target) + " to 45 else 0. Press Apply to create native components and connections.";
             return true;
         }
 
@@ -2209,7 +2252,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (AutomationLink link in _links)
             {
-                if (link == null || link.Kind != kind)
+                if (link == null || link.Kind != kind || !link.IsResolved)
                     continue;
 
                 AutomationBlockRef breadboard = kind == AutomationLinkKind.InputToBreadboard
@@ -2267,12 +2310,12 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraph graph = SyncedGraphFor(_selectedBreadboard);
             List<AutomationLink> inputs = _links
                 .Where(link => link?.Kind == AutomationLinkKind.InputToBreadboard)
-                .OrderBy(link => link.Source?.Name)
+                .OrderBy(link => BlockRefCurrentName(link.Source))
                 .ThenBy(link => link.Property)
                 .ToList();
             List<AutomationLink> outputs = _links
                 .Where(link => link?.Kind == AutomationLinkKind.BreadboardToOutput)
-                .OrderBy(link => link.Target?.Name)
+                .OrderBy(link => BlockRefCurrentName(link.Target))
                 .ThenBy(link => link.Property)
                 .ToList();
             if (inputs.Count == 0 && outputs.Count == 0)
@@ -2322,8 +2365,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraphNode node = GraphNodeForNativeLink(graph, link);
             bool selected = IsSelectedGraphNode(graph, node);
             string targetName = link.Kind == AutomationLinkKind.InputToBreadboard
-                ? link.Source?.Name
-                : link.Target?.Name;
+                ? BlockRefCurrentName(link.Source)
+                : BlockRefCurrentName(link.Target);
             string label = verb + " " + ShortText(targetName, 18) + "." + ShortText(link.Property, 14);
             Rect row = GUILayoutUtility.GetRect(
                 1f,
@@ -2351,10 +2394,18 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (graph == null || link == null)
                 return null;
 
-            return graph.Nodes.FirstOrDefault(node =>
+            AutomationGraphNode exactNode = graph.Nodes.FirstOrDefault(node =>
                 node != null &&
                 (node.Id == link.Id ||
                  link.NativeComponent != null && ReferenceEquals(node.NativeComponent, link.NativeComponent)));
+            if (exactNode != null)
+                return exactNode;
+
+            List<AutomationGraphNode> targetMatches = graph.Nodes
+                .Where(node => NodeBindingTargetsMatchLink(node, link))
+                .ToList();
+            return targetMatches.FirstOrDefault(node => MatchesPropertyText(node.TargetBinding?.Property, link.Property)) ??
+                   targetMatches.FirstOrDefault();
         }
 
         private void FocusLinkedHardwareGraphNode(
@@ -2486,7 +2537,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
             }
 
-            AutomationGraph graph = SyncedGraphFor(_selectedBreadboard, force: true);
+            AutomationGraph graph = SyncedGraphFor(_selectedBreadboard);
             AutomationGraphNode preview = TemporaryPaletteNode(_draggingPaletteKind);
             preview.Rect = PaletteDropGraphRect(workspaceRect, _paletteDragLastWindowMouse);
 
@@ -2855,7 +2906,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         private static string GraphNodeTargetProperty(AutomationGraphNode node)
         {
-            string target = BlockTargetLabel(node);
+            string target = BlockTitleTargetLabel(node);
             string property = DisplayNodeProperty(node);
             return ShortText(target, 28) + "." + ShortText(property, 18);
         }
@@ -3017,9 +3068,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             switch (node.Kind)
             {
                 case AutomationNodeKind.InputGetter:
-                    return "read " + ShortText(BlockTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18);
+                    return "read " + ShortText(BlockTitleTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18);
                 case AutomationNodeKind.OutputSetter:
-                    return "set " + ShortText(BlockTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18) + " to " + BlockValueText(SnappedValueForHost(graph, node));
+                    return "set " + ShortText(BlockTitleTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18) + " to " + BlockValueText(SnappedValueForHost(graph, node));
                 case AutomationNodeKind.IfLessThan:
                     return "if incoming signal > " + SwitchThresholdBlockText(graph, node);
                 case AutomationNodeKind.IfCondition:
@@ -3069,7 +3120,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 case AutomationNodeKind.Random:
                     return "random " + RandomRangeSlotText(node);
                 case AutomationNodeKind.InputGetter:
-                    return "read " + ShortText(BlockTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18);
+                    return "read " + ShortText(BlockTitleTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18);
                 default:
                     return NativePlanSentence(node);
             }
@@ -3171,7 +3222,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraph graph,
             AutomationGraphNode node)
         {
-            foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(node.Kind))
+            foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, node))
             {
                 AutomationGraphNode value = SnappedValueForHost(graph, node, slotKind);
                 if (value != null)
@@ -3336,9 +3387,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             switch (node.Kind)
             {
                 case AutomationNodeKind.InputGetter:
-                    return "read " + ShortText(BlockTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18);
+                    return "read " + ShortText(BlockTitleTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18);
                 case AutomationNodeKind.OutputSetter:
-                    return "set " + ShortText(BlockTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18) + " from incoming signal";
+                    return "set " + ShortText(BlockTitleTargetLabel(node), 34) + "." + ShortText(DisplayNodeProperty(node), 18) + " from incoming signal";
                 case AutomationNodeKind.Forever:
                     return "native continuous evaluation starts here";
                 case AutomationNodeKind.IfLessThan:
@@ -3434,10 +3485,18 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraph graph = SyncedGraphFor(_selectedBreadboard);
 
             UpdateGraphEventMousePosition(canvasRect);
-            if (HandleGraphCanvasRightClick(canvasRect, graph))
-                return;
-            HandleGraphCanvasZoom(canvasRect);
-            HandleGraphCanvasPan(canvasRect, graph);
+            RefreshGraphSlotDropdownRect(graph, GraphViewportRect(canvasRect));
+            if (_graphPropertyPickerNodeId == 0)
+            {
+                if (HandleGraphCanvasRightClick(canvasRect, graph))
+                    return;
+                HandleGraphCanvasZoom(canvasRect);
+                HandleGraphCanvasPan(canvasRect, graph);
+            }
+            else
+            {
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            }
 
             GUI.BeginGroup(canvasRect);
             Matrix4x4 previousMatrix = GUI.matrix;
@@ -3452,11 +3511,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 List<List<AutomationGraphNode>> executionChains = OrderedGraphFlowChains(graph);
                 List<AutomationGraphNode> executionFlow = executionChains.SelectMany(chain => chain).ToList();
                 DrawGraphConnections(graph, executionChains);
+                ConsumeGraphSlotDropdownOutsideMouseDown();
                 foreach (AutomationGraphNode node in graph.Nodes.ToArray())
                     DrawGraphNodeCard(graph, node, executionFlow, executionChains);
                 DrawGraphSnapPreview(graph);
-                DrawGraphSlotDropdown(graph, graphViewport);
+                DrawGraphReadinessPopover(graph, graphViewport);
                 DrawGraphContextMenu(graph, graphViewport);
+                DrawGraphSlotDropdown(graph, graphViewport);
                 CompleteGraphNodeDragIfReleased(graph);
             }
             finally
@@ -3491,7 +3552,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 _draggingNodeId != 0 ||
                 _draggingPaletteBlock ||
                 IsWindowMouseInsideGraphSlotDropdown(current, canvasRect) ||
-                IsWindowMouseInsideGraphContextMenu(current, canvasRect))
+                IsWindowMouseInsideGraphContextMenu(current, canvasRect) ||
+                IsWindowMouseInsideGraphReadinessPopover(current, canvasRect))
             {
                 if (_panningGraphCanvas)
                     ResetCanvasInteractionState();
@@ -3509,6 +3571,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 _graphCanvasPanScrollStart = _graphScroll;
                 CloseGraphSlotMenu();
                 CloseGraphContextMenu();
+                CloseGraphReadinessPopover();
                 BeginCanvasInteraction(AutomationCanvasInteractionKind.CanvasPan, current.button, current.mousePosition);
                 AutomationBuilderInputScope.ClaimBuildInputForFrames();
                 current.Use();
@@ -3568,6 +3631,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 CancelActiveCanvasInteraction(graph, restoreNode: true);
                 CloseGraphSlotMenu();
                 CloseGraphContextMenu();
+                CloseGraphReadinessPopover();
                 AutomationBuilderInputScope.ClaimBuildInputForFrames();
                 current.Use();
                 return true;
@@ -3576,6 +3640,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Vector2 graphPoint = WindowToGraphPoint(canvasRect, current.mousePosition);
             AutomationGraphNode node = FindGraphNodeAtPoint(graph, graphPoint);
             CloseGraphSlotMenu();
+            CloseGraphReadinessPopover();
             StopGraphCanvasPan();
             if (node == null)
             {
@@ -3619,6 +3684,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
             }
 
+            if (_graphReadinessPopoverNodeId != 0 &&
+                (_graphReadinessPopoverRect.Contains(graphPoint) ||
+                 _graphReadinessPopoverAnchorRect.Contains(graphPoint)))
+            {
+                return false;
+            }
+
             if (IsGraphPointInsideQuickChoices(graphPoint, graph))
                 return false;
 
@@ -3655,6 +3727,22 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return _graphContextMenuRect.Contains(WindowToGraphPoint(canvasRect, current.mousePosition));
         }
 
+        private bool IsWindowMouseInsideGraphReadinessPopover(
+            Event current,
+            Rect canvasRect)
+        {
+            if (current == null ||
+                _graphReadinessPopoverNodeId == 0 ||
+                !current.isMouse)
+            {
+                return false;
+            }
+
+            Vector2 graphPoint = WindowToGraphPoint(canvasRect, current.mousePosition);
+            return _graphReadinessPopoverRect.Contains(graphPoint) ||
+                   _graphReadinessPopoverAnchorRect.Contains(graphPoint);
+        }
+
         private void HandleGraphCanvasZoom(Rect canvasRect)
         {
             Event current = Event.current;
@@ -3662,6 +3750,12 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 current.type != EventType.ScrollWheel ||
                 !canvasRect.Contains(current.mousePosition))
             {
+                return;
+            }
+
+            if (IsWindowMouseInsideGraphSlotDropdown(current, canvasRect))
+            {
+                AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
                 return;
             }
 
@@ -3756,18 +3850,164 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Vector2 graphPoint,
             AutomationGraph graph)
         {
-            AutomationGraphNode selected = graph?.SelectedNode;
-            return selected != null &&
-                   _closedQuickChoicesNodeId != selected.Id &&
-                   (selected.Kind == AutomationNodeKind.InputGetter ||
-                    selected.Kind == AutomationNodeKind.OutputSetter) &&
-                   GraphQuickChoicesRect(selected.Rect).Contains(graphPoint);
+            return false;
         }
 
         private void StopGraphCanvasPan()
         {
             _panningGraphCanvas = false;
             _graphCanvasPanButton = -1;
+        }
+
+        private void UpdateActiveCanvasPointerInteraction()
+        {
+            if (!_canvasOpen)
+            {
+                AutomationBuilderInputScope.SetGraphPointerInputOwned(false);
+                return;
+            }
+
+            bool active = GraphPointerInputActive();
+            AutomationBuilderInputScope.SetGraphPointerInputOwned(active);
+            if (!active)
+            {
+                _nodeDragStalledFrames = 0;
+                return;
+            }
+
+            AutomationBuilderInputScope.ClaimBuildInputForFrames(3);
+            AutomationBuilderInputScope.ClaimCameraInputForFrames(3);
+
+            if (_canvasInteraction == AutomationCanvasInteractionKind.NodeDrag &&
+                _draggingNodeId != 0)
+            {
+                if (!UpdateNodeDragFromRawMouse())
+                    MaybeLogGraphDragRawUpdateStall("node raw update unavailable");
+                return;
+            }
+
+            _nodeDragStalledFrames = 0;
+            if (_canvasInteraction == AutomationCanvasInteractionKind.PaletteDrag ||
+                _draggingPaletteBlock)
+            {
+                UpdatePaletteDragFromRawMouse();
+                return;
+            }
+
+            if (_canvasInteraction == AutomationCanvasInteractionKind.CanvasPan ||
+                _panningGraphCanvas)
+            {
+                if (!UpdateCanvasPanFromRawMouse())
+                    MaybeLogGraphDragRawUpdateStall("canvas pan raw update unavailable");
+            }
+        }
+
+        private bool UpdateNodeDragFromRawMouse()
+        {
+            if (!Input.GetMouseButton(0))
+                return true;
+
+            AutomationGraph graph = CurrentSelectedGraph();
+            if (graph == null || !LastCanvasWorkspaceUsable())
+                return false;
+
+            AutomationGraphNode node = graph.Nodes.FirstOrDefault(candidate => candidate.Id == _draggingNodeId);
+            if (node == null)
+                return false;
+
+            Vector2 graphMouse = WindowToGraphPoint(_lastCanvasWorkspaceRect, CurrentCanvasWindowMousePosition());
+            _nodeDragLastRawMouse = graphMouse;
+            Vector2 delta = graphMouse - _nodeDragStartMouse;
+            if (delta.sqrMagnitude >= CanvasDragThreshold * CanvasDragThreshold)
+                _canvasInteractionMoved = true;
+
+            Rect next = _nodeDragStartRect;
+            next.x = Mathf.Max(0f, _nodeDragStartRect.x + delta.x);
+            next.y = Mathf.Max(0f, _nodeDragStartRect.y + delta.y);
+            if (Mathf.Abs(node.Rect.x - next.x) > 0.001f ||
+                Mathf.Abs(node.Rect.y - next.y) > 0.001f)
+            {
+                node.Rect = next;
+            }
+
+            _nodeDragStalledFrames = 0;
+            return true;
+        }
+
+        private void UpdatePaletteDragFromRawMouse()
+        {
+            if (!Input.GetMouseButton(0))
+                return;
+
+            Vector2 mouse = CurrentCanvasWindowMousePosition();
+            _paletteDragLastWindowMouse = mouse;
+            Vector2 delta = mouse - _canvasInteractionStartMouse;
+            if (delta.sqrMagnitude >= CanvasDragThreshold * CanvasDragThreshold)
+            {
+                _paletteDragMoved = true;
+                _canvasInteractionMoved = true;
+            }
+        }
+
+        private bool UpdateCanvasPanFromRawMouse()
+        {
+            if (_graphCanvasPanButton < 0 || !Input.GetMouseButton(_graphCanvasPanButton))
+                return true;
+
+            if (!LastCanvasWorkspaceUsable())
+                return false;
+
+            Vector2 mouse = CurrentCanvasWindowMousePosition();
+            Vector2 delta = mouse - _graphCanvasPanMouseStart;
+            if (delta.sqrMagnitude >= CanvasDragThreshold * CanvasDragThreshold)
+                _canvasInteractionMoved = true;
+
+            _graphScroll = _graphCanvasPanScrollStart - delta / Mathf.Max(0.001f, _graphZoom);
+            ClampGraphScroll(_lastCanvasWorkspaceRect, CurrentSelectedGraph());
+            return true;
+        }
+
+        private bool GraphPointerInputActive() =>
+            _canvasOpen &&
+            (_canvasInteraction != AutomationCanvasInteractionKind.None ||
+             _draggingPaletteBlock ||
+             _draggingNodeId != 0 ||
+             _panningGraphCanvas ||
+             _graphSlotMenuKind != AutomationGraphSlotMenuKind.None ||
+             _graphContextMenuNodeId != 0 ||
+             _graphReadinessPopoverNodeId != 0 ||
+             _graphPropertyPickerNodeId != 0);
+
+        private Vector2 CurrentCanvasWindowMousePosition() =>
+            MouseGuiPosition() - _canvasRect.position;
+
+        private bool LastCanvasWorkspaceUsable() =>
+            _lastCanvasWorkspaceRect.width > 1f &&
+            _lastCanvasWorkspaceRect.height > 1f;
+
+        private void MaybeLogGraphDragRawUpdateStall(string reason)
+        {
+            _nodeDragStalledFrames++;
+            if (_nodeDragStalledFrames < GraphDragStalledFrameThreshold)
+                return;
+
+            float now = Time.unscaledTime;
+            if (now < _nextGraphInteractionDiagnosticsLogTime)
+                return;
+
+            _nextGraphInteractionDiagnosticsLogTime = now + GraphInteractionDiagnosticsLogCooldownSeconds;
+            EsuRuntimeLog.Warning(
+                "Automation Builder",
+                "Automation graph pointer capture could not update from raw mouse input.",
+                "reason=" + reason +
+                "\ninteraction=" + _canvasInteraction +
+                "\ndragged_node=" + _draggingNodeId.ToString(CultureInfo.InvariantCulture) +
+                "\nleft_down=" + (Input.GetMouseButton(0) ? "true" : "false") +
+                "\ncanvas_open=" + (_canvasOpen ? "true" : "false") +
+                "\nworkspace_valid=" + (LastCanvasWorkspaceUsable() ? "true" : "false") +
+                "\nowns_graph_input=" + (AutomationBuilderInputScope.OwnsGraphPointerInput ? "true" : "false") +
+                "\nlast_raw_mouse=" + _nodeDragLastRawMouse.x.ToString("0.0", CultureInfo.InvariantCulture) +
+                "," + _nodeDragLastRawMouse.y.ToString("0.0", CultureInfo.InvariantCulture));
         }
 
         private void BeginCanvasInteraction(
@@ -3779,7 +4019,48 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _canvasInteractionButton = mouseButton;
             _canvasInteractionStartMouse = startMouse;
             _canvasInteractionMoved = false;
-            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            _nodeDragStalledFrames = 0;
+            AutomationBuilderInputScope.SetGraphPointerInputOwned(true);
+            AutomationBuilderInputScope.ClaimBuildInputForFrames(3);
+            AutomationBuilderInputScope.ClaimCameraInputForFrames(3);
+        }
+
+        private void ClaimActiveCanvasInteractionInput()
+        {
+            if (!_canvasOpen)
+            {
+                AutomationBuilderInputScope.SetGraphPointerInputOwned(false);
+                return;
+            }
+
+            bool active = GraphPointerInputActive();
+            AutomationBuilderInputScope.SetGraphPointerInputOwned(active);
+            if (!active)
+                return;
+
+            AutomationBuilderInputScope.ClaimBuildInputForFrames(3);
+            AutomationBuilderInputScope.ClaimCameraInputForFrames(3);
+        }
+
+        private void CompleteCanvasInteractionIfReleased()
+        {
+            if (!_canvasOpen)
+                return;
+
+            if (_canvasInteraction == AutomationCanvasInteractionKind.NodeDrag &&
+                _draggingNodeId != 0 &&
+                !Input.GetMouseButton(0))
+            {
+                FinishNodeDrag(CurrentSelectedGraph());
+                return;
+            }
+
+            if (_canvasInteraction == AutomationCanvasInteractionKind.CanvasPan &&
+                _graphCanvasPanButton >= 0 &&
+                !Input.GetMouseButton(_graphCanvasPanButton))
+            {
+                ResetCanvasInteractionState();
+            }
         }
 
         private void ResetCanvasInteractionState()
@@ -3795,6 +4076,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _graphCanvasPanButton = -1;
             _draggingNodeId = 0;
             _suppressNextCanvasRightClick = false;
+            _nodeDragStalledFrames = 0;
+            _nodeDragLastRawMouse = Vector2.zero;
+            AutomationBuilderInputScope.SetGraphPointerInputOwned(false);
         }
 
         private void CancelActiveCanvasInteraction(
@@ -3832,9 +4116,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ResetCanvasInteractionState();
             if (node != null)
             {
-                if (TrySnapGraphNode(graph, node))
+                if (moved && TrySnapGraphNode(graph, node))
                     moved = true;
-                RefreshGraphConnections(graph);
+
+                if (moved)
+                    RefreshGraphConnections(graph);
                 SyncNativeNodeRect(node);
                 if (moved)
                     MarkAutomationDirty();
@@ -3954,6 +4240,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 float y = startY;
                 ArrangeLayoutChain(
+                    graph,
                     chain,
                     x,
                     ref y,
@@ -4073,6 +4360,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         }
 
         private void ArrangeLayoutChain(
+            AutomationGraph graph,
             IReadOnlyList<AutomationGraphNode> chain,
             float x,
             ref float y,
@@ -4088,6 +4376,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             foreach (AutomationGraphNode node in chain)
             {
                 ArrangeLayoutNode(
+                    graph,
                     node,
                     x,
                     y,
@@ -4101,6 +4390,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         }
 
         private void ArrangeLayoutNode(
+            AutomationGraph graph,
             AutomationGraphNode node,
             float x,
             float y,
@@ -4127,6 +4417,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 bodyChains.TryGetValue(node, out List<List<AutomationGraphNode>> childChains))
             {
                 ArrangeControlBodyChains(
+                    graph,
                     node,
                     childChains,
                     arranged,
@@ -4136,10 +4427,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     ref moved);
             }
 
-            ArrangeSocketValuesForHosts(new[] { node }, arranged, chainNodes, socketValues, ref moved);
+            ArrangeSocketValuesForHosts(graph, new[] { node }, arranged, chainNodes, socketValues, ref moved);
         }
 
         private void ArrangeControlBodyChains(
+            AutomationGraph graph,
             AutomationGraphNode host,
             IReadOnlyList<List<AutomationGraphNode>> childChains,
             HashSet<AutomationGraphNode> arranged,
@@ -4157,6 +4449,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             foreach (List<AutomationGraphNode> chain in childChains)
             {
                 ArrangeLayoutChain(
+                    graph,
                     chain,
                     childX,
                     ref y,
@@ -4191,7 +4484,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 if (host == null || !AcceptsValueSlot(host.Kind))
                     continue;
 
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
                 {
                     AutomationGraphNode value = SnappedValueForHost(graph, host, slotKind);
                     if (value != null)
@@ -4203,6 +4496,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         }
 
         private void ArrangeSocketValuesForHosts(
+            AutomationGraph graph,
             IEnumerable<AutomationGraphNode> hosts,
             HashSet<AutomationGraphNode> arranged,
             HashSet<AutomationGraphNode> chainNodes,
@@ -4217,7 +4511,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 if (host == null || !AcceptsValueSlot(host.Kind))
                     continue;
 
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
                 {
                     socketValues.TryGetValue(Tuple.Create(host, slotKind), out AutomationGraphNode value);
                     if (value == null ||
@@ -4247,14 +4541,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             rect.x = Mathf.Max(0f, rect.x);
             rect.y = Mathf.Max(0f, rect.y);
             bool valueFootprint = CanProduceValueBlock(node.Kind) && IsValueFootprint(rect);
-            float minWidth = valueFootprint
-                ? GraphValueNodeWidth
-                : GraphNodeWidthForKind(node.Kind);
-            float minHeight = valueFootprint
-                ? GraphNodeHeightForKind(AutomationNodeKind.Constant)
-                : GraphNodeHeightForKind(node.Kind);
-            rect.width = Mathf.Max(minWidth, rect.width);
-            rect.height = Mathf.Max(minHeight, rect.height);
+            rect = NormalizeGraphNodeRect(node.Kind, rect, valueFootprint);
             bool changed =
                 Mathf.Abs(node.Rect.x - rect.x) > 0.001f ||
                 Mathf.Abs(node.Rect.y - rect.y) > 0.001f ||
@@ -4413,7 +4700,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     continue;
                 }
 
-                foreach (AutomationValueSlotKind candidateSlotKind in ValueSlotKinds(other.Kind))
+                foreach (AutomationValueSlotKind candidateSlotKind in ActiveValueSlotKinds(graph, other))
                 {
                     if (!CanSnapIntoValueSlot(node, other.Kind, candidateSlotKind))
                         continue;
@@ -4497,35 +4784,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             target = Rect.zero;
             snapBelow = true;
-            if (graph == null || !CanStackSnapNode(node))
-                return false;
 
-            float threshold = EsuHudLayout.Scale(30f);
-            AutomationGraphNode best = null;
-            float bestDistance = threshold;
-            foreach (AutomationGraphNode other in graph.Nodes)
-            {
-                if (!CanStackSnapNode(other) || ReferenceEquals(other, node))
-                    continue;
-
-                float belowDistance = Mathf.Abs(node.Rect.y - other.Rect.yMax);
-                if (belowDistance < bestDistance)
-                {
-                    best = other;
-                    bestDistance = belowDistance;
-                    snapBelow = true;
-                }
-
-                float aboveDistance = Mathf.Abs(node.Rect.yMax - other.Rect.y);
-                if (aboveDistance < bestDistance)
-                {
-                    best = other;
-                    bestDistance = aboveDistance;
-                    snapBelow = false;
-                }
-            }
-
-            if (best == null)
+            if (!TryFindStackSnapTarget(graph, node, out AutomationGraphNode best, out snapBelow))
                 return false;
 
             target = node.Rect;
@@ -4533,6 +4793,72 @@ namespace DecoLimitLifter.AutomationBuilderMode
             target.y = snapBelow
                 ? best.Rect.yMax - EsuHudLayout.Scale(2f)
                 : Mathf.Max(0f, best.Rect.y - node.Rect.height + EsuHudLayout.Scale(2f));
+            return true;
+        }
+
+        private static bool TryFindStackSnapTarget(
+            AutomationGraph graph,
+            AutomationGraphNode node,
+            out AutomationGraphNode best,
+            out bool snapBelow)
+        {
+            best = null;
+            snapBelow = true;
+            if (graph == null || !CanStackSnapNode(node))
+                return false;
+
+            float bestScore = EsuHudLayout.Scale(30f);
+            foreach (AutomationGraphNode other in graph.Nodes)
+            {
+                if (!CanStackSnapNode(other) || ReferenceEquals(other, node))
+                    continue;
+
+                if (TryScoreStackSnap(node.Rect, other.Rect, below: true, out float belowScore) &&
+                    belowScore < bestScore)
+                {
+                    best = other;
+                    bestScore = belowScore;
+                    snapBelow = true;
+                }
+
+                if (TryScoreStackSnap(node.Rect, other.Rect, below: false, out float aboveScore) &&
+                    aboveScore < bestScore)
+                {
+                    best = other;
+                    bestScore = aboveScore;
+                    snapBelow = false;
+                }
+            }
+
+            return best != null;
+        }
+
+        private static bool TryScoreStackSnap(
+            Rect moving,
+            Rect target,
+            bool below,
+            out float score)
+        {
+            score = float.MaxValue;
+            float verticalDistance = below
+                ? Mathf.Abs(moving.y - target.yMax)
+                : Mathf.Abs(moving.yMax - target.y);
+            float verticalThreshold = EsuHudLayout.Scale(30f);
+            if (verticalDistance > verticalThreshold)
+                return false;
+
+            float overlap = Mathf.Min(moving.xMax, target.xMax) - Mathf.Max(moving.xMin, target.xMin);
+            float centerDistance = Mathf.Abs(moving.center.x - target.center.x);
+            float horizontalThreshold = Mathf.Min(
+                EsuHudLayout.Scale(80f),
+                Mathf.Max(EsuHudLayout.Scale(30f), Mathf.Min(moving.width, target.width) * 0.42f));
+            if (overlap <= EsuHudLayout.Scale(16f) &&
+                centerDistance > horizontalThreshold)
+            {
+                return false;
+            }
+
+            score = verticalDistance + centerDistance * 0.18f;
             return true;
         }
 
@@ -4566,7 +4892,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return OrderedGraphFlowChains(graph).SelectMany(chain => chain);
         }
 
-        private void RefreshGraphConnections(AutomationGraph graph)
+        private void RefreshGraphConnections(
+            AutomationGraph graph,
+            bool preserveRestoredNative = false)
         {
             if (graph == null)
                 return;
@@ -4579,19 +4907,25 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     AutomationGraphNode from = flow[index];
                     AutomationGraphNode to = flow[index + 1];
                     if (CanStoreEsuGeometryConnection(AutomationGraphConnectionKind.Stack, from, to))
-                        connections.Add(new AutomationGraphConnection(AutomationGraphConnectionKind.Stack, from, to));
+                    {
+                        AddConnectionIfMissing(
+                            connections,
+                            new AutomationGraphConnection(AutomationGraphConnectionKind.Stack, from, to));
+                    }
                 }
             }
 
             foreach (AutomationGraphNode host in graph.Nodes.Where(node => node != null && AcceptsValueSlot(node.Kind)))
             {
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
                 {
                     AutomationGraphNode value = GeometrySnappedValueForHost(graph, host, slotKind);
                     if (value != null &&
                         CanStoreEsuGeometryConnection(AutomationGraphConnectionKind.Value, value, host))
                     {
-                        connections.Add(new AutomationGraphConnection(AutomationGraphConnectionKind.Value, value, host, slotKind));
+                        AddConnectionIfMissing(
+                            connections,
+                            new AutomationGraphConnection(AutomationGraphConnectionKind.Value, value, host, slotKind));
                     }
                 }
             }
@@ -4601,10 +4935,24 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 foreach (AutomationGraphNode child in GeometryBodyChildrenForHost(graph, host))
                 {
                     if (CanStoreEsuGeometryConnection(AutomationGraphConnectionKind.Body, host, child))
-                        connections.Add(new AutomationGraphConnection(AutomationGraphConnectionKind.Body, host, child));
+                    {
+                        AddConnectionIfMissing(
+                            connections,
+                            new AutomationGraphConnection(AutomationGraphConnectionKind.Body, host, child));
+                    }
                 }
             }
 
+            if (preserveRestoredNative)
+            {
+                foreach (AutomationGraphConnection connection in graph.Connections.Where(connection =>
+                             connection?.Origin == AutomationGraphWireOrigin.EsuNative))
+                {
+                    AddConnectionIfMissing(connections, connection);
+                }
+            }
+
+            RemoveStackFedPrimaryValueConnections(connections);
             graph.RebuildConnections(connections);
         }
 
@@ -4635,12 +4983,18 @@ namespace DecoLimitLifter.AutomationBuilderMode
                    new List<AutomationGraphConnection>();
         }
 
-        private static void RefreshImportedNativeConnections(AutomationGraph graph)
+        private void RefreshNativeGraphConnections(AutomationGraph graph)
         {
             if (graph == null)
                 return;
 
-            var connections = new List<AutomationGraphConnection>();
+            var editableConnections = graph.Connections
+                .Where(connection =>
+                    connection != null &&
+                    !connection.IsImportedNative &&
+                    ShouldPreserveExistingGraphConnection(connection))
+                .ToList();
+            var importedConnections = new List<AutomationGraphConnection>();
             List<AutomationGraphNode> nativeNodes = graph.Nodes
                 .Where(node => node?.NativeComponent != null)
                 .ToList();
@@ -4654,17 +5008,20 @@ namespace DecoLimitLifter.AutomationBuilderMode
                         continue;
                     }
 
-                    connections.Add(new AutomationGraphConnection(
-                        AutomationGraphConnectionKind.Stack,
-                        from,
-                        to,
-                        origin: AutomationGraphWireOrigin.NativeImported));
+                    AddNativeGraphConnection(
+                        editableConnections,
+                        importedConnections,
+                        new AutomationGraphConnection(
+                            AutomationGraphConnectionKind.Stack,
+                            from,
+                            to,
+                            origin: NativeConnectionOrigin(to)));
                 }
             }
 
             foreach (AutomationGraphNode host in nativeNodes.Where(node => AcceptsValueSlot(node.Kind)))
             {
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
                 {
                     foreach (AutomationGraphNode value in nativeNodes)
                     {
@@ -4674,17 +5031,151 @@ namespace DecoLimitLifter.AutomationBuilderMode
                             continue;
                         }
 
-                        connections.Add(new AutomationGraphConnection(
-                            AutomationGraphConnectionKind.Value,
-                            value,
-                            host,
-                            slotKind,
-                            AutomationGraphWireOrigin.NativeImported));
+                        AddNativeGraphConnection(
+                            editableConnections,
+                            importedConnections,
+                            new AutomationGraphConnection(
+                                AutomationGraphConnectionKind.Value,
+                                value,
+                                host,
+                                slotKind,
+                                NativeConnectionOrigin(host)));
                     }
                 }
             }
 
-            graph.RebuildImportedNativeConnections(connections);
+            RemoveStackFedPrimaryValueConnections(editableConnections);
+            RemoveStackFedPrimaryValueConnections(importedConnections);
+            graph.RebuildConnections(editableConnections);
+            graph.RebuildImportedNativeConnections(importedConnections);
+        }
+
+        private bool ShouldPreserveExistingGraphConnection(AutomationGraphConnection connection)
+        {
+            if (connection?.From == null || connection.To == null)
+                return false;
+
+            if (connection.Origin == AutomationGraphWireOrigin.EsuNative ||
+                connection.Origin == AutomationGraphWireOrigin.NativeImported)
+            {
+                return false;
+            }
+
+            return _automationDirty || !ConnectionBetweenNativeNodes(connection);
+        }
+
+        private static bool ConnectionBetweenNativeNodes(AutomationGraphConnection connection)
+        {
+            return connection?.From?.NativeComponent != null &&
+                   connection.To?.NativeComponent != null;
+        }
+
+        private AutomationGraphWireOrigin NativeConnectionOrigin(AutomationGraphNode target)
+        {
+            return IsEsuOwnedNativeNode(target)
+                ? AutomationGraphWireOrigin.EsuNative
+                : AutomationGraphWireOrigin.NativeImported;
+        }
+
+        private static void AddNativeGraphConnection(
+            List<AutomationGraphConnection> editableConnections,
+            List<AutomationGraphConnection> importedConnections,
+            AutomationGraphConnection connection)
+        {
+            if (connection == null)
+                return;
+
+            if (connection.Origin == AutomationGraphWireOrigin.NativeImported)
+                AddConnectionIfMissing(importedConnections, connection);
+            else
+                AddConnectionIfMissing(editableConnections, connection);
+        }
+
+        private static void AddConnectionIfMissing(
+            List<AutomationGraphConnection> connections,
+            AutomationGraphConnection candidate)
+        {
+            if (connections == null ||
+                candidate?.From == null ||
+                candidate.To == null)
+            {
+                return;
+            }
+
+            if (connections.Any(existing => ConnectionsEquivalent(existing, candidate)))
+                return;
+
+            connections.Add(candidate);
+        }
+
+        private static void RemoveStackFedPrimaryValueConnections(
+            List<AutomationGraphConnection> connections)
+        {
+            if (connections == null || connections.Count == 0)
+                return;
+
+            var stackFedPrimaryHosts = new HashSet<int>(connections
+                .Where(connection =>
+                    connection?.Kind == AutomationGraphConnectionKind.Stack &&
+                    UsesStackAsPrimaryInput(connection.To?.Kind ?? AutomationNodeKind.Comment))
+                .Select(connection => connection.ToNodeId));
+            if (stackFedPrimaryHosts.Count == 0)
+                return;
+
+            connections.RemoveAll(connection =>
+                connection?.Kind == AutomationGraphConnectionKind.Value &&
+                UsesStackAsPrimaryInput(connection.To?.Kind ?? AutomationNodeKind.Comment) &&
+                connection.SlotKind == AutomationValueSlotKind.Pass &&
+                stackFedPrimaryHosts.Contains(connection.ToNodeId));
+        }
+
+        private static bool UsesStackAsPrimaryInput(AutomationNodeKind kind)
+        {
+            return kind == AutomationNodeKind.OutputSetter ||
+                   IsLogicGateKind(kind) ||
+                   IsFuzzyThresholdKind(kind) ||
+                   IsMathEvaluatorKind(kind) ||
+                   IsMaxMinKind(kind) ||
+                   kind == AutomationNodeKind.Clamp ||
+                   kind == AutomationNodeKind.Smooth;
+        }
+
+        private static bool IsStackFedPrimaryValueSlot(
+            AutomationGraph graph,
+            AutomationGraphNode host,
+            AutomationValueSlotKind slotKind)
+        {
+            return graph != null &&
+                   host != null &&
+                   slotKind == AutomationValueSlotKind.Pass &&
+                   UsesStackAsPrimaryInput(host.Kind) &&
+                   PreviousFlowNode(graph, host) != null;
+        }
+
+        private static IEnumerable<AutomationValueSlotKind> ActiveValueSlotKinds(
+            AutomationGraph graph,
+            AutomationGraphNode host)
+        {
+            if (host == null)
+                yield break;
+
+            foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+            {
+                if (!IsStackFedPrimaryValueSlot(graph, host, slotKind))
+                    yield return slotKind;
+            }
+        }
+
+        private static bool ConnectionsEquivalent(
+            AutomationGraphConnection left,
+            AutomationGraphConnection right)
+        {
+            return left != null &&
+                   right != null &&
+                   left.Kind == right.Kind &&
+                   left.FromNodeId == right.FromNodeId &&
+                   left.ToNodeId == right.ToNodeId &&
+                   left.SlotKind == right.SlotKind;
         }
 
         private static IReadOnlyList<AutomationGraphConnection> ImportedNativeConnections(AutomationGraph graph)
@@ -4998,6 +5489,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraphNode host,
             AutomationValueSlotKind slotKind)
         {
+            if (IsStackFedPrimaryValueSlot(graph, host, slotKind))
+                return null;
+
             return GraphValueConnection(graph, host, slotKind)?.From;
         }
 
@@ -5051,7 +5545,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             foreach (AutomationGraphNode host in graph.Nodes.Where(node => node != null && AcceptsValueSlot(node.Kind)))
             {
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
                 {
                     AutomationGraphNode value = SnappedValueForHost(graph, host, slotKind);
                     if (value != null)
@@ -5092,7 +5586,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 if (host == null || !AcceptsValueSlot(host.Kind))
                     continue;
 
-                if (ValueSlotKinds(host.Kind).Any(slotKind => ReferenceEquals(GeometrySnappedValueForHost(graph, host, slotKind), value)))
+                if (ActiveValueSlotKinds(graph, host).Any(slotKind => ReferenceEquals(GeometrySnappedValueForHost(graph, host, slotKind), value)))
                     return host;
             }
 
@@ -5171,7 +5665,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (graph == null || value == null || host == null)
                 return AutomationValueSlotKind.Pass;
 
-            foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(host.Kind))
+            foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
             {
                 if (ReferenceEquals(SnappedValueForHost(graph, host, slotKind), value))
                     return slotKind;
@@ -5271,16 +5765,24 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 DrawControlBodyHint(ControlBodyRect(rect, node.Kind), BodyChildrenForHost(graph, node).Any(), ControlBodyLabel(node.Kind));
             if (AcceptsValueSlot(node.Kind))
             {
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(node.Kind))
-                    DrawValueSocketHint(
-                        ValueSlotRect(rect, node.Kind, slotKind),
-                        SnappedValueForHost(graph, node, slotKind) != null,
-                        ValueSlotLabel(node.Kind, slotKind));
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, node))
+                {
+                    if (ShouldDrawValueSocketHint(graph, node, slotKind))
+                    {
+                        DrawValueSocketHint(
+                            ValueSlotRect(rect, node.Kind, slotKind),
+                            SnappedValueForHost(graph, node, slotKind) != null,
+                            ValueSlotLabel(node.Kind, slotKind));
+                    }
+                }
             }
             Rect inner = EsuHudLayout.PanelInnerRect(rect, 8f);
             Rect close = GraphNodeCloseRect(rect);
-            if (TryConsumeGraphLeftMouseUp(close) ||
-                GUI.Button(close, new GUIContent("X", "Remove this native graph component."), DecorationEditorTheme.Button))
+            bool foregroundOwnsInput = GraphForegroundMenuOpen() || GraphPointerInputActive();
+            bool canUseNodeControls = !foregroundOwnsInput;
+            if (canUseNodeControls &&
+                (TryConsumeGraphLeftMouseUp(close) ||
+                 GUI.Button(close, new GUIContent("X", "Remove this native graph component."), DecorationEditorTheme.Button)))
             {
                 RemoveGraphNode(graph, node);
                 MarkAutomationDirty();
@@ -5290,9 +5792,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _graphSlotConsumedInput = false;
             DrawBlockSentence(rect, node, compact: false, graph);
             DrawExecutionOrderBadge(rect, node, executionFlow);
-            DrawReadinessBadge(rect, graph, node, executionChains);
-            if (selected)
-                DrawGraphNodeQuickChoices(node, rect);
+            if (!foregroundOwnsInput)
+                DrawReadinessBadge(rect, graph, node, executionChains);
+
+            if (foregroundOwnsInput)
+                return;
 
             Event current = Event.current;
             if (current == null)
@@ -5302,6 +5806,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
 
             Vector2 graphMouse = CurrentGraphMousePosition(current);
+            if (IsMouseInsideGraphReadinessPopover(current))
+                return;
             if (IsMouseInsideGraphContextMenu(current))
                 return;
             if (_graphContextMenuNodeId != 0 &&
@@ -5443,13 +5949,134 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     alignment = TextAnchor.MiddleCenter,
                     fontStyle = FontStyle.Bold
                 };
+                MarkGraphSlotInputIfMouseInside(badge);
+                bool clicked = GUI.Button(badge, GUIContent.none, GUIStyle.none) ||
+                               TryConsumeGraphLeftMouseUp(badge);
                 GUI.Label(EsuHudLayout.PanelInnerRect(badge, 2f), new GUIContent("!", tooltip), style);
                 EsuCursorTooltip.Register(badge, tooltip);
+                if (clicked)
+                    OpenGraphReadinessPopover(node, badge);
             }
             finally
             {
                 GUI.color = previous;
             }
+        }
+
+        private void OpenGraphReadinessPopover(
+            AutomationGraphNode node,
+            Rect anchorRect)
+        {
+            if (node == null)
+            {
+                CloseGraphReadinessPopover();
+                return;
+            }
+
+            _graphReadinessPopoverNodeId = node.Id;
+            _graphReadinessPopoverAnchorRect = anchorRect;
+            _graphReadinessPopoverScroll = Vector2.zero;
+            CloseGraphContextMenu();
+            CloseGraphSlotMenu();
+            CloseGraphPropertyPicker();
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+        }
+
+        private void CloseGraphReadinessPopover()
+        {
+            _graphReadinessPopoverNodeId = 0;
+            _graphReadinessPopoverRect = Rect.zero;
+            _graphReadinessPopoverAnchorRect = Rect.zero;
+            _graphReadinessPopoverScroll = Vector2.zero;
+        }
+
+        private void DrawGraphReadinessPopover(
+            AutomationGraph graph,
+            Rect viewRect)
+        {
+            if (_graphReadinessPopoverNodeId == 0)
+                return;
+
+            AutomationGraphNode node = graph?.Nodes.FirstOrDefault(candidate => candidate.Id == _graphReadinessPopoverNodeId);
+            if (node == null)
+            {
+                CloseGraphReadinessPopover();
+                return;
+            }
+
+            List<string> issues = NativeNodeReadinessIssues(graph, node).ToList();
+            if (issues.Count == 0)
+            {
+                CloseGraphReadinessPopover();
+                return;
+            }
+
+            Rect rect = GraphReadinessPopoverRect(_graphReadinessPopoverAnchorRect, viewRect, issues.Count);
+            _graphReadinessPopoverRect = rect;
+            MarkGraphDropdownInputIfMouseInside(rect);
+            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            Rect inner = EsuHudLayout.PanelInnerRect(rect, 6f);
+            Rect title = new Rect(inner.x, inner.y, inner.width - EsuHudLayout.Scale(30f), EsuHudLayout.Scale(24f));
+            Rect close = new Rect(inner.xMax - EsuHudLayout.Scale(26f), inner.y, EsuHudLayout.Scale(26f), EsuHudLayout.Scale(22f));
+            GUI.Label(title, "Block Issue", DecorationEditorTheme.SubHeader);
+            if (GUI.Button(close, new GUIContent("X", "Close issue details."), DecorationEditorTheme.Button) ||
+                TryConsumeGraphLeftMouseUp(close))
+            {
+                CloseGraphReadinessPopover();
+                return;
+            }
+
+            Rect scrollRect = new Rect(
+                inner.x,
+                title.yMax + EsuHudLayout.Scale(4f),
+                inner.width,
+                Mathf.Max(1f, inner.yMax - title.yMax - EsuHudLayout.Scale(4f)));
+            float rowHeight = EsuHudLayout.Scale(48f);
+            Rect view = new Rect(
+                0f,
+                0f,
+                Mathf.Max(1f, scrollRect.width - EsuHudLayout.Scale(18f)),
+                Mathf.Max(scrollRect.height, issues.Count * rowHeight));
+            _graphReadinessPopoverScroll = GUI.BeginScrollView(scrollRect, _graphReadinessPopoverScroll, view);
+            for (int index = 0; index < issues.Count; index++)
+            {
+                Rect row = new Rect(0f, index * rowHeight, view.width, rowHeight - EsuHudLayout.Scale(4f));
+                GUI.Label(row, issues[index], DecorationEditorTheme.MiniWrap);
+            }
+
+            GUI.EndScrollView();
+
+            Event current = Event.current;
+            if (current != null &&
+                current.isMouse &&
+                current.type == EventType.MouseDown &&
+                !_graphReadinessPopoverRect.Contains(CurrentGraphMousePosition(current)) &&
+                !_graphReadinessPopoverAnchorRect.Contains(CurrentGraphMousePosition(current)))
+            {
+                CloseGraphReadinessPopover();
+                current.Use();
+            }
+        }
+
+        private static Rect GraphReadinessPopoverRect(
+            Rect anchorRect,
+            Rect viewRect,
+            int issueCount)
+        {
+            float width = EsuHudLayout.Scale(GraphReadinessPopoverWidth);
+            float height = Mathf.Min(
+                EsuHudLayout.Scale(GraphReadinessPopoverMaxHeight),
+                EsuHudLayout.Scale(48f + Math.Max(1, issueCount) * 48f));
+            Rect rect = new Rect(
+                anchorRect.x,
+                anchorRect.yMax + EsuHudLayout.Scale(8f),
+                width,
+                height);
+            if (rect.yMax > viewRect.yMax - EsuHudLayout.Scale(8f))
+                rect.y = anchorRect.y - height - EsuHudLayout.Scale(8f);
+            rect.x = Mathf.Clamp(rect.x, viewRect.x + EsuHudLayout.Scale(8f), viewRect.xMax - width - EsuHudLayout.Scale(8f));
+            rect.y = Mathf.Clamp(rect.y, viewRect.y + EsuHudLayout.Scale(8f), viewRect.yMax - height - EsuHudLayout.Scale(8f));
+            return rect;
         }
 
         private static Rect GraphNodeCloseRect(Rect nodeRect)
@@ -5591,33 +6218,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!CanStackSnapNode(node))
                 return false;
 
-            float threshold = EsuHudLayout.Scale(30f);
-            AutomationGraphNode best = null;
-            bool snapBelow = true;
-            float bestDistance = threshold;
-            foreach (AutomationGraphNode other in graph.Nodes)
-            {
-                if (!CanStackSnapNode(other) || ReferenceEquals(other, node))
-                    continue;
-
-                float belowDistance = Mathf.Abs(node.Rect.y - other.Rect.yMax);
-                if (belowDistance < bestDistance)
-                {
-                    best = other;
-                    bestDistance = belowDistance;
-                    snapBelow = true;
-                }
-
-                float aboveDistance = Mathf.Abs(node.Rect.yMax - other.Rect.y);
-                if (aboveDistance < bestDistance)
-                {
-                    best = other;
-                    bestDistance = aboveDistance;
-                    snapBelow = false;
-                }
-            }
-
-            if (best == null)
+            if (!TryFindStackSnapTarget(graph, node, out AutomationGraphNode best, out bool snapBelow))
                 return false;
 
             Rect next = node.Rect;
@@ -5703,7 +6304,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     continue;
                 }
 
-                foreach (AutomationValueSlotKind slotKind in ValueSlotKinds(other.Kind))
+                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, other))
                 {
                     if (!CanSnapIntoValueSlot(node, other.Kind, slotKind))
                         continue;
@@ -5785,7 +6386,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             Rect inner = EsuHudLayout.PanelInnerRect(rect, compact ? 8f : 10f);
             bool valueFootprint = DrawsAsValueBlock(node.Kind, rect);
-            bool selected = IsSelectedGraphNode(graph, node);
+            bool selected = IsSelectedGraphNode(graph, node) && !GraphForegroundMenuOpen();
             float y = inner.y + (valueFootprint ? 0f : EsuHudLayout.Scale(4f));
             if (!compact &&
                 valueFootprint &&
@@ -5795,8 +6396,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
             }
 
-            Rect title = new Rect(inner.x, y, inner.width - EsuHudLayout.Scale(compact ? 4f : 114f), EsuHudLayout.Scale(compact ? 22f : 24f));
-            GUI.Label(title, BlockSentenceTitle(node), compact ? DecorationEditorTheme.Mini : DecorationEditorTheme.Body);
+            Rect title = new Rect(inner.x, y, inner.width - EsuHudLayout.Scale(compact ? 4f : 92f), EsuHudLayout.Scale(compact ? 22f : 24f));
+            string titleText = BlockSentenceTitle(node);
+            GUI.Label(title, titleText, compact ? DecorationEditorTheme.Mini : DecorationEditorTheme.Body);
+            RegisterFullTextTooltip(title, BlockSentenceTitleTooltip(node), titleText);
             y = title.yMax + EsuHudLayout.Scale(4f);
 
             if (compact)
@@ -5809,9 +6412,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
                             ref y,
                             inner,
                             "target",
-                            BlockTargetLabel(node),
+                            BlockTitleTargetLabel(node),
                             selected,
-                            "Choose linked input target."))
+                            TargetSlotTooltip(node, input: true)))
                     {
                         OpenGraphSlotMenu(node, AutomationGraphSlotMenuKind.Target, _lastDrawnGraphSlotRect);
                     }
@@ -5835,9 +6438,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
                             ref y,
                             inner,
                             "target",
-                            BlockTargetLabel(node),
+                            BlockTitleTargetLabel(node),
                             selected,
-                            "Choose linked output target."))
+                            TargetSlotTooltip(node, input: false)))
                     {
                         OpenGraphSlotMenu(node, AutomationGraphSlotMenuKind.Target, _lastDrawnGraphSlotRect);
                     }
@@ -6081,6 +6684,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Rect valueRect = new Rect(labelRect.xMax + EsuHudLayout.Scale(6f), y, Mathf.Max(1f, inner.xMax - labelRect.xMax - EsuHudLayout.Scale(6f)), height);
             GUI.Label(labelRect, label, DecorationEditorTheme.Mini);
             MarkGraphSlotInputIfMouseInside(valueRect);
+            string controlName = "ESU_AB_value_" +
+                                 (node?.Id.ToString(CultureInfo.InvariantCulture) ?? "node") +
+                                 "_" +
+                                 SanitizeControlName(label);
+            GUI.SetNextControlName(controlName);
             string nextValue = GUI.TextField(valueRect, value ?? string.Empty, DecorationEditorTheme.TextField);
             if (!string.Equals(nextValue, value ?? string.Empty, StringComparison.Ordinal))
             {
@@ -6094,7 +6702,35 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!string.IsNullOrWhiteSpace(tooltip))
                 EsuCursorTooltip.Register(valueRect, tooltip);
 
+            Event current = Event.current;
+            if (current != null &&
+                current.type == EventType.KeyDown &&
+                (current.keyCode == KeyCode.Return ||
+                 current.keyCode == KeyCode.KeypadEnter) &&
+                string.Equals(GUI.GetNameOfFocusedControl(), controlName, StringComparison.Ordinal))
+            {
+                GUI.FocusControl(null);
+                GUIUtility.keyboardControl = 0;
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                current.Use();
+            }
+
             y += height + EsuHudLayout.Scale(3f);
+        }
+
+        private static string SanitizeControlName(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "value";
+
+            var builder = new StringBuilder(text.Length);
+            for (int index = 0; index < text.Length; index++)
+            {
+                char c = text[index];
+                builder.Append(char.IsLetterOrDigit(c) ? c : '_');
+            }
+
+            return builder.ToString();
         }
 
         private void ApplySwitchThresholdSlotEdit(
@@ -6723,15 +7359,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraphNode outputValue)
         {
             AutomationGraphNode previous = PreviousFlowNode(graph, node);
-            if (previous != null && outputValue != null)
-                return "ambiguous: stack + socket";
+            if (previous != null)
+                return "stack " + BlockValueText(previous);
 
             if (outputValue != null)
                 return "socket " + BlockValueText(outputValue);
 
-            return previous == null
-                ? "snap value block or stack above"
-                : "stack " + BlockValueText(previous);
+            return "snap value block or stack above";
         }
 
         private static string SwitchFailValueSlotText(AutomationGraphNode node)
@@ -6854,17 +7488,18 @@ namespace DecoLimitLifter.AutomationBuilderMode
             string tooltip = null)
         {
             float height = EsuHudLayout.Scale(20f);
-            Rect labelRect = new Rect(inner.x, y, EsuHudLayout.Scale(70f), height);
+            Rect labelRect = new Rect(inner.x, y, EsuHudLayout.Scale(GraphSlotLabelWidth), height);
             Rect valueRect = new Rect(labelRect.xMax + EsuHudLayout.Scale(6f), y, Mathf.Max(1f, inner.xMax - labelRect.xMax - EsuHudLayout.Scale(6f)), height);
             _lastDrawnGraphSlotRect = valueRect;
             GUI.Label(labelRect, label, DecorationEditorTheme.Mini);
             bool clicked = false;
+            string displayValue = ShortMiddleText(value, GraphSlotValueTextMaxCharacters);
             if (interactive)
             {
                 MarkGraphSlotInputIfMouseInside(valueRect);
                 clicked = GUI.Button(
                     valueRect,
-                    new GUIContent(ShortText(value, 38), tooltip ?? "Cycle this block slot."),
+                    new GUIContent(displayValue, tooltip ?? value ?? "Cycle this block slot."),
                     DecorationEditorTheme.ToolButton(false));
             }
             else
@@ -6873,9 +7508,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 GUI.color = new Color(0f, 0.07f, 0.085f, 0.72f * oldColor.a);
                 GUI.DrawTexture(valueRect, Texture2D.whiteTexture);
                 GUI.color = oldColor;
-                GUI.Label(EsuHudLayout.PanelInnerRect(valueRect, 3f), ShortText(value, 38), DecorationEditorTheme.Mini);
+                GUI.Label(EsuHudLayout.PanelInnerRect(valueRect, 3f), displayValue, GraphSlotValueStyle());
             }
 
+            RegisterFullTextTooltip(valueRect, value, displayValue);
             y += height + EsuHudLayout.Scale(3f);
             return clicked;
         }
@@ -6894,12 +7530,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _lastDrawnGraphSlotRect = valueRect;
             GUI.Label(labelRect, label, DecorationEditorTheme.Mini);
             bool clicked = false;
+            string displayValue = ShortMiddleText(value, GraphCompactSlotValueTextMaxCharacters);
             if (interactive)
             {
                 MarkGraphSlotInputIfMouseInside(valueRect);
                 clicked = GUI.Button(
                     valueRect,
-                    new GUIContent(ShortText(value, 26), tooltip ?? "Choose this value block slot."),
+                    new GUIContent(displayValue, tooltip ?? value ?? "Choose this value block slot."),
                     DecorationEditorTheme.ToolButton(false));
             }
             else
@@ -6908,9 +7545,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 GUI.color = new Color(0f, 0.07f, 0.085f, 0.72f * oldColor.a);
                 GUI.DrawTexture(valueRect, Texture2D.whiteTexture);
                 GUI.color = oldColor;
-                GUI.Label(EsuHudLayout.PanelInnerRect(valueRect, 3f), ShortText(value, 26), DecorationEditorTheme.Mini);
+                GUI.Label(EsuHudLayout.PanelInnerRect(valueRect, 3f), displayValue, GraphSlotValueStyle());
             }
 
+            RegisterFullTextTooltip(valueRect, value, displayValue);
             y += height + EsuHudLayout.Scale(2f);
             return clicked;
         }
@@ -6942,7 +7580,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 MarkGraphSlotInputIfMouseInside(propertyRect);
                 if (GUI.Button(
                         targetRect,
-                        new GUIContent(ShortText(BlockTargetLabel(node), 13), "Choose linked input target."),
+                        new GUIContent(ShortMiddleText(BlockTitleTargetLabel(node), 24), TargetSlotTooltip(node, input: true)),
                         DecorationEditorTheme.ToolButton(false)))
                 {
                     _lastDrawnGraphSlotRect = targetRect;
@@ -6951,7 +7589,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                 if (GUI.Button(
                         propertyRect,
-                        new GUIContent(ShortText(property, 13), "Choose native readable property."),
+                        new GUIContent(ShortMiddleText(property, 24), "Choose native readable property."),
                         DecorationEditorTheme.ToolButton(false)))
                 {
                     _lastDrawnGraphSlotRect = propertyRect;
@@ -6960,20 +7598,32 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
             else
             {
-                DrawCompactReadValueField(targetRect, ShortText(BlockTargetLabel(node), 13));
-                DrawCompactReadValueField(propertyRect, ShortText(property, 13));
+                DrawCompactReadValueField(targetRect, BlockTitleTargetLabel(node));
+                DrawCompactReadValueField(propertyRect, property);
             }
 
-            DrawCompactReadValueField(currentRect, "now " + ShortText(InputGetterCurrentValueText(node), 9));
+            DrawCompactReadValueField(currentRect, "now " + InputGetterCurrentValueText(node));
         }
 
         private static void DrawCompactReadValueField(Rect rect, string value)
         {
+            string displayValue = ShortMiddleText(value, GraphCompactSlotValueTextMaxCharacters);
             Color oldColor = GUI.color;
             GUI.color = new Color(0f, 0.07f, 0.085f, 0.72f * oldColor.a);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
             GUI.color = oldColor;
-            GUI.Label(EsuHudLayout.PanelInnerRect(rect, 3f), ShortText(value, 16), DecorationEditorTheme.Mini);
+            GUI.Label(EsuHudLayout.PanelInnerRect(rect, 3f), displayValue, GraphSlotValueStyle());
+            RegisterFullTextTooltip(rect, value, displayValue);
+        }
+
+        private static GUIStyle GraphSlotValueStyle()
+        {
+            return new GUIStyle(DecorationEditorTheme.Mini)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                clipping = TextClipping.Clip,
+                wordWrap = false
+            };
         }
 
         private void OpenGraphSlotMenu(
@@ -6991,7 +7641,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _graphSlotMenuNodeId = node.Id;
             _graphSlotMenuAnchorRect = anchorRect;
             _graphSlotMenuScroll = Vector2.zero;
+            CloseGraphReadinessPopover();
             CloseGraphContextMenu();
+            CloseGraphPropertyPicker();
             BeginCanvasInteraction(AutomationCanvasInteractionKind.Dropdown, -1, Vector2.zero);
             AutomationBuilderInputScope.ClaimBuildInputForFrames();
         }
@@ -7006,6 +7658,41 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 ResetCanvasInteractionState();
         }
 
+        private void OpenGraphPropertyPicker(AutomationGraphNode node)
+        {
+            if (node == null)
+            {
+                CloseGraphPropertyPicker();
+                return;
+            }
+
+            _graphPropertyPickerNodeId = node.Id;
+            _graphPropertyPickerScroll = Vector2.zero;
+            CloseGraphSlotMenu();
+            CloseGraphReadinessPopover();
+            CloseGraphContextMenu();
+            BeginCanvasInteraction(AutomationCanvasInteractionKind.Dropdown, -1, Vector2.zero);
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+        }
+
+        private void CloseGraphPropertyPicker()
+        {
+            _graphPropertyPickerNodeId = 0;
+            _graphPropertyPickerRect = Rect.zero;
+            _graphPropertyPickerScroll = Vector2.zero;
+            if (_canvasInteraction == AutomationCanvasInteractionKind.Dropdown &&
+                _graphSlotMenuKind == AutomationGraphSlotMenuKind.None)
+            {
+                ResetCanvasInteractionState();
+            }
+        }
+
+        private bool GraphForegroundMenuOpen() =>
+            _graphPropertyPickerNodeId != 0 ||
+            _graphSlotMenuKind != AutomationGraphSlotMenuKind.None ||
+            _graphContextMenuNodeId != 0 ||
+            _graphReadinessPopoverNodeId != 0;
+
         private bool IsMouseInsideGraphSlotDropdown(Event current) =>
             current != null &&
             _graphSlotMenuKind != AutomationGraphSlotMenuKind.None &&
@@ -7017,6 +7704,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _graphContextMenuNodeId != 0 &&
             current.isMouse &&
             _graphContextMenuRect.Contains(CurrentGraphMousePosition(current));
+
+        private bool IsMouseInsideGraphReadinessPopover(Event current) =>
+            current != null &&
+            _graphReadinessPopoverNodeId != 0 &&
+            current.isMouse &&
+            (_graphReadinessPopoverRect.Contains(CurrentGraphMousePosition(current)) ||
+             _graphReadinessPopoverAnchorRect.Contains(CurrentGraphMousePosition(current)));
 
         private void DrawGraphSlotDropdown(
             AutomationGraph graph,
@@ -7037,14 +7731,276 @@ namespace DecoLimitLifter.AutomationBuilderMode
             else if (_graphSlotMenuKind == AutomationGraphSlotMenuKind.Property)
                 DrawPropertySlotDropdown(node, viewRect);
 
+            ConsumeGraphSlotDropdownMouseInput();
+        }
+
+        private void ConsumeGraphSlotDropdownMouseInput()
+        {
             Event current = Event.current;
+            if (current == null ||
+                !current.isMouse ||
+                _graphSlotMenuKind == AutomationGraphSlotMenuKind.None)
+            {
+                return;
+            }
+
             Vector2 graphMouse = CurrentGraphMousePosition(current);
-            if (current != null &&
-                current.type == EventType.MouseDown &&
-                !_graphSlotMenuRect.Contains(graphMouse) &&
-                !_graphSlotMenuAnchorRect.Contains(graphMouse))
+            bool insideMenu = _graphSlotMenuRect.Contains(graphMouse) ||
+                              _graphSlotMenuAnchorRect.Contains(graphMouse);
+            if (insideMenu)
+            {
+                if (current.type == EventType.ScrollWheel)
+                    AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
+
+                if (current.type == EventType.MouseDown ||
+                    current.type == EventType.MouseUp ||
+                    current.type == EventType.MouseDrag ||
+                    current.type == EventType.ScrollWheel)
+                {
+                    AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                    current.Use();
+                }
+
+                return;
+            }
+
+            if (current.type == EventType.MouseDown)
             {
                 CloseGraphSlotMenu();
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                current.Use();
+            }
+        }
+
+        private bool ConsumeGraphSlotDropdownOutsideMouseDown()
+        {
+            Event current = Event.current;
+            if (current == null ||
+                _graphSlotMenuKind == AutomationGraphSlotMenuKind.None ||
+                current.type != EventType.MouseDown)
+            {
+                return false;
+            }
+
+            Vector2 graphMouse = CurrentGraphMousePosition(current);
+            if (_graphSlotMenuRect.Contains(graphMouse) ||
+                _graphSlotMenuAnchorRect.Contains(graphMouse))
+            {
+                return false;
+            }
+
+            CloseGraphSlotMenu();
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            current.Use();
+            return true;
+        }
+
+        private void RefreshGraphPropertyPickerRect(
+            AutomationGraph graph,
+            Rect canvasRect,
+            Rect planRect)
+        {
+            if (_graphPropertyPickerNodeId == 0)
+                return;
+
+            AutomationGraphNode node = graph?.Nodes.FirstOrDefault(candidate => candidate.Id == _graphPropertyPickerNodeId);
+            if (node == null)
+                return;
+
+            int choiceCount = NativePropertyOptionsForNode(node)
+                .Count(option => !string.IsNullOrWhiteSpace(option));
+            if (choiceCount <= 0)
+                return;
+
+            _graphPropertyPickerRect = GraphPropertyPickerRect(canvasRect, planRect, choiceCount);
+        }
+
+        private void RefreshGraphSlotDropdownRect(
+            AutomationGraph graph,
+            Rect viewRect)
+        {
+            if (_graphSlotMenuKind == AutomationGraphSlotMenuKind.None)
+                return;
+
+            AutomationGraphNode node = graph?.Nodes.FirstOrDefault(candidate => candidate.Id == _graphSlotMenuNodeId);
+            if (node == null)
+                return;
+
+            int choiceCount = 1;
+            if (_graphSlotMenuKind == AutomationGraphSlotMenuKind.Target)
+                choiceCount = Math.Max(1, TargetChoicesForNode(node).Count());
+            else if (_graphSlotMenuKind == AutomationGraphSlotMenuKind.Property)
+                choiceCount = Math.Max(
+                    1,
+                    NativePropertyOptionsForNode(node).Count(option => !string.IsNullOrWhiteSpace(option)));
+
+            _graphSlotMenuRect = GraphSlotDropdownRect(viewRect, choiceCount);
+        }
+
+        private void DrawGraphPropertyPicker(
+            AutomationGraph graph,
+            Rect canvasRect,
+            Rect planRect)
+        {
+            if (_graphPropertyPickerNodeId == 0)
+                return;
+
+            AutomationGraphNode node = graph?.Nodes.FirstOrDefault(candidate => candidate.Id == _graphPropertyPickerNodeId);
+            if (node == null)
+            {
+                CloseGraphPropertyPicker();
+                return;
+            }
+
+            List<string> choices = NativePropertyOptionsForNode(node)
+                .Where(option => !string.IsNullOrWhiteSpace(option))
+                .ToList();
+            if (choices.Count == 0)
+            {
+                CloseGraphPropertyPicker();
+                return;
+            }
+
+            Rect rect = GraphPropertyPickerRect(canvasRect, planRect, choices.Count);
+            _graphPropertyPickerRect = rect;
+            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            Rect inner = EsuHudLayout.PanelInnerRect(rect, 6f);
+            GUILayout.BeginArea(inner);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Native Property", DecorationEditorTheme.SubHeader, GUILayout.ExpandWidth(true));
+            if (GUILayout.Button(
+                    new GUIContent("X", "Close native property choices."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                ConsumeCurrentGraphMenuMouseEvent();
+                CloseGraphPropertyPicker();
+                GUILayout.EndHorizontal();
+                GUILayout.EndArea();
+                return;
+            }
+
+            GUILayout.EndHorizontal();
+            _graphPropertyPickerScroll = GUILayout.BeginScrollView(
+                _graphPropertyPickerScroll,
+                GUILayout.Height(Mathf.Max(1f, inner.height - EsuHudLayout.Scale(30f))));
+            foreach (string option in choices)
+            {
+                bool selected = MatchesPropertyText(node.Property, option);
+                if (!GUILayout.Button(
+                        new GUIContent(ShortMiddleText(option, 58), option),
+                        DecorationEditorTheme.ToolButton(selected),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    continue;
+                }
+
+                ApplyNativeNodeEdits(node, node.Label, option, node.ValueText);
+                MarkAutomationDirty();
+                ConsumeCurrentGraphMenuMouseEvent();
+                CloseGraphPropertyPicker();
+                GUILayout.EndScrollView();
+                GUILayout.EndArea();
+                return;
+            }
+
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+            ConsumeGraphPropertyPickerMouseInput();
+        }
+
+        private Rect GraphPropertyPickerRect(
+            Rect canvasRect,
+            Rect planRect,
+            int rowCount)
+        {
+            float pad = EsuHudLayout.Scale(6f);
+            float width = EsuHudLayout.Scale(GraphPropertyPickerWidth);
+            float headerAndPadding = EsuHudLayout.Scale(56f);
+            float rowHeight = EsuHudLayout.Scale(27f);
+            float height = Mathf.Clamp(
+                headerAndPadding + Mathf.Max(1, rowCount) * rowHeight,
+                EsuHudLayout.Scale(86f),
+                EsuHudLayout.Scale(GraphPropertyPickerMaxHeight));
+            Rect rect = new Rect(
+                planRect.x - width - pad,
+                planRect.y + EsuHudLayout.Scale(118f),
+                width,
+                height);
+            if (rect.xMin < canvasRect.xMin + pad)
+                rect.x = canvasRect.xMin + pad;
+            if (rect.xMax > planRect.xMax - pad)
+                rect.x = Mathf.Max(canvasRect.xMin + pad, planRect.xMax - rect.width - pad);
+            if (rect.yMax > canvasRect.yMax - pad)
+                rect.y = Mathf.Max(canvasRect.yMin + pad, canvasRect.yMax - rect.height - pad);
+            if (rect.yMin < canvasRect.yMin + pad)
+                rect.y = canvasRect.yMin + pad;
+            return rect;
+        }
+
+        private bool ConsumeGraphPropertyPickerOutsideMouseDown()
+        {
+            Event current = Event.current;
+            if (current == null ||
+                _graphPropertyPickerNodeId == 0 ||
+                current.type != EventType.MouseDown ||
+                !current.isMouse ||
+                _graphPropertyPickerRect.Contains(current.mousePosition))
+            {
+                return false;
+            }
+
+            CloseGraphPropertyPicker();
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            current.Use();
+            return true;
+        }
+
+        private void ConsumeGraphPropertyPickerMouseInput()
+        {
+            Event current = Event.current;
+            if (current == null ||
+                !current.isMouse ||
+                _graphPropertyPickerNodeId == 0)
+            {
+                return;
+            }
+
+            bool inside = _graphPropertyPickerRect.Contains(current.mousePosition);
+            if (inside)
+            {
+                if (current.type == EventType.ScrollWheel)
+                    AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
+
+                if (current.type == EventType.MouseDown ||
+                    current.type == EventType.MouseUp ||
+                    current.type == EventType.MouseDrag ||
+                    current.type == EventType.ScrollWheel)
+                {
+                    AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                    current.Use();
+                }
+
+                return;
+            }
+
+            if (current.type == EventType.MouseDown)
+            {
+                CloseGraphPropertyPicker();
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                current.Use();
+                return;
+            }
+
+            if (current.type == EventType.MouseUp ||
+                current.type == EventType.MouseDrag ||
+                current.type == EventType.ScrollWheel)
+            {
+                if (current.type == EventType.ScrollWheel)
+                    AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                current.Use();
             }
         }
 
@@ -7061,6 +8017,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             _graphContextMenuNodeId = node.Id;
             _graphContextMenuRect = GraphContextMenuRect(graphPoint, viewRect);
+            CloseGraphReadinessPopover();
+            CloseGraphPropertyPicker();
             BeginCanvasInteraction(AutomationCanvasInteractionKind.ContextMenu, -1, Vector2.zero);
         }
 
@@ -7192,6 +8150,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             List<AutomationLink> choices = TargetChoicesForNode(node).ToList();
             Rect rect = GraphSlotDropdownRect(viewRect, Math.Max(1, choices.Count));
             _graphSlotMenuRect = rect;
+            MarkGraphDropdownInputIfMouseInside(rect);
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
             Rect inner = EsuHudLayout.PanelInnerRect(rect, 6f);
             GUILayout.BeginArea(inner);
@@ -7211,15 +8170,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
             else
             {
-                _graphSlotMenuScroll = GUILayout.BeginScrollView(_graphSlotMenuScroll);
+                _graphSlotMenuScroll = GUILayout.BeginScrollView(
+                    _graphSlotMenuScroll,
+                    GUILayout.Height(Mathf.Max(1f, inner.height - EsuHudLayout.Scale(30f))));
                 foreach (AutomationLink link in choices)
                 {
                     string targetName = LinkChoiceTargetName(node, link);
                     bool selected = string.Equals(targetName, BlockTargetLabel(node), StringComparison.OrdinalIgnoreCase) &&
                                     MatchesPropertyText(node.Property, link.Property);
-                    string label = ShortText(targetName, 28) + " | " + ShortText(link.Property, 22);
+                    string label = ShortMiddleText(targetName, 36) + " | " + ShortMiddleText(link.Property, 32);
                     if (!GUILayout.Button(
-                            label,
+                            new GUIContent(label, targetName + " | " + link.Property),
                             DecorationEditorTheme.ToolButton(selected),
                             GUILayout.Height(EsuHudLayout.Scale(24f))))
                     {
@@ -7236,6 +8197,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                         InfoStore.Add(message ?? "Automation Builder could not assign that linked target.");
                     }
 
+                    ConsumeCurrentGraphMenuMouseEvent();
                     CloseGraphSlotMenu();
                 }
 
@@ -7254,6 +8216,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 .ToList();
             Rect rect = GraphSlotDropdownRect(viewRect, Math.Max(1, choices.Count));
             _graphSlotMenuRect = rect;
+            MarkGraphDropdownInputIfMouseInside(rect);
             GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
             Rect inner = EsuHudLayout.PanelInnerRect(rect, 6f);
             GUILayout.BeginArea(inner);
@@ -7269,12 +8232,14 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
             else
             {
-                _graphSlotMenuScroll = GUILayout.BeginScrollView(_graphSlotMenuScroll);
+                _graphSlotMenuScroll = GUILayout.BeginScrollView(
+                    _graphSlotMenuScroll,
+                    GUILayout.Height(Mathf.Max(1f, inner.height - EsuHudLayout.Scale(30f))));
                 foreach (string option in choices)
                 {
                     bool selected = MatchesPropertyText(node.Property, option);
                     if (!GUILayout.Button(
-                            ShortText(option, 42),
+                            new GUIContent(ShortMiddleText(option, 58), option),
                             DecorationEditorTheme.ToolButton(selected),
                             GUILayout.Height(EsuHudLayout.Scale(24f))))
                     {
@@ -7283,6 +8248,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                     ApplyNativeNodeEdits(node, node.Label, option, node.ValueText);
                     MarkAutomationDirty();
+                    ConsumeCurrentGraphMenuMouseEvent();
                     CloseGraphSlotMenu();
                 }
 
@@ -7290,6 +8256,16 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
 
             GUILayout.EndArea();
+        }
+
+        private static void ConsumeCurrentGraphMenuMouseEvent()
+        {
+            Event current = Event.current;
+            if (current == null || !current.isMouse)
+                return;
+
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            current.Use();
         }
 
         private bool DrawGraphSlotDropdownHeader(string title, Rect areaRect)
@@ -7337,13 +8313,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Rect viewRect,
             int rowCount)
         {
-            float width = EsuHudLayout.Scale(268f);
+            float width = EsuHudLayout.Scale(GraphSlotDropdownWidth);
             float headerAndPadding = EsuHudLayout.Scale(56f);
-            float rowHeight = EsuHudLayout.Scale(26f);
+            float rowHeight = EsuHudLayout.Scale(27f);
             float height = Mathf.Clamp(
                 headerAndPadding + Mathf.Max(1, rowCount) * rowHeight,
                 EsuHudLayout.Scale(86f),
-                EsuHudLayout.Scale(260f));
+                EsuHudLayout.Scale(GraphSlotDropdownMaxHeight));
             Rect rect = new Rect(
                 _graphSlotMenuAnchorRect.x,
                 _graphSlotMenuAnchorRect.yMax + EsuHudLayout.Scale(4f),
@@ -7351,9 +8327,25 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 height);
             if (rect.xMax > viewRect.xMax)
                 rect.x = Mathf.Max(viewRect.xMin, viewRect.xMax - rect.width - EsuHudLayout.Scale(6f));
+            if (rect.xMin < viewRect.xMin)
+                rect.x = viewRect.xMin + EsuHudLayout.Scale(6f);
             if (rect.yMax > viewRect.yMax)
                 rect.y = Mathf.Max(viewRect.yMin, _graphSlotMenuAnchorRect.y - rect.height - EsuHudLayout.Scale(4f));
+            if (rect.yMin < viewRect.yMin)
+                rect.y = viewRect.yMin + EsuHudLayout.Scale(6f);
             return rect;
+        }
+
+        private void MarkGraphDropdownInputIfMouseInside(Rect rect)
+        {
+            Event current = Event.current;
+            if (current == null || !current.isMouse || !rect.Contains(CurrentGraphMousePosition(current)))
+                return;
+
+            _graphSlotConsumedInput = true;
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            if (current.type == EventType.ScrollWheel)
+                AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
         }
 
         private void MarkGraphSlotInputIfMouseInside(Rect rect)
@@ -7434,9 +8426,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             switch (node.Kind)
             {
                 case AutomationNodeKind.InputGetter:
-                    return "read " + ShortText(BlockTargetLabel(node), 26);
+                    return "read " + ShortMiddleText(BlockTitleTargetLabel(node), 34);
                 case AutomationNodeKind.OutputSetter:
-                    return "set " + ShortText(BlockTargetLabel(node), 26);
+                    return "set " + ShortMiddleText(BlockTitleTargetLabel(node), 34);
                 case AutomationNodeKind.Forever:
                     return "forever";
                 case AutomationNodeKind.IfCondition:
@@ -7590,7 +8582,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             AutomationBlockRef boundTarget = BoundTargetRef(node);
             if (boundTarget != null)
-                return boundTarget.Name;
+                return BlockRefCurrentName(boundTarget);
 
             string label = node.Label ?? string.Empty;
             if (node.Kind == AutomationNodeKind.InputGetter &&
@@ -7606,6 +8598,123 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
 
             return string.IsNullOrWhiteSpace(label) ? "linked block" : label;
+        }
+
+        private static string BlockTitleTargetLabel(AutomationGraphNode node)
+        {
+            string label = BlockTargetLabel(node);
+            if (!IsGeneratedAutomationBlockName(label) ||
+                !TryGetBoundTargetBlock(node, out Block block))
+            {
+                return label;
+            }
+
+            string itemName = AutomationBreadboardCatalog.ItemName(block.item);
+            string baseName = !string.IsNullOrWhiteSpace(itemName)
+                ? itemName
+                : HumanizeTypeName(block.GetType().Name);
+            string suffix = GeneratedAutomationBlockSuffix(label);
+            return string.IsNullOrWhiteSpace(suffix)
+                ? baseName
+                : baseName + " " + suffix;
+        }
+
+        private static string BlockSentenceTitleTooltip(AutomationGraphNode node)
+        {
+            string title = BlockSentenceTitle(node);
+            if (node == null ||
+                node.Kind != AutomationNodeKind.InputGetter &&
+                node.Kind != AutomationNodeKind.OutputSetter)
+            {
+                return title;
+            }
+
+            string exact = BlockTargetLabel(node);
+            string display = BlockTitleTargetLabel(node);
+            if (string.IsNullOrWhiteSpace(exact) ||
+                string.Equals(exact, display, StringComparison.Ordinal))
+            {
+                return title;
+            }
+
+            return title + "\nExact target: " + exact;
+        }
+
+        private static string TargetSlotTooltip(
+            AutomationGraphNode node,
+            bool input)
+        {
+            string exact = BlockTargetLabel(node);
+            string prefix = input
+                ? "Choose linked input target."
+                : "Choose linked output target.";
+            string display = BlockTitleTargetLabel(node);
+            if (string.IsNullOrWhiteSpace(exact) ||
+                string.Equals(exact, display, StringComparison.Ordinal))
+            {
+                return prefix;
+            }
+
+            return prefix + "\nExact target: " + exact;
+        }
+
+        private static string BlockRefCurrentName(AutomationBlockRef target)
+        {
+            if (target == null)
+                return "linked block";
+
+            return target.TryGetBlock(out Block block)
+                ? AutomationBreadboardCatalog.BlockName(block)
+                : target.Name;
+        }
+
+        private static bool IsGeneratedAutomationBlockName(string name)
+        {
+            return !string.IsNullOrWhiteSpace(name) &&
+                   (name.StartsWith(AutoNamePrefix, StringComparison.Ordinal) ||
+                    name.StartsWith(RetiredAutoNamePrefix, StringComparison.Ordinal) ||
+                     name.StartsWith("ESU_AB_", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string GeneratedAutomationBlockSuffix(string name)
+        {
+            string letters = LettersOnly(name);
+            if (letters.Length <= AutoNameTokenLength)
+                return string.Empty;
+
+            return letters.Substring(letters.Length - AutoNameTokenLength);
+        }
+
+        private static string HumanizeTypeName(string typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+                return "linked block";
+
+            string text = typeName;
+            if (text.StartsWith("ESU_AB_", StringComparison.OrdinalIgnoreCase))
+                text = text.Substring(7);
+            if (text.StartsWith(RetiredAutoNamePrefix, StringComparison.Ordinal))
+                text = text.Substring(RetiredAutoNamePrefix.Length);
+            if (text.StartsWith(AutoNamePrefix, StringComparison.Ordinal))
+                text = text.Substring(AutoNamePrefix.Length);
+
+            var words = new List<string>();
+            int start = 0;
+            for (int index = 1; index < text.Length; index++)
+            {
+                if (!char.IsUpper(text[index]) || !char.IsLetterOrDigit(text[index - 1]))
+                    continue;
+
+                words.Add(text.Substring(start, index - start));
+                start = index;
+            }
+
+            if (start < text.Length)
+                words.Add(text.Substring(start));
+
+            return words.Count == 0
+                ? text
+                : string.Join(" ", words).ToLowerInvariant();
         }
 
         private static AutomationBlockRef BoundTargetRef(AutomationGraphNode node)
@@ -7639,7 +8748,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationBlockRef target = node.Kind == AutomationNodeKind.InputGetter
                 ? link.Source
                 : link.Target;
-            return target?.Name ?? string.Empty;
+            return BlockRefCurrentName(target);
         }
 
         private void DrawLinkedTargetSuggestions(AutomationGraphNode node)
@@ -7696,7 +8805,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (AutomationLink link in _links)
             {
-                if (link == null || link.Kind != kind)
+                if (link == null || link.Kind != kind || !link.IsResolved)
                     continue;
 
                 AutomationBlockRef target = kind == AutomationLinkKind.InputToBreadboard
@@ -7715,71 +8824,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return;
 
             GUILayout.Label("Native Properties", DecorationEditorTheme.Mini);
-            foreach (string option in options)
-            {
-                if (string.IsNullOrWhiteSpace(option))
-                    continue;
-
-                bool selected = MatchesPropertyText(node.Property, option);
-                if (!GUILayout.Button(
-                        ShortText(option, 42),
-                        DecorationEditorTheme.ToolButton(selected),
-                        GUILayout.Height(EsuHudLayout.Scale(24f))))
-                {
-                    continue;
-                }
-
-                ApplyNativeNodeEdits(node, node.Label, option, node.ValueText);
-                MarkAutomationDirty();
-            }
-        }
-
-        private void DrawComponentPaletteButtons(bool inGraphCanvas)
-        {
-            DrawComponentButton(AutomationNodeKind.InputGetter, "Read Input", "Native block getter: read a linked block property.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.Forever, "Forever", "Native continuous evaluation container for action stacks.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.IfCondition, "If True", "Pass the then value when the incoming condition is true.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.IfLessThan, "Switch > Threshold", "Native Switch: pass the then value when the switcher signal is above threshold.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicNot, "Not", "Invert a boolean signal using a native Logic Gate.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicAnd, "And", "Output 1 when both boolean inputs are true.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicOr, "Or", "Output 1 when either boolean input is true.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicXor, "Xor", "Output 1 when exactly one boolean input is true.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicNand, "Nand", "Output 0 only when both boolean inputs are true.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicNor, "Nor", "Output 1 only when both boolean inputs are false.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.LogicXnor, "Xnor", "Output 1 when both boolean inputs match.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.CompareAboveThreshold, "Above Threshold", "Output 1 when the signal is above a native threshold.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.CompareBelowThreshold, "Below Threshold", "Output 1 when the signal is below a native threshold.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.Constant, "Constant", "Output a fixed number such as 30.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.Random, "Random", "Output a native random number inside a saved range.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.MathAdd, "Add", "Add a value to the incoming signal.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.MathSubtract, "Subtract", "Subtract a value from the incoming signal.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.MathMultiply, "Multiply", "Multiply the incoming signal by a value.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.MathMax, "Max", "Output the larger of two native inputs.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.MathMin, "Min", "Output the smaller of two native inputs.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.Clamp, "Clamp", "Limit the signal to a min/max range.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.Smooth, "Smooth", "Blend changes over time.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.OutputSetter, "Set Output", "Native block setter: apply a value to a linked block property.", inGraphCanvas);
-            DrawComponentButton(AutomationNodeKind.Comment, "Note", "Add a readable graph note.", inGraphCanvas);
-        }
-
-        private void DrawComponentButton(
-            AutomationNodeKind kind,
-            string label,
-            string tooltip,
-            bool inGraphCanvas)
-        {
-            bool enabled = inGraphCanvas && CanOpenCanvas;
-            bool previous = GUI.enabled;
-            GUI.enabled = previous && enabled;
+            bool open = node != null && _graphPropertyPickerNodeId == node.Id;
+            string property = string.IsNullOrWhiteSpace(node?.Property)
+                ? "Choose native property"
+                : node.Property;
             if (GUILayout.Button(
-                    new GUIContent(label, DecorationEditorIconCatalog.Get(NodeIcon(kind)), tooltip),
-                    enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
-                    GUILayout.Height(EsuHudLayout.Scale(38f))))
+                    new GUIContent(ShortMiddleText(property, 42), "Open native property choices."),
+                    DecorationEditorTheme.ToolButton(open),
+                    GUILayout.Height(EsuHudLayout.Scale(28f))))
             {
-                AddGraphNode(kind);
+                OpenGraphPropertyPicker(node);
             }
-
-            GUI.enabled = previous;
         }
 
         private void AddGraphNode(AutomationNodeKind kind)
@@ -7869,6 +8924,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 CloseGraphSlotMenu();
             if (_graphContextMenuNodeId == node.Id)
                 CloseGraphContextMenu();
+            if (_graphReadinessPopoverNodeId == node.Id)
+                CloseGraphReadinessPopover();
+            if (_graphPropertyPickerNodeId == node.Id)
+                CloseGraphPropertyPicker();
             if (_draggingNodeId == node.Id)
                 ResetCanvasInteractionState();
             RefreshGraphConnections(graph);
@@ -7928,9 +8987,47 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationBlockRef breadboard,
             bool force = false)
         {
-            AutomationGraph graph = SyncedGraphFor(breadboard);
+            if (breadboard == null)
+                return null;
+
+            // This wrapper must stay thin: GraphFor is the only graph creation path.
+            AutomationGraph graph = GraphFor(breadboard);
+            if (!breadboard.IsStillValidBreadboard)
+                return graph;
+
             SyncGraphFromNativeBreadboardIfNeeded(breadboard, graph, force);
+            NormalizeGraphNodeRects(graph);
             return graph;
+        }
+
+        private void NormalizeGraphNodeRects(AutomationGraph graph)
+        {
+            if (graph == null)
+                return;
+
+            bool moved = false;
+            foreach (AutomationGraphNode node in graph.Nodes)
+            {
+                if (node == null)
+                    continue;
+
+                bool valueFootprint = CanProduceValueBlock(node.Kind) && IsValueFootprint(node.Rect);
+                Rect normalized = NormalizeGraphNodeRect(node.Kind, node.Rect, valueFootprint);
+                bool changed =
+                    Mathf.Abs(node.Rect.x - normalized.x) > 0.001f ||
+                    Mathf.Abs(node.Rect.y - normalized.y) > 0.001f ||
+                    Mathf.Abs(node.Rect.width - normalized.width) > 0.001f ||
+                    Mathf.Abs(node.Rect.height - normalized.height) > 0.001f;
+                if (!changed)
+                    continue;
+
+                node.Rect = normalized;
+                SyncNativeNodeRect(node);
+                moved = true;
+            }
+
+            if (moved)
+                RefreshGraphConnections(graph, preserveRestoredNative: true);
         }
 
         private void HandleKeyboard()
@@ -7946,35 +9043,44 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 Input.GetKeyDown(KeyCode.Escape) &&
                 (_canvasInteraction != AutomationCanvasInteractionKind.None ||
                  _graphSlotMenuKind != AutomationGraphSlotMenuKind.None ||
-                 _graphContextMenuNodeId != 0))
+                 _graphContextMenuNodeId != 0 ||
+                 _graphReadinessPopoverNodeId != 0 ||
+                 _graphPropertyPickerNodeId != 0))
             {
                 CancelActiveCanvasInteraction(CurrentSelectedGraph(), restoreNode: true);
                 CloseGraphSlotMenu();
                 CloseGraphContextMenu();
+                CloseGraphReadinessPopover();
+                CloseGraphPropertyPicker();
                 AutomationBuilderInputScope.ClaimBuildInputForFrames();
                 return;
             }
 
+            if (_canvasOpen && GraphForegroundMenuOpen())
+                return;
+
             if (DecoLimitLifter.EsuInputState.IsEsuNumberShortcutDown(1))
             {
                 AutomationBuilderInputScope.ClaimBuildInputForFrames();
-                SetTool(AutomationBuilderTool.PlaceBreadboard);
+                SetTool(_tool == AutomationBuilderTool.LinkInput
+                    ? AutomationBuilderTool.Select
+                    : AutomationBuilderTool.LinkInput);
                 return;
             }
 
             if (DecoLimitLifter.EsuInputState.IsEsuNumberShortcutDown(2))
             {
                 AutomationBuilderInputScope.ClaimBuildInputForFrames();
-                SetTool(_tool == AutomationBuilderTool.LinkInput
-                    ? AutomationBuilderTool.LinkOutput
-                    : AutomationBuilderTool.LinkInput);
+                SetTool(_tool == AutomationBuilderTool.LinkOutput
+                    ? AutomationBuilderTool.Select
+                    : AutomationBuilderTool.LinkOutput);
                 return;
             }
 
             if (DecoLimitLifter.EsuInputState.IsEsuNumberShortcutDown(3))
             {
                 AutomationBuilderInputScope.ClaimBuildInputForFrames();
-                OpenCanvas();
+                CycleAutomationViewMode();
                 return;
             }
 
@@ -8019,11 +9125,16 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     return;
                 }
 
+                ClearSelection();
                 if (TryOpenAutomationContextMenu())
                 {
                     AutomationBuilderInputScope.ClaimBuildInputForFrames();
                     return;
                 }
+
+                SetTool(AutomationBuilderTool.Select);
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                return;
             }
 
             if (!Input.GetMouseButtonDown(0))
@@ -8164,8 +9275,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (Time.unscaledTime - _lastLinkNotificationTime > 0.2f)
             {
                 InfoStore.Add(kind == AutomationLinkKind.InputToBreadboard
-                    ? "Automation input staged: " + source.Name + " -> " + target.Name + "."
-                    : "Automation output staged: " + source.Name + " -> " + target.Name + ".");
+                    ? "Automation input staged: " + BlockRefCurrentName(source) + " -> " + BlockRefCurrentName(target) + "."
+                    : "Automation output staged: " + BlockRefCurrentName(source) + " -> " + BlockRefCurrentName(target) + ".");
                 _lastLinkNotificationTime = Time.unscaledTime;
             }
 
@@ -8274,9 +9385,24 @@ namespace DecoLimitLifter.AutomationBuilderMode
                    right.Source != null &&
                    left.Target != null &&
                    right.Target != null &&
-                   left.Source.SameBlock(right.Source) &&
-                   left.Target.SameBlock(right.Target) &&
+                   LinkBlockRefsMatch(left.Source, right.Source) &&
+                   LinkBlockRefsMatch(left.Target, right.Target) &&
                    string.Equals(left.Property, right.Property, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LinkBlockRefsMatch(
+            AutomationBlockRef left,
+            AutomationBlockRef right)
+        {
+            if (left == null || right == null)
+                return false;
+
+            if (left.SameBlock(right))
+                return true;
+
+            return !left.IsResolved &&
+                   !right.IsResolved &&
+                   string.Equals(left.StableKey, right.StableKey, StringComparison.Ordinal);
         }
 
         private void RemoveSelectedLink()
@@ -8303,11 +9429,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!TryResolvePointedBlock(out AutomationBlockRef blockRef, out _))
                 return false;
 
-            SelectBlock(blockRef, notify: false);
             RefreshNativeAutomationCache(force: true);
             _contextBlock = blockRef;
             _contextLink = FirstContextLink(blockRef);
-            _selectedLink = _contextLink;
             _viewModeMenuOpen = false;
             _contextMenuRect = AutomationContextRect(AutomationContextButtonCount(_contextLink != null));
             return true;
@@ -8691,7 +9815,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _selectedBlock = blockRef;
             _selectedLink = null;
             if (blockRef.IsBreadboard)
+            {
                 _selectedBreadboard = blockRef;
+                ForceRefreshSelectedBreadboardNativeState();
+            }
             if (notify)
                 InfoStore.Add("Automation Builder selected: " + blockRef.Name + ".");
         }
@@ -8893,7 +10020,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                 Color color = link.Color;
                 bool selected = ReferenceEquals(link, _selectedLink);
-                DecorationEditorOverlay.Arrow(start, end, new Color(color.r, color.g, color.b, selected ? 0.95f : 0.7f), selected ? 4.2f : 2.8f, 0.24f);
+                Color linkColor = new Color(color.r, color.g, color.b, selected ? 0.95f : 0.7f);
+                DrawAutomationLinkEndpointWireframes(link, linkColor, selected);
+                DecorationEditorOverlay.Arrow(start, end, linkColor, selected ? 4.2f : 2.8f, 0.24f);
                 DrawFlowPulse(start, end, color, link.Id);
             }
         }
@@ -8929,6 +10058,31 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if ((pulseEnd - start).magnitude > length)
                 pulseEnd = end;
             DecorationEditorOverlay.Line(pulseStart, pulseEnd, new Color(color.r, color.g, color.b, 1f), 5.2f);
+        }
+
+        private static void DrawAutomationLinkEndpointWireframes(
+            AutomationLink link,
+            Color color,
+            bool selected)
+        {
+            if (link == null)
+                return;
+
+            Color wireColor = new Color(color.r, color.g, color.b, selected ? 1f : 0.78f);
+            float width = selected ? 4f : 2.7f;
+            DrawLinkEndpointWireframe(link.Source, wireColor, width);
+            DrawLinkEndpointWireframe(link.Target, wireColor, width);
+        }
+
+        private static void DrawLinkEndpointWireframe(
+            AutomationBlockRef blockRef,
+            Color color,
+            float width)
+        {
+            if (blockRef?.Construct == null)
+                return;
+
+            DrawCellWire(blockRef.Construct, blockRef.Cell, color, width);
         }
 
         private void DrawSelectedBlockHighlight()
@@ -9253,9 +10407,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (kind == AutomationNodeKind.Forever)
                 return 244f;
             if (kind == AutomationNodeKind.InputGetter)
-                return 148f;
+                return 154f;
             if (kind == AutomationNodeKind.OutputSetter)
-                return 286f;
+                return 284f;
             if (kind == AutomationNodeKind.LogicNot)
                 return 178f;
             if (IsLogicGateKind(kind))
@@ -9295,6 +10449,41 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 : GraphNodeWidth;
         }
 
+        private static Rect NormalizeGraphNodeRect(
+            AutomationNodeKind kind,
+            Rect rect,
+            bool valueFootprint = false,
+            bool preserveCenter = false)
+        {
+            Vector2 center = rect.center;
+            float minWidth = valueFootprint
+                ? GraphValueNodeWidth
+                : GraphNodeWidthForKind(kind);
+            float minHeight = valueFootprint
+                ? BlockShape(kind) == AutomationBlockShape.Value
+                    ? GraphNodeHeightForKind(kind)
+                    : GraphNodeHeightForKind(AutomationNodeKind.Constant)
+                : GraphNodeHeightForKind(kind);
+
+            rect.width = Mathf.Max(minWidth, rect.width);
+            rect.height = Mathf.Max(minHeight, rect.height);
+            if (!valueFootprint &&
+                (kind == AutomationNodeKind.InputGetter ||
+                 kind == AutomationNodeKind.OutputSetter ||
+                 IsMathEvaluatorKind(kind)))
+            {
+                rect.width = Mathf.Max(minWidth, rect.width);
+                rect.height = minHeight;
+            }
+
+            if (preserveCenter)
+                rect.center = center;
+
+            rect.x = Mathf.Max(0f, rect.x);
+            rect.y = Mathf.Max(0f, rect.y);
+            return rect;
+        }
+
         private static bool AcceptsValueSlot(AutomationNodeKind kind)
         {
             return kind == AutomationNodeKind.IfLessThan ||
@@ -9328,14 +10517,64 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationNodeKind hostKind,
             AutomationValueSlotKind slotKind)
         {
-            if (node == null || !CanProduceValueBlock(node.Kind))
+            if (node == null)
+                return false;
+
+            return CanNodeKindSnapIntoValueSlot(node.Kind, hostKind, slotKind);
+        }
+
+        private static bool CanNodeKindSnapIntoValueSlot(
+            AutomationNodeKind nodeKind,
+            AutomationNodeKind hostKind,
+            AutomationValueSlotKind slotKind)
+        {
+            if (!CanProduceValueBlock(nodeKind))
                 return false;
 
             if (CanFeedSignalValueSlot(hostKind, slotKind))
                 return true;
 
-            return node.Kind == AutomationNodeKind.Constant &&
+            return nodeKind == AutomationNodeKind.Constant &&
                    IsConstantOnlyValueSlot(hostKind, slotKind);
+        }
+
+        private bool ShouldDrawValueSocketHint(
+            AutomationGraph graph,
+            AutomationGraphNode host,
+            AutomationValueSlotKind slotKind)
+        {
+            if (host == null)
+                return false;
+
+            if (SnappedValueForHost(graph, host, slotKind) != null)
+                return true;
+
+            if (IsStackFedPrimaryValueSlot(graph, host, slotKind))
+                return false;
+
+            if (IsMathEvaluatorKind(host.Kind) &&
+                slotKind == MathOperandSlotKind(host.Kind))
+            {
+                return IsDraggingValueBlockForSlot(graph, host.Kind, slotKind);
+            }
+
+            return true;
+        }
+
+        private bool IsDraggingValueBlockForSlot(
+            AutomationGraph graph,
+            AutomationNodeKind hostKind,
+            AutomationValueSlotKind slotKind)
+        {
+            if (_draggingPaletteBlock)
+                return CanNodeKindSnapIntoValueSlot(_draggingPaletteKind, hostKind, slotKind);
+
+            if (graph == null || _draggingNodeId == 0)
+                return false;
+
+            AutomationGraphNode dragged = graph.Nodes.FirstOrDefault(node => node.Id == _draggingNodeId);
+            return dragged != null &&
+                   CanNodeKindSnapIntoValueSlot(dragged.Kind, hostKind, slotKind);
         }
 
         private static bool CanFeedSignalValueSlot(
@@ -9581,7 +10820,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 return new Rect(
                     hostRect.x + EsuHudLayout.Scale(58f),
-                    hostRect.y + EsuHudLayout.Scale(144f),
+                    hostRect.y + EsuHudLayout.Scale(172f),
                     width,
                     height);
             }
@@ -9592,14 +10831,14 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 {
                     return new Rect(
                         hostRect.x + EsuHudLayout.Scale(50f),
-                        hostRect.y + EsuHudLayout.Scale(76f),
+                        hostRect.y + EsuHudLayout.Scale(92f),
                         width,
                         height);
                 }
 
                 return new Rect(
                     hostRect.x + EsuHudLayout.Scale(50f),
-                    hostRect.y + EsuHudLayout.Scale(142f),
+                    hostRect.y + EsuHudLayout.Scale(160f),
                     width,
                     height);
             }
@@ -9724,6 +10963,39 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return trimmed.Substring(0, maxCharacters);
 
             return trimmed.Substring(0, maxCharacters - 3) + "...";
+        }
+
+        private static string ShortMiddleText(string text, int maxCharacters)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string trimmed = text.Trim();
+            if (trimmed.Length <= maxCharacters)
+                return trimmed;
+
+            if (maxCharacters <= 3)
+                return trimmed.Substring(0, maxCharacters);
+
+            int remaining = maxCharacters - 3;
+            int leading = Math.Max(1, (remaining + 1) / 2);
+            int trailing = Math.Max(1, remaining - leading);
+            if (leading + trailing >= trimmed.Length)
+                return trimmed;
+
+            return trimmed.Substring(0, leading) + "..." + trimmed.Substring(trimmed.Length - trailing, trailing);
+        }
+
+        private static void RegisterFullTextTooltip(Rect rect, string fullText, string displayText)
+        {
+            if (string.IsNullOrWhiteSpace(fullText))
+                return;
+
+            string trimmed = fullText.Trim();
+            if (string.Equals(trimmed, displayText, StringComparison.Ordinal))
+                return;
+
+            EsuCursorTooltip.Register(rect, trimmed);
         }
 
         private static bool MatchesPropertyText(string current, string candidate)
@@ -9993,8 +11265,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (link == null)
                 return "Linked block";
             return link.Kind == AutomationLinkKind.InputToBreadboard
-                ? "Read " + (link.Source?.Name ?? "linked block")
-                : "Set " + (link.Target?.Name ?? "linked block");
+                ? "Read " + BlockRefCurrentName(link.Source)
+                : "Set " + BlockRefCurrentName(link.Target);
         }
 
         private sealed class AutomationBlockRef
@@ -10003,13 +11275,16 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 AllConstruct construct,
                 Vector3i cell,
                 string name,
-                bool isBreadboard)
+                bool isBreadboard,
+                string stableKey = null)
             {
                 Construct = construct;
                 Cell = cell;
                 Name = string.IsNullOrWhiteSpace(name) ? "Block" : name;
                 IsBreadboard = isBreadboard;
-                StableKey = ConstructKey(construct) + ":" + FormatCell(cell);
+                StableKey = string.IsNullOrWhiteSpace(stableKey)
+                    ? ConstructKey(construct) + ":" + FormatCell(cell)
+                    : stableKey;
             }
 
             internal AllConstruct Construct { get; }
@@ -10021,6 +11296,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             internal bool IsBreadboard { get; }
 
             internal string StableKey { get; }
+
+            internal bool IsResolved => Construct != null;
 
             internal bool IsStillValidBreadboard
             {
@@ -10041,11 +11318,28 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
 
             internal bool SameBlock(AutomationBlockRef other) =>
+                ReferenceEquals(this, other) ||
                 other != null &&
+                Construct != null &&
+                other.Construct != null &&
                 ReferenceEquals(Construct, other.Construct) &&
                 Cell.x == other.Cell.x &&
                 Cell.y == other.Cell.y &&
                 Cell.z == other.Cell.z;
+
+            internal static AutomationBlockRef Unresolved(
+                string name,
+                string stableKey)
+            {
+                return new AutomationBlockRef(
+                    null,
+                    default(Vector3i),
+                    name,
+                    isBreadboard: false,
+                    stableKey: string.IsNullOrWhiteSpace(stableKey)
+                        ? "unresolved:" + (name ?? string.Empty)
+                        : stableKey);
+            }
 
             internal bool TryWorldCenter(out Vector3 world)
             {
@@ -10133,6 +11427,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             internal string NativeStatus { get; }
 
             internal bool IsStaged => NativeComponent == null;
+
+            internal bool IsResolved => Source?.IsResolved == true && Target?.IsResolved == true;
 
             internal void SetProperty(string property)
             {
@@ -10511,14 +11807,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 string value)
             {
                 int index = Nodes.Count;
-                Nodes.Add(new AutomationGraphNode(
-                    _nextNodeId++,
+                Rect rect = NormalizeGraphNodeRect(
                     kind,
                     new Rect(
                         StartX + (index % 2) * (GraphNodeWidth + 46f),
                         StartY + index * StepY,
-                        GraphNodeWidth,
-                        GraphNodeHeight),
+                        GraphNodeWidthForKind(kind),
+                        GraphNodeHeightForKind(kind)));
+                Nodes.Add(new AutomationGraphNode(
+                    _nextNodeId++,
+                    kind,
+                    rect,
                     label,
                     property,
                     value));
@@ -10530,9 +11829,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 Rect nodeRect = rect;
                 if (nodeRect.width <= 0f)
-                    nodeRect.width = GraphNodeWidth;
+                    nodeRect.width = GraphNodeWidthForKind(kind);
                 if (nodeRect.height <= 0f)
-                    nodeRect.height = GraphNodeHeight;
+                    nodeRect.height = GraphNodeHeightForKind(kind);
+                nodeRect = NormalizeGraphNodeRect(kind, nodeRect);
 
                 var node = new AutomationGraphNode(
                     _nextStagedNodeId--,
