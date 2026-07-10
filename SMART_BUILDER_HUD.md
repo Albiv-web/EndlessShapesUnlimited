@@ -11,15 +11,20 @@ This note tracks the current Smart Block Builder workflow and the HUD responsibi
 - Use **Rotate** or **Yaw** to turn the selected preview piece in 90-degree steps.
 - Use the scene list or click a preview piece in the world to select between pieces.
 - Right click a preview piece to open the context menu for Select, Duplicate, Delete, Yaw, and Flip.
+- The context menu owns foreground input even when it overlaps panel fields or
+  buttons; background controls remain disabled until the menu closes.
 - **Apply** commits all preview pieces atomically. **Cancel** clears the whole scene.
 - Right click cancels the current Add mode or active drag only; it does not clear the scene.
 
 ## HUD Areas
 
 - **Top toolbar:** mode switch, Add/Move/Scale/Rotate, draw plane, occupancy, material, symmetry, notifications/log, Undo/Redo, Yaw/Flip, Apply/Cancel/Close.
-- **Right palette:** shape selection, down-slope length buttons (**1m**, **2m**, **3m**, **4m**), selected-piece actions, and scene list.
+- **Right palette:** full-height Shapes/Generators browsing, including shape
+  selection and down-slope length buttons (**1m**, **2m**, **3m**, **4m**).
 - **Bottom strip:** current state, readable handle modes (**Gizmo**, **Face**, **Edge**, **Corner**), preview mode (**Wireframe** or **Material**), and down-slope support mode.
-- **Left panel:** material/tool/plane/occupancy/symmetry readout and selected-piece metrics.
+- **Left panel:** material/tool/plane/occupancy/symmetry readout, then the Scene
+  list above scrollable Selected-piece metrics and actions. Both splitters are
+  draggable and retain their ratios when Smart Builder reopens.
 
 ## Add, Scale, Move, Cancel
 
@@ -55,4 +60,9 @@ This note tracks the current Smart Block Builder workflow and the HUD responsibi
 - Place a full-width down slope from a wide block face and confirm committed lanes line up with the source width.
 - Test **Gizmo**, **Face**, **Edge**, and **Corner** from the bottom strip.
 - Test **Wireframe** and **Material** preview modes.
+- Confirm Scene and Selected live only on the left, selecting a Scene row
+  refreshes the actions below it, and the right browser uses the full height.
+- At 1366x768 with the effective 1.44x scale and at 1920x1080 with 2x scale,
+  confirm both panels and the left Apply/Cancel footer stay between the toolbar
+  and status strip; every overview, Scene, and Selected body remains reachable.
 - Right click a preview piece and confirm the context menu can Duplicate, Delete, Yaw, and Flip without clearing the scene.

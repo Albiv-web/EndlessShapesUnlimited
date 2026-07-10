@@ -70,6 +70,10 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <Target Name="BuildCurrentModAssemblyForVerification"

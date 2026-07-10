@@ -19,7 +19,7 @@ https://discord.gg/6Us9UamUPx
 Move, rotate, scale, paint, retether, select, and edit decorations directly on your craft.
 
 [b]Surface Builder[/b]
-Create decoration surfaces, paths, circles, cones, spheres, partial shapes, and other generated decoration layouts.
+Create decoration surfaces, paths, circles, quads, polygons, tubes, cones, spheres, partial shapes, and other generated decoration layouts.
 
 [b]Smart Block Builder[/b]
 Preview block shapes before placing them. Move, rotate, scale, change materials, and apply when ready.

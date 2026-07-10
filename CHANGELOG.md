@@ -26,16 +26,22 @@ GitHub history, but short enough that it can be copied into release notes.
   controls, matching Decoration Edit Mode and Surface Builder behavior.
 - Added a dedicated Surface Builder coordinate workbench in the left panel.
   Points, edges, faces, and generator path points/centers expose construct-local
-  X/Y/Z text fields and 0.001 m sliders. Sliders update geometry live as one
-  undoable drag while exact text remains staged behind Apply text.
+  X/Y/Z text fields and 0.001 m sliders. The shelf defaults collapsed; sliders
+  update geometry live as one undoable drag, and Enter atomically commits exact
+  text without a separate Apply button.
 - Added live `-step` / `+step` controls on both sides of every coordinate
-  slider. Right-clicking either button opens a per-axis custom step editor with
-  common presets including 1/8, 1/4, and 1/2 metre values; X/Y/Z steps persist
-  in the ESU profile.
+  slider. Each button displays its configured amount. Right-clicking either
+  button opens a per-axis custom step editor with common presets including 1/8,
+  1/4, and 1/2 metre values; X/Y/Z steps persist in the ESU profile.
 - Added profile-persistent X/Y/Z Surface slider ranges. Each axis defaults to
   `-10..+10`, supports validated custom limits and reset, and temporarily
   expands for out-of-range selected or staged values without clamping geometry
   or changing the saved preference.
+- Added Quad, Polygon, and Tube generators to Surface Builder Extra Tools.
+  Quad exposes independent width/height, Polygon exposes radius and 3-12 sides,
+  and Tube sweeps configurable rings and rails along a multi-point path. The
+  three tools share the existing mesh, strut diameter, paint, material, anchor,
+  symmetry, preview, placement, history, and rollback paths.
 - Added shared profile-backed gizmo settings to Decoration Edit, Surface
   Builder, and Smart Builder. Move/Rotate/Scale size, thickness, and click area
   can be adjusted from the bottom-left gear without dirtying the craft or
@@ -98,6 +104,13 @@ GitHub history, but short enough that it can be copied into release notes.
   added a persisted draggable divider for resizing the Draft and Coordinates
   shelves. The automatic split now accounts for the draft list's own viewport
   cap so unused list space is not reserved twice.
+- Surface Coordinates now collapses to a persistent bottom header with its
+  Show control instead of disappearing. The Draft list expands into the
+  released space, while the open divider preserves the real minimum height of
+  Draft controls and no longer continuously rescales the list viewport.
+- Hovering an A/B/C coordinate header or slider row now highlights that row and
+  draws a high-contrast marker around the exact bound Surface or generator
+  point on the construct.
 - Move, scale, point, decoration-anchor, and shared-anchor gizmos now use the
   same full-shaft picker and hover preview as their rendered geometry. Tool size
   changes affect display and picking together while drag projection remains
@@ -105,10 +118,16 @@ GitHub history, but short enough that it can be copied into release notes.
 - Renamed the Decoration Edit context action from `Duplicate` to `Duplicate in
   place` and routed it through the same transactional one-item creation path as
   whole-selection paste without overwriting either clipboard.
-- Expanded the Decoration cursor menu with selection-aware Move, Rotate, Scale,
-  native settings Copy/Paste, Copy selection, Duplicate selection, and Delete
-  selection actions. Group duplication uses deterministic manager ordering;
+- Trimmed the Decoration cursor menu by replacing `Copy selection` with an
+  active-state `Focus deco` toggle above native settings Copy/Paste. Whole-
+  selection copying remains available from the Inspector and keyboard
+  shortcuts. Group duplication uses deterministic manager ordering;
   group deletion preflights all explicit and mirrored targets before mutation.
+- Decoration Edit's configured native Copy/Paste shortcuts (`Ctrl+C` / `Ctrl+V`
+  by default) are now selection-aware: an explicit multi-selection copies and
+  pastes whole decorations in place, while a single selection retains native
+  settings clipboard behavior. `Ctrl+Shift+C/V` remain explicit whole-selection
+  shortcuts.
 - Smart Builder down-slope scale handles can stretch along the cardinal ramp
   run while preserving the anchored first slope cell.
 - ESU mode handoff rendering now lets the newly opened target editor claim the
@@ -116,6 +135,18 @@ GitHub history, but short enough that it can be copied into release notes.
 - Smart Builder now switches the right panel between full `Shapes` and
   `Generators` pages, so procedural generators get the full browser area
   instead of being squeezed under the shape palette.
+- Smart Builder now keeps the `Scene` list and scrollable `Selected` piece
+  actions in the left panel, with Scene above Selected and independent
+  persisted split dividers. The right Shapes/Generators browser now uses its
+  full panel height.
+- Surface Builder now places `Draw` first with the right-panel Extra Tools
+  creation buttons instead of beside the left Draft list. Draw and generator
+  buttons now have mutually exclusive active highlighting.
+- Right-click context menus now own a modal foreground input layer across
+  Decoration Edit, Surface Builder, Smart Builder, and Automation Builder.
+  Controls behind a menu are rendered disabled and cannot consume its clicks,
+  wheel, keyboard, or camera input; Automation graph fields likewise yield to
+  graph popups.
 - Surface Builder previews now draw the actual planned decoration meshes using
   the selected material and paint color before Apply, while keeping draft
   wireframes and points visible for editing.
@@ -161,6 +192,32 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Fixed
 
+- Fixed Tube symmetry rebuilding reflected cross-sections with a different
+  winding. Symmetry now mirrors one validated segment batch exactly and applies
+  the 100,000-segment limit to aggregate unique output across all variants.
+- Fixed near-180-degree Tube turns producing crossed rails. Consecutive path
+  directions with a dot product of `-0.999` or less now reject the offending
+  point, and required Quad, Polygon, and Tube edges at or below 0.000001 m fail
+  atomically instead of leaving partial geometry.
+- Fixed Quad uniform scaling drifting from its starting aspect ratio and allowed
+  both dimensions to share one snapped, minimum-clamped scale factor.
+- Fixed modal world and Automation graph popups leaking clicks, wheel, keyboard,
+  divider drags, and console input into disabled background controls.
+- Fixed high HUD scales preserving a Smart Builder minimum height larger than
+  the toolbar-to-status budget, which could move Apply/Cancel off-screen.
+- Fixed viewport right-click in Decoration Edit consuming the click to disable
+  Box mode before the selected decoration group could open its action menu.
+  Completed Box selections now get the full group-aware menu first; active Box
+  drags still cancel safely and empty-space right-click retains the Box-off
+  fallback. The projected group gizmo and selected bounds also act as safe
+  context targets when no individual decoration center is close enough.
+- Fixed right-clicking a selected Outliner or Selected anchor row running the
+  row's normal primary-click handler first and collapsing the multi-selection.
+  Secondary clicks are now consumed before normal row selection.
+- Fixed right-clicking a Surface coordinate `-step` / `+step` button running
+  its normal increment/decrement action instead of opening the step editor.
+- Fixed extreme Coordinates divider positions allowing Draft list controls and
+  hint rows to overflow into the coordinate shelf.
 - Fixed Automation Builder links not persisting through mode exits by creating
   vanilla-compatible getter/setter components immediately on the selected
   breadboard.
@@ -278,10 +335,10 @@ GitHub history, but short enough that it can be copied into release notes.
   the active release line at `1.0.7`.
 - Added a local `*.log` ignore rule so verifier logs do not show up as
   accidental repository changes.
-- Expanded Release verification to 541 checks, including Surface coordinate
-  range/step normalization and fallback, temporary slider expansion, atomic
-  live updates, full-shaft gizmo picking, transactional clipboard paths, and
-  list-opened multi-selection decoration actions.
+- Expanded Release verification to 574 checks, including strict ordering,
+  cached Surface coordinate bindings, Tube mirror/cap/reversal boundaries,
+  modal event ownership, responsive Smart panel geometry, transactional
+  clipboard paths, and list-opened multi-selection decoration actions.
 
 ## 1.0.6 - 2026-07-04
 

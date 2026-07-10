@@ -66,25 +66,54 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static bool ContainsMouse(Vector2 mouse) =>
             _open && _rect.Contains(mouse);
 
-        internal static void Draw()
+        internal static void Draw(bool interactive = true)
         {
             if (!_open)
                 return;
 
             EnsureRect();
-            HandleDrag();
-            HandleResize();
-            DrawPanel(_rect);
-            _rect = ClampRect(_rect);
-            EsuHudLayout.DrawResizeGrip(_rect, leftEdge: false);
-            EsuCursorTooltip.Register(HeaderDragRect(), "Drag to move the ESU console.");
-            EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(_rect, leftEdge: false), "Drag to resize the ESU console.");
+            bool previousEnabled = GUI.enabled;
+            bool canInteract = interactive && previousEnabled;
+            Vector2 preservedScroll = _scroll;
+            if (!canInteract)
+                CancelPointerInteraction();
+
+            try
+            {
+                GUI.enabled = canInteract;
+                if (canInteract)
+                {
+                    HandleDrag();
+                    HandleResize();
+                }
+
+                DrawPanel(_rect);
+                if (!canInteract)
+                    _scroll = preservedScroll;
+                _rect = ClampRect(_rect);
+                EsuHudLayout.DrawResizeGrip(_rect, leftEdge: false);
+                if (canInteract)
+                {
+                    EsuCursorTooltip.Register(HeaderDragRect(), "Drag to move the ESU console.");
+                    EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(_rect, leftEdge: false), "Drag to resize the ESU console.");
+                }
+            }
+            finally
+            {
+                GUI.enabled = previousEnabled;
+            }
         }
 
-        internal static void DrawForegroundWindow()
+        internal static void DrawForegroundWindow(bool interactive = true)
         {
             if (!_open)
                 return;
+
+            if (!interactive || !GUI.enabled)
+            {
+                Draw(interactive: false);
+                return;
+            }
 
             EnsureRect();
             HandleDrag();
@@ -109,6 +138,12 @@ namespace DecoLimitLifter.DecorationEditMode
             _rect = ClampRect(_rect);
             EsuCursorTooltip.Register(HeaderDragRect(), "Drag to move the ESU console.");
             EsuCursorTooltip.Register(EsuHudLayout.ResizeGripRect(_rect, leftEdge: false), "Drag to resize the ESU console.");
+        }
+
+        private static void CancelPointerInteraction()
+        {
+            _dragging = false;
+            _resizing = false;
         }
 
         private static void EnsureRect()
@@ -143,8 +178,11 @@ namespace DecoLimitLifter.DecorationEditMode
         private static void HandleResize()
         {
             Event current = Event.current;
-            if (current == null)
+            if (!GUI.enabled || current == null)
+            {
+                _resizing = false;
                 return;
+            }
 
             if (_dragging)
                 return;
@@ -180,8 +218,11 @@ namespace DecoLimitLifter.DecorationEditMode
         private static void HandleDrag()
         {
             Event current = Event.current;
-            if (current == null)
+            if (!GUI.enabled || current == null)
+            {
+                _dragging = false;
                 return;
+            }
 
             if (_resizing)
                 return;

@@ -34,9 +34,10 @@ release pass.
 9. Shift-click and Ctrl-click rows in the Outliner and Selected anchor panel;
    confirm additive/range selection behaves like a normal list. Right-click a
    selected row and confirm the group stays selected with that row promoted to
-   primary; exercise Copy/Paste settings, Copy selection, Duplicate selection,
-   and Delete selection. Right-click an unselected row and confirm it becomes
-   the only target.
+   primary; toggle Focus deco and confirm its button lights, then exercise
+   Copy/Paste settings, Duplicate selection, and Delete selection. Right-click
+   an unselected row and confirm it becomes the only target. Use the Inspector
+   or keyboard shortcuts for whole-selection copy/paste.
 10. Paint a multi-selected group from the swatches, typed color field, and paint
     tool; confirm the whole group changes in one undoable step.
 11. Move, rotate, axis-scale, and uniform-scale the selected group with each
@@ -45,7 +46,9 @@ release pass.
     and confirm the entire group scales around the selected pivot.
 13. Toggle symmetry and confirm mirrored decoration preview/anchors are visible,
     mirrored scale/rotation match, and deleting one side deletes its counterpart.
-14. Open Surface Builder.
+14. Open Surface Builder. Confirm Draw is absent beside the left Draft header,
+    appears first in right-side Extra Tools, and clears every generator-button
+    highlight when selected. Selecting a generator must clear Draw's highlight.
 15. Build triangles on a normal block, a spin block, and an angled subobject.
 16. Toggle normal flip and confirm preview and applied decorations match.
 17. Use Create Face, Same anchor, and right-click context actions; confirm they
@@ -412,9 +415,22 @@ coverage, not proof that the current editor is complete.
 - Right-click selected decoration rows in both Outliner and Selected anchor.
   Confirm the cursor menu opens at the row, preserves the whole explicit group,
   promotes the clicked row to primary, and offers Select only this, Move,
-  Rotate, Scale, Copy/Paste settings, Copy selection, Duplicate selection, and
-  Delete selection. Right-clicking an unselected row must isolate it; construct
-  headers and stale/removed rows must never open actionable menus.
+  Rotate, Scale, active-state Focus deco, Copy/Paste settings, Duplicate
+  selection, and Delete selection. Copy selection must remain absent from this
+  compact menu but available in Inspector and through shortcuts. Right-clicking
+  an unselected row must isolate it; construct headers and stale/removed rows
+  must never open actionable menus.
+- Leave Box mode active after selecting several viewport decorations, then
+  right-click a selected decoration center. Confirm the group menu opens and
+  every group action retains the explicit selection where appropriate. Repeat
+  from the group gizmo between centers and inside the cyan group bounds. An
+  active unfinished Box drag must still cancel safely; right-clicking empty
+  space may disable Box mode without changing the completed selection.
+- Open every Decoration/Surface, Smart Builder, and Automation right-click menu
+  directly over a text or number field. Click each overlapping menu row,
+  especially Delete, and confirm only the foreground action runs: the field
+  behind it must not focus, edit, submit, scroll, or move the camera. Repeat for
+  Automation graph-node context actions over editable node values.
 - Duplicate a shuffled multi-selection from the row menu and verify stable
   primary-first manager ordering, exact in-place clones, selection of the new
   group, no clipboard replacement, and one-step undo/redo. Delete a group with
@@ -425,8 +441,10 @@ coverage, not proof that the current editor is complete.
   with FtD's native decoration clipboard and preserves every target tether and
   runtime identity. Test a valid native decoration offset beyond +/-10 m.
 - Box-select decorations in a deliberately non-sorted order. Use
-  `Ctrl+Shift+C`, then `Ctrl+Shift+V`; confirm exact in-place clones are created
+  `Ctrl+C`, then `Ctrl+V`; confirm exact in-place clones are created
   primary-first, selected as one Move group, and repeated paste remains usable.
+  Repeat with explicit `Ctrl+Shift+C/V`. Copy one decoration with `Ctrl+C` and
+  confirm the next `Ctrl+V` returns to native settings paste instead of cloning.
 - Confirm whole-selection paste rejects a different main/subconstruct, a
   missing tether block, Focus deco, placement, active drags, box selection,
   prompts, and active text fields without creating anything.
@@ -458,12 +476,35 @@ coverage, not proof that the current editor is complete.
 
 ## Surface Builder
 
+- Confirm Draw is the first Extra Tools button and no longer appears beside the
+  left Draft header. Switching between Draw and every generator must leave only
+  the selected creation button highlighted; transform tools must not leave a
+  stale Draw/generator highlight. Confirm all three four-column rows fill the
+  panel width and include Quad, Polygon, and Tube.
+- Place and rotate a Quad on several craft faces, edit width and height
+  independently, then use uniform Scale and verify its aspect ratio remains
+  stable. Preview/place with nearest and same-anchor modes, symmetry, undo, and
+  redo; reject zero, negative, non-finite, and overflowed dimensions atomically.
+- Place Polygons with 3 and 12 sides and several intermediate values. Confirm
+  radius, rotation, center movement, mesh/strut diameter, paint, material,
+  symmetry, preview/place, undo, and redo all use the normal generator paths;
+  values outside 3-12 must normalize or reject without partial geometry.
+- Draw straight and bent Tube paths with 3, 8, and 64 sides. Confirm tube
+  diameter changes the ring radius, each path point has one ring, adjacent rings
+  have matching rails without sudden frame flips, moved/typed path points rebuild
+  safely, and Preview/Place remain transactional. Reject exact and near
+  backtracks at the offending point, including a direction dot product exactly
+  `-0.999`. Verify 781 points x 64 sides succeeds at 99,904 segments and 782 x
+  64 rejects, then confirm the 100,000-segment pre-allocation guard counts
+  aggregate unique output across two- and eight-variant symmetry.
+
 - Create triangle faces from three craft-surface points.
 - Select a point, edge, and face and use the **Coordinates** shelf in the left
-  Surface Builder panel. Confirm its action header
-  stays visible, its coordinate body scrolls, exact text stages until Apply
-  text, comma/point decimals work, values normalize to 0.001 m, shared point
-  indexes update connected faces, and one Apply produces one undo step. Confirm the
+  Surface Builder panel. Confirm it defaults collapsed, its action header stays
+  visible, its coordinate body scrolls, and no Apply text button remains. Exact
+  text stages until Enter, comma/point decimals work, values normalize to 0.001
+  m, shared point indexes update connected faces, and one Enter commit produces
+  one undo step. Confirm the
   bottom strip keeps its existing height and snap controls and only points to
   the left-panel editor.
 - Edit and persist independent X/Y/Z slider ranges, then restart FtD and verify
@@ -479,20 +520,27 @@ coverage, not proof that the current editor is complete.
   trigger a Surface build action. Revert must restore the target's selection-time
   coordinates without reverting unrelated Surface settings.
 - Confirm the header reads only **Coordinates**, New triangle is absent, Hide
-  gives the full workspace to Draft, and Show coords restores the editor. Drag
-  the divider in both directions, reopen the editor, and verify the customized
-  split persists while both shelves retain usable minimum heights. With the
-  automatic split, the Coordinates header should follow the final draft hint
-  without the previous empty list-sized gap.
+  collapses it to a persistent bottom **Coordinates | Show** header, and the
+  Draft list expands through all released space. Show must restore the editor.
+  Drag the divider in both directions, reopen the editor, and verify the
+  customized split persists while Draft controls never overlap Coordinates and
+  the draft list stays stable until the real minimum workspace is reached.
+  With the automatic split, the Coordinates header should follow the final
+  draft hint without the previous empty list-sized gap.
 - Click the `-step` and `+step` buttons around every axis slider and verify each
-  click updates an existing point live as one undo action. Right-click either
-  button, test custom comma/point values plus 0.001, 0.01, 0.05, 0.1, 1/8, 1/4,
+  button visibly includes the current configured step and each click updates an
+  existing point live as one undo action. Right-click either
+  button and confirm it opens the chooser without changing the coordinate;
+  test custom comma/point values plus 0.001, 0.01, 0.05, 0.1, 1/8, 1/4,
   1/2, and 1 presets, then restart FtD to confirm independent X/Y/Z persistence.
   Reject zero, sub-0.001, non-finite, overflow, and greater-than-1000 m steps
   without changing the saved preference or craft history.
 - Select every generator path point and shape center and repeat typed coordinate
   edits; confirm the shape basis is preserved and previews invalidate only on a
   real successful change.
+- Hover each A/B/C vector header and each X/Y/Z slider row. Confirm that row
+  highlights and only its bound Surface/generator point gains the bright world
+  marker, including faces with three different points.
 - Preview, place, delete, and bridge surfaces.
 - Test right-click menus for point, edge, and face targets.
 - Test X/Y/Z symmetry and multi-axis symmetry.
@@ -503,6 +551,15 @@ coverage, not proof that the current editor is complete.
 ## Smart Block Builder Baseline
 
 - Open Smart Builder from build mode and from ESU mode switching.
+- Confirm Scene and Selected appear only in the left panel, Scene is above
+  Selected, both bodies scroll independently, and their actions still target
+  the active preview piece.
+- Drag both left-panel dividers, close and reopen Smart Builder, and confirm the
+  split ratios persist. Confirm the right Shapes/Generators browser uses the
+  full available height without duplicate Scene or Selected shelves.
+- Repeat at 1366x768 with effective 1.44x scaling and 1920x1080 at 2x. Both
+  panels, the Apply/Cancel footer, and every scrollable body must remain on
+  screen; split rectangles must stay ordered, nonnegative, and nonoverlapping.
 - Select material, draw plane, occupancy mode, symmetry, handles, and preview mode.
 - Place an independent shape on empty construct space.
 - Snap a new shape to an existing construct block.

@@ -388,6 +388,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private Rect _canvasRect = s_canvasRect;
         private Rect _lastCanvasPaletteRect;
         private Rect _lastCanvasWorkspaceRect;
+        private Rect _lastCanvasPlanRect;
         private bool _draggingLeftPanel;
         private bool _draggingRightPanel;
         private bool _draggingCanvasPanel;
@@ -472,6 +473,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private Rect _graphPropertyPickerRect;
         private int _graphPropertyPickerNodeId;
         private Vector2 _graphPropertyPickerScroll;
+        private bool _graphForegroundInputBlockedForEvent;
+        private bool _deferGraphForegroundDraw;
         private bool _suppressNextCanvasRightClick;
         private bool _graphSlotConsumedInput;
         private AutomationGraphSlotMenuKind _graphSlotMenuKind = AutomationGraphSlotMenuKind.None;
@@ -577,6 +580,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ResetCanvasInteractionState();
             CloseGraphSlotMenu();
             CloseGraphContextMenu();
+            CloseGraphReadinessPopover();
             CloseGraphPropertyPicker();
             _graphEventMousePositionValid = false;
             _viewModeMenuOpen = false;
@@ -602,6 +606,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ResetCanvasInteractionState();
             CloseGraphSlotMenu();
             CloseGraphContextMenu();
+            CloseGraphReadinessPopover();
             CloseGraphPropertyPicker();
             _graphEventMousePositionValid = false;
             _viewModeMenuOpen = false;
@@ -621,6 +626,20 @@ namespace DecoLimitLifter.AutomationBuilderMode
             UpdateActiveCanvasPointerInteraction();
             ClaimActiveCanvasInteractionInput();
             RefreshNativeAutomationCache();
+            if (_contextBlock != null && !_canvasOpen && !_closePromptOpen)
+            {
+                AutomationBuilderInputScope.SetMouseOverUi(true);
+                if (Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.0001f)
+                    AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
+                else
+                {
+                    AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                    AutomationBuilderInputScope.ClaimCameraInputForFrames();
+                }
+                _viewModes.Tick(_viewMode);
+                DrawWorldPreview();
+                return;
+            }
             HandleKeyboard();
             HandleMouse();
             CompleteCanvasInteractionIfReleased();
@@ -660,6 +679,19 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         internal bool DismissCanvas()
         {
+            if (_canvasOpen && DismissGraphForeground())
+                return true;
+
+            if (_contextBlock != null)
+            {
+                CloseAutomationContextMenu();
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                AutomationBuilderInputScope.ClaimCameraInputForFrames();
+                DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+                InfoStore.Add("Automation context menu closed.");
+                return true;
+            }
+
             if (_closePromptOpen)
             {
                 CloseAutomationClosePrompt();
@@ -681,8 +713,29 @@ namespace DecoLimitLifter.AutomationBuilderMode
             CancelActiveCanvasInteraction(CurrentSelectedGraph(), restoreNode: true);
             CloseGraphSlotMenu();
             CloseGraphContextMenu();
+            CloseGraphReadinessPopover();
             CloseGraphPropertyPicker();
             _canvasOpen = false;
+        }
+
+        private bool DismissGraphForeground()
+        {
+            if (_graphPropertyPickerNodeId != 0)
+                CloseGraphPropertyPicker();
+            else if (_graphSlotMenuKind != AutomationGraphSlotMenuKind.None)
+                CloseGraphSlotMenu();
+            else if (_graphContextMenuNodeId != 0)
+                CloseGraphContextMenu();
+            else if (_graphReadinessPopoverNodeId != 0)
+                CloseGraphReadinessPopover();
+            else
+                return false;
+
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            AutomationBuilderInputScope.ClaimCameraInputForFrames();
+            DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+            InfoStore.Add("Automation graph popup closed.");
+            return true;
         }
 
         internal void RequestClose()
@@ -703,6 +756,75 @@ namespace DecoLimitLifter.AutomationBuilderMode
         }
 
         private void DrawGui(bool interactive)
+        {
+            bool contextMenuWasOpen = interactive &&
+                                      _contextBlock != null &&
+                                      !_canvasOpen &&
+                                      !_closePromptOpen;
+            bool graphForegroundWasOpen = interactive &&
+                                          _canvasOpen &&
+                                          !_closePromptOpen &&
+                                          GraphForegroundMenuOpen();
+            if (!contextMenuWasOpen && !graphForegroundWasOpen)
+            {
+                DrawGuiCore(interactive);
+                return;
+            }
+
+            DecorationEditorTheme.Ensure();
+            EsuCursorTooltip.BeginFrame(
+                Event.current.mousePosition,
+                suppress: true,
+                allowGuiTooltipFallback: false);
+            Event contextEvent = Event.current;
+            EventType contextEventType = contextEvent == null
+                ? EventType.Ignore
+                : contextEvent.type;
+            DecoLimitLifter.EsuModalInputPolicy.SuppressForDisabledBackground(
+                contextEvent);
+            bool previousEnabled = GUI.enabled;
+            _draggingPanelDivider = AutomationPanelDivider.None;
+            _graphForegroundInputBlockedForEvent = graphForegroundWasOpen;
+            _deferGraphForegroundDraw = graphForegroundWasOpen;
+            try
+            {
+                GUI.enabled = false;
+                DrawGuiCore(interactive: false);
+            }
+            finally
+            {
+                DecoLimitLifter.EsuModalInputPolicy.RestoreForForeground(
+                    contextEvent,
+                    contextEventType);
+                GUI.enabled = previousEnabled;
+            }
+
+            EsuConsoleWindow.DrawForegroundWindow(interactive: false);
+            EsuCursorTooltip.Draw();
+            int previousDepth = GUI.depth;
+            GUI.depth = Math.Min(previousDepth, -20000);
+            try
+            {
+                if (contextMenuWasOpen)
+                    DrawAutomationContextMenu();
+                else if (graphForegroundWasOpen)
+                    DrawGraphForegroundOverlay();
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
+                _graphForegroundInputBlockedForEvent = false;
+                _deferGraphForegroundDraw = false;
+            }
+
+            AutomationBuilderInputScope.SetMouseOverUi(true);
+            if (contextMenuWasOpen)
+                ConsumeForegroundAutomationContextInput(contextEvent, contextEventType);
+            else
+                ConsumeGraphForegroundInput(contextEvent, contextEventType);
+        }
+
+        private void DrawGuiCore(bool interactive)
         {
             DecorationEditorTheme.Ensure();
             if (interactive)
@@ -860,6 +982,44 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
         }
 
+        private static void ConsumeForegroundAutomationContextInput(
+            Event current,
+            EventType originalType)
+        {
+            if (!DecoLimitLifter.EsuModalInputPolicy.IsBlockingEventType(originalType))
+                return;
+
+            if (originalType == EventType.ScrollWheel)
+                AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
+            else
+            {
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                AutomationBuilderInputScope.ClaimCameraInputForFrames();
+            }
+
+            if (current != null && current.type != EventType.Used)
+                current.Use();
+        }
+
+        private static void ConsumeGraphForegroundInput(
+            Event current,
+            EventType originalType)
+        {
+            if (!DecoLimitLifter.EsuModalInputPolicy.IsBlockingEventType(originalType))
+                return;
+
+            if (originalType == EventType.ScrollWheel)
+                AutomationBuilderInputScope.ClaimMouseWheelInputForFrames();
+            else
+            {
+                AutomationBuilderInputScope.ClaimBuildInputForFrames();
+                AutomationBuilderInputScope.ClaimCameraInputForFrames();
+            }
+
+            if (current != null && current.type != EventType.Used)
+                current.Use();
+        }
+
         private bool TooltipInputSuppressed() =>
             _draggingLeftPanel ||
             _draggingRightPanel ||
@@ -871,6 +1031,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _panningGraphCanvas ||
             _draggingNodeId != 0 ||
             GraphPointerInputActive() ||
+            _contextBlock != null ||
             _closePromptOpen;
 
         private float StatusHeightScaled() =>
@@ -1979,6 +2140,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ref float bottomRatio)
         {
             Event current = Event.current;
+            if (!GUI.enabled)
+            {
+                if (_draggingPanelDivider == divider)
+                    _draggingPanelDivider = AutomationPanelDivider.None;
+                return;
+            }
+
             if (current == null || divider == AutomationPanelDivider.None)
                 return;
 
@@ -2021,8 +2189,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             Rect dividerRect,
             AutomationPanelDivider divider)
         {
-            bool active = _draggingPanelDivider == divider;
-            bool hovered = dividerRect.Contains(Event.current?.mousePosition ?? Vector2.zero);
+            bool active = GUI.enabled && _draggingPanelDivider == divider;
+            bool hovered = GUI.enabled &&
+                           dividerRect.Contains(Event.current?.mousePosition ?? Vector2.zero);
             EsuHudLayout.DrawStackDividerGrip(dividerRect, active || hovered);
             if (hovered)
                 EsuCursorTooltip.Register(dividerRect, "Drag to resize Automation Builder sections.");
@@ -2380,6 +2549,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 Mathf.Max(1f, planRect.x - paletteRect.xMax - gap * 2f),
                 Mathf.Max(1f, inner.yMax - y));
             _lastCanvasWorkspaceRect = canvasRect;
+            _lastCanvasPlanRect = planRect;
             _lastCanvasPaletteRect = new Rect(
                 _canvasRect.x + paletteRect.x,
                 _canvasRect.y + paletteRect.y,
@@ -2389,7 +2559,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
             GUI.Box(canvasRect, GUIContent.none, DecorationEditorTheme.Panel);
             AutomationGraph foregroundGraph = _selectedBreadboard == null ? null : GraphFor(_selectedBreadboard);
             RefreshGraphPropertyPickerRect(foregroundGraph, canvasRect, planRect);
-            ConsumeGraphPropertyPickerOutsideMouseDown();
             DrawGraphWorkspace(canvasRect);
             GUI.Box(paletteRect, GUIContent.none, DecorationEditorTheme.Panel);
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(paletteRect, 6f));
@@ -2399,12 +2568,130 @@ namespace DecoLimitLifter.AutomationBuilderMode
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(planRect, 6f));
             DrawGeneratedNativePlanPanel();
             GUILayout.EndArea();
-            DrawGraphPropertyPicker(foregroundGraph, canvasRect, planRect);
-            PaletteDropPreview? paletteDropPreview = CurrentPaletteDropPreview(canvasRect);
-            DrawPaletteDragGhost(canvasRect, paletteDropPreview);
-            DrawPaletteSnapPreview(canvasRect, paletteDropPreview);
-            DrawGraphSnapStatus(canvasRect);
-            HandlePaletteBlockDrop(canvasRect, paletteDropPreview);
+            if (!_graphForegroundInputBlockedForEvent)
+            {
+                PaletteDropPreview? paletteDropPreview = CurrentPaletteDropPreview(canvasRect);
+                DrawPaletteDragGhost(canvasRect, paletteDropPreview);
+                DrawPaletteSnapPreview(canvasRect, paletteDropPreview);
+                DrawGraphSnapStatus(canvasRect);
+                HandlePaletteBlockDrop(canvasRect, paletteDropPreview);
+            }
+
+            if (!_deferGraphForegroundDraw)
+                DrawGraphForegroundMenus(foregroundGraph, canvasRect, planRect);
+        }
+
+        private void DrawGraphForegroundOverlay()
+        {
+            if (!GraphForegroundMenuOpen() ||
+                _canvasRect.width <= 1f ||
+                _canvasRect.height <= 1f ||
+                _lastCanvasWorkspaceRect.width <= 1f ||
+                _lastCanvasWorkspaceRect.height <= 1f)
+            {
+                return;
+            }
+
+            bool previousEnabled = GUI.enabled;
+            GUI.enabled = true;
+            GUI.BeginGroup(_canvasRect);
+            try
+            {
+                AutomationGraph graph = _selectedBreadboard == null
+                    ? null
+                    : GraphFor(_selectedBreadboard);
+                DrawGraphForegroundMenus(
+                    graph,
+                    _lastCanvasWorkspaceRect,
+                    _lastCanvasPlanRect);
+            }
+            finally
+            {
+                GUI.EndGroup();
+                GUI.enabled = previousEnabled;
+            }
+        }
+
+        private void DrawGraphForegroundMenus(
+            AutomationGraph graph,
+            Rect canvasRect,
+            Rect planRect)
+        {
+            if (ConsumeGraphForegroundOutsideMouseDown(canvasRect))
+                return;
+
+            DrawGraphPropertyPicker(graph, canvasRect, planRect);
+
+            UpdateGraphEventMousePosition(canvasRect);
+            GUI.BeginGroup(canvasRect);
+            Matrix4x4 previousMatrix = GUI.matrix;
+            GUI.matrix = previousMatrix * Matrix4x4.TRS(
+                new Vector3(-_graphScroll.x * _graphZoom, -_graphScroll.y * _graphZoom, 0f),
+                Quaternion.identity,
+                new Vector3(_graphZoom, _graphZoom, 1f));
+            try
+            {
+                Rect graphViewport = GraphViewportRect(canvasRect);
+                DrawGraphReadinessPopover(graph, graphViewport);
+                DrawGraphContextMenu(graph, graphViewport);
+                DrawGraphSlotDropdown(graph, graphViewport);
+            }
+            finally
+            {
+                GUI.matrix = previousMatrix;
+                GUI.EndGroup();
+                _graphEventMousePositionValid = false;
+            }
+        }
+
+        private bool ConsumeGraphForegroundOutsideMouseDown(Rect canvasRect)
+        {
+            Event current = Event.current;
+            if (current == null ||
+                current.type != EventType.MouseDown ||
+                !current.isMouse)
+            {
+                return false;
+            }
+
+            bool outside = false;
+            if (_graphPropertyPickerNodeId != 0)
+            {
+                outside = !_graphPropertyPickerRect.Contains(current.mousePosition);
+                if (outside)
+                    CloseGraphPropertyPicker();
+            }
+            else
+            {
+                Vector2 graphMouse = WindowToGraphPoint(canvasRect, current.mousePosition);
+                if (_graphSlotMenuKind != AutomationGraphSlotMenuKind.None)
+                {
+                    outside = !_graphSlotMenuRect.Contains(graphMouse) &&
+                              !_graphSlotMenuAnchorRect.Contains(graphMouse);
+                    if (outside)
+                        CloseGraphSlotMenu();
+                }
+                else if (_graphContextMenuNodeId != 0)
+                {
+                    outside = !_graphContextMenuRect.Contains(graphMouse);
+                    if (outside)
+                        CloseGraphContextMenu();
+                }
+                else if (_graphReadinessPopoverNodeId != 0)
+                {
+                    outside = !_graphReadinessPopoverRect.Contains(graphMouse) &&
+                              !_graphReadinessPopoverAnchorRect.Contains(graphMouse);
+                    if (outside)
+                        CloseGraphReadinessPopover();
+                }
+            }
+
+            if (!outside)
+                return false;
+
+            AutomationBuilderInputScope.ClaimBuildInputForFrames();
+            current.Use();
+            return true;
         }
 
         private void DrawCanvasHeader(Rect rect)
@@ -2852,7 +3139,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         private void DrawPaletteBlock(AutomationNodeKind kind)
         {
-            bool enabled = CanOpenCanvas;
+            bool enabled = GUI.enabled && CanOpenCanvas;
             Rect row = GUILayoutUtility.GetRect(
                 1f,
                 PaletteBlockRowHeight(kind),
@@ -4127,7 +4414,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             UpdateGraphEventMousePosition(canvasRect);
             RefreshGraphSlotDropdownRect(graph, GraphViewportRect(canvasRect));
-            if (_graphPropertyPickerNodeId == 0)
+            if (!_graphForegroundInputBlockedForEvent)
             {
                 if (HandleGraphCanvasRightClick(canvasRect, graph))
                     return;
@@ -4152,14 +4439,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 List<List<AutomationGraphNode>> executionChains = OrderedGraphFlowChains(graph);
                 List<AutomationGraphNode> executionFlow = executionChains.SelectMany(chain => chain).ToList();
                 DrawGraphConnections(graph, executionChains);
-                ConsumeGraphSlotDropdownOutsideMouseDown();
                 foreach (AutomationGraphNode node in graph.Nodes.ToArray())
                     DrawGraphNodeCard(graph, node, executionFlow, executionChains);
                 DrawGraphSnapPreview(graph);
-                DrawGraphReadinessPopover(graph, graphViewport);
-                DrawGraphContextMenu(graph, graphViewport);
-                DrawGraphSlotDropdown(graph, graphViewport);
-                CompleteGraphNodeDragIfReleased(graph);
+                if (!_graphForegroundInputBlockedForEvent)
+                    CompleteGraphNodeDragIfReleased(graph);
             }
             finally
             {
@@ -6927,7 +7211,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
             Rect inner = EsuHudLayout.PanelInnerRect(rect, 8f);
             Rect close = GraphNodeCloseRect(rect);
-            bool foregroundOwnsInput = GraphForegroundMenuOpen() || GraphPointerInputActive();
+            bool foregroundOwnsInput = _graphForegroundInputBlockedForEvent ||
+                                       GraphForegroundMenuOpen() ||
+                                       GraphPointerInputActive();
             bool canUseNodeControls = !foregroundOwnsInput;
             if (canUseNodeControls &&
                 (TryConsumeGraphLeftMouseUp(close) ||
@@ -6939,7 +7225,17 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
 
             _graphSlotConsumedInput = false;
-            DrawBlockSentence(rect, node, compact: false, graph);
+            bool previousEnabled = GUI.enabled;
+            if (foregroundOwnsInput)
+                GUI.enabled = false;
+            try
+            {
+                DrawBlockSentence(rect, node, compact: false, graph);
+            }
+            finally
+            {
+                GUI.enabled = previousEnabled;
+            }
             DrawExecutionOrderBadge(rect, node, executionFlow);
             if (!foregroundOwnsInput)
                 DrawReadinessBadge(rect, graph, node, executionChains);
@@ -7118,6 +7414,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _graphReadinessPopoverNodeId = node.Id;
             _graphReadinessPopoverAnchorRect = anchorRect;
             _graphReadinessPopoverScroll = Vector2.zero;
+            _draggingPanelDivider = AutomationPanelDivider.None;
             CloseGraphContextMenu();
             CloseGraphSlotMenu();
             CloseGraphPropertyPicker();
@@ -7912,7 +8209,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 EsuCursorTooltip.Register(valueRect, tooltip);
 
             Event current = Event.current;
-            if (current != null &&
+            if (GUI.enabled &&
+                current != null &&
                 current.type == EventType.KeyDown &&
                 (current.keyCode == KeyCode.Return ||
                  current.keyCode == KeyCode.KeypadEnter) &&
@@ -8850,6 +9148,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             _graphSlotMenuNodeId = node.Id;
             _graphSlotMenuAnchorRect = anchorRect;
             _graphSlotMenuScroll = Vector2.zero;
+            _draggingPanelDivider = AutomationPanelDivider.None;
             CloseGraphReadinessPopover();
             CloseGraphContextMenu();
             CloseGraphPropertyPicker();
@@ -8877,6 +9176,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             _graphPropertyPickerNodeId = node.Id;
             _graphPropertyPickerScroll = Vector2.zero;
+            _draggingPanelDivider = AutomationPanelDivider.None;
             CloseGraphSlotMenu();
             CloseGraphReadinessPopover();
             CloseGraphContextMenu();
@@ -9226,6 +9526,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             _graphContextMenuNodeId = node.Id;
             _graphContextMenuRect = GraphContextMenuRect(graphPoint, viewRect);
+            _draggingPanelDivider = AutomationPanelDivider.None;
             CloseGraphReadinessPopover();
             CloseGraphPropertyPicker();
             BeginCanvasInteraction(AutomationCanvasInteractionKind.ContextMenu, -1, Vector2.zero);
@@ -9505,7 +9806,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private bool TryConsumeGraphLeftMouseUp(Rect graphRect)
         {
             Event current = Event.current;
-            if (current == null ||
+            if (!GUI.enabled ||
+                current == null ||
                 current.type != EventType.MouseUp ||
                 current.button != 0 ||
                 !graphRect.Contains(CurrentGraphMousePosition(current)))
@@ -10736,6 +11038,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             RefreshNativeAutomationCache(force: true);
             _contextBlock = blockRef;
             _contextLink = FirstContextLink(blockRef);
+            _draggingPanelDivider = AutomationPanelDivider.None;
             _viewModeMenuOpen = false;
             _contextMenuRect = AutomationContextRect(AutomationContextButtonCount(_contextLink != null));
             return true;
@@ -10849,12 +11152,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private bool ShouldConsumeAutomationContextEvent(Event current)
         {
             return current != null &&
+                   current.isMouse &&
                    _contextMenuRect.Contains(current.mousePosition) &&
-                   (current.type == EventType.MouseDown ||
-                    current.type == EventType.MouseUp ||
-                    current.type == EventType.MouseDrag ||
-                    current.type == EventType.ScrollWheel ||
-                    current.type == EventType.ContextClick);
+                   DecoLimitLifter.EsuModalInputPolicy.IsBlockingEventType(current.type);
         }
 
         private bool AutomationContextTargetValid() =>
@@ -11464,6 +11764,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             if (_closePromptOpen)
                 return EsuPanelUiHit.Found("Automation Builder", "prompt", mouse);
+            if (_contextBlock != null && _contextMenuRect.Contains(mouse))
+                return EsuPanelUiHit.Found("Automation Builder", "context_menu", mouse);
             if (toolbar.Contains(mouse))
                 return EsuPanelUiHit.Found("Automation Builder", "toolbar", mouse);
             if (status.Contains(mouse))
@@ -11474,8 +11776,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return EsuPanelUiHit.Found("Automation Builder", "notification", mouse);
             if (_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse))
                 return EsuPanelUiHit.Found("Automation Builder", "view_mode_menu", mouse);
-            if (_contextBlock != null && _contextMenuRect.Contains(mouse))
-                return EsuPanelUiHit.Found("Automation Builder", "context_menu", mouse);
             if (_canvasOpen && canvas.Contains(mouse))
                 return EsuPanelUiHit.Found("Automation Builder", "automation_canvas", mouse);
             if (!_canvasOpen && _showLeftPanel && leftPanel.Contains(mouse))

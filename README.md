@@ -79,7 +79,7 @@ where exposed.
 | `Tab` | ESU editor, clean state | Cycle Decoration Edit Mode -> Surface Builder -> Smart Block Builder -> Automation Builder -> Decoration Edit Mode. Dirty previews must be applied or canceled first. |
 | `Escape` | ESU editor | Close/cancel the active ESU mode and guard the same keypress from vanilla. |
 | `Ctrl+Z` / `Ctrl+Y` | ESU editor | Undo/redo un-applied editor actions. |
-| `1` | ESU editor | Create/select cycle. Decoration: Select Single/Box. Surface: Draw/Path/Circle. Smart Builder: Block/Down slope and arm Add. |
+| `1` | ESU editor | Create/select cycle. Decoration: Select Single/Box. Surface: Draw/Extra Tools. Smart Builder: Block/Down slope and arm Add. |
 | `2` | ESU editor | Transform cycle. Move -> Rotate -> Scale -> Move. If outside the transform family, first press selects Move. |
 | `3` | ESU editor | Display/preview cycle. Decoration and Surface: Mixed -> Wireframe -> Decoration only -> Normal -> Mixed. Smart Builder: Wireframe/Material preview. |
 | `F8` | Build mode | Toggle the serialization HUD. |
@@ -210,8 +210,8 @@ The editor shell includes:
 - Mesh Palette with searchable list and virtualized 3D grid previews.
 - Outliner grouped by construct/subconstruct, including normal Shift/Ctrl
   multi-select constrained to the same construct. Right-click selected Outliner
-  or Selected Anchor rows for group-aware transform, clipboard, duplicate, and
-  delete actions without collapsing the selection.
+  or Selected Anchor rows for group-aware transform, Focus deco, settings
+  clipboard, duplicate, and delete actions without collapsing the selection.
 - Inspector for color, material override, mesh, owner details, and exact
   selected decoration fields.
 - Selected Anchor panel for tether/anchor workflows.
@@ -221,6 +221,10 @@ The editor shell includes:
 Important Decoration Edit behavior:
 
 - Apply commits previewed edits. Cancel restores the current preview.
+- `Ctrl+C` / `Ctrl+V` copy and paste whole decorations when multiple
+  decorations are explicitly selected; with one decoration they retain the
+  native settings clipboard behavior. `Ctrl+Shift+C/V` always target the whole
+  decoration selection.
 - Move uses snapped X/Y/Z handles plus center freeform movement.
 - Rotate uses RGB rotation rings and snaps to 5 degrees by default.
 - Scale uses X/Y/Z handles and snaps to 0.05 by default.
@@ -234,7 +238,7 @@ Important Decoration Edit behavior:
 ## Surface Builder
 
 Surface Builder is the second ESU mode in the `Tab` cycle. It creates decoration
-surfaces and generated Path/Circle decoration runs.
+surfaces and generated Extra Tools decoration runs.
 
 Tools:
 
@@ -242,6 +246,18 @@ Tools:
 - **Path**: click points to generate segmented decoration paths.
 - **Circle**: click a surface to place a circle center. Circle orientation uses
   the clicked surface normal instead of camera perspective.
+- **Quad**: place a centered rectangular frame with independent width and
+  height. Uniform Scale preserves its aspect ratio.
+- **Polygon**: place a centered regular frame with adjustable radius and 3-12
+  sides.
+- **Tube**: click a multi-point path and sweep adjustable rings and rails along
+  it using a configurable tube diameter and 3-64 sides.
+- Tube paths reject an exact or near reversal when consecutive directions have
+  a dot product of `-0.999` or less, preventing crossed rails at near-180-degree
+  turns.
+- The 100,000-segment generator limit applies to the aggregate unique output
+  across every enabled symmetry variant, including the mirrored shared anchor
+  identity used by Same anchor mode.
 - **Move/Rotate/Scale**: transform selected surface, path, or circle draft
   points.
 - **View**: cycle editor view modes.
@@ -252,16 +268,20 @@ The left Surface Builder panel is the single draft/action home:
 - `Preview`, `Place`, `Clear`, and `Delete` dispatch to the selected draft row
   first, then to the active tool.
 - `Bridge` remains Surface-only.
-- Right-side Extra Tools is settings-only for mesh, shape, paint color, and
-  material override.
+- Right-side Extra Tools starts with mutually exclusive Draw and generator
+  creation buttons, followed by mesh, shape, paint color, and material settings.
 
 Surface notes:
 
+- The left-panel Coordinates shelf can be resized independently down to the
+  Draft workspace's real content minimum. Collapsing it keeps a compact Show
+  header and expands the Draft list; hovering a coordinate vector highlights
+  its exact point on the construct.
 - `Nearest anchor` resolves each generated decoration to its nearest valid
   anchor.
 - `Same anchor` previews the shared anchor block with wireframe hints and
   rejects placement if no common anchor is valid.
-- Right-clicking Surface, Path, or Circle points opens a small context menu.
+- Right-clicking Surface or Extra Tools points opens a small context menu.
 - Hovering generator mesh rows shows the shared mesh preview card.
 
 ## Smart Block Builder
@@ -277,6 +297,9 @@ Core workflow:
 
 - Add/Build creates a `SmartBuildDraft`.
 - Move, Rotate, and Scale edit the selected preview piece.
+- The left panel keeps the Scene list above the scrollable Selected-piece
+  actions; drag the splitters to allocate its free space between them.
+- The right panel is a full-height Shapes/Generators browser.
 - Apply commits planned vanilla block placements.
 - Cancel restores the current preview.
 - Occupancy can fail on occupied cells or skip occupied cells.

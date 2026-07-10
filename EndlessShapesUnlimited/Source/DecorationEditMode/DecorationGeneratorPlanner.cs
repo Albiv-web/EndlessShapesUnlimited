@@ -18,7 +18,10 @@ namespace DecoLimitLifter.DecorationEditMode
         PartialSphere,
         Cone,
         Frustum,
-        Cone2D
+        Cone2D,
+        Quad,
+        Polygon,
+        Tube
     }
 
     internal sealed class DecorationGeneratorSettings
@@ -36,6 +39,11 @@ namespace DecoLimitLifter.DecorationEditMode
             ShapeHeight = 2f;
             TopRadius = 1f;
             RingCount = 6;
+            QuadWidth = 4f;
+            QuadHeight = 2f;
+            PolygonSides = 6;
+            TubeDiameter = 1f;
+            TubeSegments = 8;
             ColorIndex = 0;
             NearestAnchor = true;
         }
@@ -57,6 +65,16 @@ namespace DecoLimitLifter.DecorationEditMode
         internal float TopRadius { get; set; }
 
         internal int RingCount { get; set; }
+
+        internal float QuadWidth { get; set; }
+
+        internal float QuadHeight { get; set; }
+
+        internal int PolygonSides { get; set; }
+
+        internal float TubeDiameter { get; set; }
+
+        internal int TubeSegments { get; set; }
 
         internal int ColorIndex { get; set; }
 
@@ -81,13 +99,15 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
-            if (!DecorationEditMath.IsFinite(Diameter) || Diameter <= 0f)
+            if (!DecorationEditMath.IsFinite(Diameter) || Diameter <= 0f ||
+                !DecorationEditMath.IsFinite(Diameter * Diameter))
             {
                 reason = "Generator diameter must be finite and greater than zero.";
                 return false;
             }
 
-            if (!DecorationEditMath.IsFinite(CircleRadius) || CircleRadius <= 0f)
+            if (!DecorationEditMath.IsFinite(CircleRadius) || CircleRadius <= 0f ||
+                !DecorationEditMath.IsFinite(CircleRadius * CircleRadius))
             {
                 reason = "Generator radius must be finite and greater than zero.";
                 return false;
@@ -123,6 +143,34 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
+            if (!DecorationEditMath.IsFinite(QuadWidth) || QuadWidth <= 0f ||
+                !DecorationEditMath.IsFinite(QuadWidth * QuadWidth) ||
+                !DecorationEditMath.IsFinite(QuadHeight) || QuadHeight <= 0f ||
+                !DecorationEditMath.IsFinite(QuadHeight * QuadHeight))
+            {
+                reason = "Generator quad width and height must be finite and greater than zero.";
+                return false;
+            }
+
+            if (PolygonSides < 3 || PolygonSides > 12)
+            {
+                reason = "Generator polygon side count must be 3 through 12.";
+                return false;
+            }
+
+            if (!DecorationEditMath.IsFinite(TubeDiameter) || TubeDiameter <= 0f ||
+                !DecorationEditMath.IsFinite(TubeDiameter * TubeDiameter))
+            {
+                reason = "Generator tube diameter must be finite and greater than zero.";
+                return false;
+            }
+
+            if (TubeSegments < 3 || TubeSegments > 64)
+            {
+                reason = "Generator tube segment count must be 3 through 64.";
+                return false;
+            }
+
             if (ColorIndex < 0 || ColorIndex > 31)
             {
                 reason = "Generator color must be 0 through 31.";
@@ -149,6 +197,11 @@ namespace DecoLimitLifter.DecorationEditMode
             ShapeHeight = settings.ShapeHeight;
             TopRadius = settings.TopRadius;
             RingCount = settings.RingCount;
+            QuadWidth = settings.QuadWidth;
+            QuadHeight = settings.QuadHeight;
+            PolygonSides = settings.PolygonSides;
+            TubeDiameter = settings.TubeDiameter;
+            TubeSegments = settings.TubeSegments;
             ColorIndex = settings.ColorIndex;
             NearestAnchor = settings.NearestAnchor;
             MaterialReplacement = settings.MaterialReplacement;
@@ -172,6 +225,16 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal int RingCount { get; }
 
+        internal float QuadWidth { get; }
+
+        internal float QuadHeight { get; }
+
+        internal int PolygonSides { get; }
+
+        internal float TubeDiameter { get; }
+
+        internal int TubeSegments { get; }
+
         internal int ColorIndex { get; }
 
         internal bool NearestAnchor { get; }
@@ -192,6 +255,11 @@ namespace DecoLimitLifter.DecorationEditMode
             settings.ShapeHeight = ShapeHeight;
             settings.TopRadius = TopRadius;
             settings.RingCount = RingCount;
+            settings.QuadWidth = QuadWidth;
+            settings.QuadHeight = QuadHeight;
+            settings.PolygonSides = PolygonSides;
+            settings.TubeDiameter = TubeDiameter;
+            settings.TubeSegments = TubeSegments;
             settings.ColorIndex = ColorIndex;
             settings.NearestAnchor = NearestAnchor;
             settings.MaterialReplacement = MaterialReplacement;
@@ -208,6 +276,11 @@ namespace DecoLimitLifter.DecorationEditMode
             SameFloat(ShapeHeight, other.ShapeHeight) &&
             SameFloat(TopRadius, other.TopRadius) &&
             RingCount == other.RingCount &&
+            SameFloat(QuadWidth, other.QuadWidth) &&
+            SameFloat(QuadHeight, other.QuadHeight) &&
+            PolygonSides == other.PolygonSides &&
+            SameFloat(TubeDiameter, other.TubeDiameter) &&
+            TubeSegments == other.TubeSegments &&
             ColorIndex == other.ColorIndex &&
             NearestAnchor == other.NearestAnchor &&
             MaterialReplacement == other.MaterialReplacement;
@@ -383,7 +456,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static bool UsesCenter(SurfaceExtraTool tool) =>
             tool != SurfaceExtraTool.None &&
-            tool != SurfaceExtraTool.Path;
+            tool != SurfaceExtraTool.Path &&
+            tool != SurfaceExtraTool.Tube;
+
+        internal static bool UsesPath(SurfaceExtraTool tool) =>
+            tool == SurfaceExtraTool.Path ||
+            tool == SurfaceExtraTool.Tube;
 
         internal void SetTool(SurfaceExtraTool tool)
         {
@@ -430,7 +508,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return false;
             }
 
-            Tool = SurfaceExtraTool.Path;
+            Tool = UsesPath(Tool) ? Tool : SurfaceExtraTool.Path;
             _pathPoints.Add(DecorationEditMath.Snap(local));
             SharedAnchorSelected = false;
             SelectedPoint = _pathPoints.Count - 1;
@@ -995,6 +1073,7 @@ namespace DecoLimitLifter.DecorationEditMode
     {
         private const float GeometryEpsilon = 0.000001f;
         private const float GeometryLengthSquaredEpsilon = GeometryEpsilon * GeometryEpsilon;
+        private const int MaximumGeneratedSegments = 100000;
 
         internal static bool TryPlan(
             DecorationGeneratorDraft draft,
@@ -1004,40 +1083,37 @@ namespace DecoLimitLifter.DecorationEditMode
             out string message)
         {
             plan = null;
-            message = null;
-            if (draft == null)
+            if (!TryBuildValidatedSegmentBatch(
+                    draft,
+                    settings,
+                    out ValidatedSegmentBatch batch,
+                    out message))
             {
-                message = "Create a generator draft before previewing.";
                 return false;
             }
 
-            if (settings == null || !settings.IsValid(out message))
-                return false;
-
-            List<DecorationGeneratorSegment> segments = BuildSegments(draft, settings, out message);
-            if (segments == null || segments.Count == 0)
-                return false;
-
-            var placements = new List<DecorationGeneratorPlacement>(segments.Count);
+            var placements = new List<DecorationGeneratorPlacement>(batch.Count);
             var warnings = new List<string>();
             var anchorContext = new GeneratorAnchorContext(
                 settings.NearestAnchor,
                 anchorResolver,
                 draft.HasSharedAnchor,
                 draft.SharedAnchor);
-            for (int index = 0; index < segments.Count; index++)
+            for (int index = 0; index < batch.Count; index++)
             {
                 if (!TryCreatePlacement(
-                        segments[index],
+                        batch.Segments[index],
                         index,
                         settings,
                         anchorContext,
-                        placements,
+                        out DecorationGeneratorPlacement placement,
                         out message))
                 {
                     plan = null;
                     return false;
                 }
+
+                placements.Add(placement);
             }
 
             plan = new DecorationGeneratorPlan(draft.Construct, placements, warnings);
@@ -1080,42 +1156,43 @@ namespace DecoLimitLifter.DecorationEditMode
             out string message)
         {
             plan = null;
-            message = null;
-            if (draft == null)
+            if (!TryBuildSymmetrySegmentBatches(
+                    draft,
+                    settings,
+                    anchorResolver,
+                    variants,
+                    out ValidatedSegmentBatch _,
+                    out List<SymmetrySegmentBatch> batches,
+                    out int uniqueSegmentCount,
+                    out message))
             {
-                message = "Create a generator draft before previewing.";
                 return false;
             }
 
-            List<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variantList =
-                (variants ?? DecoLimitLifter.EsuSymmetry.Variants()).ToList();
-            if (variantList.Count == 0)
-                variantList.Add(new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()));
-
-            var placements = new List<DecorationGeneratorPlacement>();
-            var placementKeys = new HashSet<string>();
-            var geometryKeys = new HashSet<string>();
-            int plannedVariants = 0;
-            foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in variantList)
+            // The aggregate unique-segment cap is established before this list or
+            // any DecorationGeneratorPlacement instance is allocated.
+            var placements = new List<DecorationGeneratorPlacement>(uniqueSegmentCount);
+            var placementKeys = new HashSet<PlacementValueKey>();
+            for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
             {
-                DecorationGeneratorDraft variantDraft = variant.IsIdentity
-                    ? draft
-                    : draft.CreateMirroredForSymmetry(variant);
-                if (!geometryKeys.Add(GeometryKey(variantDraft, settings)))
-                    continue;
-
-                if (!TryPlan(variantDraft, settings, anchorResolver, out DecorationGeneratorPlan variantPlan, out string variantMessage))
+                SymmetrySegmentBatch batch = batches[batchIndex];
+                for (int segmentIndex = 0; segmentIndex < batch.Segments.Count; segmentIndex++)
                 {
-                    message = variant.IsIdentity
-                        ? variantMessage
-                        : "Generator symmetry placement rejected: " + variantMessage;
-                    return false;
-                }
+                    if (!TryCreatePlacement(
+                            batch.Segments[segmentIndex],
+                            segmentIndex,
+                            settings,
+                            batch.AnchorContext,
+                            out DecorationGeneratorPlacement placement,
+                            out string placementMessage))
+                    {
+                        message = batch.Variant.IsIdentity
+                            ? placementMessage
+                            : "Generator symmetry placement rejected: " + placementMessage;
+                        return false;
+                    }
 
-                plannedVariants++;
-                foreach (DecorationGeneratorPlacement placement in variantPlan.Placements)
-                {
-                    if (placementKeys.Add(PlacementKey(placement)))
+                    if (placementKeys.Add(new PlacementValueKey(placement)))
                         placements.Add(placement);
                 }
             }
@@ -1127,11 +1204,11 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             plan = new DecorationGeneratorPlan(draft.Construct, placements, Array.Empty<string>());
-            message = plannedVariants > 1
+            message = batches.Count > 1
                 ? "Generator symmetry: " +
                   placements.Count.ToString("N0", CultureInfo.InvariantCulture) +
                   " decoration(s) ready across " +
-                  plannedVariants.ToString("N0", CultureInfo.InvariantCulture) +
+                  batches.Count.ToString("N0", CultureInfo.InvariantCulture) +
                   " variant(s)."
                 : placements.Count.ToString("N0", CultureInfo.InvariantCulture) + " generated decoration(s) ready.";
             return true;
@@ -1143,16 +1220,239 @@ namespace DecoLimitLifter.DecorationEditMode
             out IReadOnlyList<DecorationGeneratorSegment> segments,
             out string message)
         {
-            segments = BuildSegments(draft, settings, out message);
-            return segments != null && segments.Count > 0;
+            segments = Array.Empty<DecorationGeneratorSegment>();
+            if (!TryBuildValidatedSegmentBatch(
+                    draft,
+                    settings,
+                    out ValidatedSegmentBatch batch,
+                    out message))
+            {
+                return false;
+            }
+
+            segments = batch.Segments;
+            return true;
         }
 
-        private static List<DecorationGeneratorSegment> BuildSegments(
+        internal static IReadOnlyList<DecorationGeneratorSegment> MirrorSegmentsForSymmetry(
+            IReadOnlyList<DecorationGeneratorSegment> segments,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant)
+        {
+            if (segments == null || segments.Count == 0)
+                return Array.Empty<DecorationGeneratorSegment>();
+            if (variant.IsIdentity)
+                return segments;
+
+            var mirrored = new DecorationGeneratorSegment[segments.Count];
+            for (int index = 0; index < segments.Count; index++)
+                mirrored[index] = MirrorSegmentForSymmetry(segments[index], variant);
+            return mirrored;
+        }
+
+        internal static bool TryBuildSymmetryPreviewSegments(
             DecorationGeneratorDraft draft,
             DecorationGeneratorSettings settings,
+            DecorationAnchorResolver anchorResolver,
+            IEnumerable<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variants,
+            out IReadOnlyList<DecorationGeneratorSegment> segments,
             out string message)
         {
+            return TryBuildSymmetryPreviewSegments(
+                draft,
+                settings,
+                anchorResolver,
+                variants,
+                out IReadOnlyList<DecorationGeneratorSegment> _,
+                out segments,
+                out message);
+        }
+
+        internal static bool TryBuildSymmetryPreviewSegments(
+            DecorationGeneratorDraft draft,
+            DecorationGeneratorSettings settings,
+            DecorationAnchorResolver anchorResolver,
+            IEnumerable<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variants,
+            out IReadOnlyList<DecorationGeneratorSegment> baseSegments,
+            out IReadOnlyList<DecorationGeneratorSegment> segments,
+            out string message)
+        {
+            baseSegments = Array.Empty<DecorationGeneratorSegment>();
+            segments = Array.Empty<DecorationGeneratorSegment>();
+            if (!TryBuildSymmetrySegmentBatches(
+                    draft,
+                    settings,
+                    anchorResolver,
+                    variants,
+                    out ValidatedSegmentBatch baseBatch,
+                    out List<SymmetrySegmentBatch> batches,
+                    out int uniqueSegmentCount,
+                    out message))
+            {
+                return false;
+            }
+
+            var flattened = new DecorationGeneratorSegment[uniqueSegmentCount];
+            int targetIndex = 0;
+            for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                IReadOnlyList<DecorationGeneratorSegment> batchSegments = batches[batchIndex].Segments;
+                for (int segmentIndex = 0; segmentIndex < batchSegments.Count; segmentIndex++)
+                    flattened[targetIndex++] = batchSegments[segmentIndex];
+            }
+
+            baseSegments = baseBatch.Segments;
+            segments = flattened;
+            message = uniqueSegmentCount.ToString("N0", CultureInfo.InvariantCulture) +
+                      " generated preview segment(s) ready.";
+            return true;
+        }
+
+        private static bool TryBuildSymmetrySegmentBatches(
+            DecorationGeneratorDraft draft,
+            DecorationGeneratorSettings settings,
+            DecorationAnchorResolver anchorResolver,
+            IEnumerable<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variants,
+            out ValidatedSegmentBatch baseBatch,
+            out List<SymmetrySegmentBatch> batches,
+            out int uniqueSegmentCount,
+            out string message)
+        {
+            baseBatch = null;
+            batches = null;
+            uniqueSegmentCount = 0;
+            if (!TryBuildValidatedSegmentBatch(
+                    draft,
+                    settings,
+                    out baseBatch,
+                    out message))
+            {
+                return false;
+            }
+
+            List<DecoLimitLifter.EsuSymmetry.SymmetryVariant> variantList =
+                (variants ?? DecoLimitLifter.EsuSymmetry.Variants()).ToList();
+            if (variantList.Count == 0)
+            {
+                variantList.Add(new DecoLimitLifter.EsuSymmetry.SymmetryVariant(
+                    Array.Empty<DecorationEditAxis>()));
+            }
+
+            var result = new List<SymmetrySegmentBatch>(variantList.Count);
+            var uniqueKeys = new HashSet<DirectedSegmentValueKey>();
+            for (int variantIndex = 0; variantIndex < variantList.Count; variantIndex++)
+            {
+                DecoLimitLifter.EsuSymmetry.SymmetryVariant variant = variantList[variantIndex];
+                bool hasExplicitSharedAnchor = draft.HasSharedAnchor;
+                Vector3i explicitSharedAnchor = draft.SharedAnchor;
+                if (hasExplicitSharedAnchor && !variant.IsIdentity)
+                    explicitSharedAnchor = variant.Mirror(explicitSharedAnchor);
+
+                var anchorContext = new GeneratorAnchorContext(
+                    settings.NearestAnchor,
+                    anchorResolver,
+                    hasExplicitSharedAnchor,
+                    explicitSharedAnchor);
+
+                bool includeSharedAnchor = !settings.NearestAnchor;
+                Vector3i sharedAnchor = default;
+                if (includeSharedAnchor)
+                {
+                    DecorationGeneratorSegment firstSegment = MirrorSegmentForSymmetry(
+                        baseBatch.Segments[0],
+                        variant);
+                    Vector3 firstCenter = (firstSegment.Start + firstSegment.End) * 0.5f;
+                    if (!anchorContext.TryResolveAnchor(
+                            firstCenter,
+                            0,
+                            out sharedAnchor,
+                            out string anchorMessage))
+                    {
+                        message = variant.IsIdentity
+                            ? anchorMessage
+                            : "Generator symmetry placement rejected: " + anchorMessage;
+                        return false;
+                    }
+                }
+
+                var variantSegments = new List<DecorationGeneratorSegment>(baseBatch.Count);
+                for (int segmentIndex = 0; segmentIndex < baseBatch.Count; segmentIndex++)
+                {
+                    DecorationGeneratorSegment segment = MirrorSegmentForSymmetry(
+                        baseBatch.Segments[segmentIndex],
+                        variant);
+                    if (!TryValidateSegment(segment, draft.Tool, segmentIndex, out string validationMessage))
+                    {
+                        message = variant.IsIdentity
+                            ? validationMessage
+                            : "Generator symmetry geometry rejected: " + validationMessage;
+                        return false;
+                    }
+
+                    var key = new DirectedSegmentValueKey(
+                        segment,
+                        includeSharedAnchor,
+                        sharedAnchor);
+                    if (!uniqueKeys.Add(key))
+                        continue;
+
+                    uniqueSegmentCount++;
+                    if (uniqueSegmentCount > MaximumGeneratedSegments)
+                    {
+                        message = "Generator symmetry would generate more than " +
+                                  MaximumGeneratedSegments.ToString("N0", CultureInfo.InvariantCulture) +
+                                  " unique segments across all variants, above the 100,000-segment safety limit.";
+                        return false;
+                    }
+
+                    variantSegments.Add(segment);
+                }
+
+                if (variantSegments.Count > 0)
+                {
+                    result.Add(new SymmetrySegmentBatch(
+                        variant,
+                        variantSegments,
+                        anchorContext));
+                }
+            }
+
+            if (result.Count == 0)
+            {
+                message = "Generator draft produced no unique segments.";
+                return false;
+            }
+
+            batches = result;
             message = null;
+            return true;
+        }
+
+        private static DecorationGeneratorSegment MirrorSegmentForSymmetry(
+            DecorationGeneratorSegment segment,
+            DecoLimitLifter.EsuSymmetry.SymmetryVariant variant) =>
+            variant.IsIdentity
+                ? segment
+                : new DecorationGeneratorSegment(
+                    variant.Mirror(segment.Start),
+                    variant.Mirror(segment.End));
+
+        private static bool TryBuildValidatedSegmentBatch(
+            DecorationGeneratorDraft draft,
+            DecorationGeneratorSettings settings,
+            out ValidatedSegmentBatch batch,
+            out string message)
+        {
+            batch = null;
+            message = null;
+            if (draft == null)
+            {
+                message = "Create a generator draft before previewing.";
+                return false;
+            }
+
+            if (settings == null || !settings.IsValid(out message))
+                return false;
+
             List<DecorationGeneratorSegment> segments;
             switch (draft.Tool)
             {
@@ -1173,45 +1473,45 @@ namespace DecoLimitLifter.DecorationEditMode
                 case SurfaceExtraTool.Cone2D:
                     segments = BuildCone2DSegments(draft, settings, out message);
                     break;
+                case SurfaceExtraTool.Quad:
+                    segments = BuildQuadSegments(draft, settings, out message);
+                    break;
+                case SurfaceExtraTool.Polygon:
+                    segments = BuildPolygonSegments(draft, settings, out message);
+                    break;
+                case SurfaceExtraTool.Tube:
+                    segments = BuildTubeSegments(draft, settings, out message);
+                    break;
                 default:
                     segments = BuildPathSegments(draft, out message);
                     break;
             }
 
             if (segments == null)
-                return null;
+                return false;
+            if (segments.Count == 0)
+            {
+                if (string.IsNullOrWhiteSpace(message))
+                    message = "Generator draft produced no segments.";
+                return false;
+            }
+
+            if (segments.Count > MaximumGeneratedSegments)
+            {
+                message = SegmentSafetyLimitMessage(
+                    draft.Tool == SurfaceExtraTool.Tube ? "Tube" : "Generator",
+                    segments.Count);
+                return false;
+            }
 
             for (int index = 0; index < segments.Count; index++)
             {
-                DecorationGeneratorSegment segment = segments[index];
-                if (!TryGetFiniteSquaredMagnitude(segment.Start, out float _) ||
-                    !TryGetFiniteSquaredMagnitude(segment.End, out float _))
-                {
-                    message = "Generator segment " +
-                              (index + 1).ToString(CultureInfo.InvariantCulture) +
-                              " contains a point outside the supported numeric range.";
-                    return null;
-                }
-
-                Vector3 delta = segment.End - segment.Start;
-                if (!TryGetFiniteSquaredMagnitude(delta, out float lengthSquared))
-                {
-                    message = "Generator segment " +
-                              (index + 1).ToString(CultureInfo.InvariantCulture) +
-                              " is outside the supported numeric range.";
-                    return null;
-                }
-
-                if (lengthSquared <= GeometryLengthSquaredEpsilon)
-                {
-                    message = "Generator segment " +
-                              (index + 1).ToString(CultureInfo.InvariantCulture) +
-                              " has zero length.";
-                    return null;
-                }
+                if (!TryValidateSegment(segments[index], draft.Tool, index, out message))
+                    return false;
             }
 
-            return segments;
+            batch = new ValidatedSegmentBatch(segments);
+            return true;
         }
 
         private static List<DecorationGeneratorSegment> BuildPathSegments(
@@ -1254,6 +1554,257 @@ namespace DecoLimitLifter.DecorationEditMode
             var segments = new List<DecorationGeneratorSegment>(points.Count);
             AddPolylineSegments(segments, points, closed);
             return segments;
+        }
+
+        private static List<DecorationGeneratorSegment> BuildQuadSegments(
+            DecorationGeneratorDraft draft,
+            DecorationGeneratorSettings settings,
+            out string message)
+        {
+            message = null;
+            if (!draft.HasCircleCenter)
+            {
+                message = "Place a quad center before previewing.";
+                return null;
+            }
+
+            Vector3 halfWidth = BasisA(draft) * (settings.QuadWidth * 0.5f);
+            Vector3 halfHeight = BasisB(draft) * (settings.QuadHeight * 0.5f);
+            var corners = new List<Vector3>(4)
+            {
+                draft.CircleCenter - halfWidth - halfHeight,
+                draft.CircleCenter + halfWidth - halfHeight,
+                draft.CircleCenter + halfWidth + halfHeight,
+                draft.CircleCenter - halfWidth + halfHeight
+            };
+            var segments = new List<DecorationGeneratorSegment>(4);
+            AddRequiredPolylineSegments(segments, corners, closed: true);
+            return segments;
+        }
+
+        private static List<DecorationGeneratorSegment> BuildPolygonSegments(
+            DecorationGeneratorDraft draft,
+            DecorationGeneratorSettings settings,
+            out string message)
+        {
+            message = null;
+            if (!draft.HasCircleCenter)
+            {
+                message = "Place a polygon center before previewing.";
+                return null;
+            }
+
+            int sides = Mathf.Clamp(settings.PolygonSides, 3, 12);
+            Vector3 tangentA = BasisA(draft);
+            Vector3 tangentB = BasisB(draft);
+            var points = new List<Vector3>(sides);
+            for (int index = 0; index < sides; index++)
+            {
+                float angle = index * Mathf.PI * 2f / sides;
+                points.Add(
+                    draft.CircleCenter +
+                    (tangentA * Mathf.Cos(angle) + tangentB * Mathf.Sin(angle)) *
+                    settings.CircleRadius);
+            }
+
+            var segments = new List<DecorationGeneratorSegment>(sides);
+            AddRequiredPolylineSegments(segments, points, closed: true);
+            return segments;
+        }
+
+        private static List<DecorationGeneratorSegment> BuildTubeSegments(
+            DecorationGeneratorDraft draft,
+            DecorationGeneratorSettings settings,
+            out string message)
+        {
+            message = null;
+            if (draft.PathPoints.Count < 2)
+            {
+                message = "Place at least two tube path points before previewing.";
+                return null;
+            }
+
+            if (!TryValidateTubePath(draft.PathPoints, out message))
+                return null;
+
+            int sides = Mathf.Clamp(settings.TubeSegments, 3, 64);
+            float radius = settings.TubeDiameter * 0.5f;
+            long requestedSegments =
+                (long)draft.PathPoints.Count * sides +
+                (long)(draft.PathPoints.Count - 1) * sides;
+            if (requestedSegments > MaximumGeneratedSegments)
+            {
+                message = SegmentSafetyLimitMessage("Tube", requestedSegments);
+                return null;
+            }
+
+            var segments = new List<DecorationGeneratorSegment>((int)requestedSegments);
+            Vector3[] previousRing = null;
+            Vector3 previousRadial = Vector3.zero;
+            for (int pointIndex = 0; pointIndex < draft.PathPoints.Count; pointIndex++)
+            {
+                if (!TryGetTubePathTangent(draft.PathPoints, pointIndex, out Vector3 tangent))
+                {
+                    message = "Tube path point " +
+                              (pointIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                              " has a zero-length adjacent segment.";
+                    return null;
+                }
+
+                Vector3 radialA;
+                Vector3 radialB;
+                if (pointIndex == 0 ||
+                    !TryProjectTubeRadial(previousRadial, tangent, out radialA))
+                {
+                    BuildCircleBasis(tangent, out radialA, out radialB);
+                }
+                else
+                {
+                    radialB = NormalizeOrFallback(
+                        Vector3.Cross(tangent, radialA),
+                        Vector3.forward);
+                }
+
+                if (pointIndex > 0 && Vector3.Dot(radialA, previousRadial) < 0f)
+                {
+                    radialA = -radialA;
+                    radialB = -radialB;
+                }
+
+                var ring = new Vector3[sides];
+                for (int side = 0; side < sides; side++)
+                {
+                    float angle = side * Mathf.PI * 2f / sides;
+                    ring[side] = draft.PathPoints[pointIndex] +
+                                 (radialA * Mathf.Cos(angle) + radialB * Mathf.Sin(angle)) *
+                                 radius;
+                }
+
+                AddRequiredPolylineSegments(segments, ring, closed: true);
+                if (previousRing != null)
+                {
+                    for (int side = 0; side < sides; side++)
+                    {
+                        segments.Add(new DecorationGeneratorSegment(
+                            previousRing[side],
+                            ring[side]));
+                    }
+                }
+
+                previousRing = ring;
+                previousRadial = radialA;
+            }
+
+            return segments;
+        }
+
+        private static bool TryValidateTubePath(
+            IReadOnlyList<Vector3> points,
+            out string message)
+        {
+            message = null;
+            Vector3 previousDirection = Vector3.zero;
+            for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+            {
+                Vector3 delta = points[segmentIndex + 1] - points[segmentIndex];
+                if (!TryGetFiniteSquaredMagnitude(delta, out float lengthSquared))
+                {
+                    message = "Tube path edge after point " +
+                              (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                              " is outside the supported numeric range.";
+                    return false;
+                }
+
+                if (lengthSquared <= GeometryLengthSquaredEpsilon)
+                {
+                    message = "Tube path point " +
+                              (segmentIndex + 2).ToString(CultureInfo.InvariantCulture) +
+                              " creates an edge no longer than 0.000001 metres.";
+                    return false;
+                }
+
+                Vector3 direction = delta / Mathf.Sqrt(lengthSquared);
+                if (segmentIndex > 0)
+                {
+                    float directionDot = Vector3.Dot(previousDirection, direction);
+                    if (!DecorationEditMath.IsFinite(directionDot) || directionDot <= -0.999f)
+                    {
+                        message = "Tube path point " +
+                                  (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                                  " reverses direction too sharply; consecutive path directions must have a dot product greater than -0.999.";
+                        return false;
+                    }
+                }
+
+                previousDirection = direction;
+            }
+
+            return true;
+        }
+
+        private static bool TryGetTubePathTangent(
+            IReadOnlyList<Vector3> points,
+            int index,
+            out Vector3 tangent)
+        {
+            tangent = Vector3.zero;
+            if (points == null || points.Count < 2 || index < 0 || index >= points.Count)
+                return false;
+
+            if (index == 0)
+            {
+                tangent = points[1] - points[0];
+            }
+            else if (index == points.Count - 1)
+            {
+                tangent = points[index] - points[index - 1];
+            }
+            else
+            {
+                Vector3 incoming = points[index] - points[index - 1];
+                Vector3 outgoing = points[index + 1] - points[index];
+                if (!TryGetFiniteSquaredMagnitude(incoming, out float incomingSquared) ||
+                    incomingSquared <= GeometryLengthSquaredEpsilon ||
+                    !TryGetFiniteSquaredMagnitude(outgoing, out float outgoingSquared) ||
+                    outgoingSquared <= GeometryLengthSquaredEpsilon)
+                {
+                    return false;
+                }
+
+                tangent = incoming / Mathf.Sqrt(incomingSquared) +
+                          outgoing / Mathf.Sqrt(outgoingSquared);
+                if (!TryGetFiniteSquaredMagnitude(tangent, out float joinedSquared) ||
+                    joinedSquared <= GeometryLengthSquaredEpsilon)
+                {
+                    tangent = outgoing;
+                }
+            }
+
+            if (!TryGetFiniteSquaredMagnitude(tangent, out float tangentSquared) ||
+                tangentSquared <= GeometryLengthSquaredEpsilon)
+            {
+                return false;
+            }
+
+            tangent /= Mathf.Sqrt(tangentSquared);
+            return DecorationEditMath.IsFinite(tangent);
+        }
+
+        private static bool TryProjectTubeRadial(
+            Vector3 previousRadial,
+            Vector3 tangent,
+            out Vector3 projected)
+        {
+            projected = previousRadial - tangent * Vector3.Dot(previousRadial, tangent);
+            if (!TryGetFiniteSquaredMagnitude(projected, out float squared) ||
+                squared <= GeometryLengthSquaredEpsilon)
+            {
+                projected = Vector3.zero;
+                return false;
+            }
+
+            projected /= Mathf.Sqrt(squared);
+            return DecorationEditMath.IsFinite(projected);
         }
 
         private static List<DecorationGeneratorSegment> BuildSphereSegments(
@@ -1431,6 +1982,24 @@ namespace DecoLimitLifter.DecorationEditMode
                 AddSegmentIfValid(segments, points[points.Count - 1], points[0]);
         }
 
+        private static void AddRequiredPolylineSegments(
+            List<DecorationGeneratorSegment> segments,
+            IReadOnlyList<Vector3> points,
+            bool closed)
+        {
+            if (segments == null || points == null || points.Count < 2)
+                return;
+
+            for (int index = 0; index < points.Count - 1; index++)
+                segments.Add(new DecorationGeneratorSegment(points[index], points[index + 1]));
+            if (closed)
+            {
+                segments.Add(new DecorationGeneratorSegment(
+                    points[points.Count - 1],
+                    points[0]));
+            }
+        }
+
         private static void AddSegmentIfValid(
             List<DecorationGeneratorSegment> segments,
             Vector3 start,
@@ -1469,9 +2038,10 @@ namespace DecoLimitLifter.DecorationEditMode
             int segmentIndex,
             DecorationGeneratorSettings settings,
             GeneratorAnchorContext anchorContext,
-            List<DecorationGeneratorPlacement> placements,
+            out DecorationGeneratorPlacement placement,
             out string message)
         {
+            placement = null;
             message = null;
             if (!DecorationEditMath.IsFinite(segment.Start) ||
                 !DecorationEditMath.IsFinite(segment.End))
@@ -1516,14 +2086,14 @@ namespace DecoLimitLifter.DecorationEditMode
                     DecorationEditMath.AxisVector(settings.LengthAxis),
                     direction);
 
-            placements.Add(new DecorationGeneratorPlacement(
+            placement = new DecorationGeneratorPlacement(
                 anchor,
                 settings.MeshGuid,
                 positioning,
                 scaling,
                 orientation,
                 settings.ColorIndex,
-                settings.MaterialReplacement));
+                settings.MaterialReplacement);
             return true;
         }
 
@@ -1646,51 +2216,229 @@ namespace DecoLimitLifter.DecorationEditMode
             return degrees < 0f ? degrees + 360f : degrees;
         }
 
-        private static string GeometryKey(
-            DecorationGeneratorDraft draft,
-            DecorationGeneratorSettings settings)
+        private static bool TryValidateSegment(
+            DecorationGeneratorSegment segment,
+            SurfaceExtraTool tool,
+            int segmentIndex,
+            out string message)
         {
-            if (draft == null)
-                return string.Empty;
-
-            List<DecorationGeneratorSegment> segments = BuildSegments(draft, settings, out string _);
-            if (segments == null)
-                return string.Empty;
-
-            var builder = new System.Text.StringBuilder();
-            if (draft.HasSharedAnchor)
+            message = null;
+            if (!TryGetFiniteSquaredMagnitude(segment.Start, out float _) ||
+                !TryGetFiniteSquaredMagnitude(segment.End, out float _))
             {
-                builder.Append("anchor:")
-                    .Append(CellKey(draft.SharedAnchor))
-                    .Append('|');
+                message = "Generator segment " +
+                          (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                          " contains a point outside the supported numeric range.";
+                return false;
             }
 
-            foreach (DecorationGeneratorSegment segment in segments)
+            Vector3 delta = segment.End - segment.Start;
+            if (!TryGetFiniteSquaredMagnitude(delta, out float lengthSquared))
             {
-                builder.Append(VectorKey(segment.Start)).Append(">")
-                    .Append(VectorKey(segment.End)).Append(";");
+                message = "Generator segment " +
+                          (segmentIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                          " is outside the supported numeric range.";
+                return false;
             }
 
-            return builder.ToString();
+            if (lengthSquared <= GeometryLengthSquaredEpsilon)
+            {
+                message = RequiredEdgeFailureMessage(tool, segmentIndex);
+                return false;
+            }
+
+            return true;
         }
 
-        private static string PlacementKey(DecorationGeneratorPlacement placement) =>
-            placement.MeshGuid.ToString("N") + "|" +
-            CellKey(placement.Anchor) + "|" +
-            VectorKey(placement.Positioning) + "|" +
-            VectorKey(placement.Scaling) + "|" +
-            VectorKey(placement.Orientation);
+        private static string RequiredEdgeFailureMessage(
+            SurfaceExtraTool tool,
+            int segmentIndex)
+        {
+            string shape = null;
+            switch (tool)
+            {
+                case SurfaceExtraTool.Quad:
+                    shape = "Quad";
+                    break;
+                case SurfaceExtraTool.Polygon:
+                    shape = "Polygon";
+                    break;
+                case SurfaceExtraTool.Tube:
+                    shape = "Tube";
+                    break;
+            }
 
-        private static string CellKey(Vector3i value) =>
-            value.x.ToString(CultureInfo.InvariantCulture) + ":" +
-            value.y.ToString(CultureInfo.InvariantCulture) + ":" +
-            value.z.ToString(CultureInfo.InvariantCulture);
+            string index = (segmentIndex + 1).ToString(CultureInfo.InvariantCulture);
+            return shape == null
+                ? "Generator segment " + index + " has zero length."
+                : shape + " edge " + index + " must be longer than 0.000001 metres.";
+        }
 
-        private static string VectorKey(Vector3 value) =>
-            FloatKey(value.x) + ":" + FloatKey(value.y) + ":" + FloatKey(value.z);
+        private static string SegmentSafetyLimitMessage(string source, long segmentCount) =>
+            source + " would generate " +
+            segmentCount.ToString("N0", CultureInfo.InvariantCulture) +
+            " segments, above the 100,000-segment safety limit.";
 
-        private static string FloatKey(float value) =>
-            value.ToString("0.####", CultureInfo.InvariantCulture);
+        private sealed class ValidatedSegmentBatch
+        {
+            internal ValidatedSegmentBatch(IReadOnlyList<DecorationGeneratorSegment> segments)
+            {
+                Segments = segments ?? Array.Empty<DecorationGeneratorSegment>();
+            }
+
+            internal IReadOnlyList<DecorationGeneratorSegment> Segments { get; }
+
+            internal int Count => Segments.Count;
+        }
+
+        private sealed class SymmetrySegmentBatch
+        {
+            internal SymmetrySegmentBatch(
+                DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
+                IReadOnlyList<DecorationGeneratorSegment> segments,
+                GeneratorAnchorContext anchorContext)
+            {
+                Variant = variant;
+                Segments = segments ?? Array.Empty<DecorationGeneratorSegment>();
+                AnchorContext = anchorContext;
+            }
+
+            internal DecoLimitLifter.EsuSymmetry.SymmetryVariant Variant { get; }
+
+            internal IReadOnlyList<DecorationGeneratorSegment> Segments { get; }
+
+            internal GeneratorAnchorContext AnchorContext { get; }
+        }
+
+        private readonly struct QuantizedVectorValue : IEquatable<QuantizedVectorValue>
+        {
+            private readonly float _x;
+            private readonly float _y;
+            private readonly float _z;
+
+            internal QuantizedVectorValue(Vector3 value)
+            {
+                _x = Round(value.x);
+                _y = Round(value.y);
+                _z = Round(value.z);
+            }
+
+            public bool Equals(QuantizedVectorValue other) =>
+                _x == other._x &&
+                _y == other._y &&
+                _z == other._z;
+
+            public override bool Equals(object obj) =>
+                obj is QuantizedVectorValue other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = _x.GetHashCode();
+                    hash = hash * 397 ^ _y.GetHashCode();
+                    hash = hash * 397 ^ _z.GetHashCode();
+                    return hash;
+                }
+            }
+        }
+
+        private readonly struct DirectedSegmentValueKey : IEquatable<DirectedSegmentValueKey>
+        {
+            private readonly QuantizedVectorValue _start;
+            private readonly QuantizedVectorValue _end;
+            private readonly bool _hasSharedAnchor;
+            private readonly int _anchorX;
+            private readonly int _anchorY;
+            private readonly int _anchorZ;
+
+            internal DirectedSegmentValueKey(
+                DecorationGeneratorSegment segment,
+                bool hasSharedAnchor,
+                Vector3i sharedAnchor)
+            {
+                _start = new QuantizedVectorValue(segment.Start);
+                _end = new QuantizedVectorValue(segment.End);
+                _hasSharedAnchor = hasSharedAnchor;
+                _anchorX = hasSharedAnchor ? sharedAnchor.x : 0;
+                _anchorY = hasSharedAnchor ? sharedAnchor.y : 0;
+                _anchorZ = hasSharedAnchor ? sharedAnchor.z : 0;
+            }
+
+            public bool Equals(DirectedSegmentValueKey other) =>
+                _start.Equals(other._start) &&
+                _end.Equals(other._end) &&
+                _hasSharedAnchor == other._hasSharedAnchor &&
+                _anchorX == other._anchorX &&
+                _anchorY == other._anchorY &&
+                _anchorZ == other._anchorZ;
+
+            public override bool Equals(object obj) =>
+                obj is DirectedSegmentValueKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = _start.GetHashCode();
+                    hash = hash * 397 ^ _end.GetHashCode();
+                    hash = hash * 397 ^ _hasSharedAnchor.GetHashCode();
+                    hash = hash * 397 ^ _anchorX;
+                    hash = hash * 397 ^ _anchorY;
+                    hash = hash * 397 ^ _anchorZ;
+                    return hash;
+                }
+            }
+        }
+
+        private readonly struct PlacementValueKey : IEquatable<PlacementValueKey>
+        {
+            private readonly Guid _meshGuid;
+            private readonly int _anchorX;
+            private readonly int _anchorY;
+            private readonly int _anchorZ;
+            private readonly QuantizedVectorValue _positioning;
+            private readonly QuantizedVectorValue _scaling;
+            private readonly QuantizedVectorValue _orientation;
+
+            internal PlacementValueKey(DecorationGeneratorPlacement placement)
+            {
+                _meshGuid = placement.MeshGuid;
+                _anchorX = placement.Anchor.x;
+                _anchorY = placement.Anchor.y;
+                _anchorZ = placement.Anchor.z;
+                _positioning = new QuantizedVectorValue(placement.Positioning);
+                _scaling = new QuantizedVectorValue(placement.Scaling);
+                _orientation = new QuantizedVectorValue(placement.Orientation);
+            }
+
+            public bool Equals(PlacementValueKey other) =>
+                _meshGuid.Equals(other._meshGuid) &&
+                _anchorX == other._anchorX &&
+                _anchorY == other._anchorY &&
+                _anchorZ == other._anchorZ &&
+                _positioning.Equals(other._positioning) &&
+                _scaling.Equals(other._scaling) &&
+                _orientation.Equals(other._orientation);
+
+            public override bool Equals(object obj) =>
+                obj is PlacementValueKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = _meshGuid.GetHashCode();
+                    hash = hash * 397 ^ _anchorX;
+                    hash = hash * 397 ^ _anchorY;
+                    hash = hash * 397 ^ _anchorZ;
+                    hash = hash * 397 ^ _positioning.GetHashCode();
+                    hash = hash * 397 ^ _scaling.GetHashCode();
+                    hash = hash * 397 ^ _orientation.GetHashCode();
+                    return hash;
+                }
+            }
+        }
 
         private static bool TryGetFiniteSquaredMagnitude(Vector3 value, out float squaredMagnitude)
         {

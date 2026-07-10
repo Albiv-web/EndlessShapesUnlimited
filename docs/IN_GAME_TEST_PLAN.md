@@ -7,7 +7,7 @@ Installed mod folder: `%USERPROFILE%\Documents\From The Depths\Mods\EndlessShape
 Expected assembly: `EndlessShapesUnlimited.dll`
 
 Expected assembly SHA-256:
-`DBD22965AC8C98C47C9311F35EA11D4D5528FF5DC6E32A42B15DA24873B3F9DC`
+`3844D314B82E3179E5B85452542E8766C2C55C6848452CC0EE3CA3B601D65A9B`
 
 Do not merge the draft PR or publish a release until every required section
 passes. Record the FTD build, test date, result, and evidence for each section.
@@ -224,7 +224,14 @@ Pass: all content survives both reload paths without truncation or corruption.
      beside that face.
 16. Resize the Smart Builder left panel, close and reopen Smart Builder, and
     confirm its panel size persists, fits the current screen, and responds to
-    the same ESU editor scale options.
+    the same ESU editor scale options. Confirm the left panel shows the Scene
+    list above scrollable Selected-piece actions, both split dividers resize
+    independently and persist after reopening, and selecting a Scene row updates
+    the actions below it. Confirm the right Shapes/Generators browser uses its
+    full height and contains no duplicate Scene or Selected shelves. Repeat at
+    1366x768 with effective 1.44x scaling and 1920x1080 at 2x; both panels and
+    the Apply/Cancel footer must stay between the toolbar and status strip, all
+    bodies must remain reachable, and split rectangles must not overlap.
 17. Use **Move** and **Scale** handles on the Smart Builder preview. Confirm
     movement/resizing snap to whole cells, the bottom strip exposes readable
     **Gizmo**, **Face**, **Edge**, and **Corner** buttons, Edge mode highlights a
@@ -314,7 +321,10 @@ Pass: all content survives both reload paths without truncation or corruption.
    mirrored preview, every mirrored component must touch the existing construct,
    and Apply places all mirrored blocks atomically or none.
 30. In Surface Builder, place an X symmetry plane from the Surface toolbar and
-   confirm the plane wire spans the vehicle's Y/Z size instead of a tiny local
+   first confirm **Draw** is absent beside the left Draft header and is the first
+   right-panel Extra Tools button. Switch Draw -> Path -> Circle -> Draw and
+   confirm only the active creation button lights each time. Then confirm the
+   plane wire spans the vehicle's Y/Z size instead of a tiny local
    square. Create a triangular surface draft on one side and confirm the mirrored
    preview appears. Press **Place** and confirm original plus mirrored surface
    decorations are created as one atomic batch. Enable X+Y and confirm four
@@ -342,24 +352,38 @@ Pass: all content survives both reload paths without truncation or corruption.
     the full batch must restore on failure.
 37. Select several decorations in a deliberately shuffled order and use
     **Decorations Copy selection** / **Paste in place**, then repeat with
-    `Ctrl+Shift+C/V`. Confirm exact in-place clones are ordered primary first,
+    `Ctrl+C/V` and explicit `Ctrl+Shift+C/V`. Confirm exact in-place clones are ordered primary first,
     selected as one Move group, do not expand active symmetry, and can be pasted
     repeatedly. Confirm one undo removes the entire group and redo recreates and
     reselects it. Apply, Cancel, close/reopen ESU, and verify the memory clipboard
     remains available; focus another subconstruct/main construct and confirm the
     same clipboard is rejected without mutation. Delete a copied tether block
-    and repeat the rejection test.
+    and repeat the rejection test. Finally, select one decoration, press
+    `Ctrl+C/V`, and confirm the configured native shortcut returns to settings
+    copy/paste instead of creating another decoration.
 38. Select several decorations, then right-click one selected row in both the
     **Outliner** and **Selected anchor** lists. Confirm the cursor menu opens at
     the row, retains the group, promotes that row to primary, and offers
-    **Select only this**, Move/Rotate/Scale, native settings Copy/Paste, Copy
-    selection, **Duplicate selection**, and **Delete selection**. Exercise each
-    applicable action. Duplicate must create exact primary-first in-place clones
+    **Select only this**, Move/Rotate/Scale, active-state **Focus deco**, native
+    settings Copy/Paste, **Duplicate selection**, and **Delete selection**.
+    Confirm Focus deco appears above Copy settings, lights while enabled, and
+    Copy selection is absent from this menu but still works from Inspector and
+    its shortcuts. Move the menu over the bottom numeric fields and click
+    **Delete** plus the other overlapping menu rows; only the menu action may
+    run, with no field focus/value change or camera/build input. Repeat the
+    foreground-priority check for Surface, Smart Builder, Automation Builder,
+    and an Automation graph-node context menu. Exercise each applicable action.
+    Duplicate must create exact primary-first in-place clones
     without replacing either clipboard; delete must include deduplicated active
     symmetry counterparts, and each batch must undo/redo as one action.
     Right-click an unselected row and confirm it becomes the only target; verify
     construct headers do not open the menu and Focus deco blocks another row.
     For one decoration, confirm the action remains **Duplicate in place**.
+    Finally, leave Box mode active after a completed viewport box selection and
+    right-click a selected decoration center, the group gizmo between centers,
+    and inside the cyan group bounds: the same multi-selection menu must open
+    before Box-off fallback. Verify an unfinished Box drag still cancels,
+    while empty-space right-click can disable Box without clearing the group.
 39. In Deco, Surface, and Smart Builder modes open the bottom-left Gizmo settings
     gear. Confirm preferences are shared across all three editors, then exercise
     Move/Rotate/Scale size and Thickness at 0.5x and 3x, Click area at 8px and
@@ -380,28 +404,49 @@ Pass: all content survives both reload paths without truncation or corruption.
     shape center. Confirm the header remains visible, vector/range rows scroll,
     and the bottom strip only points to this editor while retaining its existing
     snap controls and height. Type X/Y/Z with dot and comma decimals; verify
-    nothing changes before Apply, Revert reloads current values, successful
-    values normalize to 0.001 m, shared indexes propagate, and each text Apply
-    is one undo step. Drag every existing-point slider and confirm live 0.001 m
+    nothing changes before Enter, Revert reloads current values, successful
+    values normalize to 0.001 m, shared indexes propagate, and each Enter text
+    commit is one undo step. Drag every existing-point slider and confirm live 0.001 m
     updates, one undo command per complete drag, atomic rejection of invalid
     intermediate faces, and full camera/build/text/wheel capture. Revert must
     restore the selection-time coordinates without rolling back unrelated settings.
-42. Confirm the header is only **Coordinates** and has no New triangle action.
-    Hide Coordinates, verify Draft uses the released area, then use Show coords.
-    Drag the Draft/Coordinates divider to both extremes and reopen the editor;
-    the custom split must persist, neither shelf may collapse, and the automatic
-    split must not leave a second list-sized empty gap below the final draft hint.
+ 42. Confirm Coordinates defaults hidden, the header is only **Coordinates**,
+    and it has neither New triangle nor Apply text actions. Verify its compact
+    **Coordinates | Show** header remains
+    pinned above Surface settings and the Draft list fills the released area,
+    then use Show. Drag the Draft/Coordinates divider to both extremes and
+    reopen the editor; the custom split must persist, Draft controls/list/hints
+    must not overlap Coordinates, and resizing Coordinates should not resize the
+    Draft list until its true minimum workspace is reached. The automatic split
+    must not leave a second list-sized empty gap below the final draft hint.
 43. Set independent X/Y/Z ranges, restart FtD, and verify profile persistence.
     Reject non-finite, reversed, equal, and sub-0.001 m ranges, then use **Reset
     -10/+10**. Select/stage values below -10 and above +10 across A/B/C; the
     effective limits must expand for the current target without clamping values
     or altering the saved limits. Invalid/incomplete coordinate text disables
     only its slider and remains unchanged. Exercise the `-step` / `+step`
-    buttons and right-click chooser on every axis, including custom dot/comma
+    buttons and right-click chooser on every axis; every button must display its
+    configured amount and right-click must not apply a normal step. Include custom dot/comma
     input and 1/8, 1/4, and 1/2 presets; verify independent profile persistence,
     one undo step per click, and safe rejection outside 0.001-1000 m. Finish at
     1366x768, normal resolution, and 200% HUD scale with Preview/Place, symmetry,
     undo/redo, save/reload, and no overlap with pinned material/action shelves.
+44. With point, edge, face, generator path point, and generator center targets,
+    hover every coordinate vector header and slider row. Confirm the row lights
+    up and a bright marker identifies exactly that bound point on the construct;
+    leaving Coordinates or collapsing it must clear the marker.
+45. Confirm Extra Tools is a full-width three-by-four grid containing Draw,
+    Path, Circle, Arc, 2D cone, Sphere, Part sph, Quad, Cone, Frustum, Polygon,
+    and Tube. Exercise Quad width/height and aspect-preserving Scale; Polygon
+    radius and 3/12-side boundaries; and straight/bent Tube paths with diameter
+    and 3/8/64 sides. For all three, verify move/rotate where applicable, mesh and
+    strut diameter, paint/material, nearest/same anchor, symmetry, Preview/Place,
+    Clear/Delete, undo/redo, invalid-input rejection, capacity rollback, and no
+    Tube frame flips at bends. Exact and near-180-degree backtracks, including a
+    direction dot product of `-0.999`, must identify and reject the offending
+    path point. Confirm 781 points x 64 sides produces 99,904 segments, while
+    782 x 64 and aggregate two/eight-variant symmetry output above 100,000 reject
+    before placement allocation.
 
 Pass: modal input, FTD-styled shell, Smart Builder runtime previews,
 outliner/inspector synchronization, move preview, anchor retether, mesh
