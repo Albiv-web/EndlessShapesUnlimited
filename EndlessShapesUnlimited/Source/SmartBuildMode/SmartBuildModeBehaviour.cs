@@ -106,12 +106,18 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 if (Active && toggleDown)
                 {
+                    if (_session != null && _session.DismissOpenPopup())
+                        return;
+
                     Close("toggle pressed");
                     return;
                 }
 
                 if (Active && Input.GetKeyDown(KeyCode.Escape))
                 {
+                    if (_session != null && _session.DismissOpenPopup())
+                        return;
+
                     DecoLimitLifter.EsuEscapeCloseGuard.Arm();
                     Close("Escape pressed");
                     return;

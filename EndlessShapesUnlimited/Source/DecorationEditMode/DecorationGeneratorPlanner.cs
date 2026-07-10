@@ -331,6 +331,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
     internal sealed class DecorationGeneratorDraft
     {
+        private const float TypedCoordinateResolutionMetres = 0.001f;
+        private const float TypedGeometryEpsilon = 0.000001f;
+        private const float TypedEdgeLengthSquaredEpsilon =
+            TypedGeometryEpsilon * TypedGeometryEpsilon;
+
         private readonly List<Vector3> _pathPoints = new List<Vector3>();
 
         internal SurfaceExtraTool Tool { get; private set; } = SurfaceExtraTool.Path;
@@ -562,7 +567,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 }
 
                 CircleCenter = DecorationEditMath.Snap(local, snap);
-                if (DecorationEditMath.IsFinite(normal) && normal.sqrMagnitude > 0.0001f)
+                if (TryGetFiniteSquaredMagnitude(normal, out float normalSquared) &&
+                    normalSquared > 0.0001f)
                     SetCircleBasisFromNormal(normal);
                 return true;
             }
@@ -575,6 +581,114 @@ namespace DecoLimitLifter.DecorationEditMode
 
             _pathPoints[SelectedPoint] = DecorationEditMath.Snap(local, snap);
             return true;
+        }
+
+        internal bool TrySetSelectedPointCoordinate(Vector3 local, out string message)
+        {
+            message = null;
+            if (SelectedPoint < 0)
+            {
+                message = "Select a generator point before applying its coordinate.";
+                return false;
+            }
+
+            if (!DecorationEditMath.IsFinite(local))
+            {
+                message = "Generator point coordinates must be finite.";
+                return false;
+            }
+
+            Vector3 normalized = DecorationEditMath.Snap(local, TypedCoordinateResolutionMetres);
+            if (!TryGetFiniteSquaredMagnitude(normalized, out float _))
+            {
+                message = "Generator point coordinates are outside the supported numeric range.";
+                return false;
+            }
+
+            if (UsesCenterTool)
+            {
+                if (!HasCircleCenter || SelectedPoint != 0)
+                {
+                    message = "Selected generator center is no longer available.";
+                    return false;
+                }
+
+                if (SameTypedCoordinate(CircleCenter, normalized))
+                {
+                    message = "Typed generator center already matches the selected point.";
+                    return false;
+                }
+
+                CircleCenter = normalized;
+                message = "Generator center coordinate applied.";
+                return true;
+            }
+
+            if (SelectedPoint >= _pathPoints.Count)
+            {
+                message = "Selected path point is no longer available.";
+                return false;
+            }
+
+            if (SelectedPoint > 0)
+            {
+                Vector3 previousDelta = _pathPoints[SelectedPoint - 1] - normalized;
+                if (!TryGetFiniteSquaredMagnitude(previousDelta, out float previousSquared))
+                {
+                    message = "Generator path coordinate is outside the supported numeric range.";
+                    return false;
+                }
+
+                if (previousSquared <= TypedEdgeLengthSquaredEpsilon)
+                {
+                    message = "Generator path coordinate would create a zero-length previous segment.";
+                    return false;
+                }
+            }
+
+            if (SelectedPoint + 1 < _pathPoints.Count)
+            {
+                Vector3 nextDelta = _pathPoints[SelectedPoint + 1] - normalized;
+                if (!TryGetFiniteSquaredMagnitude(nextDelta, out float nextSquared))
+                {
+                    message = "Generator path coordinate is outside the supported numeric range.";
+                    return false;
+                }
+
+                if (nextSquared <= TypedEdgeLengthSquaredEpsilon)
+                {
+                    message = "Generator path coordinate would create a zero-length next segment.";
+                    return false;
+                }
+            }
+
+            if (SameTypedCoordinate(_pathPoints[SelectedPoint], normalized))
+            {
+                message = "Typed generator coordinate already matches the selected path point.";
+                return false;
+            }
+
+            _pathPoints[SelectedPoint] = normalized;
+            message = "Generator path point coordinate applied.";
+            return true;
+        }
+
+        private static bool TryGetFiniteSquaredMagnitude(Vector3 value, out float squaredMagnitude)
+        {
+            squaredMagnitude = 0f;
+            if (!DecorationEditMath.IsFinite(value))
+                return false;
+
+            squaredMagnitude = value.sqrMagnitude;
+            return DecorationEditMath.IsFinite(squaredMagnitude);
+        }
+
+        private static bool SameTypedCoordinate(Vector3 left, Vector3 right)
+        {
+            const float tolerance = TypedCoordinateResolutionMetres * 0.001f;
+            return Math.Abs(left.x - right.x) <= tolerance &&
+                   Math.Abs(left.y - right.y) <= tolerance &&
+                   Math.Abs(left.z - right.z) <= tolerance;
         }
 
         internal bool TryDeleteSelection(out string message)
@@ -691,8 +805,20 @@ namespace DecoLimitLifter.DecorationEditMode
             _pathPoints.AddRange(snapshot.PathPoints ?? Array.Empty<Vector3>());
             HasCircleCenter = snapshot.HasCircleCenter;
             CircleCenter = snapshot.CircleCenter;
-            CircleNormal = NormalizeOrDefault(snapshot.CircleNormal, Vector3.up);
-            SetCircleBasis(snapshot.CircleTangentA, snapshot.CircleTangentB);
+            if (UsesCenterTool && HasCircleCenter)
+            {
+                CircleNormal = NormalizeOrDefault(snapshot.CircleNormal, Vector3.up);
+                SetCircleBasis(snapshot.CircleTangentA, snapshot.CircleTangentB);
+            }
+            else
+            {
+                // The basis is inactive in Path mode. Preserve it byte-for-byte so
+                // undo/redo restores the complete draft snapshot without changing
+                // the default right/forward/up state into a derived down normal.
+                CircleNormal = snapshot.CircleNormal;
+                CircleTangentA = snapshot.CircleTangentA;
+                CircleTangentB = snapshot.CircleTangentB;
+            }
             HasSharedAnchor = snapshot.HasSharedAnchor;
             SharedAnchor = snapshot.SharedAnchor;
             SelectPoint(snapshot.SelectedPoint);
@@ -752,9 +878,11 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static Vector3 NormalizeOrDefault(Vector3 value, Vector3 fallback)
         {
-            if (DecorationEditMath.IsFinite(value) && value.sqrMagnitude > 0.0001f)
+            if (TryGetFiniteSquaredMagnitude(value, out float valueSquared) &&
+                valueSquared > 0.0001f)
                 return value.normalized;
-            if (DecorationEditMath.IsFinite(fallback) && fallback.sqrMagnitude > 0.0001f)
+            if (TryGetFiniteSquaredMagnitude(fallback, out float fallbackSquared) &&
+                fallbackSquared > 0.0001f)
                 return fallback.normalized;
             return Vector3.up;
         }
@@ -772,9 +900,13 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             tangentA = NormalizeOrDefault(tangentA, Vector3.right);
             Vector3 normal = Vector3.Cross(tangentA, tangentB);
-            if (!DecorationEditMath.IsFinite(normal) || normal.sqrMagnitude <= 0.0001f)
+            if (!TryGetFiniteSquaredMagnitude(normal, out float normalSquared) ||
+                normalSquared <= 0.0001f)
             {
-                normal = CircleNormal.sqrMagnitude > 0.0001f ? CircleNormal : Vector3.up;
+                normal = TryGetFiniteSquaredMagnitude(CircleNormal, out float circleNormalSquared) &&
+                         circleNormalSquared > 0.0001f
+                    ? CircleNormal
+                    : Vector3.up;
                 DecorationGeneratorPlanner.BuildCircleBasisForDraft(normal, out tangentA, out tangentB);
             }
             else
@@ -862,6 +994,7 @@ namespace DecoLimitLifter.DecorationEditMode
     internal static class DecorationGeneratorPlanner
     {
         private const float GeometryEpsilon = 0.000001f;
+        private const float GeometryLengthSquaredEpsilon = GeometryEpsilon * GeometryEpsilon;
 
         internal static bool TryPlan(
             DecorationGeneratorDraft draft,
@@ -1020,23 +1153,65 @@ namespace DecoLimitLifter.DecorationEditMode
             out string message)
         {
             message = null;
+            List<DecorationGeneratorSegment> segments;
             switch (draft.Tool)
             {
                 case SurfaceExtraTool.Circle:
                 case SurfaceExtraTool.PartialCircle:
-                    return BuildCircleSegments(draft, settings, out message);
+                    segments = BuildCircleSegments(draft, settings, out message);
+                    break;
                 case SurfaceExtraTool.Sphere:
                 case SurfaceExtraTool.PartialSphere:
-                    return BuildSphereSegments(draft, settings, out message);
+                    segments = BuildSphereSegments(draft, settings, out message);
+                    break;
                 case SurfaceExtraTool.Cone:
-                    return BuildConeSegments(draft, settings, out message);
+                    segments = BuildConeSegments(draft, settings, out message);
+                    break;
                 case SurfaceExtraTool.Frustum:
-                    return BuildFrustumSegments(draft, settings, out message);
+                    segments = BuildFrustumSegments(draft, settings, out message);
+                    break;
                 case SurfaceExtraTool.Cone2D:
-                    return BuildCone2DSegments(draft, settings, out message);
+                    segments = BuildCone2DSegments(draft, settings, out message);
+                    break;
                 default:
-                    return BuildPathSegments(draft, out message);
+                    segments = BuildPathSegments(draft, out message);
+                    break;
             }
+
+            if (segments == null)
+                return null;
+
+            for (int index = 0; index < segments.Count; index++)
+            {
+                DecorationGeneratorSegment segment = segments[index];
+                if (!TryGetFiniteSquaredMagnitude(segment.Start, out float _) ||
+                    !TryGetFiniteSquaredMagnitude(segment.End, out float _))
+                {
+                    message = "Generator segment " +
+                              (index + 1).ToString(CultureInfo.InvariantCulture) +
+                              " contains a point outside the supported numeric range.";
+                    return null;
+                }
+
+                Vector3 delta = segment.End - segment.Start;
+                if (!TryGetFiniteSquaredMagnitude(delta, out float lengthSquared))
+                {
+                    message = "Generator segment " +
+                              (index + 1).ToString(CultureInfo.InvariantCulture) +
+                              " is outside the supported numeric range.";
+                    return null;
+                }
+
+                if (lengthSquared <= GeometryLengthSquaredEpsilon)
+                {
+                    message = "Generator segment " +
+                              (index + 1).ToString(CultureInfo.InvariantCulture) +
+                              " has zero length.";
+                    return null;
+                }
+            }
+
+            return segments;
         }
 
         private static List<DecorationGeneratorSegment> BuildPathSegments(
@@ -1261,7 +1436,9 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 start,
             Vector3 end)
         {
-            if ((end - start).sqrMagnitude <= GeometryEpsilon * GeometryEpsilon)
+            Vector3 delta = end - start;
+            if (TryGetFiniteSquaredMagnitude(delta, out float lengthSquared) &&
+                lengthSquared <= GeometryLengthSquaredEpsilon)
                 return;
             segments.Add(new DecorationGeneratorSegment(start, end));
         }
@@ -1273,19 +1450,19 @@ namespace DecoLimitLifter.DecorationEditMode
             Mathf.Clamp(settings?.ArcDegrees ?? 360f, 0.001f, 360f) * Mathf.Deg2Rad;
 
         private static Vector3 BasisA(DecorationGeneratorDraft draft) =>
-            draft.CircleTangentA.sqrMagnitude > GeometryEpsilon
-                ? draft.CircleTangentA.normalized
-                : Vector3.right;
+            NormalizeOrFallback(draft.CircleTangentA, Vector3.right);
 
         private static Vector3 BasisB(DecorationGeneratorDraft draft) =>
-            draft.CircleTangentB.sqrMagnitude > GeometryEpsilon
-                ? draft.CircleTangentB.normalized
-                : Vector3.forward;
+            NormalizeOrFallback(draft.CircleTangentB, Vector3.forward);
 
         private static Vector3 BasisNormal(DecorationGeneratorDraft draft) =>
-            draft.CircleNormal.sqrMagnitude > GeometryEpsilon
-                ? draft.CircleNormal.normalized
-                : Vector3.up;
+            NormalizeOrFallback(draft.CircleNormal, Vector3.up);
+
+        private static Vector3 NormalizeOrFallback(Vector3 value, Vector3 fallback) =>
+            TryGetFiniteSquaredMagnitude(value, out float squaredMagnitude) &&
+            squaredMagnitude > GeometryLengthSquaredEpsilon
+                ? value.normalized
+                : fallback;
 
         private static bool TryCreatePlacement(
             DecorationGeneratorSegment segment,
@@ -1368,23 +1545,26 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static void BuildCircleBasis(Vector3 normal, out Vector3 tangentA, out Vector3 tangentB)
         {
-            normal = normal.sqrMagnitude > GeometryEpsilon ? normal.normalized : Vector3.up;
+            normal = NormalizeOrFallback(normal, Vector3.up);
             tangentA = Vector3.Cross(
                 normal,
                 Mathf.Abs(Vector3.Dot(normal, Vector3.up)) > 0.92f
                     ? Vector3.right
                     : Vector3.up);
-            if (tangentA.sqrMagnitude <= GeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(tangentA, out float tangentSquared) ||
+                tangentSquared <= GeometryLengthSquaredEpsilon)
                 tangentA = Vector3.Cross(normal, Vector3.forward);
-            tangentA = tangentA.normalized;
-            tangentB = Vector3.Cross(normal, tangentA).normalized;
+            tangentA = NormalizeOrFallback(tangentA, Vector3.right);
+            tangentB = NormalizeOrFallback(Vector3.Cross(normal, tangentA), Vector3.forward);
         }
 
         private static Vector3 LookRotationEuler(Vector3 forward, Vector3 upwards)
         {
-            if (!DecorationEditMath.IsFinite(forward) || forward.sqrMagnitude <= GeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(forward, out float forwardSquared) ||
+                forwardSquared <= GeometryLengthSquaredEpsilon)
                 forward = Vector3.forward;
-            if (!DecorationEditMath.IsFinite(upwards) || upwards.sqrMagnitude <= GeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(upwards, out float upwardsSquared) ||
+                upwardsSquared <= GeometryLengthSquaredEpsilon)
                 upwards = Vector3.up;
 
             try
@@ -1399,8 +1579,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static Vector3 EulerFromTo(Vector3 from, Vector3 to)
         {
-            from = from.sqrMagnitude > GeometryEpsilon ? from.normalized : Vector3.right;
-            to = to.sqrMagnitude > GeometryEpsilon ? to.normalized : Vector3.right;
+            from = NormalizeOrFallback(from, Vector3.right);
+            to = NormalizeOrFallback(to, Vector3.right);
             float dot = Mathf.Clamp(Vector3.Dot(from, to), -1f, 1f);
             if (dot > 0.999999f)
                 return Vector3.zero;
@@ -1413,9 +1593,10 @@ namespace DecoLimitLifter.DecorationEditMode
             if (dot < -0.999999f)
             {
                 axis = Vector3.Cross(from, Vector3.right);
-                if (axis.sqrMagnitude <= GeometryEpsilon)
+                if (!TryGetFiniteSquaredMagnitude(axis, out float axisSquared) ||
+                    axisSquared <= GeometryLengthSquaredEpsilon)
                     axis = Vector3.Cross(from, Vector3.up);
-                axis = axis.normalized;
+                axis = NormalizeOrFallback(axis, Vector3.up);
                 x = axis.x;
                 y = axis.y;
                 z = axis.z;
@@ -1510,6 +1691,16 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static string FloatKey(float value) =>
             value.ToString("0.####", CultureInfo.InvariantCulture);
+
+        private static bool TryGetFiniteSquaredMagnitude(Vector3 value, out float squaredMagnitude)
+        {
+            squaredMagnitude = 0f;
+            if (!DecorationEditMath.IsFinite(value))
+                return false;
+
+            squaredMagnitude = value.sqrMagnitude;
+            return DecorationEditMath.IsFinite(squaredMagnitude);
+        }
 
         private static Vector3 RoundPlacementPosition(Vector3 value) =>
             new Vector3(

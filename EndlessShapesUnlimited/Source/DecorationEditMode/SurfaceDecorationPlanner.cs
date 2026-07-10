@@ -334,6 +334,13 @@ namespace DecoLimitLifter.DecorationEditMode
 
     internal sealed class SurfaceDraft
     {
+        private const float TypedCoordinateResolutionMetres = 0.001f;
+        private const float TypedGeometryEpsilon = 0.000001f;
+        private const float TypedEdgeLengthSquaredEpsilon =
+            TypedGeometryEpsilon * TypedGeometryEpsilon;
+        private const float TypedAreaSquaredEpsilon =
+            TypedEdgeLengthSquaredEpsilon * TypedEdgeLengthSquaredEpsilon;
+
         private readonly List<Vector3> _points = new List<Vector3>();
         private readonly List<SurfaceFace> _faces = new List<SurfaceFace>();
         private readonly List<SurfaceFaceStyle> _faceStyles = new List<SurfaceFaceStyle>();
@@ -640,6 +647,259 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             _points[index] = DecorationEditMath.Snap(local, snap);
+            return true;
+        }
+
+        internal bool TrySetPointCoordinates(
+            IReadOnlyDictionary<int, Vector3> coordinates,
+            out string message)
+        {
+            message = null;
+            if (coordinates == null || coordinates.Count == 0)
+            {
+                message = "Enter at least one surface point coordinate before applying.";
+                return false;
+            }
+
+            Vector3[] stagedPoints = _points.ToArray();
+            var updatedIndexes = new HashSet<int>();
+            foreach (KeyValuePair<int, Vector3> coordinate in coordinates)
+            {
+                int index = coordinate.Key;
+                if (index < 0 || index >= stagedPoints.Length)
+                {
+                    message = "A selected surface point is no longer available.";
+                    return false;
+                }
+
+                if (!updatedIndexes.Add(index))
+                {
+                    message = "Each surface point can be assigned only one coordinate.";
+                    return false;
+                }
+
+                if (!DecorationEditMath.IsFinite(coordinate.Value))
+                {
+                    message = "Surface point coordinates must be finite.";
+                    return false;
+                }
+
+                Vector3 normalized = NormalizeTypedCoordinate(coordinate.Value);
+                if (!TryGetFiniteSquaredMagnitude(normalized, out float _))
+                {
+                    message = "Surface point coordinates are outside the supported numeric range.";
+                    return false;
+                }
+
+                stagedPoints[index] = normalized;
+            }
+
+            if (updatedIndexes.Count == 0)
+            {
+                message = "Enter at least one surface point coordinate before applying.";
+                return false;
+            }
+
+            for (int faceIndex = 0; faceIndex < _faces.Count; faceIndex++)
+            {
+                SurfaceFace face = _faces[faceIndex];
+                if (!updatedIndexes.Contains(face.A) &&
+                    !updatedIndexes.Contains(face.B) &&
+                    !updatedIndexes.Contains(face.C))
+                {
+                    continue;
+                }
+
+                if (!TryValidateTypedFaceGeometry(
+                        face,
+                        stagedPoints,
+                        "Surface face " + (faceIndex + 1).ToString(CultureInfo.InvariantCulture),
+                        out message))
+                {
+                    return false;
+                }
+            }
+
+            bool changed = false;
+            foreach (int index in updatedIndexes)
+            {
+                if (!SameTypedCoordinate(_points[index], stagedPoints[index]))
+                {
+                    changed = true;
+                    break;
+                }
+            }
+
+            if (!changed)
+            {
+                message = "Typed surface coordinates already match the selected points.";
+                return false;
+            }
+
+            foreach (int index in updatedIndexes)
+                _points[index] = stagedPoints[index];
+
+            message = updatedIndexes.Count == 1
+                ? "Surface point coordinate applied."
+                : updatedIndexes.Count.ToString(CultureInfo.InvariantCulture) + " surface point coordinates applied.";
+            return true;
+        }
+
+        internal bool TrySetPointCoordinateLive(
+            int index,
+            Vector3 coordinate,
+            out string message)
+        {
+            message = null;
+            if (index < 0 || index >= _points.Count)
+            {
+                message = "The selected surface point is no longer available.";
+                return false;
+            }
+
+            if (!DecorationEditMath.IsFinite(coordinate))
+            {
+                message = "Surface point coordinates must be finite.";
+                return false;
+            }
+
+            Vector3 normalized = NormalizeTypedCoordinate(coordinate);
+            if (!TryGetFiniteSquaredMagnitude(normalized, out float _))
+            {
+                message = "Surface point coordinates are outside the supported numeric range.";
+                return false;
+            }
+
+            if (SameTypedCoordinate(_points[index], normalized))
+            {
+                message = "Surface point coordinate already matches the selected point.";
+                return false;
+            }
+
+            for (int faceIndex = 0; faceIndex < _faces.Count; faceIndex++)
+            {
+                SurfaceFace face = _faces[faceIndex];
+                if (!face.Contains(index))
+                    continue;
+                if (face.A < 0 || face.B < 0 || face.C < 0 ||
+                    face.A >= _points.Count ||
+                    face.B >= _points.Count ||
+                    face.C >= _points.Count ||
+                    face.A == face.B || face.B == face.C || face.A == face.C)
+                {
+                    message = "Surface face " +
+                              (faceIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                              " references an unavailable point.";
+                    return false;
+                }
+
+                Vector3 a = face.A == index ? normalized : _points[face.A];
+                Vector3 b = face.B == index ? normalized : _points[face.B];
+                Vector3 c = face.C == index ? normalized : _points[face.C];
+                if (!TryValidateTypedTriangleCoordinates(
+                        a,
+                        b,
+                        c,
+                        "Surface face " +
+                        (faceIndex + 1).ToString(CultureInfo.InvariantCulture),
+                        out message))
+                {
+                    return false;
+                }
+            }
+
+            _points[index] = normalized;
+            message = "Surface point coordinate applied live.";
+            return true;
+        }
+
+        internal bool TryAddTypedTriangle(
+            AllConstruct focusedConstruct,
+            Vector3 a,
+            Vector3 b,
+            Vector3 c,
+            out string message)
+        {
+            message = null;
+            AllConstruct acceptedConstruct = Construct ?? focusedConstruct;
+            if (acceptedConstruct == null)
+            {
+                message = "Point at a real craft block before adding a typed surface triangle.";
+                return false;
+            }
+
+            if (Construct != null &&
+                focusedConstruct != null &&
+                !ReferenceEquals(Construct, focusedConstruct))
+            {
+                message = "Surface drafts are scoped to one construct. Clear the draft to start on another construct.";
+                return false;
+            }
+
+            if (!DecorationEditMath.IsFinite(a) ||
+                !DecorationEditMath.IsFinite(b) ||
+                !DecorationEditMath.IsFinite(c))
+            {
+                message = "Typed surface triangle coordinates must be finite.";
+                return false;
+            }
+
+            a = NormalizeTypedCoordinate(a);
+            b = NormalizeTypedCoordinate(b);
+            c = NormalizeTypedCoordinate(c);
+            if (!TryGetFiniteSquaredMagnitude(a, out float _) ||
+                !TryGetFiniteSquaredMagnitude(b, out float _) ||
+                !TryGetFiniteSquaredMagnitude(c, out float _))
+            {
+                message = "Typed surface triangle coordinates are outside the supported numeric range.";
+                return false;
+            }
+
+            var enteredPoints = new[] { a, b, c };
+            if (!TryValidateTypedFaceGeometry(
+                    new SurfaceFace(0, 1, 2),
+                    enteredPoints,
+                    "Typed surface triangle",
+                    out message))
+            {
+                return false;
+            }
+
+            if (_faces.Any(face => SameTypedFaceCoordinates(face, a, b, c)))
+            {
+                message = "A surface face already exists at those typed coordinates.";
+                return false;
+            }
+
+            var stagedPoints = new List<Vector3>(_points.Count + 3);
+            stagedPoints.AddRange(_points);
+            SurfaceFace candidate = ResolveTypedTrianglePointIndexes(stagedPoints, a, b, c);
+            if (!TryValidateTypedFaceGeometry(
+                    candidate,
+                    stagedPoints,
+                    "Typed surface triangle",
+                    out message))
+            {
+                return false;
+            }
+
+            if (_faces.Any(face => SameFace(face, candidate.A, candidate.B, candidate.C)))
+            {
+                message = "A surface face already exists at those typed coordinates.";
+                return false;
+            }
+
+            if (!TryOrientTypedFace(candidate, stagedPoints, out SurfaceFace oriented, out message))
+                return false;
+
+            if (Construct == null)
+                Construct = acceptedConstruct;
+            for (int index = _points.Count; index < stagedPoints.Count; index++)
+                _points.Add(stagedPoints[index]);
+            _faces.Add(oriented);
+            _faceStyles.Add(SurfaceFaceStyle.FromSettings(Settings));
+            SelectFace(_faces.Count - 1);
+            message = "Typed surface triangle added.";
             return true;
         }
 
@@ -1205,16 +1465,22 @@ namespace DecoLimitLifter.DecorationEditMode
             }
         }
 
-        private bool TryGetReferenceNormal(out Vector3 normal)
+        private bool TryGetReferenceNormal(out Vector3 normal) =>
+            TryGetReferenceNormal(_points, out normal);
+
+        private bool TryGetReferenceNormal(
+            IReadOnlyList<Vector3> points,
+            out Vector3 normal)
         {
             normal = Vector3.zero;
             foreach (SurfaceFace face in _faces)
             {
-                if (TryGetFaceNormal(face, out Vector3 faceNormal))
+                if (TryGetFaceNormal(face, points, out Vector3 faceNormal))
                     normal += faceNormal;
             }
 
-            if (DecorationEditMath.IsFinite(normal) && normal.sqrMagnitude > 0.000000000001f)
+            if (TryGetFiniteSquaredMagnitude(normal, out float normalSquared) &&
+                normalSquared > TypedAreaSquaredEpsilon)
             {
                 normal.Normalize();
                 return true;
@@ -1222,7 +1488,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             foreach (SurfaceFace face in _faces)
             {
-                if (TryGetFaceNormal(face, out normal))
+                if (TryGetFaceNormal(face, points, out normal))
                 {
                     normal.Normalize();
                     return true;
@@ -1233,19 +1499,633 @@ namespace DecoLimitLifter.DecorationEditMode
             return false;
         }
 
-        private bool TryGetFaceNormal(SurfaceFace face, out Vector3 normal)
+        private bool TryGetFaceNormal(SurfaceFace face, out Vector3 normal) =>
+            TryGetFaceNormal(face, _points, out normal);
+
+        private static bool TryGetFaceNormal(
+            SurfaceFace face,
+            IReadOnlyList<Vector3> points,
+            out Vector3 normal)
         {
             normal = Vector3.zero;
+            if (face.A < 0 || face.B < 0 || face.C < 0 ||
+                points == null ||
+                face.A >= points.Count || face.B >= points.Count || face.C >= points.Count)
+            {
+                return false;
+            }
+
+            Vector3 ab = points[face.B] - points[face.A];
+            Vector3 ac = points[face.C] - points[face.A];
+            normal = Vector3.Cross(ab, ac);
+            return TryGetFiniteSquaredMagnitude(normal, out float normalSquared) &&
+                   normalSquared > TypedAreaSquaredEpsilon;
+        }
+
+        private static Vector3 NormalizeTypedCoordinate(Vector3 local) =>
+            DecorationEditMath.Snap(local, TypedCoordinateResolutionMetres);
+
+        private SurfaceFace ResolveTypedTrianglePointIndexes(
+            List<Vector3> points,
+            Vector3 a,
+            Vector3 b,
+            Vector3 c)
+        {
+            int[] incidences = BuildExistingFaceIncidences(points.Count);
+            HashSet<ulong> existingEdges = BuildExistingEdgeKeys(points.Count);
+            List<int> aCandidates = ResolveTypedPointCandidates(points, a, incidences);
+            List<int> bCandidates = ResolveTypedPointCandidates(points, b, incidences);
+            List<int> cCandidates = ResolveTypedPointCandidates(points, c, incidences);
+
+            int bestA = BestTypedPoint(aCandidates, incidences);
+            int bestB = BestTypedPoint(bCandidates, incidences);
+            int bestC = BestTypedPoint(cCandidates, incidences);
+            int fallbackA = bestA;
+            int fallbackB = bestB;
+            int fallbackC = bestC;
+            int bestSharedEdges = CountTypedSharedEdges(bestA, bestB, bestC, existingEdges);
+            long bestIncidence = TypedTupleIncidence(bestA, bestB, bestC, incidences);
+
+            int[] candidateGroups = BuildTypedCandidateGroups(
+                points.Count,
+                aCandidates,
+                bCandidates,
+                cCandidates);
+            int[][] bestConnectedByGroup = CreateTypedNeighborTable(points.Count);
+            foreach (ulong edgeKey in existingEdges)
+            {
+                DecodeTypedEdgeKey(edgeKey, out int first, out int second);
+                if (first < 0 || second < 0 ||
+                    first >= candidateGroups.Length || second >= candidateGroups.Length)
+                {
+                    continue;
+                }
+
+                int firstGroup = candidateGroups[first];
+                int secondGroup = candidateGroups[second];
+                if (firstGroup < 0 || secondGroup < 0 || firstGroup == secondGroup)
+                    continue;
+
+                UpdateBestTypedNeighbor(
+                    bestConnectedByGroup[firstGroup],
+                    second,
+                    first,
+                    incidences);
+                UpdateBestTypedNeighbor(
+                    bestConnectedByGroup[secondGroup],
+                    first,
+                    second,
+                    incidences);
+            }
+
+            // Every two-edge topology has one center vertex. Evaluating the best
+            // cross-group neighbor on each side of every candidate finds the best
+            // connected path without multiplying the three candidate set sizes.
+            foreach (int aIndex in aCandidates)
+            {
+                ConsiderTypedTuple(
+                    aIndex,
+                    bestConnectedByGroup[1][aIndex],
+                    bestConnectedByGroup[2][aIndex],
+                    incidences,
+                    existingEdges,
+                    ref bestA,
+                    ref bestB,
+                    ref bestC,
+                    ref bestSharedEdges,
+                    ref bestIncidence);
+            }
+
+            foreach (int bIndex in bCandidates)
+            {
+                ConsiderTypedTuple(
+                    bestConnectedByGroup[0][bIndex],
+                    bIndex,
+                    bestConnectedByGroup[2][bIndex],
+                    incidences,
+                    existingEdges,
+                    ref bestA,
+                    ref bestB,
+                    ref bestC,
+                    ref bestSharedEdges,
+                    ref bestIncidence);
+            }
+
+            foreach (int cIndex in cCandidates)
+            {
+                ConsiderTypedTuple(
+                    bestConnectedByGroup[0][cIndex],
+                    bestConnectedByGroup[1][cIndex],
+                    cIndex,
+                    incidences,
+                    existingEdges,
+                    ref bestA,
+                    ref bestB,
+                    ref bestC,
+                    ref bestSharedEdges,
+                    ref bestIncidence);
+            }
+
+            // Also consider each sparse existing edge with the best independent
+            // point from the missing group. This covers one-edge topology and can
+            // discover an additional connection without any Cartesian scan.
+            foreach (ulong edgeKey in existingEdges)
+            {
+                DecodeTypedEdgeKey(edgeKey, out int first, out int second);
+                if (first < 0 || second < 0 ||
+                    first >= candidateGroups.Length || second >= candidateGroups.Length)
+                {
+                    continue;
+                }
+
+                int firstGroup = candidateGroups[first];
+                int secondGroup = candidateGroups[second];
+                if (firstGroup < 0 || secondGroup < 0 || firstGroup == secondGroup)
+                    continue;
+
+                int candidateA = fallbackA;
+                int candidateB = fallbackB;
+                int candidateC = fallbackC;
+                SetTypedTupleIndex(firstGroup, first, ref candidateA, ref candidateB, ref candidateC);
+                SetTypedTupleIndex(secondGroup, second, ref candidateA, ref candidateB, ref candidateC);
+
+                ConsiderTypedTuple(
+                    candidateA,
+                    candidateB,
+                    candidateC,
+                    incidences,
+                    existingEdges,
+                    ref bestA,
+                    ref bestB,
+                    ref bestC,
+                    ref bestSharedEdges,
+                    ref bestIncidence);
+            }
+
+            return new SurfaceFace(bestA, bestB, bestC);
+        }
+
+        private static int BestTypedPoint(
+            IReadOnlyList<int> candidates,
+            IReadOnlyList<int> incidences)
+        {
+            int best = -1;
+            if (candidates == null)
+                return best;
+
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                int candidate = candidates[index];
+                if (TypedPointPrecedes(candidate, best, incidences))
+                    best = candidate;
+            }
+
+            return best;
+        }
+
+        private static int[] BuildTypedCandidateGroups(
+            int pointCount,
+            IReadOnlyList<int> aCandidates,
+            IReadOnlyList<int> bCandidates,
+            IReadOnlyList<int> cCandidates)
+        {
+            var groups = new int[Math.Max(0, pointCount)];
+            for (int index = 0; index < groups.Length; index++)
+                groups[index] = -1;
+            AssignTypedCandidateGroup(groups, aCandidates, 0);
+            AssignTypedCandidateGroup(groups, bCandidates, 1);
+            AssignTypedCandidateGroup(groups, cCandidates, 2);
+            return groups;
+        }
+
+        private static void AssignTypedCandidateGroup(
+            int[] groups,
+            IReadOnlyList<int> candidates,
+            int group)
+        {
+            if (groups == null || candidates == null)
+                return;
+
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                int candidate = candidates[index];
+                if (candidate >= 0 && candidate < groups.Length)
+                    groups[candidate] = group;
+            }
+        }
+
+        private static int[][] CreateTypedNeighborTable(int pointCount)
+        {
+            int length = Math.Max(0, pointCount);
+            var table = new[]
+            {
+                new int[length],
+                new int[length],
+                new int[length]
+            };
+            for (int group = 0; group < table.Length; group++)
+            {
+                for (int index = 0; index < length; index++)
+                    table[group][index] = -1;
+            }
+
+            return table;
+        }
+
+        private static void UpdateBestTypedNeighbor(
+            int[] groupNeighbors,
+            int point,
+            int candidate,
+            IReadOnlyList<int> incidences)
+        {
+            if (groupNeighbors == null || point < 0 || point >= groupNeighbors.Length)
+                return;
+            if (TypedPointPrecedes(candidate, groupNeighbors[point], incidences))
+                groupNeighbors[point] = candidate;
+        }
+
+        private static bool TypedPointPrecedes(
+            int candidate,
+            int current,
+            IReadOnlyList<int> incidences)
+        {
+            if (candidate < 0)
+                return false;
+            if (current < 0)
+                return true;
+
+            long candidateIncidence = TypedPointIncidence(incidences, candidate);
+            long currentIncidence = TypedPointIncidence(incidences, current);
+            return candidateIncidence > currentIncidence ||
+                   (candidateIncidence == currentIncidence && candidate < current);
+        }
+
+        private static void ConsiderTypedTuple(
+            int a,
+            int b,
+            int c,
+            IReadOnlyList<int> incidences,
+            ISet<ulong> existingEdges,
+            ref int bestA,
+            ref int bestB,
+            ref int bestC,
+            ref int bestSharedEdges,
+            ref long bestIncidence)
+        {
+            if (a < 0 || b < 0 || c < 0)
+                return;
+
+            int sharedEdges = CountTypedSharedEdges(a, b, c, existingEdges);
+            long incidence = TypedTupleIncidence(a, b, c, incidences);
+            if (sharedEdges < bestSharedEdges ||
+                (sharedEdges == bestSharedEdges && incidence < bestIncidence) ||
+                (sharedEdges == bestSharedEdges &&
+                 incidence == bestIncidence &&
+                 !TypedIndexTuplePrecedes(a, b, c, bestA, bestB, bestC)))
+            {
+                return;
+            }
+
+            bestA = a;
+            bestB = b;
+            bestC = c;
+            bestSharedEdges = sharedEdges;
+            bestIncidence = incidence;
+        }
+
+        private static int CountTypedSharedEdges(
+            int a,
+            int b,
+            int c,
+            ISet<ulong> existingEdges)
+        {
+            if (existingEdges == null)
+                return 0;
+
+            int count = 0;
+            if (existingEdges.Contains(TypedEdgeKey(a, b)))
+                count++;
+            if (existingEdges.Contains(TypedEdgeKey(b, c)))
+                count++;
+            if (existingEdges.Contains(TypedEdgeKey(c, a)))
+                count++;
+            // One edge supplies connected winding; a second establishes a full
+            // connected path. A third does not improve that decision, and capping
+            // the rank at two keeps the sparse center-neighbor search exact.
+            return Math.Min(count, 2);
+        }
+
+        private static long TypedTupleIncidence(
+            int a,
+            int b,
+            int c,
+            IReadOnlyList<int> incidences) =>
+            TypedPointIncidence(incidences, a) +
+            TypedPointIncidence(incidences, b) +
+            TypedPointIncidence(incidences, c);
+
+        private static void DecodeTypedEdgeKey(ulong key, out int lower, out int upper)
+        {
+            lower = (int)(key >> 32);
+            upper = (int)(uint)key;
+        }
+
+        private static void SetTypedTupleIndex(
+            int group,
+            int point,
+            ref int a,
+            ref int b,
+            ref int c)
+        {
+            switch (group)
+            {
+                case 0:
+                    a = point;
+                    break;
+                case 1:
+                    b = point;
+                    break;
+                case 2:
+                    c = point;
+                    break;
+            }
+        }
+
+        private List<int> ResolveTypedPointCandidates(
+            List<Vector3> points,
+            Vector3 coordinate,
+            IReadOnlyList<int> incidences)
+        {
+            var candidates = new List<int>();
+            bool hasReferencedCandidate = false;
+            for (int index = 0; index < points.Count; index++)
+            {
+                if (!SameTypedCoordinate(points[index], coordinate))
+                    continue;
+
+                candidates.Add(index);
+                if (TypedPointIncidence(incidences, index) > 0)
+                    hasReferencedCandidate = true;
+            }
+
+            if (candidates.Count == 0)
+            {
+                points.Add(coordinate);
+                candidates.Add(points.Count - 1);
+                return candidates;
+            }
+
+            if (hasReferencedCandidate)
+            {
+                candidates.RemoveAll(index => TypedPointIncidence(incidences, index) == 0);
+            }
+            else if (candidates.Count > 1)
+            {
+                int first = candidates[0];
+                candidates.Clear();
+                candidates.Add(first);
+            }
+
+            return candidates;
+        }
+
+        private int[] BuildExistingFaceIncidences(int pointCount)
+        {
+            var incidences = new int[pointCount];
+            foreach (SurfaceFace face in _faces)
+            {
+                IncrementTypedPointIncidence(incidences, face.A);
+                IncrementTypedPointIncidence(incidences, face.B);
+                IncrementTypedPointIncidence(incidences, face.C);
+            }
+
+            return incidences;
+        }
+
+        private HashSet<ulong> BuildExistingEdgeKeys(int pointCount)
+        {
+            var edges = new HashSet<ulong>();
+            foreach (SurfaceFace face in _faces)
+            {
+                if (face.A < 0 || face.B < 0 || face.C < 0 ||
+                    face.A >= pointCount || face.B >= pointCount || face.C >= pointCount)
+                {
+                    continue;
+                }
+
+                edges.Add(TypedEdgeKey(face.A, face.B));
+                edges.Add(TypedEdgeKey(face.B, face.C));
+                edges.Add(TypedEdgeKey(face.C, face.A));
+            }
+
+            return edges;
+        }
+
+        private static void IncrementTypedPointIncidence(int[] incidences, int index)
+        {
+            if (incidences == null || index < 0 || index >= incidences.Length)
+                return;
+
+            if (incidences[index] < int.MaxValue)
+                incidences[index]++;
+        }
+
+        private static long TypedPointIncidence(IReadOnlyList<int> incidences, int index) =>
+            incidences != null && index >= 0 && index < incidences.Count
+                ? incidences[index]
+                : 0L;
+
+        private static ulong TypedEdgeKey(int a, int b)
+        {
+            uint lower = (uint)Math.Min(a, b);
+            uint upper = (uint)Math.Max(a, b);
+            return ((ulong)lower << 32) | upper;
+        }
+
+        private static bool TypedIndexTuplePrecedes(
+            int a,
+            int b,
+            int c,
+            int otherA,
+            int otherB,
+            int otherC)
+        {
+            if (a != otherA)
+                return a < otherA;
+            if (b != otherB)
+                return b < otherB;
+            return c < otherC;
+        }
+
+        private bool SameTypedFaceCoordinates(
+            SurfaceFace face,
+            Vector3 a,
+            Vector3 b,
+            Vector3 c)
+        {
             if (face.A < 0 || face.B < 0 || face.C < 0 ||
                 face.A >= _points.Count || face.B >= _points.Count || face.C >= _points.Count)
             {
                 return false;
             }
 
-            Vector3 ab = _points[face.B] - _points[face.A];
-            Vector3 ac = _points[face.C] - _points[face.A];
-            normal = Vector3.Cross(ab, ac);
-            return DecorationEditMath.IsFinite(normal) && normal.sqrMagnitude > 0.000000000001f;
+            Vector3 faceA = _points[face.A];
+            Vector3 faceB = _points[face.B];
+            Vector3 faceC = _points[face.C];
+            return
+                (SameTypedCoordinate(faceA, a) &&
+                 SameTypedCoordinate(faceB, b) &&
+                 SameTypedCoordinate(faceC, c)) ||
+                (SameTypedCoordinate(faceA, a) &&
+                 SameTypedCoordinate(faceB, c) &&
+                 SameTypedCoordinate(faceC, b)) ||
+                (SameTypedCoordinate(faceA, b) &&
+                 SameTypedCoordinate(faceB, a) &&
+                 SameTypedCoordinate(faceC, c)) ||
+                (SameTypedCoordinate(faceA, b) &&
+                 SameTypedCoordinate(faceB, c) &&
+                 SameTypedCoordinate(faceC, a)) ||
+                (SameTypedCoordinate(faceA, c) &&
+                 SameTypedCoordinate(faceB, a) &&
+                 SameTypedCoordinate(faceC, b)) ||
+                (SameTypedCoordinate(faceA, c) &&
+                 SameTypedCoordinate(faceB, b) &&
+                 SameTypedCoordinate(faceC, a));
+        }
+
+        private static bool SameTypedCoordinate(Vector3 left, Vector3 right)
+        {
+            const float tolerance = TypedCoordinateResolutionMetres * 0.001f;
+            return Math.Abs(left.x - right.x) <= tolerance &&
+                   Math.Abs(left.y - right.y) <= tolerance &&
+                   Math.Abs(left.z - right.z) <= tolerance;
+        }
+
+        private bool TryOrientTypedFace(
+            SurfaceFace candidate,
+            IReadOnlyList<Vector3> stagedPoints,
+            out SurfaceFace oriented,
+            out string message)
+        {
+            oriented = candidate;
+            message = null;
+            int sameDirectionEdges = 0;
+            int oppositeDirectionEdges = 0;
+            foreach (SurfaceEdge edge in candidate.Edges())
+            {
+                foreach (SurfaceFace existing in _faces)
+                    CountSharedEdgeDirection(existing, edge, ref sameDirectionEdges, ref oppositeDirectionEdges);
+            }
+
+            if (sameDirectionEdges > 0 && oppositeDirectionEdges > 0)
+            {
+                message = "Typed surface triangle conflicts with the winding of connected faces.";
+                return false;
+            }
+
+            if (sameDirectionEdges > 0)
+            {
+                oriented = candidate.Flipped();
+                return true;
+            }
+
+            if (oppositeDirectionEdges > 0)
+                return true;
+
+            if (TryGetReferenceNormal(stagedPoints, out Vector3 referenceNormal) &&
+                TryGetFaceNormal(candidate, stagedPoints, out Vector3 candidateNormal) &&
+                Vector3.Dot(referenceNormal, candidateNormal) < 0f)
+            {
+                oriented = candidate.Flipped();
+            }
+
+            return true;
+        }
+
+        private static bool TryValidateTypedFaceGeometry(
+            SurfaceFace face,
+            IReadOnlyList<Vector3> points,
+            string label,
+            out string message)
+        {
+            message = null;
+            if (points == null ||
+                face.A < 0 || face.B < 0 || face.C < 0 ||
+                face.A >= points.Count || face.B >= points.Count || face.C >= points.Count ||
+                face.A == face.B || face.B == face.C || face.A == face.C)
+            {
+                message = label + " references an unavailable point.";
+                return false;
+            }
+
+            Vector3 a = points[face.A];
+            Vector3 b = points[face.B];
+            Vector3 c = points[face.C];
+            return TryValidateTypedTriangleCoordinates(a, b, c, label, out message);
+        }
+
+        private static bool TryValidateTypedTriangleCoordinates(
+            Vector3 a,
+            Vector3 b,
+            Vector3 c,
+            string label,
+            out string message)
+        {
+            message = null;
+            if (!DecorationEditMath.IsFinite(a) ||
+                !DecorationEditMath.IsFinite(b) ||
+                !DecorationEditMath.IsFinite(c))
+            {
+                message = label + " contains a non-finite coordinate.";
+                return false;
+            }
+
+            Vector3 ab = b - a;
+            Vector3 bc = c - b;
+            Vector3 ca = a - c;
+            if (!DecorationEditMath.IsFinite(ab) ||
+                !DecorationEditMath.IsFinite(bc) ||
+                !DecorationEditMath.IsFinite(ca) ||
+                !TryGetFiniteSquaredMagnitude(ab, out float abSquared) ||
+                !TryGetFiniteSquaredMagnitude(bc, out float bcSquared) ||
+                !TryGetFiniteSquaredMagnitude(ca, out float caSquared))
+            {
+                message = label + " contains geometry outside the supported numeric range.";
+                return false;
+            }
+
+            if (abSquared <= TypedEdgeLengthSquaredEpsilon ||
+                bcSquared <= TypedEdgeLengthSquaredEpsilon ||
+                caSquared <= TypedEdgeLengthSquaredEpsilon)
+            {
+                message = label + " has repeated points or a zero-length edge.";
+                return false;
+            }
+
+            Vector3 normal = Vector3.Cross(ab, c - a);
+            if (!TryGetFiniteSquaredMagnitude(normal, out float normalSquared))
+            {
+                message = label + " contains geometry outside the supported numeric range.";
+                return false;
+            }
+
+            if (normalSquared <= TypedAreaSquaredEpsilon)
+            {
+                message = label + " has zero area.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryGetFiniteSquaredMagnitude(Vector3 value, out float squaredMagnitude)
+        {
+            squaredMagnitude = 0f;
+            if (!DecorationEditMath.IsFinite(value))
+                return false;
+
+            squaredMagnitude = value.sqrMagnitude;
+            return DecorationEditMath.IsFinite(squaredMagnitude);
         }
 
         private bool TryAcceptConstruct(AllConstruct construct, out string message)
@@ -1529,6 +2409,10 @@ namespace DecoLimitLifter.DecorationEditMode
     internal static class SurfaceDecorationPlanner
     {
         private const float SurfaceGeometryEpsilon = 0.000001f;
+        private const float SurfaceEdgeLengthSquaredEpsilon =
+            SurfaceGeometryEpsilon * SurfaceGeometryEpsilon;
+        private const float SurfaceAreaSquaredEpsilon =
+            SurfaceEdgeLengthSquaredEpsilon * SurfaceEdgeLengthSquaredEpsilon;
 
         internal static bool TryPlan(
             SurfaceDraft draft,
@@ -1877,21 +2761,26 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 ca = vertices[0] - vertices[2];
             if (!DecorationEditMath.IsFinite(ab) ||
                 !DecorationEditMath.IsFinite(bc) ||
-                !DecorationEditMath.IsFinite(ca))
+                !DecorationEditMath.IsFinite(ca) ||
+                !TryGetFiniteSquaredMagnitude(ab, out float abSquared) ||
+                !TryGetFiniteSquaredMagnitude(bc, out float bcSquared) ||
+                !TryGetFiniteSquaredMagnitude(ca, out float caSquared))
             {
                 throw SurfaceGeometryError(faceIndex, "has a non-finite edge");
             }
 
-            if (ab.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon ||
-                bc.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon ||
-                ca.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (abSquared <= SurfaceEdgeLengthSquaredEpsilon ||
+                bcSquared <= SurfaceEdgeLengthSquaredEpsilon ||
+                caSquared <= SurfaceEdgeLengthSquaredEpsilon)
             {
                 throw SurfaceGeometryError(faceIndex, "contains a repeated or zero-length edge");
             }
 
             Vector3 normal = Vector3.Cross(ab, vertices[2] - vertices[0]);
-            if (!DecorationEditMath.IsFinite(normal) ||
-                normal.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(normal, out float normalSquared))
+                throw SurfaceGeometryError(faceIndex, "has a non-finite normal");
+
+            if (normalSquared <= SurfaceAreaSquaredEpsilon)
             {
                 throw SurfaceGeometryError(faceIndex, "is a zero-area triangle");
             }
@@ -1904,8 +2793,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 axis = Vector3.Cross(
                 vertices[1] - vertices[0],
                 vertices[2] - vertices[0]);
-            if (!DecorationEditMath.IsFinite(axis) ||
-                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(axis, out float axisSquared) ||
+                axisSquared <= SurfaceAreaSquaredEpsilon)
             {
                 return Vector3.zero;
             }
@@ -1979,10 +2868,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 end = vertices[endIndex];
             Vector3 apex = vertices[apexIndex];
             Vector3 baseVector = end - start;
-            float baseLengthSquared = baseVector.sqrMagnitude;
-            if (!DecorationEditMath.IsFinite(baseVector) ||
-                !IsFinite(baseLengthSquared) ||
-                baseLengthSquared <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(baseVector, out float baseLengthSquared) ||
+                baseLengthSquared <= SurfaceEdgeLengthSquaredEpsilon)
             {
                 return false;
             }
@@ -2032,7 +2919,8 @@ namespace DecoLimitLifter.DecorationEditMode
             for (int side = 0; side < 3; side++)
             {
                 Vector3 edge = vertices[(side + 1) % 3] - vertices[side];
-                float squared = edge.sqrMagnitude;
+                if (!TryGetFiniteSquaredMagnitude(edge, out float squared))
+                    continue;
                 if (squared > longestSquared)
                 {
                     longestSquared = squared;
@@ -2045,6 +2933,16 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static bool IsFinite(float value) =>
             !float.IsNaN(value) && !float.IsInfinity(value);
+
+        private static bool TryGetFiniteSquaredMagnitude(Vector3 value, out float squaredMagnitude)
+        {
+            squaredMagnitude = 0f;
+            if (!DecorationEditMath.IsFinite(value))
+                return false;
+
+            squaredMagnitude = value.sqrMagnitude;
+            return IsFinite(squaredMagnitude);
+        }
 
         private static Vector3 RoundPlacementPosition(Vector3 value) =>
             new Vector3(
@@ -2085,8 +2983,8 @@ namespace DecoLimitLifter.DecorationEditMode
                     break;
             }
 
-            if (!DecorationEditMath.IsFinite(axis) ||
-                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(axis, out float axisSquared) ||
+                axisSquared <= SurfaceAreaSquaredEpsilon)
             {
                 return Vector3.zero;
             }
@@ -2103,8 +3001,8 @@ namespace DecoLimitLifter.DecorationEditMode
             int faceIndex,
             string context)
         {
-            if (!DecorationEditMath.IsFinite(axis) ||
-                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(axis, out float axisSquared) ||
+                axisSquared <= SurfaceEdgeLengthSquaredEpsilon)
             {
                 throw SurfaceGeometryError(faceIndex, context + " has no valid thickness axis");
             }
@@ -2128,8 +3026,8 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             Vector3 localAxis = DecorationTransformLocalThicknessAxis(polygon);
             Vector3 axis = RotateEuler(orientation, localAxis);
-            if (!DecorationEditMath.IsFinite(axis) ||
-                axis.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(axis, out float axisSquared) ||
+                axisSquared <= SurfaceEdgeLengthSquaredEpsilon)
             {
                 return Vector3.zero;
             }
@@ -2226,7 +3124,8 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             Vector3 z = NormalizeVector(forward, sourceLine, "forward vector");
             Vector3 x = Cross(upwards, z);
-            if (x.sqrMagnitude <= SurfaceGeometryEpsilon * SurfaceGeometryEpsilon)
+            if (!TryGetFiniteSquaredMagnitude(x, out float xSquared) ||
+                xSquared <= SurfaceEdgeLengthSquaredEpsilon)
                 throw SurfaceGeometryError(sourceLine - 1, "generated decoration up vector is parallel to forward");
             x = NormalizeVector(x, sourceLine, "right vector");
             Vector3 y = Cross(z, x);

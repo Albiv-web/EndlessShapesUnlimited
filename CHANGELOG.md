@@ -7,7 +7,7 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
-## 1.0.7 - 2026-07-06
+## 1.0.7 - 2026-07-10
 
 ### Added
 
@@ -24,6 +24,26 @@ GitHub history, but short enough that it can be copied into release notes.
   preview faces without the wireframe overlay.
 - Added Smart Builder cursor tooltips for buttons and interactive panel
   controls, matching Decoration Edit Mode and Surface Builder behavior.
+- Added a dedicated Surface Builder coordinate workbench in the left panel.
+  Points, edges, faces, and generator path points/centers expose construct-local
+  X/Y/Z text fields and 0.001 m sliders. Sliders update geometry live as one
+  undoable drag while exact text remains staged behind Apply text.
+- Added live `-step` / `+step` controls on both sides of every coordinate
+  slider. Right-clicking either button opens a per-axis custom step editor with
+  common presets including 1/8, 1/4, and 1/2 metre values; X/Y/Z steps persist
+  in the ESU profile.
+- Added profile-persistent X/Y/Z Surface slider ranges. Each axis defaults to
+  `-10..+10`, supports validated custom limits and reset, and temporarily
+  expands for out-of-range selected or staged values without clamping geometry
+  or changing the saved preference.
+- Added shared profile-backed gizmo settings to Decoration Edit, Surface
+  Builder, and Smart Builder. Move/Rotate/Scale size, thickness, and click area
+  can be adjusted from the bottom-left gear without dirtying the craft or
+  changing transform sensitivity.
+- Added Decoration Edit clipboard parity with separate native-compatible
+  settings Copy/Paste and repeatable whole-selection Copy selection/Paste in
+  place workflows. Group paste creates and selects exact in-place clones as one
+  undoable operation.
 - Added mirrored Decoration Edit placement and anchor preview hints while
   symmetry planes are active, so the original and mirrored side can be checked
   before committing.
@@ -40,6 +60,9 @@ GitHub history, but short enough that it can be copied into release notes.
   Edit Selected anchor list.
 - Added Decoration Edit multi-selection primary switching, so clicking an
   already selected decoration promotes it without clearing the selected group.
+- Added the Decoration cursor action menu to decoration rows in both the
+  Outliner and Selected anchor lists. Right-clicked selected rows retain and
+  promote the current group, while unselected rows become a safe single target.
 - Added a Developer diagnostics setting in the serialization/editor settings
   screen. It is off by default and gates low-level HUD/editor/render-gate
   diagnostic entries so normal players do not fill the ESU log with bug-report
@@ -63,6 +86,29 @@ GitHub history, but short enough that it can be copied into release notes.
   of guessing a visual block type.
 - ESU editor panels now share more of the same responsive top/bottom layout
   limits across Decoration Edit, Surface Builder, and Smart Builder.
+- Surface Builder coordinate editing moved out of the cramped bottom transform
+  row into an adaptive, internally scrolling shelf above the pinned material
+  and action controls. Shelf allocation now follows the visible draft rows
+  instead of donating all unused list space to the draft panel, keeping the
+  coordinate workbench directly below its actual content. The bottom strip
+  keeps its previous height and snap controls and now points players to the
+  left-panel workbench.
+- Simplified the Surface coordinate header to `Coordinates`, removed the
+  redundant New triangle action, added Hide/Show coordinates controls, and
+  added a persisted draggable divider for resizing the Draft and Coordinates
+  shelves. The automatic split now accounts for the draft list's own viewport
+  cap so unused list space is not reserved twice.
+- Move, scale, point, decoration-anchor, and shared-anchor gizmos now use the
+  same full-shaft picker and hover preview as their rendered geometry. Tool size
+  changes affect display and picking together while drag projection remains
+  based on the original sensitivity geometry.
+- Renamed the Decoration Edit context action from `Duplicate` to `Duplicate in
+  place` and routed it through the same transactional one-item creation path as
+  whole-selection paste without overwriting either clipboard.
+- Expanded the Decoration cursor menu with selection-aware Move, Rotate, Scale,
+  native settings Copy/Paste, Copy selection, Duplicate selection, and Delete
+  selection actions. Group duplication uses deterministic manager ordering;
+  group deletion preflights all explicit and mirrored targets before mutation.
 - Smart Builder down-slope scale handles can stretch along the cardinal ramp
   run while preserving the anchored first slope cell.
 - ESU mode handoff rendering now lets the newly opened target editor claim the
@@ -140,6 +186,24 @@ GitHub history, but short enough that it can be copied into release notes.
   uses the same unapplied-change prompt/apply/discard flow as the hotkey.
 - Fixed Decoration Edit and Smart Builder snap settings so pressing Set
   explicitly saves the ESU profile instead of relying on later profile writes.
+- Fixed Move/Scale/Anchor arrows being difficult to acquire except near their
+  tips. The nearest visible axis can now be selected across the full shaft,
+  collapsed or invalid projected axes no longer disable valid axes, and the
+  oversized free-move region was reduced to a compact center target.
+- Fixed Surface coordinate entry mutating or partially invalidating editor
+  state on bad input. All affected points/faces are now validated before one
+  atomic update; stale indexes, non-finite/overflowed math, repeated or
+  zero-length edges, zero-area faces, duplicate triangles, and cross-construct
+  targets leave draft, selection, preview, pending points, and history intact.
+- Fixed coordinate slider history and Revert semantics for live editing. A
+  complete mouse drag records one command, each step click records one command,
+  rejected intermediate positions remain non-mutating, and Revert restores the
+  target coordinates captured when it was selected without rolling back other
+  Surface settings.
+- Fixed decoration clipboard batch failures leaving partial settings or clones.
+  Settings paste and whole-selection paste now preflight all targets/capacity,
+  preserve tether/runtime identity where required, and reverse-clean the full
+  batch on failure.
 - Fixed Smart Builder fixed-geometry preview edge filtering so angled mesh
   handles are not mistaken for removable internal axis-aligned faces.
 - Fixed Decoration/Smart Builder toolbar icons regressing to generic boxed
@@ -214,6 +278,10 @@ GitHub history, but short enough that it can be copied into release notes.
   the active release line at `1.0.7`.
 - Added a local `*.log` ignore rule so verifier logs do not show up as
   accidental repository changes.
+- Expanded Release verification to 541 checks, including Surface coordinate
+  range/step normalization and fallback, temporary slider expansion, atomic
+  live updates, full-shaft gizmo picking, transactional clipboard paths, and
+  list-opened multi-selection decoration actions.
 
 ## 1.0.6 - 2026-07-04
 

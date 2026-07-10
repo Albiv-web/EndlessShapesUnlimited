@@ -32,7 +32,11 @@ release pass.
 8. Click an already selected decoration and confirm the multi-selection outline
    remains while the clicked decoration becomes primary.
 9. Shift-click and Ctrl-click rows in the Outliner and Selected anchor panel;
-   confirm additive/range selection behaves like a normal list.
+   confirm additive/range selection behaves like a normal list. Right-click a
+   selected row and confirm the group stays selected with that row promoted to
+   primary; exercise Copy/Paste settings, Copy selection, Duplicate selection,
+   and Delete selection. Right-click an unselected row and confirm it becomes
+   the only target.
 10. Paint a multi-selected group from the swatches, typed color field, and paint
     tool; confirm the whole group changes in one undoable step.
 11. Move, rotate, axis-scale, and uniform-scale the selected group with each
@@ -182,6 +186,16 @@ release pass.
   whether they are lowerable now.
 - Confirm the ESU Blocks palette categories read as Inputs, Logic, Math,
   Outputs, Timing, Organization, and Advanced Native.
+- Confirm each ESU Blocks palette card renders one readable caption, stays within
+  the measured palette width, and starts a drag from anywhere on its full row.
+- At minimum, default, and maximum graph zoom, drag palette blocks to free space,
+  a value socket, a control body, and a stack edge. Confirm the drag ghost, snap
+  outline, and final placement use the same target. Repeat at different ESU HUD
+  scales and confirm an occupied value socket rejects the new block.
+- Drag outside the workspace and back before releasing, release outside, and
+  switch mode during a drag. Confirm no stray block appears and the palette drag
+  state clears. Apply, reopen, and save/reload; compact value blocks must stay
+  compact and socketed, and body children must stay attached inside the host.
 - On the ESU Blocks canvas, confirm block cards show named input/output nubs,
   the starter links are drawn nub-to-nub with direction labels, and incomplete
   or unsupported blocks are not presented as silently lowerable.
@@ -395,6 +409,41 @@ coverage, not proof that the current editor is complete.
 ## Decoration Edit
 
 - Select existing decorations in viewport and outliner.
+- Right-click selected decoration rows in both Outliner and Selected anchor.
+  Confirm the cursor menu opens at the row, preserves the whole explicit group,
+  promotes the clicked row to primary, and offers Select only this, Move,
+  Rotate, Scale, Copy/Paste settings, Copy selection, Duplicate selection, and
+  Delete selection. Right-clicking an unselected row must isolate it; construct
+  headers and stale/removed rows must never open actionable menus.
+- Duplicate a shuffled multi-selection from the row menu and verify stable
+  primary-first manager ordering, exact in-place clones, selection of the new
+  group, no clipboard replacement, and one-step undo/redo. Delete a group with
+  symmetry off and on; all explicit/mirrored targets must be preflighted,
+  deduplicated, deleted as one history action, and restored together by undo or
+  by rollback after a forced failure.
+- In Inspector, verify `Settings: Copy | Paste` interoperates in both directions
+  with FtD's native decoration clipboard and preserves every target tether and
+  runtime identity. Test a valid native decoration offset beyond +/-10 m.
+- Box-select decorations in a deliberately non-sorted order. Use
+  `Ctrl+Shift+C`, then `Ctrl+Shift+V`; confirm exact in-place clones are created
+  primary-first, selected as one Move group, and repeated paste remains usable.
+- Confirm whole-selection paste rejects a different main/subconstruct, a
+  missing tether block, Focus deco, placement, active drags, box selection,
+  prompts, and active text fields without creating anything.
+- Confirm active symmetry does not expand paste-in-place or Duplicate in place.
+- Undo/redo a pasted group as one action, then exercise Apply, Cancel, editor
+  reopen, and save/reload. The memory clipboard must survive Apply/Cancel/reopen
+  but intentionally not a game restart or cross-construct paste.
+- Click the base, middle, and tip of every Move/Scale/Anchor shaft at near/far
+  camera distances and heavy foreshortening. Confirm the hovered axis always
+  matches the clicked axis and the center free-move area remains compact.
+- Open the bottom-left Gizmo settings gear in Deco, Surface, and Smart Builder
+  modes. Confirm the same saved values appear in every editor, then test
+  0.5x/3x size and thickness plus 8px/40px click areas, Set, Reset defaults,
+  Escape/Close, profile persistence, low resolution, and 200% HUD scale.
+- Compare the same pixel drag at every gizmo size in all three editors;
+  movement, scale, and rotation sensitivity must not change. Confirm the popup blocks background UI, mouse
+  wheel, keyboard, build, and camera input and cannot change settings mid-drag.
 - Toggle Focus deco on a selected decoration, then verify viewport click-select,
   Box select, outliner rows, and selected-anchor rows cannot move selection
   until Focus deco is turned off.
@@ -410,6 +459,40 @@ coverage, not proof that the current editor is complete.
 ## Surface Builder
 
 - Create triangle faces from three craft-surface points.
+- Select a point, edge, and face and use the **Coordinates** shelf in the left
+  Surface Builder panel. Confirm its action header
+  stays visible, its coordinate body scrolls, exact text stages until Apply
+  text, comma/point decimals work, values normalize to 0.001 m, shared point
+  indexes update connected faces, and one Apply produces one undo step. Confirm the
+  bottom strip keeps its existing height and snap controls and only points to
+  the left-panel editor.
+- Edit and persist independent X/Y/Z slider ranges, then restart FtD and verify
+  they reload. Reject non-finite, reversed, equal, and sub-0.001 m ranges. Test
+  Reset -10/+10, values below -10 and above +10, and all A/B/C values outside
+  multiple axes; effective ranges must temporarily expand without changing the
+  saved profile or clamping staged coordinates. Invalid/incomplete coordinate
+  text must disable only that row's slider and must remain untouched.
+- Drag each X/Y/Z slider at low/normal resolution and 200% HUD scale. Existing
+  points must update live at 0.001 m while one complete drag creates one undo
+  command; rejected zero-edge/zero-area positions must leave the last valid
+  geometry unchanged. Mouse/text/scroll input must never move the camera or
+  trigger a Surface build action. Revert must restore the target's selection-time
+  coordinates without reverting unrelated Surface settings.
+- Confirm the header reads only **Coordinates**, New triangle is absent, Hide
+  gives the full workspace to Draft, and Show coords restores the editor. Drag
+  the divider in both directions, reopen the editor, and verify the customized
+  split persists while both shelves retain usable minimum heights. With the
+  automatic split, the Coordinates header should follow the final draft hint
+  without the previous empty list-sized gap.
+- Click the `-step` and `+step` buttons around every axis slider and verify each
+  click updates an existing point live as one undo action. Right-click either
+  button, test custom comma/point values plus 0.001, 0.01, 0.05, 0.1, 1/8, 1/4,
+  1/2, and 1 presets, then restart FtD to confirm independent X/Y/Z persistence.
+  Reject zero, sub-0.001, non-finite, overflow, and greater-than-1000 m steps
+  without changing the saved preference or craft history.
+- Select every generator path point and shape center and repeat typed coordinate
+  edits; confirm the shape basis is preserved and previews invalidate only on a
+  real successful change.
 - Preview, place, delete, and bridge surfaces.
 - Test right-click menus for point, edge, and face targets.
 - Test X/Y/Z symmetry and multi-axis symmetry.

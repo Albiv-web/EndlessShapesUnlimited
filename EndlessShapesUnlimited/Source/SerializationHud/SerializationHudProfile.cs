@@ -20,6 +20,20 @@ namespace DecoLimitLifter.SerializationHud
             public float DecorationMoveSnap { get; set; } = 0.001f;
             public float DecorationRotateSnapDegrees { get; set; } = 0.001f;
             public float DecorationScaleSnap { get; set; } = 0.001f;
+            public float DecorationGizmoMoveSize { get; set; } = 1f;
+            public float DecorationGizmoRotateSize { get; set; } = 1f;
+            public float DecorationGizmoScaleSize { get; set; } = 1f;
+            public float DecorationGizmoThickness { get; set; } = 1f;
+            public float DecorationGizmoHitAreaPixels { get; set; } = 18f;
+            public float SurfaceCoordinateSliderMinX { get; set; } = -10f;
+            public float SurfaceCoordinateSliderMaxX { get; set; } = 10f;
+            public float SurfaceCoordinateSliderMinY { get; set; } = -10f;
+            public float SurfaceCoordinateSliderMaxY { get; set; } = 10f;
+            public float SurfaceCoordinateSliderMinZ { get; set; } = -10f;
+            public float SurfaceCoordinateSliderMaxZ { get; set; } = 10f;
+            public float SurfaceCoordinateStepX { get; set; } = 0.1f;
+            public float SurfaceCoordinateStepY { get; set; } = 0.1f;
+            public float SurfaceCoordinateStepZ { get; set; } = 0.1f;
             public bool DecorationSmoothSnapDefaultsMigrated { get; set; }
             public int SmartBuildMoveStepCells { get; set; } = 1;
             public float SmartBuildRotateSnapDegrees { get; set; } = 90f;
@@ -80,6 +94,8 @@ namespace DecoLimitLifter.SerializationHud
         UndoDecorationEdit,
         RedoDecorationEdit,
         ToggleAutomationBuilderMode,
+        CopyDecorationSelection,
+        PasteDecorationSelection,
         MaxId
     }
 
@@ -149,6 +165,18 @@ namespace DecoLimitLifter.SerializationHud
                 "Open or close the EndlessShapes Unlimited Automation Builder.",
                 category,
                 Q(Key.Control, Key.Shift, Key.A));
+            SetVolatile(
+                SerializationHudKeyInput.CopyDecorationSelection,
+                "Copy decoration selection",
+                "Copy the explicit Decoration Edit selection for repeatable in-place cloning.",
+                category,
+                Q(Key.Control, Key.Shift, Key.C));
+            SetVolatile(
+                SerializationHudKeyInput.PasteDecorationSelection,
+                "Paste decoration selection in place",
+                "Create in-place clones of the copied Decoration Edit selection on its original construct.",
+                category,
+                Q(Key.Control, Key.Shift, Key.V));
         }
 
         protected override int IdToInt(SerializationHudKeyInput id) => (int)id;

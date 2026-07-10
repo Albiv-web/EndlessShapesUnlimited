@@ -459,49 +459,84 @@ namespace DecoLimitLifter.DecorationEditMode
         private readonly AllConstruct _construct;
         private readonly DecorationEditSnapshot[] _created;
         private readonly Decoration[] _decorations;
+        private readonly int _primaryIndex;
 
         internal DecorationCreateBatchCommand(
             AllConstruct construct,
             Decoration[] decorations,
             DecorationEditSnapshot[] created)
+            : this(
+                "Create mirrored decorations",
+                construct,
+                decorations,
+                created,
+                primaryIndex: 0)
         {
-            Label = "Create mirrored decorations";
+        }
+
+        internal DecorationCreateBatchCommand(
+            string label,
+            AllConstruct construct,
+            Decoration[] decorations,
+            DecorationEditSnapshot[] created,
+            int primaryIndex)
+        {
+            Label = string.IsNullOrEmpty(label) ? "Create decorations" : label;
             _construct = construct;
-            _decorations = decorations ?? Array.Empty<Decoration>();
-            _created = created ?? Array.Empty<DecorationEditSnapshot>();
+            _decorations = decorations == null
+                ? Array.Empty<Decoration>()
+                : (Decoration[])decorations.Clone();
+            _created = created == null
+                ? Array.Empty<DecorationEditSnapshot>()
+                : (DecorationEditSnapshot[])created.Clone();
+            _primaryIndex = primaryIndex;
         }
 
         public string Label { get; }
 
         public bool Undo(DecorationEditSession session)
         {
-            if (session == null)
+            if (session == null || !HasCompleteHistory())
                 return false;
 
-            bool ok = true;
-            for (int index = _decorations.Length - 1; index >= 0; index--)
-                ok &= session.TryUndoCreatedDecoration(_construct, ref _decorations[index]);
-            return ok;
+            return session.TryUndoCreatedDecorationBatch(
+                _construct,
+                _decorations,
+                _created,
+                _primaryIndex,
+                Label + " undo");
         }
 
         public bool Redo(DecorationEditSession session)
         {
-            if (session == null)
+            if (session == null || !HasCompleteHistory())
                 return false;
 
-            var recreated = new Decoration[_created.Length];
-            for (int index = 0; index < _created.Length; index++)
+            return session.TryRedoCreatedDecorationBatch(
+                _construct,
+                _decorations,
+                _created,
+                _primaryIndex,
+                Label + " redo");
+        }
+
+        private bool HasCompleteHistory()
+        {
+            if (_construct == null ||
+                _decorations.Length == 0 ||
+                _decorations.Length != _created.Length ||
+                _primaryIndex < 0 ||
+                _primaryIndex >= _decorations.Length)
             {
-                if (!session.TryRedoCreatedDecoration(_construct, _created[index], out recreated[index]))
-                {
-                    for (int rollback = index - 1; rollback >= 0; rollback--)
-                        session.TryUndoCreatedDecoration(_construct, ref recreated[rollback]);
-                    return false;
-                }
+                return false;
             }
 
-            for (int index = 0; index < recreated.Length && index < _decorations.Length; index++)
-                _decorations[index] = recreated[index];
+            for (int index = 0; index < _created.Length; index++)
+            {
+                if (_created[index] == null)
+                    return false;
+            }
+
             return true;
         }
     }

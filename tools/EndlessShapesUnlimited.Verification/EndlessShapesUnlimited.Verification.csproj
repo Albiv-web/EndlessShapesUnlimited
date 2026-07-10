@@ -5,6 +5,8 @@
     <AssemblyName>EndlessShapesUnlimited.Verification</AssemblyName>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
+    <ModProject>$(MSBuildThisFileDirectory)..\..\EndlessShapesUnlimited\Source\EndlessShapesUnlimited.csproj</ModProject>
+    <ModReleaseAssembly>$(MSBuildThisFileDirectory)..\..\EndlessShapesUnlimited\Source\bin\Release\netstandard2.1\EndlessShapesUnlimited.dll</ModReleaseAssembly>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,7 +15,7 @@
       <Private>true</Private>
     </Reference>
     <Reference Include="EndlessShapesUnlimited">
-      <HintPath>..\..\EndlessShapesUnlimited\EndlessShapesUnlimited.dll</HintPath>
+      <HintPath>$(ModReleaseAssembly)</HintPath>
       <Private>true</Private>
     </Reference>
     <Reference Include="Core">
@@ -69,4 +71,14 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="BuildCurrentModAssemblyForVerification"
+          BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild Projects="$(ModProject)"
+             Targets="Build"
+             Properties="Configuration=Release" />
+    <Error Condition="!Exists('$(ModReleaseAssembly)')"
+           Text="The current Release mod assembly was not produced for verification." />
+  </Target>
 </Project>

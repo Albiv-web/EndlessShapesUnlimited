@@ -209,7 +209,9 @@ The editor shell includes:
   controls.
 - Mesh Palette with searchable list and virtualized 3D grid previews.
 - Outliner grouped by construct/subconstruct, including normal Shift/Ctrl
-  multi-select constrained to the same construct.
+  multi-select constrained to the same construct. Right-click selected Outliner
+  or Selected Anchor rows for group-aware transform, clipboard, duplicate, and
+  delete actions without collapsing the selection.
 - Inspector for color, material override, mesh, owner details, and exact
   selected decoration fields.
 - Selected Anchor panel for tether/anchor workflows.

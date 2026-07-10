@@ -1,4 +1,4 @@
-# EndlessShapes Unlimited 1.0.0 in-game acceptance plan
+# EndlessShapes Unlimited 1.0.7 in-game acceptance plan
 
 Test target: From The Depths 4.3.3
 
@@ -7,7 +7,7 @@ Installed mod folder: `%USERPROFILE%\Documents\From The Depths\Mods\EndlessShape
 Expected assembly: `EndlessShapesUnlimited.dll`
 
 Expected assembly SHA-256:
-`9EBB4DA72B8E17C2EBA62371E3152BC74F5BA753128ECF1D0BCF78DFC2F6E4E9`
+`DBD22965AC8C98C47C9311F35EA11D4D5528FF5DC6E32A42B15DA24873B3F9DC`
 
 Do not merge the draft PR or publish a release until every required section
 passes. Record the FTD build, test date, result, and evidence for each section.
@@ -16,7 +16,7 @@ passes. Record the FTD build, test date, result, and evidence for each section.
 
 - Back up any construct used for legacy or high-decoration testing.
 - Confirm standalone `DecoLimitLifter` and `EndlessShapes2` are absent or disabled.
-- Confirm `EndlessShapes Unlimited 1.0.0` is enabled. The separately installed
+- Confirm `EndlessShapes Unlimited 1.0.7` is enabled. The separately installed
   `AdvancedMimicUi` mod is not a dependency; the required input helper is bundled.
 - Close FTD before replacing mod files.
 - Preserve the full FTD log for every failed test.
@@ -24,9 +24,9 @@ passes. Record the FTD build, test date, result, and evidence for each section.
 ## 1. Startup and registration
 
 1. Start FTD and reach the main menu.
-2. Confirm the log contains the successful `EndlessShapes Unlimited v1.0.0`
+2. Confirm the log contains the successful `EndlessShapes Unlimited v1.0.7`
    message exactly once.
-3. Confirm the Alerts panel contains `EndlessShapes Unlimited v1.0.0 Active!`.
+3. Confirm the Alerts panel contains `EndlessShapes Unlimited v1.0.7 Active!`.
 4. Confirm there is no patch-installation, missing-target, duplicate-GUID,
    duplicate-class, or `AutoSyncroniser.fullArray` error.
 5. Open the Decorations inventory and confirm **Decoration Builder** appears.
@@ -193,6 +193,17 @@ Pass: all content survives both reload paths without truncation or corruption.
    Decoration Edit Mode, the shared notification slot stays visible through the
    handoff, and the previous ESU panel frame bridges the transition without
    accepting input.
+   In Automation Editor, confirm every palette card has one readable caption and
+   that its full row starts a drag. At minimum, default, and maximum graph zoom,
+   drag blocks to free space, a value socket, a control body, and a stack edge;
+   confirm the ghost, highlighted snap outline, and final placement agree. Repeat
+   after changing the ESU HUD scale, and confirm occupied value sockets reject the
+   drop without replacing their current block.
+   Drag outside the workspace and back before releasing, then release outside and
+   simulate a lost mouse-up by switching mode. Confirm no stray block is created
+   and the palette does not remain stuck in a dragging state. Apply, reopen, and
+   save/reload the craft; compact value blocks must remain compact and socketed,
+   while body children remain attached inside an adequately expanded host.
 12. While Deco or Smart Builder is open, press Ctrl alone and confirm the vanilla
    **Press L Ctrl** control/drive HUD does not appear and the screen does not
    turn green. Confirm `Ctrl+D`, `Ctrl+Shift+B`, `Ctrl+Z`, `Ctrl+Y`,
@@ -220,7 +231,9 @@ Pass: all content survives both reload paths without truncation or corruption.
     hovered edge instead of drawing plus markers everywhere, WASD/mouse-look still
     work while idle, camera input is suppressed only while dragging a handle,
     mouse wheel still zooms in the scene, and middle mouse shows the FTD cursor
-    without closing or canceling the mode.
+    without closing or canceling the mode. Open the gear beside **Smart Block
+    Builder** and confirm it exposes the same saved gizmo settings as Deco and
+    Surface modes.
 18. In Smart Builder, choose **Down slope** size 1-4 from the right palette, hover
     a target, and confirm a sloped placement ghost appears. Place a wide slope
     from a wide block face and confirm its lanes line up with the source face.
@@ -320,6 +333,75 @@ Pass: all content survives both reload paths without truncation or corruption.
     and viewport hints are capped rather than drawing every decoration.
 35. Repeat with AdvancedMimicUi installed and confirm its decoration UI still
     opens and works after ESU edit mode is closed.
+36. Select one decoration and use Inspector **Settings Copy**. Paste in the
+    vanilla/Advanced Mimic UI and compare mesh, position, rotation, scale,
+    color, material, and hide-mesh state. Copy there and paste onto a multi-
+    selection in ESU; confirm all explicit targets change atomically while each
+    tether and runtime identity stays unchanged. Include a valid native offset
+    between 10 m and 20 m, and force one invalid/stale target if reproducible;
+    the full batch must restore on failure.
+37. Select several decorations in a deliberately shuffled order and use
+    **Decorations Copy selection** / **Paste in place**, then repeat with
+    `Ctrl+Shift+C/V`. Confirm exact in-place clones are ordered primary first,
+    selected as one Move group, do not expand active symmetry, and can be pasted
+    repeatedly. Confirm one undo removes the entire group and redo recreates and
+    reselects it. Apply, Cancel, close/reopen ESU, and verify the memory clipboard
+    remains available; focus another subconstruct/main construct and confirm the
+    same clipboard is rejected without mutation. Delete a copied tether block
+    and repeat the rejection test.
+38. Select several decorations, then right-click one selected row in both the
+    **Outliner** and **Selected anchor** lists. Confirm the cursor menu opens at
+    the row, retains the group, promotes that row to primary, and offers
+    **Select only this**, Move/Rotate/Scale, native settings Copy/Paste, Copy
+    selection, **Duplicate selection**, and **Delete selection**. Exercise each
+    applicable action. Duplicate must create exact primary-first in-place clones
+    without replacing either clipboard; delete must include deduplicated active
+    symmetry counterparts, and each batch must undo/redo as one action.
+    Right-click an unselected row and confirm it becomes the only target; verify
+    construct headers do not open the menu and Focus deco blocks another row.
+    For one decoration, confirm the action remains **Duplicate in place**.
+39. In Deco, Surface, and Smart Builder modes open the bottom-left Gizmo settings
+    gear. Confirm preferences are shared across all three editors, then exercise
+    Move/Rotate/Scale size and Thickness at 0.5x and 3x, Click area at 8px and
+    40px, Set, Reset defaults, Close, and Escape. Reopen ESU and restart FtD to
+    confirm profile persistence. While open, verify background buttons, fields,
+    scroll views, build actions, camera/WASD, and mouse wheel do not respond.
+    Repeat at 1366x768, normal desktop resolution, automatic HUD scale, and 200%
+    manual HUD scale; no controls may overlap or leave the screen.
+40. At near/far camera distances and strong foreshortening, hover and click the
+    base, middle, and tip of Move, Scale, Smart Builder Move/Scale, Surface/generator point, decoration
+    anchor, and shared-anchor shafts. Confirm collapsed axes are ignored without
+    disabling visible axes, the highlight predicts the click, the center free-
+    move core is only a small target, and the whole shaft remains selectable.
+    Repeat identical pixel drags at every size and confirm translation, scale,
+    anchor stepping, and rotation sensitivity do not change.
+41. In Surface Builder use the left-panel **Coordinates** shelf with a point,
+    edge, face, generator path point, and generator
+    shape center. Confirm the header remains visible, vector/range rows scroll,
+    and the bottom strip only points to this editor while retaining its existing
+    snap controls and height. Type X/Y/Z with dot and comma decimals; verify
+    nothing changes before Apply, Revert reloads current values, successful
+    values normalize to 0.001 m, shared indexes propagate, and each text Apply
+    is one undo step. Drag every existing-point slider and confirm live 0.001 m
+    updates, one undo command per complete drag, atomic rejection of invalid
+    intermediate faces, and full camera/build/text/wheel capture. Revert must
+    restore the selection-time coordinates without rolling back unrelated settings.
+42. Confirm the header is only **Coordinates** and has no New triangle action.
+    Hide Coordinates, verify Draft uses the released area, then use Show coords.
+    Drag the Draft/Coordinates divider to both extremes and reopen the editor;
+    the custom split must persist, neither shelf may collapse, and the automatic
+    split must not leave a second list-sized empty gap below the final draft hint.
+43. Set independent X/Y/Z ranges, restart FtD, and verify profile persistence.
+    Reject non-finite, reversed, equal, and sub-0.001 m ranges, then use **Reset
+    -10/+10**. Select/stage values below -10 and above +10 across A/B/C; the
+    effective limits must expand for the current target without clamping values
+    or altering the saved limits. Invalid/incomplete coordinate text disables
+    only its slider and remains unchanged. Exercise the `-step` / `+step`
+    buttons and right-click chooser on every axis, including custom dot/comma
+    input and 1/8, 1/4, and 1/2 presets; verify independent profile persistence,
+    one undo step per click, and safe rejection outside 0.001-1000 m. Finish at
+    1366x768, normal resolution, and 200% HUD scale with Preview/Place, symmetry,
+    undo/redo, save/reload, and no overlap with pinned material/action shelves.
 
 Pass: modal input, FTD-styled shell, Smart Builder runtime previews,
 outliner/inspector synchronization, move preview, anchor retether, mesh
@@ -349,7 +431,7 @@ produces loadable converted blueprints from disposable test inputs.
 
 ## 10. Multiplayer
 
-1. Install the exact same 1.0.0 DLL on host and every client; compare SHA-256.
+1. Install the exact same 1.0.7 DLL on host and every client; compare SHA-256.
 2. Join with a decoration-heavy construct and verify initial synchronization.
 3. Generate, cancel, move a tether, save, and reload while connected.
 4. Disconnect and reconnect each client and compare decoration state.

@@ -8,6 +8,7 @@ using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
 using DecoLimitLifter.DecorationEditMode;
+using EndlessShapes2;
 using UnityEngine;
 
 namespace DecoLimitLifter.SmartBuildMode
@@ -69,6 +70,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private readonly int _panelWindowId = "EndlessShapesUnlimited.SmartBuild.Panel".GetHashCode();
         private readonly int _rightPanelWindowId = "EndlessShapesUnlimited.SmartBuild.Shapes".GetHashCode();
         private readonly int _statusWindowId = "EndlessShapesUnlimited.SmartBuild.Status".GetHashCode();
+        private readonly int _gizmoSettingsWindowId = "EndlessShapesUnlimited.SmartBuild.GizmoSettings".GetHashCode();
         private readonly DecorationEditorViewModeController _viewModes;
 
         private Rect _toolbarRect;
@@ -146,6 +148,13 @@ namespace DecoLimitLifter.SmartBuildMode
         private string _snapMoveText = EsuTransformSnapSettings.Format(EsuTransformSnapSettings.SmartMoveStepCells);
         private string _snapRotateText = EsuTransformSnapSettings.Format(EsuTransformSnapSettings.SmartRotateSnapDegrees);
         private string _snapScaleText = EsuTransformSnapSettings.Format(EsuTransformSnapSettings.SmartScaleStepCells);
+        private bool _gizmoSettingsOpen;
+        private Rect _gizmoSettingsButtonScreenRect;
+        private string _gizmoMoveSizeText = "1";
+        private string _gizmoRotateSizeText = "1";
+        private string _gizmoScaleSizeText = "1";
+        private string _gizmoThicknessText = "1";
+        private string _gizmoHitAreaText = "18";
         private readonly Stack<SmartBuildSceneSnapshot> _sceneUndo = new Stack<SmartBuildSceneSnapshot>();
         private readonly Stack<SmartBuildSceneSnapshot> _sceneRedo = new Stack<SmartBuildSceneSnapshot>();
         private SmartBuildSceneSnapshot _dragSceneStart;
@@ -155,6 +164,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private Vector2 _rotateDragStartVector;
         private Vector2 _rotateDragLastVector;
         private float _rotateDragAccumulatedDegrees;
+        private float _rotateDragSensitivityScale = 1f;
         private SmartBuildPiece _rotatePieceStart;
         private SmartBuildSceneSnapshot _rotateSceneStart;
         private bool _contextMenuOpen;
@@ -188,6 +198,16 @@ namespace DecoLimitLifter.SmartBuildMode
         internal void ClearSwitchToDecorationEditRequest() =>
             SwitchToDecorationEditRequested = false;
 
+        internal bool DismissOpenPopup()
+        {
+            if (!_gizmoSettingsOpen)
+                return false;
+
+            CloseGizmoSettingsMenu();
+            InfoStore.Add("Gizmo settings closed.");
+            return true;
+        }
+
         private SmartBuildShapeDescriptor SelectedShapeDescriptor =>
             SmartBuildShapeDescriptors.ByKey(_selectedShapeDescriptorKey) ??
             SmartBuildShapeDescriptors.Cuboid;
@@ -197,6 +217,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool CanSwitchToDecorationEdit(out string reason)
         {
+            if (_gizmoSettingsOpen)
+            {
+                reason = "Close Gizmo settings before switching modes.";
+                return false;
+            }
+
             if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
             {
                 reason = "Place or cancel the pending symmetry plane before switching modes.";
@@ -237,6 +263,7 @@ namespace DecoLimitLifter.SmartBuildMode
             ApplyFocusView();
             RefreshSelection();
             SyncSnapTextFromSettings();
+            SyncGizmoSettingsText();
         }
 
         internal void End(bool preserveSharedHud = false)
@@ -265,6 +292,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _hoverFaceAxis = DecorationEditAxis.None;
             _contextMenuOpen = false;
             _viewModeMenuOpen = false;
+            _gizmoSettingsOpen = false;
             _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
             _itemPreviewRenderer?.Dispose();
             _itemPreviewRenderer = null;
@@ -284,6 +312,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _resizingRightPanel = false;
             _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
             _viewModeMenuOpen = false;
+            _gizmoSettingsOpen = false;
             SwitchToDecorationEditRequested = false;
         }
 
@@ -296,6 +325,15 @@ namespace DecoLimitLifter.SmartBuildMode
             EsuHudNotifications.SetActiveSource("Smart Builder");
             RefreshMouseOverUiFromCurrentPointer();
             RefreshSelection();
+            if (_gizmoSettingsOpen)
+            {
+                SmartBuildInputScope.SetMouseOverUi(true);
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                _viewModes.Tick(_viewMode);
+                DrawWorldPreview();
+                return;
+            }
             HandleKeyboard();
             HandleMouse();
             _viewModes.Tick(_viewMode);
@@ -318,6 +356,33 @@ namespace DecoLimitLifter.SmartBuildMode
         }
 
         private void DrawGui(bool interactive)
+        {
+            if (!interactive || !_gizmoSettingsOpen)
+            {
+                DrawGuiCore(interactive);
+                return;
+            }
+
+            DecorationEditorTheme.Ensure();
+            EsuCursorTooltip.BeginFrame(Event.current.mousePosition, suppress: false);
+            bool previousEnabled = GUI.enabled;
+            try
+            {
+                GUI.enabled = false;
+                DrawGuiCore(interactive: false);
+            }
+            finally
+            {
+                GUI.enabled = previousEnabled;
+            }
+
+            DrawGizmoSettingsMenu();
+            EsuCursorTooltip.Draw();
+            SmartBuildInputScope.SetMouseOverUi(true);
+            ConsumeGizmoSettingsInput(Event.current);
+        }
+
+        private void DrawGuiCore(bool interactive)
         {
             _hoveredShapeEntry = default;
             DecorationEditorTheme.Ensure();
@@ -426,6 +491,7 @@ namespace DecoLimitLifter.SmartBuildMode
         }
 
         private bool TooltipInputSuppressed() =>
+            _gizmoSettingsOpen ||
             _dragging ||
             _rotating ||
             _resizingLeftPanel ||
@@ -1754,22 +1820,44 @@ namespace DecoLimitLifter.SmartBuildMode
             Vector2 mouseDelta = MouseGuiPosition() - _dragMouseStart;
             Vector3 center = _draft.CenterLocal;
             Vector3 axisVector = DecorationEditMath.AxisVector(axis);
+            float visualLength = SmartGizmoHandleLength(_dragTool);
             Vector3 start = _draft.Construct.SafeLocalToGlobal(center);
-            Vector3 end = _draft.Construct.SafeLocalToGlobal(center + axisVector * HandleLength);
+            Vector3 visualEnd = _draft.Construct.SafeLocalToGlobal(
+                center + axisVector * visualLength);
+            Vector3 referenceEnd = _draft.Construct.SafeLocalToGlobal(
+                center + axisVector * HandleLength);
             Vector3 screenStart = camera.WorldToScreenPoint(start);
-            Vector3 screenEnd = camera.WorldToScreenPoint(end);
-            if (screenStart.z <= camera.nearClipPlane || screenEnd.z <= camera.nearClipPlane)
+            Vector3 screenVisualEnd = camera.WorldToScreenPoint(visualEnd);
+            Vector3 screenReferenceEnd = camera.WorldToScreenPoint(referenceEnd);
+            if (screenStart.z <= camera.nearClipPlane ||
+                screenVisualEnd.z <= camera.nearClipPlane ||
+                screenReferenceEnd.z <= camera.nearClipPlane)
+            {
                 return 0;
+            }
 
             Vector2 guiStart = ScreenToGui(screenStart);
-            Vector2 guiEnd = ScreenToGui(screenEnd);
-            float projected = DecorationEditMath.ProjectMouseDeltaToAxis(
-                mouseDelta,
-                guiStart,
-                guiEnd,
-                HandleLength);
+            if (!DecorationEditMath.TryProjectMouseDeltaToAxisInvariant(
+                    mouseDelta,
+                    guiStart,
+                    ScreenToGui(screenVisualEnd),
+                    ScreenToGui(screenReferenceEnd),
+                    HandleLength,
+                    out float projected))
+            {
+                return 0;
+            }
             int step = Mathf.Max(1, stepCells);
             return Mathf.RoundToInt(projected / step) * step;
+        }
+
+        private static float SmartGizmoHandleLength(SmartBuildTool tool)
+        {
+            EsuGizmoStyle style = EsuGizmoSettings.Current;
+            float multiplier = tool == SmartBuildTool.Scale
+                ? style.ScaleSize
+                : style.MoveSize;
+            return HandleLength * multiplier;
         }
 
         private bool TryPickHandle(out DecorationEditAxis axis, out int sign)
@@ -1779,58 +1867,54 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft?.Construct == null)
                 return false;
 
-            Camera camera = Camera.main ?? Camera.current;
-            if (camera == null)
-                return false;
-
-            Vector2 mouse = MouseGuiPosition();
             Vector3 center = _draft.CenterLocal;
-            Vector3 centerWorld = _draft.Construct.SafeLocalToGlobal(center);
-            Vector3 screenCenter = camera.WorldToScreenPoint(centerWorld);
-            if (screenCenter.z <= camera.nearClipPlane)
-                return false;
-
-            Vector2 guiCenter = ScreenToGui(screenCenter);
-            float best = AxisPickThresholdPixels;
-            TryPickAxisEndpoint(camera, mouse, guiCenter, center, DecorationEditAxis.X, 1, ref axis, ref sign, ref best);
-            TryPickAxisEndpoint(camera, mouse, guiCenter, center, DecorationEditAxis.Y, 1, ref axis, ref sign, ref best);
-            TryPickAxisEndpoint(camera, mouse, guiCenter, center, DecorationEditAxis.Z, 1, ref axis, ref sign, ref best);
-            if (_tool == SmartBuildTool.Scale)
-            {
-                TryPickAxisEndpoint(camera, mouse, guiCenter, center, DecorationEditAxis.X, -1, ref axis, ref sign, ref best);
-                TryPickAxisEndpoint(camera, mouse, guiCenter, center, DecorationEditAxis.Y, -1, ref axis, ref sign, ref best);
-                TryPickAxisEndpoint(camera, mouse, guiCenter, center, DecorationEditAxis.Z, -1, ref axis, ref sign, ref best);
-            }
-
-            return axis != DecorationEditAxis.None;
+            EsuGizmoStyle style = EsuGizmoSettings.Current;
+            DecorationGizmoPick pick = DecorationEditMath.PickGizmo(
+                MouseGuiPosition(),
+                ProjectSmartGizmoAxes(
+                    center,
+                    SmartGizmoHandleLength(_tool),
+                    includeNegative: _tool == SmartBuildTool.Scale),
+                style.HitAreaPixels,
+                style.FreeMoveCorePixels,
+                allowFree: false);
+            axis = pick.Axis;
+            sign = pick.Sign == 0 ? 1 : pick.Sign;
+            return pick.IsHit;
         }
 
-        private void TryPickAxisEndpoint(
-            Camera camera,
-            Vector2 mouse,
-            Vector2 guiCenter,
+        private DecorationGizmoProjections ProjectSmartGizmoAxes(
             Vector3 center,
-            DecorationEditAxis candidate,
-            int candidateSign,
-            ref DecorationEditAxis bestAxis,
-            ref int bestSign,
-            ref float bestDistance)
+            float length,
+            bool includeNegative)
         {
-            Vector3 axisVector = DecorationEditMath.AxisVector(candidate) * candidateSign;
-            Vector3 world = _draft.Construct.SafeLocalToGlobal(center + axisVector * HandleLength);
-            Vector3 screen = camera.WorldToScreenPoint(world);
-            if (screen.z <= camera.nearClipPlane)
-                return;
+            Vector2? origin = TryProjectSmartGizmoPoint(center);
+            if (!origin.HasValue)
+                return new DecorationGizmoProjections(null, null, null, null);
 
-            Vector2 guiEnd = ScreenToGui(screen);
-            float distance = DistanceToSegment(mouse, guiCenter, guiEnd);
-            if (distance >= bestDistance)
-                return;
-
-            bestDistance = distance;
-            bestAxis = candidate;
-            bestSign = candidateSign;
+            Vector3 x = DecorationEditMath.AxisVector(DecorationEditAxis.X) * length;
+            Vector3 y = DecorationEditMath.AxisVector(DecorationEditAxis.Y) * length;
+            Vector3 z = DecorationEditMath.AxisVector(DecorationEditAxis.Z) * length;
+            return includeNegative
+                ? new DecorationGizmoProjections(
+                    origin,
+                    TryProjectSmartGizmoPoint(center + x),
+                    TryProjectSmartGizmoPoint(center - x),
+                    TryProjectSmartGizmoPoint(center + y),
+                    TryProjectSmartGizmoPoint(center - y),
+                    TryProjectSmartGizmoPoint(center + z),
+                    TryProjectSmartGizmoPoint(center - z))
+                : new DecorationGizmoProjections(
+                    origin,
+                    TryProjectSmartGizmoPoint(center + x),
+                    TryProjectSmartGizmoPoint(center + y),
+                    TryProjectSmartGizmoPoint(center + z));
         }
+
+        private Vector2? TryProjectSmartGizmoPoint(Vector3 local) =>
+            TryProjectSmartGizmo(_draft?.Construct, local, out Vector2 screen)
+                ? (Vector2?)screen
+                : null;
 
         private bool TryPickFace(out DecorationEditAxis axis, out int sign)
         {
@@ -4577,10 +4661,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void DrawSmartBottomHeader(Rect rect)
         {
-            float gap = EsuHudLayout.Scale(8f);
-            float titleWidth = Mathf.Min(EsuHudLayout.Scale(168f), rect.width * 0.42f);
+            float gap = EsuHudLayout.Scale(6f);
+            float buttonWidth = Mathf.Min(EsuHudLayout.Scale(34f), rect.width * 0.12f);
+            float titleWidth = Mathf.Min(EsuHudLayout.Scale(168f), rect.width * 0.36f);
             float stateWidth = Mathf.Min(EsuHudLayout.Scale(118f), rect.width * 0.32f);
-            Rect title = new Rect(rect.x, rect.y, titleWidth, rect.height);
+            Rect gizmoSettings = new Rect(rect.x, rect.y, buttonWidth, rect.height);
+            Rect title = new Rect(gizmoSettings.xMax + gap, rect.y, titleWidth, rect.height);
             Rect state = new Rect(rect.xMax - stateWidth, rect.y, stateWidth, rect.height);
             Rect mode = new Rect(
                 title.xMax + gap,
@@ -4588,9 +4674,259 @@ namespace DecoLimitLifter.SmartBuildMode
                 Mathf.Max(1f, state.x - title.xMax - gap * 2f),
                 rect.height);
 
+            _gizmoSettingsButtonScreenRect = new Rect(
+                _statusRect.x + gizmoSettings.x,
+                _statusRect.y + gizmoSettings.y,
+                gizmoSettings.width,
+                gizmoSettings.height);
+            DrawSmartBottomGizmoSettingsButton(gizmoSettings);
             GUI.Label(title, "Smart Block Builder", DecorationEditorTheme.SubHeader);
             GUI.Label(mode, "Mode: Smart | Tab to Automation when clean", DecorationEditorTheme.Body);
             DrawStatusRightLabel(state);
+        }
+
+        private void DrawSmartBottomGizmoSettingsButton(Rect rect)
+        {
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && !HasActiveSmartGizmoDrag();
+            if (SmartGUIButton(
+                    rect,
+                    new GUIContent(
+                        string.Empty,
+                        DecorationEditorIconCatalog.Get("settings"),
+                        "Open shared move, rotate, scale, thickness, and click-area gizmo settings."),
+                    DecorationEditorTheme.ToolButton(_gizmoSettingsOpen)))
+            {
+                if (_gizmoSettingsOpen)
+                {
+                    CloseGizmoSettingsMenu();
+                }
+                else
+                {
+                    _gizmoSettingsOpen = true;
+                    SyncGizmoSettingsText();
+                    _viewModeMenuOpen = false;
+                    _contextMenuOpen = false;
+                }
+            }
+            GUI.enabled = previous;
+        }
+
+        private bool HasActiveSmartGizmoDrag() =>
+            _dragging || _rotating;
+
+        private Rect GizmoSettingsMenuRect()
+        {
+            float margin = EsuHudLayout.Scale(8f);
+            float maxWidth = Mathf.Max(1f, Screen.width - margin * 2f);
+            float width = Mathf.Clamp(
+                EsuHudLayout.Scale(720f),
+                Mathf.Min(EsuHudLayout.Scale(420f), maxWidth),
+                maxWidth);
+            float height = EsuHudLayout.Scale(122f);
+            Rect button = _gizmoSettingsButtonScreenRect.width > 1f
+                ? _gizmoSettingsButtonScreenRect
+                : new Rect(
+                    margin,
+                    Screen.height - height - margin,
+                    EsuHudLayout.Scale(34f),
+                    EsuHudLayout.Scale(24f));
+            float x = Mathf.Clamp(
+                button.x,
+                margin,
+                Mathf.Max(margin, Screen.width - width - margin));
+            float y = Mathf.Clamp(
+                button.y - height - EsuHudLayout.Scale(4f),
+                margin,
+                Mathf.Max(margin, Screen.height - height - margin));
+            return new Rect(x, y, width, height);
+        }
+
+        private void CloseGizmoSettingsMenu()
+        {
+            _gizmoSettingsOpen = false;
+            try { GUIUtility.keyboardControl = 0; }
+            catch { }
+        }
+
+        private void DrawGizmoSettingsMenu()
+        {
+            if (!_gizmoSettingsOpen)
+                return;
+
+            GUI.ModalWindow(
+                _gizmoSettingsWindowId,
+                GizmoSettingsMenuRect(),
+                DrawGizmoSettingsWindow,
+                GUIContent.none,
+                GUIStyle.none);
+        }
+
+        private void DrawGizmoSettingsWindow(int id)
+        {
+            Rect screenRect = GizmoSettingsMenuRect();
+            Rect rect = new Rect(0f, 0f, screenRect.width, screenRect.height);
+            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            float padding = EsuHudLayout.Scale(8f);
+            float gap = EsuHudLayout.Scale(6f);
+            float headerHeight = EsuHudLayout.Scale(22f);
+            float fieldRowY = padding + headerHeight;
+            float fieldRowHeight = EsuHudLayout.Scale(46f);
+            float available = rect.width - padding * 2f - gap * 4f;
+            float cellWidth = Mathf.Max(1f, available / 5f);
+            GUI.Label(
+                new Rect(padding, padding, rect.width - padding * 2f, headerHeight),
+                "Gizmo settings (shared across ESU editors; visual size does not change sensitivity)",
+                DecorationEditorTheme.SubHeader);
+
+            DrawGizmoSettingField(
+                new Rect(padding, fieldRowY, cellWidth, fieldRowHeight),
+                "Move size",
+                ref _gizmoMoveSizeText,
+                "0.5-3.0x Smart Builder move gizmo length.");
+            DrawGizmoSettingField(
+                new Rect(padding + (cellWidth + gap), fieldRowY, cellWidth, fieldRowHeight),
+                "Rotate size",
+                ref _gizmoRotateSizeText,
+                "0.5-3.0x Smart Builder rotation ring radius.");
+            DrawGizmoSettingField(
+                new Rect(padding + (cellWidth + gap) * 2f, fieldRowY, cellWidth, fieldRowHeight),
+                "Scale size",
+                ref _gizmoScaleSizeText,
+                "0.5-3.0x Smart Builder scale gizmo length.");
+            DrawGizmoSettingField(
+                new Rect(padding + (cellWidth + gap) * 3f, fieldRowY, cellWidth, fieldRowHeight),
+                "Thickness",
+                ref _gizmoThicknessText,
+                "0.5-3.0x Smart Builder gizmo line thickness.");
+            DrawGizmoSettingField(
+                new Rect(padding + (cellWidth + gap) * 4f, fieldRowY, cellWidth, fieldRowHeight),
+                "Click area px",
+                ref _gizmoHitAreaText,
+                "8-40 pixel full-shaft click radius.");
+
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && !HasActiveSmartGizmoDrag();
+            float buttonY = rect.height - padding - EsuHudLayout.Scale(26f);
+            float buttonWidth = EsuHudLayout.Scale(112f);
+            if (SmartGUIButton(
+                    new Rect(padding, buttonY, buttonWidth, EsuHudLayout.Scale(24f)),
+                    new GUIContent("Set", "Clamp, save, and apply these shared profile preferences."),
+                    DecorationEditorTheme.Button))
+            {
+                ApplyGizmoSettingsText();
+            }
+            if (SmartGUIButton(
+                    new Rect(
+                        padding + buttonWidth + gap,
+                        buttonY,
+                        EsuHudLayout.Scale(132f),
+                        EsuHudLayout.Scale(24f)),
+                    new GUIContent("Reset defaults", "Restore 1x sizes and thickness with an 18 px click area."),
+                    DecorationEditorTheme.Button))
+            {
+                bool saved = EsuGizmoSettings.ResetDefaults();
+                SyncGizmoSettingsText();
+                InfoStore.Add(saved
+                    ? "Gizmo settings reset to defaults and saved."
+                    : "Gizmo defaults applied for this session, but the profile could not be saved.");
+            }
+            if (SmartGUIButton(
+                    new Rect(
+                        rect.width - padding - EsuHudLayout.Scale(72f),
+                        buttonY,
+                        EsuHudLayout.Scale(72f),
+                        EsuHudLayout.Scale(24f)),
+                    new GUIContent("Close", "Close Gizmo settings without applying unsaved typed values."),
+                    DecorationEditorTheme.Button))
+            {
+                CloseGizmoSettingsMenu();
+            }
+            GUI.enabled = previous;
+        }
+
+        private static void DrawGizmoSettingField(
+            Rect rect,
+            string label,
+            ref string text,
+            string tooltip)
+        {
+            GUI.Label(
+                new Rect(rect.x, rect.y, rect.width, EsuHudLayout.Scale(18f)),
+                label,
+                DecorationEditorTheme.Mini);
+            Rect field = new Rect(
+                rect.x,
+                rect.y + EsuHudLayout.Scale(19f),
+                rect.width,
+                EsuHudLayout.Scale(23f));
+            text = GUI.TextField(field, text ?? string.Empty, DecorationEditorTheme.TextField);
+            EsuCursorTooltip.Register(field, tooltip);
+        }
+
+        private void SyncGizmoSettingsText()
+        {
+            EsuGizmoStyle style = EsuGizmoSettings.Current;
+            _gizmoMoveSizeText = EsuGizmoSettings.FormatMultiplier(style.MoveSize);
+            _gizmoRotateSizeText = EsuGizmoSettings.FormatMultiplier(style.RotateSize);
+            _gizmoScaleSizeText = EsuGizmoSettings.FormatMultiplier(style.ScaleSize);
+            _gizmoThicknessText = EsuGizmoSettings.FormatMultiplier(style.Thickness);
+            _gizmoHitAreaText = EsuGizmoSettings.FormatPixels(style.HitAreaPixels);
+        }
+
+        private void ApplyGizmoSettingsText()
+        {
+            if (!FlexibleFloatParser.TryParse(_gizmoMoveSizeText, out float move) ||
+                !FlexibleFloatParser.TryParse(_gizmoRotateSizeText, out float rotate) ||
+                !FlexibleFloatParser.TryParse(_gizmoScaleSizeText, out float scale) ||
+                !FlexibleFloatParser.TryParse(_gizmoThicknessText, out float thickness) ||
+                !FlexibleFloatParser.TryParse(_gizmoHitAreaText, out float hitArea))
+            {
+                InfoStore.Add("Gizmo settings must be finite numbers.");
+                SyncGizmoSettingsText();
+                return;
+            }
+
+            bool saved = EsuGizmoSettings.Set(move, rotate, scale, thickness, hitArea);
+            SyncGizmoSettingsText();
+            InfoStore.Add(
+                (saved
+                    ? "Gizmo settings saved: move "
+                    : "Gizmo settings applied for this session (profile save failed): move ") +
+                _gizmoMoveSizeText + "x, rotate " + _gizmoRotateSizeText +
+                "x, scale " + _gizmoScaleSizeText +
+                "x, thickness " + _gizmoThicknessText +
+                "x, click area " + _gizmoHitAreaText + "px.");
+        }
+
+        private static void ConsumeGizmoSettingsInput(Event current)
+        {
+            if (current == null)
+                return;
+
+            bool blocking =
+                current.type == EventType.MouseDown ||
+                current.type == EventType.MouseUp ||
+                current.type == EventType.MouseDrag ||
+                current.type == EventType.ScrollWheel ||
+                current.type == EventType.ContextClick ||
+                current.type == EventType.KeyDown ||
+                current.type == EventType.KeyUp;
+            if (!blocking)
+                return;
+
+            if (current.type == EventType.ScrollWheel)
+            {
+                SmartBuildInputScope.ClaimMouseWheelInputForFrames();
+            }
+            else
+            {
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+            }
+
+            if (current.type != EventType.Used)
+                current.Use();
         }
 
         private void DrawStatusRightLabel(Rect rect)
@@ -6971,24 +7307,45 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             Vector3 center = _draft.CenterLocal;
-            DrawHandleAxis(center, DecorationEditAxis.X, 1);
-            DrawHandleAxis(center, DecorationEditAxis.Y, 1);
-            DrawHandleAxis(center, DecorationEditAxis.Z, 1);
+            DecorationEditAxis hoverAxis = DecorationEditAxis.None;
+            int hoverSign = 0;
+            if (!_dragging && !SmartBuildInputScope.MouseOverUi)
+                TryPickHandle(out hoverAxis, out hoverSign);
+            DrawHandleAxis(center, DecorationEditAxis.X, 1, hoverAxis, hoverSign);
+            DrawHandleAxis(center, DecorationEditAxis.Y, 1, hoverAxis, hoverSign);
+            DrawHandleAxis(center, DecorationEditAxis.Z, 1, hoverAxis, hoverSign);
             if (_tool == SmartBuildTool.Scale)
             {
-                DrawHandleAxis(center, DecorationEditAxis.X, -1);
-                DrawHandleAxis(center, DecorationEditAxis.Y, -1);
-                DrawHandleAxis(center, DecorationEditAxis.Z, -1);
+                DrawHandleAxis(center, DecorationEditAxis.X, -1, hoverAxis, hoverSign);
+                DrawHandleAxis(center, DecorationEditAxis.Y, -1, hoverAxis, hoverSign);
+                DrawHandleAxis(center, DecorationEditAxis.Z, -1, hoverAxis, hoverSign);
             }
         }
 
-        private void DrawHandleAxis(Vector3 center, DecorationEditAxis axis, int sign)
+        private void DrawHandleAxis(
+            Vector3 center,
+            DecorationEditAxis axis,
+            int sign,
+            DecorationEditAxis hoverAxis,
+            int hoverSign)
         {
             Color color = DecorationEditMath.AxisColor(axis);
             Vector3 axisVector = DecorationEditMath.AxisVector(axis) * sign;
-            float width = _dragging && _dragAxis == axis && _dragSign == sign ? 4.4f : 2.7f;
+            bool active = _dragging && _dragAxis == axis && _dragSign == sign;
+            bool hovered = !_dragging && hoverAxis == axis && hoverSign == sign;
+            if (hovered)
+            {
+                color = new Color(
+                    Mathf.Lerp(color.r, 1f, 0.48f),
+                    Mathf.Lerp(color.g, 1f, 0.48f),
+                    Mathf.Lerp(color.b, 1f, 0.48f),
+                    1f);
+            }
+            EsuGizmoStyle style = EsuGizmoSettings.Current;
+            float width = style.LineWidth(active || hovered ? 4.4f : 2.7f);
             Vector3 start = _draft.Construct.SafeLocalToGlobal(center);
-            Vector3 end = _draft.Construct.SafeLocalToGlobal(center + axisVector * HandleLength);
+            Vector3 end = _draft.Construct.SafeLocalToGlobal(
+                center + axisVector * SmartGizmoHandleLength(_tool));
             DecorationEditorOverlay.Arrow(start, end, color, width, 0.18f);
         }
 
@@ -6997,12 +7354,17 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft?.Construct == null)
                 return;
 
-            DrawRotationRing(DecorationEditAxis.X);
-            DrawRotationRing(DecorationEditAxis.Y);
-            DrawRotationRing(DecorationEditAxis.Z);
+            DecorationEditAxis hoverAxis = DecorationEditAxis.None;
+            if (!_rotating && !SmartBuildInputScope.MouseOverUi)
+                TryPickRotationRing(out hoverAxis);
+            DrawRotationRing(DecorationEditAxis.X, hoverAxis);
+            DrawRotationRing(DecorationEditAxis.Y, hoverAxis);
+            DrawRotationRing(DecorationEditAxis.Z, hoverAxis);
         }
 
-        private void DrawRotationRing(DecorationEditAxis axis)
+        private void DrawRotationRing(
+            DecorationEditAxis axis,
+            DecorationEditAxis hoverAxis)
         {
             if (_draft?.Construct == null)
                 return;
@@ -7014,7 +7376,18 @@ namespace DecoLimitLifter.SmartBuildMode
                 axisWorld = DecorationEditMath.AxisVector(axis);
 
             Color color = DecorationEditMath.AxisColor(axis);
-            float width = _rotating && _rotateDragAxis == axis ? 4.4f : 2.7f;
+            bool active = _rotating && _rotateDragAxis == axis;
+            bool hovered = !_rotating && hoverAxis == axis;
+            if (hovered)
+            {
+                color = new Color(
+                    Mathf.Lerp(color.r, 1f, 0.48f),
+                    Mathf.Lerp(color.g, 1f, 0.48f),
+                    Mathf.Lerp(color.b, 1f, 0.48f),
+                    1f);
+            }
+            EsuGizmoStyle style = EsuGizmoSettings.Current;
+            float width = style.LineWidth(active || hovered ? 4.4f : 2.7f);
             DecorationEditorOverlay.Circle(centerWorld, RotateGizmoRadius(), color, axisWorld.normalized, width, 56);
         }
 
@@ -7025,11 +7398,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 return false;
 
             Vector3 center = _draft.RotationPivotLocal;
-            if (!TryProject(_draft.Construct, center, out Vector2 origin))
+            if (!TryProjectSmartGizmo(_draft.Construct, center, out Vector2 origin))
                 return false;
 
             Vector2 mouse = MouseGuiPosition();
-            float best = AxisPickThresholdPixels * 1.35f;
+            float best = EsuGizmoSettings.Current.HitAreaPixels;
             DecorationEditAxis picked = DecorationEditAxis.None;
             TryRing(DecorationEditAxis.X);
             TryRing(DecorationEditAxis.Y);
@@ -7050,7 +7423,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     Vector3 local = center +
                                     (tangentA * Mathf.Cos(angle) + tangentB * Mathf.Sin(angle)) *
                                     radius;
-                    if (!TryProject(_draft.Construct, local, out Vector2 projected))
+                    if (!TryProjectSmartGizmo(_draft.Construct, local, out Vector2 projected))
                     {
                         havePrevious = false;
                         continue;
@@ -7082,11 +7455,18 @@ namespace DecoLimitLifter.SmartBuildMode
             _rotateDragMouseStart = MouseGuiPosition();
             _rotatePieceStart = _draft.Clone();
             _rotateSceneStart = CaptureSceneSnapshot();
-            if (!TryProject(_draft.Construct, _draft.RotationPivotLocal, out _rotateDragCenterScreen))
+            if (!TryProjectSmartGizmo(_draft.Construct, _draft.RotationPivotLocal, out _rotateDragCenterScreen))
                 _rotateDragCenterScreen = _rotateDragMouseStart;
             _rotateDragStartVector = _rotateDragMouseStart - _rotateDragCenterScreen;
             _rotateDragLastVector = _rotateDragStartVector;
             _rotateDragAccumulatedDegrees = 0f;
+            _rotateDragSensitivityScale = RotationDragSensitivityScale(
+                _draft.Construct,
+                _draft.RotationPivotLocal,
+                DecorationEditMath.AxisVector(axis),
+                RotateGizmoRadius(),
+                RotateGizmoBaseRadius(),
+                _rotateDragMouseStart);
         }
 
         private void UpdateRotateDrag()
@@ -7106,7 +7486,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
             float previousAngle = Mathf.Atan2(_rotateDragLastVector.y, _rotateDragLastVector.x) * Mathf.Rad2Deg;
             float currentAngle = Mathf.Atan2(current.y, current.x) * Mathf.Rad2Deg;
-            _rotateDragAccumulatedDegrees += Mathf.DeltaAngle(previousAngle, currentAngle);
+            _rotateDragAccumulatedDegrees +=
+                Mathf.DeltaAngle(previousAngle, currentAngle) *
+                _rotateDragSensitivityScale;
             _rotateDragLastVector = current;
             int quarterTurns = Mathf.RoundToInt(_rotateDragAccumulatedDegrees / RotateSnapDegrees);
             _draft.CopyFrom(_rotatePieceStart);
@@ -7142,17 +7524,91 @@ namespace DecoLimitLifter.SmartBuildMode
             _rotateDragStartVector = Vector2.zero;
             _rotateDragLastVector = Vector2.zero;
             _rotateDragAccumulatedDegrees = 0f;
+            _rotateDragSensitivityScale = 1f;
             _rotatePieceStart = null;
             _rotateSceneStart = null;
         }
 
-        private float RotateGizmoRadius()
+        private float RotateGizmoRadius() =>
+            RotateGizmoBaseRadius() * EsuGizmoSettings.Current.RotateSize;
+
+        private float RotateGizmoBaseRadius()
         {
             if (_draft == null)
                 return 1f;
 
             Vector3i size = _draft.Size;
             return Mathf.Max(1.1f, Math.Max(size.x, Math.Max(size.y, size.z)) * 0.68f);
+        }
+
+        private static float RotationDragSensitivityScale(
+            AllConstruct construct,
+            Vector3 center,
+            Vector3 axisVector,
+            float visualRadius,
+            float referenceRadius,
+            Vector2 mouse)
+        {
+            if (construct == null ||
+                !DecorationEditMath.IsFinite(center) ||
+                !DecorationEditMath.IsFinite(axisVector) ||
+                axisVector.sqrMagnitude < 0.0001f ||
+                !DecorationEditMath.IsFinite(visualRadius) ||
+                !DecorationEditMath.IsFinite(referenceRadius) ||
+                visualRadius <= 0f ||
+                referenceRadius <= 0f ||
+                !TryProjectSmartGizmo(construct, center, out Vector2 centerScreen))
+            {
+                return 1f;
+            }
+
+            BuildAxisBasis(axisVector, out Vector3 tangentA, out Vector3 tangentB);
+            float bestDistance = float.PositiveInfinity;
+            Vector3 bestDirection = tangentA;
+            const int steps = 48;
+            for (int step = 0; step < steps; step++)
+            {
+                float angle = step * Mathf.PI * 2f / steps;
+                Vector3 direction = tangentA * Mathf.Cos(angle) + tangentB * Mathf.Sin(angle);
+                if (!TryProjectSmartGizmo(
+                        construct,
+                        center + direction * visualRadius,
+                        out Vector2 projected))
+                {
+                    continue;
+                }
+
+                float distance = (mouse - projected).sqrMagnitude;
+                if (!DecorationEditMath.IsFinite(distance) || distance >= bestDistance)
+                    continue;
+                bestDistance = distance;
+                bestDirection = direction;
+            }
+
+            if (float.IsPositiveInfinity(bestDistance) ||
+                !TryProjectSmartGizmo(
+                    construct,
+                    center + bestDirection * visualRadius,
+                    out Vector2 visualPoint) ||
+                !TryProjectSmartGizmo(
+                    construct,
+                    center + bestDirection * referenceRadius,
+                    out Vector2 referencePoint))
+            {
+                return 1f;
+            }
+
+            float visualPixels = Vector2.Distance(centerScreen, visualPoint);
+            float referencePixels = Vector2.Distance(centerScreen, referencePoint);
+            if (!DecorationEditMath.IsFinite(visualPixels) ||
+                !DecorationEditMath.IsFinite(referencePixels) ||
+                visualPixels < DecorationEditMath.MinimumProjectedAxisLengthPixels ||
+                referencePixels < DecorationEditMath.MinimumProjectedAxisLengthPixels)
+            {
+                return 1f;
+            }
+
+            return Mathf.Clamp(visualPixels / referencePixels, 0.1f, 10f);
         }
 
         private static void BuildAxisBasis(Vector3 normal, out Vector3 tangentA, out Vector3 tangentB)
@@ -7188,6 +7644,31 @@ namespace DecoLimitLifter.SmartBuildMode
                    projected.x <= Screen.width + 50f &&
                    projected.y >= -50f &&
                    projected.y <= Screen.height + 50f;
+        }
+
+        private static bool TryProjectSmartGizmo(
+            AllConstruct construct,
+            Vector3 local,
+            out Vector2 screenPoint)
+        {
+            screenPoint = Vector2.zero;
+            if (construct == null || !DecorationEditMath.IsFinite(local))
+                return false;
+
+            Camera camera = Camera.main ?? Camera.current;
+            if (camera == null)
+                return false;
+
+            Vector3 projected = camera.WorldToScreenPoint(construct.SafeLocalToGlobal(local));
+            if (projected.z <= camera.nearClipPlane ||
+                !DecorationEditMath.IsFinite(projected.x) ||
+                !DecorationEditMath.IsFinite(projected.y))
+            {
+                return false;
+            }
+
+            screenPoint = ScreenToGui(projected);
+            return DecorationEditMath.IsFinite(screenPoint);
         }
 
         private void DrawCornerHandles()
@@ -7850,6 +8331,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 return EsuPanelUiHit.Found("Smart Builder", "console", mouse);
             if (EsuHudNotifications.ContainsMouse(mouse))
                 return EsuPanelUiHit.Found("Smart Builder", "notification", mouse);
+            if (_gizmoSettingsOpen && GizmoSettingsMenuRect().Contains(mouse))
+                return EsuPanelUiHit.Found("Smart Builder", "gizmo_settings_menu", mouse);
             if (_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse))
                 return EsuPanelUiHit.Found("Smart Builder", "view_mode_menu", mouse);
             if (_showLeftPanel && leftPanel.Contains(mouse))

@@ -22,6 +22,21 @@ namespace DecoLimitLifter.DecorationEditMode
             MaterialReplacement = decoration.MaterialReplacement.Us;
         }
 
+        private DecorationEditSnapshot(DecorationEditSnapshot source)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+
+            TetherPoint = source.TetherPoint;
+            Positioning = source.Positioning;
+            Scaling = source.Scaling;
+            Orientation = source.Orientation;
+            MeshGuid = source.MeshGuid;
+            Color = source.Color;
+            HideOriginalMesh = source.HideOriginalMesh;
+            MaterialReplacement = source.MaterialReplacement;
+        }
+
         internal Vector3i TetherPoint { get; }
 
         internal Vector3 Positioning { get; }
@@ -37,6 +52,14 @@ namespace DecoLimitLifter.DecorationEditMode
         internal bool HideOriginalMesh { get; }
 
         internal Guid MaterialReplacement { get; }
+
+        internal bool HasFiniteTransform =>
+            DecorationEditMath.IsFinite(Positioning) &&
+            DecorationEditMath.IsFinite(Scaling) &&
+            DecorationEditMath.IsFinite(Orientation);
+
+        internal DecorationEditSnapshot Copy() =>
+            new DecorationEditSnapshot(this);
 
         internal void Restore(Decoration decoration)
         {
@@ -93,8 +116,8 @@ namespace DecoLimitLifter.DecorationEditMode
             left.x == right.x && left.y == right.y && left.z == right.z;
 
         private static bool SameVector(Vector3 left, Vector3 right) =>
-            Mathf.Abs(left.x - right.x) < 0.0001f &&
-            Mathf.Abs(left.y - right.y) < 0.0001f &&
-            Mathf.Abs(left.z - right.z) < 0.0001f;
+            left.x == right.x &&
+            left.y == right.y &&
+            left.z == right.z;
     }
 }

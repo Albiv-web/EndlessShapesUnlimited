@@ -21,6 +21,7 @@ using BrilliantSkies.Ftd.Avatar.Build.UndoRedo;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Modding.Types;
 using DecoLimitLifter;
+using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.ExtendedSerialization;
 using DecoLimitLifter.Patches;
@@ -132,9 +133,15 @@ internal static class Program
             VerifyVanillaCompatibilityMode();
             VerifyBlueprintJsonStreamingSave();
             VerifyFastBlueprintLoading();
+            VerifyAutomationPaletteDropSnapping();
             VerifyDecorationEditModeMvp();
             VerifyEsuRuntimeConsole();
             VerifyPointerFlushPlacement();
+            VerifyGizmoSettingsAndPicking();
+            VerifyTypedCoordinateEditing();
+            VerifySurfaceCoordinateWorkbench();
+            VerifyDecorationSelectionClipboardCore();
+            VerifyEditorKeyMapCompatibility();
             VerifySurfaceDecorationBuilder();
             VerifySmartBlockBuilder();
             VerifyPackageIdentityAndAssets();
@@ -2166,7 +2173,8 @@ f 0 2 3
         Assert(sessionSource.Contains("plans.Count") &&
                sessionSource.Contains("_surfacePlan.DecorationCount") &&
                sessionSource.Contains("_generatorPlan.DecorationCount") &&
-               sessionSource.Contains("Redo failed: \" + compatibilityMessage") &&
+               sessionSource.Contains("TryCreateDecorationFromSnapshot(") &&
+               sessionSource.Contains("VanillaCompatibilityGuard.TryAllowDecorationCreation(") &&
                builderSource.Contains("_polygonDataList.Count") &&
                builderSource.Contains("BeginSuppression(\"decoration builder cleanup\")"),
             "ESU mesh placement, Surface Builder, Path/Circle generator, redo recreation, OBJ builder, and cleanup scopes use the vanilla compatibility guard.");
@@ -2830,6 +2838,110 @@ f 0 2 3
         };
     }
 
+    private static void VerifyAutomationPaletteDropSnapping()
+    {
+        float[] zooms = { 0.55f, 1.08f, 1.6f };
+        bool zoomCasesPassed = true;
+        foreach (float zoom in zooms)
+        {
+            float expected = Math.Min(Math.Max(0.001f, zoom), 250f / 330f);
+            float actual = AutomationBuilderSession.PaletteNodeScreenZoomFor(
+                zoom,
+                graphWidth: 330f,
+                availableWidth: 250f);
+            zoomCasesPassed &= Math.Abs(actual - expected) <= 0.0001f;
+        }
+
+        Assert(zoomCasesPassed,
+            "Automation palette thumbnails stay within their measured row width at minimum, default, and maximum graph zoom.");
+
+        var freeRect = new Rect(40f, 50f, 330f, 284f);
+        var valueTarget = new Rect(600f, 220f, 206f, 78f);
+        var bodyTarget = new Rect(116f, 220f, 330f, 420f);
+        var stackTarget = new Rect(100f, 384f, 330f, 284f);
+        Rect valueIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
+            AutomationBuilderSession.AutomationNodeKind.InputGetter,
+            freeRect,
+            AutomationBuilderSession.AutomationSnapKind.Value,
+            valueTarget);
+        Rect bodyIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
+            AutomationBuilderSession.AutomationNodeKind.IfCondition,
+            freeRect,
+            AutomationBuilderSession.AutomationSnapKind.Body,
+            bodyTarget);
+        Rect stackIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
+            AutomationBuilderSession.AutomationNodeKind.OutputSetter,
+            freeRect,
+            AutomationBuilderSession.AutomationSnapKind.Stack,
+            stackTarget);
+        Rect freeIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
+            AutomationBuilderSession.AutomationNodeKind.OutputSetter,
+            freeRect,
+            AutomationBuilderSession.AutomationSnapKind.Free,
+            freeRect);
+        Assert(RectApproximately(valueIntended, valueTarget, 0.001f) &&
+               RectApproximately(bodyIntended, bodyTarget, 0.001f) &&
+               RectApproximately(stackIntended, stackTarget, 0.001f) &&
+               RectApproximately(freeIntended, freeRect, 0.001f),
+            "Automation palette previews preserve the resolved value, body, stack, and free-drop rectangles.");
+
+        bool snappedPlansPassed = true;
+        AutomationBuilderSession.AutomationSnapKind[] snappedKinds =
+        {
+            AutomationBuilderSession.AutomationSnapKind.Free,
+            AutomationBuilderSession.AutomationSnapKind.Value,
+            AutomationBuilderSession.AutomationSnapKind.Body,
+            AutomationBuilderSession.AutomationSnapKind.Stack
+        };
+        foreach (AutomationBuilderSession.AutomationSnapKind snapKind in snappedKinds)
+        {
+            AutomationBuilderSession.PaletteDropCommitPlan plan =
+                AutomationBuilderSession.PlanPaletteDropCommit(freeRect, snapKind);
+            snappedPlansPassed &=
+                plan.UseResolvedSnap &&
+                RectApproximately(plan.PreferredRect, freeRect, 0.001f);
+        }
+
+        AutomationBuilderSession.PaletteDropCommitPlan unsnappedPlan =
+            AutomationBuilderSession.PlanPaletteDropCommit(
+                freeRect,
+                AutomationBuilderSession.AutomationSnapKind.None);
+        Assert(snappedPlansPassed &&
+               !unsnappedPlan.UseResolvedSnap &&
+               RectApproximately(unsnappedPlan.PreferredRect, freeRect, 0.001f),
+            "Automation palette drops commit value, body, stack, and free candidates exactly once from the pointer-centered rectangle.");
+
+        var hostRect = new Rect(100f, 100f, 330f, 244f);
+        Rect expandedHost = AutomationBuilderSession.ExpandedSnapBodyHostRect(
+            AutomationBuilderSession.AutomationNodeKind.Forever,
+            hostRect,
+            placedBottom: 620f,
+            bottomPadding: 28f);
+        Rect unchangedHost = AutomationBuilderSession.ExpandedSnapBodyHostRect(
+            AutomationBuilderSession.AutomationNodeKind.Forever,
+            hostRect,
+            placedBottom: 250f,
+            bottomPadding: 28f);
+        Assert(Math.Abs(expandedHost.height - 548f) <= 0.001f &&
+               expandedHost.yMax >= 648f &&
+               RectApproximately(unchangedHost, hostRect, 0.001f),
+            "Automation body drops expand only undersized hosts and retain enough padded space for the placed child.");
+
+        var compactRect = new Rect(10f, 20f, 206f, 78f);
+        Rect compactNormalized = AutomationBuilderSession.NormalizeGraphNodeRect(
+            AutomationBuilderSession.AutomationNodeKind.InputGetter,
+            compactRect,
+            valueFootprint: true);
+        Assert(RectApproximately(compactNormalized, compactRect, 0.001f),
+            "Automation native lowering can preserve compact value-producing node footprints.");
+    }
+
+    private static bool RectApproximately(Rect left, Rect right, float tolerance) =>
+        Math.Abs(left.x - right.x) <= tolerance &&
+        Math.Abs(left.y - right.y) <= tolerance &&
+        Math.Abs(left.width - right.width) <= tolerance &&
+        Math.Abs(left.height - right.height) <= tolerance;
+
     private static void VerifyDecorationEditModeMvp()
     {
         Assert(Math.Abs(DecorationEditMath.Snap(0.0764f) - 0.076f) < 0.0001f &&
@@ -3076,8 +3188,15 @@ f 0 2 3
         string selectBoxSource = ExtractMethodSource(sessionSource, "SelectBox").Replace("\r\n", "\n");
         string selectNearestSource = ExtractMethodSource(sessionSource, "SelectNearest").Replace("\r\n", "\n");
         string selectDecorationSource = ExtractMethodSource(sessionSource, "Select").Replace("\r\n", "\n");
-        string tryOpenDecorationContextMenuSource = ExtractMethodSource(sessionSource, "TryOpenDecorationContextMenu").Replace("\r\n", "\n");
+        string tryOpenDecorationContextMenuFromListSource = ExtractMethodSource(sessionSource, "TryOpenDecorationContextMenuFromList").Replace("\r\n", "\n");
+        string tryOpenDecorationContextMenuForTargetSource = ExtractMethodSource(sessionSource, "TryOpenDecorationContextMenuForTarget").Replace("\r\n", "\n");
         string selectDecorationContextTargetSource = ExtractMethodSource(sessionSource, "SelectDecorationContextTarget").Replace("\r\n", "\n");
+        string decorationContextTargetValidSource = ExtractMethodSource(sessionSource, "DecorationContextTargetValid").Replace("\r\n", "\n");
+        string executeDecorationContextActionSource = ExtractMethodSource(sessionSource, "ExecuteDecorationContextAction").Replace("\r\n", "\n");
+        string drawOutlinerRowSource = ExtractMethodSource(sessionSource, "DrawOutlinerRow").Replace("\r\n", "\n");
+        string drawAnchorContextSource = ExtractMethodSource(sessionSource, "DrawAnchorContext").Replace("\r\n", "\n");
+        string duplicateSelectedDecorationSource = ExtractMethodSource(sessionSource, "DuplicateSelectedDecoration").Replace("\r\n", "\n");
+        string tryBuildDecorationDeletePlansSource = ExtractMethodSource(sessionSource, "TryBuildDecorationDeletePlans").Replace("\r\n", "\n");
         string clearDeletedSelectionSource = ExtractMethodSource(sessionSource, "ClearDeletedSelection").Replace("\r\n", "\n");
         string selectFromHistorySource = ExtractMethodSource(sessionSource, "SelectFromHistory").Replace("\r\n", "\n");
         string addNearestToSelectionSource = ExtractMethodSource(sessionSource, "AddNearestToSelection").Replace("\r\n", "\n");
@@ -3782,6 +3901,59 @@ f 0 2 3
                !consumeDecorationContextEventSource.Contains("EventType.MouseMove"),
             "Decoration Edit Mode cursor menu uses fixed immediate-mode controls and consumes only real input events, avoiding hover-time IMGUI layout corruption.");
 
+        Assert(drawOutlinerRowSource.Contains("TryOpenDecorationContextMenuFromList(") &&
+               drawOutlinerRowSource.Contains("row.Decoration") &&
+               drawOutlinerRowSource.Contains("row.Construct") &&
+               drawAnchorContextSource.Contains("TryOpenDecorationContextMenuFromList(") &&
+               drawAnchorContextSource.Contains("decoration") &&
+               drawAnchorContextSource.Contains("_selectedConstruct") &&
+               tryOpenDecorationContextMenuFromListSource.Contains("EventType.ContextClick") &&
+               tryOpenDecorationContextMenuFromListSource.Contains("current.type == EventType.MouseDown && current.button == 1") &&
+               tryOpenDecorationContextMenuFromListSource.Contains("rowRect.Contains(current.mousePosition)") &&
+               tryOpenDecorationContextMenuFromListSource.Contains("_lastMouseGui = GUIUtility.GUIToScreenPoint(current.mousePosition)") &&
+               tryOpenDecorationContextMenuFromListSource.Contains("current.Use()"),
+            "Decoration Edit Mode opens the shared cursor action menu from right-clicked Outliner and Selected-anchor decoration rows at the list cursor position.");
+
+        Assert(tryOpenDecorationContextMenuForTargetSource.Contains("_selection.Contains(decoration)") &&
+               tryOpenDecorationContextMenuForTargetSource.Contains("_decorationContextPreserveSelection = preserveSelection") &&
+               tryOpenDecorationContextMenuForTargetSource.Contains("preserveSelectedGroup: preserveSelection") &&
+               selectDecorationContextTargetSource.Contains("bool keepGroup = preserveSelectedGroup") &&
+               selectDecorationContextTargetSource.Contains("_decorationContextPreserveSelection") &&
+               selectDecorationContextTargetSource.Contains("if (!keepGroup)\n                _selection.Clear()") &&
+               selectDecorationContextTargetSource.Contains("_selection.Add(_decorationContextTarget)") &&
+               decorationContextTargetValidSource.Contains("ReferenceEquals(_decorationContextTarget.OurManager, manager)") &&
+               decorationContextTargetValidSource.Contains("TryIsDecorationInManager("),
+            "Right-clicking a selected list row promotes it to primary without collapsing its group, while unselected or stale rows are isolated or rejected safely.");
+
+        Assert(drawDecorationContextMenuSource.Contains("multiple ? \"Select only this\" : \"Select\"") &&
+               drawDecorationContextMenuSource.Contains("\"Copy settings\"") &&
+               drawDecorationContextMenuSource.Contains("\"Paste settings\"") &&
+               drawDecorationContextMenuSource.Contains("\"Copy selection\"") &&
+               drawDecorationContextMenuSource.Contains("multiple ? \"Duplicate selection\" : \"Duplicate in place\"") &&
+               drawDecorationContextMenuSource.Contains("multiple ? \"Delete selection\" : \"Delete\"") &&
+               executeDecorationContextActionSource.Contains("CopyDecorationSettings()") &&
+               executeDecorationContextActionSource.Contains("PasteDecorationSettings()") &&
+               executeDecorationContextActionSource.Contains("CopyDecorationSelection()") &&
+               executeDecorationContextActionSource.Contains("DuplicateSelectedDecoration()") &&
+               executeDecorationContextActionSource.Contains("DeleteSelectedDecoration()"),
+            "The decoration row cursor menu exposes selection-aware transform, native settings clipboard, group copy, duplicate, and delete actions.");
+
+        Assert(duplicateSelectedDecorationSource.Contains("DecorationSelectionClipboardPayload.TryCreate(") &&
+               duplicateSelectedDecorationSource.Contains("payload.CopySnapshots()") &&
+               duplicateSelectedDecorationSource.Contains("payload.PrimaryIndex") &&
+               duplicateSelectedDecorationSource.Contains("PasteDecorationSnapshotsInPlace(") &&
+               !duplicateSelectedDecorationSource.Contains("DecorationSelectionClipboard.TryCopy"),
+            "Duplicate selection uses deterministic immutable batch snapshots and the transactional paste-in-place path without replacing clipboard contents.");
+
+        Assert(tryBuildDecorationDeletePlansSource.Contains("CurrentPrimarySelectionDecorations()") &&
+               tryBuildDecorationDeletePlansSource.Contains("TryIsDecorationInManager(manager, decoration") &&
+               tryBuildDecorationDeletePlansSource.Contains("var seen = new HashSet<Decoration>()") &&
+               tryBuildDecorationDeletePlansSource.Contains("selectionIndex < explicitSelection.Count") &&
+               tryBuildDecorationDeletePlansSource.Contains("TryBuildSymmetryFollowContext(") &&
+               tryBuildDecorationDeletePlansSource.Contains("new DecorationDeletePlan(") &&
+               tryBuildDecorationDeletePlansSource.Contains("plans.Count != decorations.Count"),
+            "Delete selection validates and prebuilds the complete explicit/symmetry batch before any mutation, deduplicating shared counterparts for one undo operation.");
+
         Assert(!sessionSource.Contains("MaxSearchRows") &&
                !sessionSource.Contains("Showing first 70") &&
                sessionSource.Contains("MeshPreviewGridMinCardWidth = 112f") &&
@@ -3938,7 +4110,7 @@ f 0 2 3
                sessionSource.Contains("TryFindAnchorDecorationIndex(rows, _anchorRangeAnchor, out int anchorIndex)") &&
                sessionSource.Contains("SelectAnchorDecorationRange(rows, anchorIndex, clickedIndex, clicked, additive: control)") &&
                sessionSource.Contains("ToggleAnchorDecorationSelection(clicked)") &&
-               sessionSource.Contains("Ctrl toggles one row; Shift selects a range.") &&
+               sessionSource.Contains("Ctrl toggles one row; Shift selects a range; right-click opens actions.") &&
                sessionSource.Contains("_tool != DecorationEditorTool.Anchor"),
             "Decoration Edit Mode outliner defaults to construct-grouped decoration rows with optional tether pins, collapsible constructs, independent selected-anchor context, anchor connection lines, and anchor-mode click selection.");
 
@@ -3999,7 +4171,7 @@ f 0 2 3
                sessionSource.Contains("DecorationDeleteBatchCommand") &&
                sessionSource.Contains("BeginSymmetryFollow") &&
                sessionSource.Contains("TryFindSymmetryCounterpart") &&
-               sessionSource.Contains("SelectedAnchorDecorations(expectedAnchor)") &&
+               sessionSourceNormalized.Contains("SelectedAnchorDecorations(\n                         sourceConstruct,\n                         expectedAnchor)") &&
                sessionSource.Contains("GetDecorationLocalCenter(decoration)") &&
                sessionSource.Contains("TryApplySymmetryFollow") &&
                sessionSource.Contains("TryApplyDecorationSymmetryTransform") &&
@@ -4174,7 +4346,7 @@ f 0 2 3
                addNearestToSelectionSource.Contains("TryHandleSelectionFocusRequest(hit.Decoration, hit.Construct)") &&
                selectOutlinerDecorationRowSource.Contains("TryHandleSelectionFocusRequest(row.Decoration, row.Construct)") &&
                selectAnchorDecorationRowSource.Contains("TryHandleSelectionFocusRequest(clicked, _selectedConstruct)") &&
-               tryOpenDecorationContextMenuSource.Contains("TryBlockSelectionFocusContextTarget(hit.Decoration, hit.Construct)") &&
+               tryOpenDecorationContextMenuForTargetSource.Contains("TryBlockSelectionFocusContextTarget(decoration, construct)") &&
                selectDecorationContextTargetSource.Contains("TryBlockSelectionFocusContextTarget(_decorationContextTarget, _decorationContextConstruct)") &&
                clearDeletedSelectionSource.Contains("ReferenceEquals(_selectionFocusDecoration, decoration)") &&
                clearDeletedSelectionSource.Contains("ClearSelectionFocusLock(notify: false)") &&
@@ -4485,9 +4657,12 @@ f 0 2 3
                overlaySource.Contains("\"_ZWrite\", 0") &&
                overlaySource.Contains("GL.QUADS") &&
                overlaySource.Contains("ScreenToWorldPoint") &&
-               sessionSource.Contains("float width = _dragAxis == axis ? 4.5f : 3f") &&
-               sessionSource.Contains("float width = _anchorDragAxis == axis && _anchorDragSign == sign ? 4f : 2.5f"),
-            "Decoration Edit Mode transform and anchor axes use ESU unlit overlay drawing with stable RGB hues across native view modes.");
+               sessionSource.Contains("Color color = GizmoHoverColor(DecorationEditMath.AxisColor(axis), hovered);") &&
+               sessionSource.Contains("float width = style.LineWidth(_dragAxis == axis || hovered ? 4.5f : 3f)") &&
+               sessionSource.Contains("_anchorDragAxis == axis && _anchorDragSign == sign || hovered ? 4f : 2.5f") &&
+               sessionSource.Contains("TryPickAnchorHandle(") &&
+               sessionSource.Contains("style.AnchorLength"),
+            "Decoration Edit Mode transform and anchor axes use the ESU unlit overlay with profiled widths and picker-matched hover highlights while retaining stable RGB hues across native view modes.");
 
         Assert(inputScopeSource.Contains("InfoStore") &&
                inputScopeSource.Contains("IsPaintHoverMessage") &&
@@ -4756,7 +4931,7 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildSession.cs"));
-        string smartBuildDrawGuiSource = ExtractMethodSource(smartBuildSessionSource, "DrawGui").Replace("\r\n", "\n");
+        string smartBuildDrawGuiSource = ExtractMethodSource(smartBuildSessionSource, "DrawGuiCore").Replace("\r\n", "\n");
         string decorationBehaviourSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -4927,6 +5102,1145 @@ f 0 2 3
         Mathf.Abs(left.x - right.x) <= tolerance &&
         Mathf.Abs(left.y - right.y) <= tolerance &&
         Mathf.Abs(left.z - right.z) <= tolerance;
+
+    private static void VerifyGizmoSettingsAndPicking()
+    {
+        var profileDefaults = new SerializationHudProfile.ProfileData();
+        EsuGizmoStyle defaults = EsuGizmoSettings.Resolve(
+            float.NaN,
+            float.PositiveInfinity,
+            -1f,
+            0f,
+            float.NaN);
+        Assert(Mathf.Abs(profileDefaults.DecorationGizmoMoveSize - 1f) < 0.0001f &&
+               Mathf.Abs(profileDefaults.DecorationGizmoRotateSize - 1f) < 0.0001f &&
+               Mathf.Abs(profileDefaults.DecorationGizmoScaleSize - 1f) < 0.0001f &&
+               Mathf.Abs(profileDefaults.DecorationGizmoThickness - 1f) < 0.0001f &&
+               Mathf.Abs(profileDefaults.DecorationGizmoHitAreaPixels - 18f) < 0.0001f &&
+               Mathf.Abs(defaults.MoveSize - 1f) < 0.0001f &&
+               Mathf.Abs(defaults.RotateSize - 1f) < 0.0001f &&
+               Mathf.Abs(defaults.ScaleSize - 1f) < 0.0001f &&
+               Mathf.Abs(defaults.Thickness - 1f) < 0.0001f &&
+               Mathf.Abs(defaults.HitAreaPixels - 18f) < 0.0001f,
+            "Gizmo profile fields and invalid-value resolution use the documented 1x/18px defaults.");
+
+        EsuGizmoStyle minimum = EsuGizmoSettings.Resolve(0.01f, 0.25f, 0.49f, 0.1f, 0.5f);
+        EsuGizmoStyle maximum = EsuGizmoSettings.Resolve(4f, 30f, float.MaxValue, 12f, 400f);
+        Assert(Mathf.Abs(minimum.MoveSize - 0.5f) < 0.0001f &&
+               Mathf.Abs(minimum.RotateSize - 0.5f) < 0.0001f &&
+               Mathf.Abs(minimum.ScaleSize - 0.5f) < 0.0001f &&
+               Mathf.Abs(minimum.Thickness - 0.5f) < 0.0001f &&
+               Mathf.Abs(minimum.HitAreaPixels - 8f) < 0.0001f &&
+               Mathf.Abs(maximum.MoveSize - 3f) < 0.0001f &&
+               Mathf.Abs(maximum.RotateSize - 3f) < 0.0001f &&
+               Mathf.Abs(maximum.ScaleSize - 3f) < 0.0001f &&
+               Mathf.Abs(maximum.Thickness - 3f) < 0.0001f &&
+               Mathf.Abs(maximum.HitAreaPixels - 40f) < 0.0001f,
+            "Gizmo sizes/thickness clamp to 0.5-3x and click area clamps to 8-40px.");
+        Assert(Mathf.Abs(defaults.MoveLength - 1.25f) < 0.0001f &&
+               Mathf.Abs(defaults.AnchorLength - 1.25f) < 0.0001f &&
+               Mathf.Abs(defaults.ScaleLength - 1.25f) < 0.0001f &&
+               Mathf.Abs(defaults.RotationRadius - 0.82f) < 0.0001f &&
+               defaults.FreeMoveCorePixels >= 5f &&
+               defaults.FreeMoveCorePixels <= 8f &&
+               Mathf.Abs(maximum.LineWidth(2f) - 6f) < 0.0001f,
+            "Resolved gizmo geometry derives from the 1.25m move/anchor/scale and 0.82m rotate bases with a compact center core.");
+
+        var shafts = new DecorationGizmoProjections(
+            Vector2.zero,
+            new Vector2(100f, 0f),
+            new Vector2(0f, 100f),
+            new Vector2(-70f, -70f));
+        DecorationGizmoPick basePick = DecorationEditMath.PickGizmo(
+            new Vector2(8f, 1f),
+            shafts,
+            defaults.HitAreaPixels,
+            defaults.FreeMoveCorePixels,
+            allowFree: true);
+        DecorationGizmoPick middlePick = DecorationEditMath.PickGizmo(
+            new Vector2(50f, 2f),
+            shafts,
+            defaults.HitAreaPixels,
+            defaults.FreeMoveCorePixels,
+            allowFree: true);
+        DecorationGizmoPick tipPick = DecorationEditMath.PickGizmo(
+            new Vector2(98f, -2f),
+            shafts,
+            defaults.HitAreaPixels,
+            defaults.FreeMoveCorePixels,
+            allowFree: true);
+        DecorationGizmoPick freePick = DecorationEditMath.PickGizmo(
+            new Vector2(3f, 2f),
+            shafts,
+            defaults.HitAreaPixels,
+            defaults.FreeMoveCorePixels,
+            allowFree: true);
+        DecorationGizmoPick miss = DecorationEditMath.PickGizmo(
+            new Vector2(70f, 40f),
+            shafts,
+            defaults.HitAreaPixels,
+            defaults.FreeMoveCorePixels,
+            allowFree: true);
+        Assert(basePick.Axis == DecorationEditAxis.X && basePick.Sign == 1 &&
+               middlePick.Axis == DecorationEditAxis.X && middlePick.Sign == 1 &&
+               tipPick.Axis == DecorationEditAxis.X && tipPick.Sign == 1 &&
+               freePick.Axis == DecorationEditAxis.Free &&
+               miss.Axis == DecorationEditAxis.None,
+            "Full-shaft gizmo picking accepts base, middle, and tip clicks, reserves only the compact center core, and rejects misses.");
+
+        var overlapping = new DecorationGizmoProjections(
+            Vector2.zero,
+            new Vector2(100f, 0f),
+            new Vector2(100f, 0f),
+            new Vector2(0f, -100f));
+        DecorationGizmoPick overlapPick = DecorationEditMath.PickGizmo(
+            new Vector2(55f, 2f),
+            overlapping,
+            8f,
+            0f,
+            allowFree: false);
+        var nearestOverlap = new DecorationGizmoProjections(
+            Vector2.zero,
+            new Vector2(100f, 0f),
+            new Vector2(100f, 12f),
+            null);
+        DecorationGizmoPick nearestOverlapPick = DecorationEditMath.PickGizmo(
+            new Vector2(50f, 5f),
+            nearestOverlap,
+            8f,
+            0f,
+            allowFree: false);
+        DecorationGizmoPick nearestXAxisPick = DecorationEditMath.PickGizmo(
+            new Vector2(50f, -5f),
+            nearestOverlap,
+            8f,
+            0f,
+            allowFree: false);
+        Assert(overlapPick.Axis == DecorationEditAxis.X &&
+               nearestOverlapPick.Axis == DecorationEditAxis.Y &&
+               nearestXAxisPick.Axis == DecorationEditAxis.X &&
+               nearestOverlapPick.DistancePixels < nearestXAxisPick.DistancePixels,
+            "Overlapping gizmo shafts break exact ties deterministically and switch to whichever visible axis is geometrically nearest.");
+
+        var partial = new DecorationGizmoProjections(
+            Vector2.zero,
+            new Vector2(3f, 0f),
+            null,
+            new Vector2(0f, 100f),
+            null,
+            new Vector2(float.NaN, 0f),
+            null);
+        DecorationGizmoPick partialPick = DecorationEditMath.PickGizmo(
+            new Vector2(1f, 55f),
+            partial,
+            8f,
+            0f,
+            allowFree: false);
+        var signed = new DecorationGizmoProjections(
+            Vector2.zero,
+            new Vector2(100f, 0f),
+            new Vector2(-100f, 0f),
+            null,
+            null,
+            null,
+            null);
+        DecorationGizmoPick negativePick = DecorationEditMath.PickGizmo(
+            new Vector2(-60f, 1f),
+            signed,
+            8f,
+            0f,
+            allowFree: false);
+        Assert(partialPick.Axis == DecorationEditAxis.Y && partialPick.Sign == 1 &&
+               negativePick.Axis == DecorationEditAxis.X && negativePick.Sign == -1,
+            "Collapsed and invalid projections are ignored independently while remaining positive and negative shafts stay pickable.");
+
+        bool projectedMinimum = DecorationEditMath.TryProjectMouseDeltaToAxisInvariant(
+            new Vector2(12f, 0f),
+            Vector2.zero,
+            new Vector2(50f, 0f),
+            new Vector2(100f, 0f),
+            EsuGizmoSettings.BaseMoveLength,
+            out float minimumDelta);
+        bool projectedMaximum = DecorationEditMath.TryProjectMouseDeltaToAxisInvariant(
+            new Vector2(12f, 0f),
+            Vector2.zero,
+            new Vector2(300f, 0f),
+            new Vector2(100f, 0f),
+            EsuGizmoSettings.BaseMoveLength,
+            out float maximumDelta);
+        Assert(projectedMinimum && projectedMaximum &&
+               Mathf.Abs(minimumDelta - maximumDelta) < 0.0001f,
+            "Changing visual gizmo size leaves projected drag sensitivity unchanged by resolving motion against the fixed base projection.");
+
+        string sessionSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        Assert(ExtractMethodSource(sessionSource, "TryUpdateDrag").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateScale").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateAnchorDrag").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateSurfaceDrag").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateGeneratorDrag").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateGeneratorScale").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateSharedAnchorDrag").Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               ExtractMethodSource(sessionSource, "TryUpdateRotate").Contains("_rotateDragSensitivityScale") &&
+               ExtractMethodSource(sessionSource, "TryUpdateGeneratorRotate").Contains("_generatorRotateDragSensitivityScale") &&
+               ExtractMethodSource(sessionSource, "HandleSceneInput").Contains("EsuGizmoSettings.Current.RotationRadius") &&
+               ExtractMethodSource(sessionSource, "HandleSceneInput").Contains("EsuGizmoSettings.BaseRotationRadius") &&
+               ExtractMethodSource(sessionSource, "BeginGeneratorRotate").Contains("EsuGizmoSettings.Current.RotationRadius") &&
+               ExtractMethodSource(sessionSource, "BeginGeneratorRotate").Contains("EsuGizmoSettings.BaseRotationRadius"),
+            "Decoration, group, anchor, shared-anchor, Surface, and generator move/scale paths use fixed-reference projection, while rotation uses the visual and base radii for normalized sensitivity.");
+
+        string handleSceneInput = ExtractMethodSource(sessionSource, "HandleSceneInput");
+        string drawAxis = ExtractMethodSource(sessionSource, "DrawAxis");
+        string drawRotateGizmo = ExtractMethodSource(sessionSource, "DrawRotateGizmo");
+        string drawUniformScale = ExtractMethodSource(sessionSource, "DrawUniformGroupScaleHandle");
+        string drawScaleAxis = ExtractMethodSource(sessionSource, "DrawScaleAxis");
+        string drawAnchorAxis = ExtractMethodSource(sessionSource, "DrawAnchorAxis");
+        string drawWorldOverlay = ExtractMethodSource(sessionSource, "DrawWorldOverlay");
+        Assert(handleSceneInput.Contains("TryPickAnchorHandle(") &&
+               handleSceneInput.Contains("TryPickGroupRotateRing(") &&
+               handleSceneInput.Contains("TryPickRotateRing(") &&
+               handleSceneInput.Contains("TryPickGroupUniformScaleHandle(") &&
+               handleSceneInput.Contains("TryPickGroupHandle(") &&
+               handleSceneInput.Contains("TryPickHandle(") &&
+               handleSceneInput.Contains("TryPickGroupMoveHandle(") &&
+               handleSceneInput.Contains("TryPickMoveHandle(") &&
+               drawAxis.Contains("TryPickGroupMoveHandle(") &&
+               drawAxis.Contains("TryPickMoveHandle(") &&
+               drawRotateGizmo.Contains("TryPickGroupRotateRing(") &&
+               drawRotateGizmo.Contains("TryPickRotateRing(") &&
+               drawUniformScale.Contains("TryPickGroupUniformScaleHandle(") &&
+               drawScaleAxis.Contains("TryPickGroupHandle(") &&
+               drawScaleAxis.Contains("TryPickHandle(") &&
+               drawAnchorAxis.Contains("TryPickAnchorHandle(") &&
+               drawWorldOverlay.Contains("TryPickGroupMoveHandle(") &&
+               drawWorldOverlay.Contains("TryPickMoveHandle("),
+            "Decoration and group hover rendering uses the same move, rotate, scale, uniform-scale, and anchor picker entry points as mouse-down handling.");
+
+        string handleSurfaceInput = ExtractMethodSource(sessionSource, "HandleSurfaceSceneInput");
+        string handleGeneratorInput = ExtractMethodSource(sessionSource, "HandleGeneratorSceneInput");
+        string handleSurfaceSharedAnchor = ExtractMethodSource(sessionSource, "TryHandleSurfaceSharedAnchorClick");
+        string handleGeneratorSharedAnchor = ExtractMethodSource(sessionSource, "TryHandleGeneratorSharedAnchorClick");
+        string drawSurfaceOverlay = ExtractMethodSource(sessionSource, "DrawSurfaceOverlay");
+        string drawSurfaceAxis = ExtractMethodSource(sessionSource, "DrawSurfaceAxis");
+        string drawGeneratorDraft = ExtractMethodSource(sessionSource, "DrawGeneratorDraftOverlay");
+        string drawGeneratorAxis = ExtractMethodSource(sessionSource, "DrawGeneratorAxis");
+        string drawGeneratorRotate = ExtractMethodSource(sessionSource, "DrawGeneratorRotateGizmo");
+        string drawGeneratorScale = ExtractMethodSource(sessionSource, "DrawGeneratorScaleGizmo");
+        string drawSharedAnchorAxis = ExtractMethodSource(sessionSource, "DrawSharedAnchorAxis");
+        Assert(handleSurfaceInput.Contains("TryPickSurfaceHandle(") &&
+               drawSurfaceOverlay.Contains("TryPickSurfaceHandle(") &&
+               drawSurfaceAxis.Contains("TryPickSurfaceHandle(") &&
+               handleGeneratorInput.Contains("TryPickGeneratorHandle(") &&
+               handleGeneratorInput.Contains("TryPickGeneratorRotateRing(") &&
+               handleGeneratorInput.Contains("TryPickGeneratorScaleHandle(") &&
+               drawGeneratorDraft.Contains("TryPickGeneratorHandle(") &&
+               drawGeneratorAxis.Contains("TryPickGeneratorHandle(") &&
+               drawGeneratorRotate.Contains("TryPickGeneratorRotateRing(") &&
+               drawGeneratorScale.Contains("TryPickGeneratorScaleHandle(") &&
+               handleSurfaceSharedAnchor.Contains("TryPickSharedAnchorHandle(") &&
+               handleGeneratorSharedAnchor.Contains("TryPickSharedAnchorHandle(") &&
+               drawSharedAnchorAxis.Contains("TryPickSharedAnchorHandle("),
+            "Surface points, generator move/rotate/scale handles, and both shared-anchor modes use matching picker entry points for hover rendering and mouse-down handling.");
+    }
+
+    private static void VerifyTypedCoordinateEditing()
+    {
+        AllConstruct constructA = NewConstructIdentityForTests();
+        AllConstruct constructB = NewConstructIdentityForTests();
+        string message;
+
+        var shared = new SurfaceDraft();
+        shared.SetConstructForTests(constructA);
+        shared.AddPointForTests(Vector3.zero);
+        shared.AddPointForTests(new Vector3(2f, 0f, 0f));
+        shared.AddPointForTests(new Vector3(0f, 2f, 0f));
+        shared.AddPointForTests(new Vector3(-2f, 0f, 0f));
+        Assert(shared.TryAddFace(0, 1, 2, out message) &&
+               shared.TryAddFace(0, 2, 3, out message),
+            "Typed coordinate verification creates connected faces sharing one point index.");
+        SurfaceDraftSnapshot beforeSharedUpdate = shared.CreateSnapshot();
+        bool sharedUpdated = shared.TrySetPointCoordinates(
+            new Dictionary<int, Vector3>
+            {
+                [0] = new Vector3(0.1236f, 0.2344f, 0.3456f)
+            },
+            out message);
+        Assert(sharedUpdated &&
+               VectorApproximately(shared.Points[0], new Vector3(0.124f, 0.234f, 0.346f), 0.00001f) &&
+               shared.Faces[0].Contains(0) &&
+               shared.Faces[1].Contains(0) &&
+               !beforeSharedUpdate.SameAs(shared.CreateSnapshot()),
+            "Typed Surface point edits normalize to 0.001m and propagate through connected faces by preserving the shared point index.");
+        SurfaceDraftSnapshot sharedNoOpBaseline = shared.CreateSnapshot();
+        Assert(!shared.TrySetPointCoordinates(
+                   new Dictionary<int, Vector3> { [0] = shared.Points[0] },
+                   out message) &&
+               sharedNoOpBaseline.SameAs(shared.CreateSnapshot()),
+            "A typed Surface no-op is reported as non-success and does not invalidate draft state or imply an undo command.");
+
+        SurfaceDraft atomic = SurfaceDraftForTests(Vector3.zero, Vector3.right, Vector3.up);
+        atomic.SetConstructForTests(constructA);
+        SurfaceDraftSnapshot atomicBaseline = atomic.CreateSnapshot();
+        bool staleRejected = !atomic.TrySetPointCoordinates(
+            new Dictionary<int, Vector3> { [99] = Vector3.zero },
+            out message) &&
+            atomicBaseline.SameAs(atomic.CreateSnapshot());
+        bool nonFiniteRejected = !atomic.TrySetPointCoordinates(
+            new Dictionary<int, Vector3> { [0] = new Vector3(float.NaN, 0f, 0f) },
+            out message) &&
+            atomicBaseline.SameAs(atomic.CreateSnapshot());
+        bool repeatedRejected = !atomic.TrySetPointCoordinates(
+            new Dictionary<int, Vector3> { [0] = Vector3.right },
+            out message) &&
+            atomicBaseline.SameAs(atomic.CreateSnapshot());
+        bool zeroAreaRejected = !atomic.TrySetPointCoordinates(
+            new Dictionary<int, Vector3> { [2] = new Vector3(2f, 0f, 0f) },
+            out message) &&
+            atomicBaseline.SameAs(atomic.CreateSnapshot());
+        bool overflowRejected = !atomic.TrySetPointCoordinates(
+            new Dictionary<int, Vector3> { [0] = new Vector3(1e30f, 1e30f, 0f) },
+            out message) &&
+            atomicBaseline.SameAs(atomic.CreateSnapshot());
+        Assert(staleRejected && nonFiniteRejected && repeatedRejected && zeroAreaRejected && overflowRejected,
+            "Typed Surface point updates reject stale indexes, non-finite or overflowed math, repeated edges, and zero-area faces without any partial mutation.");
+
+        var live = SurfaceDraftForTests(Vector3.zero, Vector3.right, Vector3.up);
+        live.SetConstructForTests(constructA);
+        SurfaceDraftSnapshot liveBaseline = live.CreateSnapshot();
+        bool liveStaleRejected = !live.TrySetPointCoordinateLive(
+            99,
+            Vector3.zero,
+            out message) && liveBaseline.SameAs(live.CreateSnapshot());
+        bool liveNonFiniteRejected = !live.TrySetPointCoordinateLive(
+            0,
+            new Vector3(float.NaN, 0f, 0f),
+            out message) && liveBaseline.SameAs(live.CreateSnapshot());
+        bool liveRepeatedRejected = !live.TrySetPointCoordinateLive(
+            0,
+            Vector3.right,
+            out message) && liveBaseline.SameAs(live.CreateSnapshot());
+        bool liveZeroAreaRejected = !live.TrySetPointCoordinateLive(
+            2,
+            new Vector3(2f, 0f, 0f),
+            out message) && liveBaseline.SameAs(live.CreateSnapshot());
+        bool liveOverflowRejected = !live.TrySetPointCoordinateLive(
+            0,
+            new Vector3(1e30f, 1e30f, 0f),
+            out message) && liveBaseline.SameAs(live.CreateSnapshot());
+        Assert(liveStaleRejected && liveNonFiniteRejected && liveRepeatedRejected &&
+               liveZeroAreaRejected && liveOverflowRejected &&
+               live.TrySetPointCoordinateLive(
+                   0,
+                   new Vector3(0.1236f, 0.2344f, 0.3456f),
+                   out message) &&
+               VectorApproximately(
+                   live.Points[0],
+                   new Vector3(0.124f, 0.234f, 0.346f),
+                   0.00001f),
+            "Live Surface coordinate updates normalize valid slider values while atomically rejecting stale, non-finite, repeated, zero-area, and overflowing intermediate geometry.");
+        Assert(atomic.TrySetPointCoordinates(
+                   new Dictionary<int, Vector3>
+                   {
+                       [0] = Vector3.right,
+                       [1] = Vector3.zero
+                   },
+                   out message) &&
+               atomic.Faces[0].A == 0 &&
+               atomic.Faces[0].B == 1 &&
+               atomic.Faces[0].C == 2 &&
+               atomic.Points[0] == Vector3.right &&
+               atomic.Points[1] == Vector3.zero,
+            "Bulk typed Surface point updates validate the final staged geometry atomically while preserving face indexes and winding.");
+
+        var noFocus = new SurfaceDraft();
+        SurfaceDraftSnapshot noFocusBaseline = noFocus.CreateSnapshot();
+        Assert(!noFocus.TryAddTypedTriangle(
+                   null,
+                   Vector3.zero,
+                   Vector3.right,
+                   Vector3.up,
+                   out message) &&
+               noFocusBaseline.SameAs(noFocus.CreateSnapshot()) &&
+               message.IndexOf("craft block", StringComparison.OrdinalIgnoreCase) >= 0,
+            "A fresh typed triangle requires a focused construct and fails without changing draft or selection state.");
+
+        var invalidTriangle = new SurfaceDraft();
+        SurfaceDraftSnapshot invalidTriangleBaseline = invalidTriangle.CreateSnapshot();
+        bool repeatedTriangleRejected = !invalidTriangle.TryAddTypedTriangle(
+            constructA,
+            Vector3.zero,
+            new Vector3(0.0004f, 0f, 0f),
+            Vector3.up,
+            out message) &&
+            invalidTriangleBaseline.SameAs(invalidTriangle.CreateSnapshot());
+        bool collinearTriangleRejected = !invalidTriangle.TryAddTypedTriangle(
+            constructA,
+            Vector3.zero,
+            Vector3.right,
+            new Vector3(2f, 0f, 0f),
+            out message) &&
+            invalidTriangleBaseline.SameAs(invalidTriangle.CreateSnapshot());
+        bool nonFiniteTriangleRejected = !invalidTriangle.TryAddTypedTriangle(
+            constructA,
+            Vector3.zero,
+            Vector3.right,
+            new Vector3(float.PositiveInfinity, 1f, 0f),
+            out message) &&
+            invalidTriangleBaseline.SameAs(invalidTriangle.CreateSnapshot());
+        Assert(repeatedTriangleRejected && collinearTriangleRejected && nonFiniteTriangleRejected,
+            "Typed triangle staging rejects post-rounding duplicates, collinear faces, and non-finite coordinates without binding the draft construct.");
+
+        var minimumGridTriangle = new SurfaceDraft();
+        Assert(minimumGridTriangle.TryAddTypedTriangle(
+                   constructA,
+                   new Vector3(-10f, -10f, 0f),
+                   new Vector3(-9.999f, -10f, 0f),
+                   new Vector3(-10f, -9.999f, 0f),
+                   out message),
+            "A nonzero minimum-resolution 0.001m triangle remains valid at offset construct-local coordinates.");
+
+        var typed = new SurfaceDraft();
+        Assert(typed.TryAddTypedTriangle(
+                   constructA,
+                   new Vector3(0.0004f, 0f, 0f),
+                   new Vector3(1.0004f, 0f, 0f),
+                   new Vector3(0f, 1.0004f, 0f),
+                   out message) &&
+               ReferenceEquals(typed.Construct, constructA) &&
+               typed.Points.Count == 3 &&
+               typed.Faces.Count == 1 &&
+               typed.SelectionKind == SurfaceSelectionKind.Face &&
+               VectorApproximately(typed.Points[0], Vector3.zero, 0.00001f) &&
+               VectorApproximately(typed.Points[1], Vector3.right, 0.00001f) &&
+               VectorApproximately(typed.Points[2], Vector3.up, 0.00001f),
+            "A valid typed triangle binds the focused construct, rounds all points to 0.001m, and selects the new face atomically.");
+        SurfaceFace firstFace = typed.Faces[0];
+        Assert(typed.TryAddTypedTriangle(
+                   constructA,
+                   Vector3.zero,
+                   Vector3.right,
+                   new Vector3(0f, -1f, 0f),
+                   out message) &&
+               typed.Points.Count == 4 &&
+               typed.Faces.Count == 2 &&
+               typed.Faces[1].HasDirectedEdge(firstFace.B, firstFace.A),
+            "Adjacent typed triangles reuse existing point indexes and orient their shared edge opposite the connected face winding.");
+
+        var topologyTie = new SurfaceDraft();
+        topologyTie.SetConstructForTests(constructA);
+        topologyTie.AddPointForTests(Vector3.zero);
+        topologyTie.AddPointForTests(new Vector3(-1f, -2f, 0f));
+        topologyTie.AddPointForTests(new Vector3(1f, -2f, 0f));
+        topologyTie.AddPointForTests(Vector3.zero);
+        topologyTie.AddPointForTests(Vector3.right);
+        topologyTie.AddPointForTests(Vector3.up);
+        Assert(topologyTie.TryAddFace(0, 1, 2, out message) &&
+               topologyTie.TryAddFace(3, 4, 5, out message) &&
+               topologyTie.TryAddTypedTriangle(
+                   constructA,
+                   Vector3.zero,
+                   Vector3.right,
+                   new Vector3(1f, -1f, 0f),
+                   out message) &&
+               topologyTie.Faces[2].Contains(3) &&
+               topologyTie.Faces[2].Contains(4) &&
+               !topologyTie.Faces[2].Contains(0) &&
+               topologyTie.Faces[2].HasDirectedEdge(4, 3),
+            "Typed triangle tuple resolution prefers an existing shared edge before equal per-point incidence and preserves connected winding.");
+
+        const int duplicateCandidateStressCount = 700;
+        var stressPoints = new List<Vector3>(duplicateCandidateStressCount * 6);
+        var stressFaces = new List<SurfaceFace>(duplicateCandidateStressCount * 2);
+        for (int index = 0; index < duplicateCandidateStressCount; index++)
+        {
+            int first = stressPoints.Count;
+            stressPoints.Add(Vector3.zero);
+            stressPoints.Add(new Vector3(2f, 0f, 0f));
+            stressPoints.Add(new Vector3(0f, 2f, 0f));
+            stressPoints.Add(new Vector3(1f, -1f, 0f));
+            stressPoints.Add(new Vector3(-1f, 3f, 0f));
+            stressPoints.Add(new Vector3(1f, 3f, 0f));
+            stressFaces.Add(new SurfaceFace(first, first + 1, first + 3));
+            stressFaces.Add(new SurfaceFace(first + 2, first + 4, first + 5));
+        }
+
+        var topologyStress = new SurfaceDraft();
+        topologyStress.Restore(new SurfaceDraftSnapshot(
+            constructA,
+            stressPoints,
+            stressFaces,
+            Array.Empty<SurfaceFaceStyle>(),
+            Array.Empty<int>(),
+            Array.Empty<int>(),
+            Array.Empty<SurfaceEdge>(),
+            SurfaceSelectionKind.None,
+            -1,
+            -1,
+            new SurfaceEdge(-1, -1),
+            false,
+            default,
+            false,
+            new SurfaceDecorationSettingsSnapshot(new SurfaceDecorationSettings())));
+        int stressFaceCount = topologyStress.Faces.Count;
+        Assert(topologyStress.TryAddTypedTriangle(
+                   constructA,
+                   Vector3.zero,
+                   new Vector3(2f, 0f, 0f),
+                   new Vector3(0f, 2f, 0f),
+                   out message) &&
+               topologyStress.Faces.Count == stressFaceCount + 1 &&
+               topologyStress.Faces[stressFaceCount].Contains(0) &&
+               topologyStress.Faces[stressFaceCount].Contains(1) &&
+               topologyStress.Faces[stressFaceCount].Contains(2) &&
+               topologyStress.Faces[stressFaceCount].HasDirectedEdge(1, 0),
+            "Typed triangle tuple resolution remains sparse and deterministic with 700 referenced candidates per coordinate while preserving shared-edge winding.");
+
+        var orphanDuplicates = new SurfaceDraft();
+        orphanDuplicates.SetConstructForTests(constructA);
+        orphanDuplicates.AddPointForTests(Vector3.zero);
+        orphanDuplicates.AddPointForTests(Vector3.zero);
+        orphanDuplicates.AddPointForTests(Vector3.right);
+        Assert(orphanDuplicates.TryAddTypedTriangle(
+                   constructA,
+                   Vector3.zero,
+                   Vector3.right,
+                   Vector3.up,
+                   out message) &&
+               orphanDuplicates.Points.Count == 4 &&
+               orphanDuplicates.Faces[0].Contains(0) &&
+               orphanDuplicates.Faces[0].Contains(2) &&
+               !orphanDuplicates.Faces[0].Contains(1),
+            "Typed triangle tuple resolution deterministically reuses the first valid unreferenced duplicate point.");
+
+        var coordinateDuplicateFace = new SurfaceDraft();
+        coordinateDuplicateFace.SetConstructForTests(constructA);
+        coordinateDuplicateFace.AddPointForTests(Vector3.zero);
+        coordinateDuplicateFace.AddPointForTests(new Vector3(2f, 0f, 0f));
+        coordinateDuplicateFace.AddPointForTests(new Vector3(0f, 2f, 0f));
+        coordinateDuplicateFace.AddPointForTests(Vector3.zero);
+        coordinateDuplicateFace.AddPointForTests(new Vector3(2f, 0f, 0f));
+        coordinateDuplicateFace.AddPointForTests(new Vector3(0f, 2f, 0f));
+        coordinateDuplicateFace.AddPointForTests(new Vector3(1f, -1f, 0f));
+        coordinateDuplicateFace.AddPointForTests(new Vector3(3f, 1f, 0f));
+        coordinateDuplicateFace.AddPointForTests(new Vector3(-1f, 1f, 0f));
+        Assert(coordinateDuplicateFace.TryAddFace(0, 1, 2, out message) &&
+               coordinateDuplicateFace.TryAddFace(3, 4, 6, out message) &&
+               coordinateDuplicateFace.TryAddFace(4, 5, 7, out message) &&
+               coordinateDuplicateFace.TryAddFace(5, 3, 8, out message),
+            "Geometric duplicate verification creates alternate referenced indexes with a complete edge topology.");
+        SurfaceDraftSnapshot coordinateDuplicateBaseline = coordinateDuplicateFace.CreateSnapshot();
+        Assert(!coordinateDuplicateFace.TryAddTypedTriangle(
+                   constructA,
+                   Vector3.zero,
+                   new Vector3(2f, 0f, 0f),
+                   new Vector3(0f, 2f, 0f),
+                   out message) &&
+               coordinateDuplicateBaseline.SameAs(coordinateDuplicateFace.CreateSnapshot()),
+            "Typed triangles reject geometric duplicate faces even when alternate duplicate-coordinate indexes have stronger topology.");
+
+        SurfaceDraftSnapshot duplicateBaseline = typed.CreateSnapshot();
+        bool duplicateRejected = !typed.TryAddTypedTriangle(
+            constructA,
+            Vector3.zero,
+            Vector3.right,
+            Vector3.up,
+            out message) &&
+            duplicateBaseline.SameAs(typed.CreateSnapshot());
+        bool wrongConstructRejected = !typed.TryAddTypedTriangle(
+            constructB,
+            new Vector3(3f, 0f, 0f),
+            new Vector3(4f, 0f, 0f),
+            new Vector3(3f, 1f, 0f),
+            out message) &&
+            duplicateBaseline.SameAs(typed.CreateSnapshot());
+        Assert(duplicateRejected && wrongConstructRejected,
+            "Typed triangles reject duplicate faces and cross-construct focus without mutating an existing draft.");
+
+        var pending = new SurfaceDraft();
+        pending.SetConstructForTests(constructA);
+        Assert(pending.TryAddPointForTests(new Vector3(10f, 0f, 0f), false, out message) &&
+               pending.TryAddPointForTests(new Vector3(11f, 0f, 0f), false, out message) &&
+               pending.FreeTriangleSelectionCount == 2 &&
+               pending.TryAddTypedTriangle(
+                   constructA,
+                   Vector3.zero,
+                   Vector3.right,
+                   Vector3.up,
+                   out message) &&
+               pending.FreeTriangleSelectionCount == 2 &&
+               pending.Points.Count == 5 &&
+               pending.Points[0] == new Vector3(10f, 0f, 0f) &&
+               pending.Points[1] == new Vector3(11f, 0f, 0f),
+            "Adding a typed triangle preserves pending click-created Surface points and their 2/3 selection state.");
+        Assert(pending.TrySetPointCoordinates(
+                   new Dictionary<int, Vector3>
+                   {
+                       [2] = new Vector3(0.1236f, 0.2344f, 0.3456f)
+                   },
+                   out message) &&
+               pending.SelectionKind == SurfaceSelectionKind.Face &&
+               pending.SelectedFace == 0 &&
+               pending.FreeTriangleSelectionCount == 2,
+            "A typed coordinate edit preserves the selected typed face and pending click-point selection before history capture.");
+        Vector3 pendingTypedCoordinate = pending.Points[2];
+        SurfaceDraftSnapshot pendingTypedSnapshot = pending.CreateSnapshot();
+        Assert(pending.TryAddPointForTests(new Vector3(10f, 1f, 0f), false, out message) &&
+               pending.FreeTriangleSelectionCount == 0 &&
+               pending.TrySetPointCoordinates(
+                   new Dictionary<int, Vector3>
+                   {
+                       [2] = new Vector3(0.5f, 0.25f, 0.125f)
+                   },
+                   out message),
+            "Surface history roundtrip verification first mutates both pending-point and typed-coordinate state.");
+        pending.SelectPoint(0);
+        pending.Restore(pendingTypedSnapshot);
+        Assert(pendingTypedSnapshot.SameAs(pending.CreateSnapshot()) &&
+               VectorApproximately(pending.Points[2], pendingTypedCoordinate, 0.00001f) &&
+               pending.SelectionKind == SurfaceSelectionKind.Face &&
+               pending.SelectedFace == 0 &&
+               pending.FreeTriangleSelectionCount == 2 &&
+               pending.Points.Count == 5,
+            "Surface snapshot restore atomically recovers typed coordinates, selected face, and pending 2/3 click points for undo/redo.");
+
+        var path = new DecorationGeneratorDraft();
+        path.SetTool(SurfaceExtraTool.Path);
+        Assert(path.TryAddPathPoint(null, Vector3.zero, out message) &&
+               path.TryAddPathPoint(null, new Vector3(2f, 0f, 0f), out message) &&
+               path.TryAddPathPoint(null, new Vector3(4f, 0f, 0f), out message),
+            "Generator coordinate verification creates a three-point path.");
+        path.SelectPoint(1);
+        Assert(path.TrySetSelectedPointCoordinate(
+                   new Vector3(1.2344f, 0.5676f, -0.0004f),
+                   out message) &&
+               VectorApproximately(path.PathPoints[1], new Vector3(1.234f, 0.568f, 0f), 0.00001f),
+            "Typed generator path coordinates normalize to the fixed 0.001m resolution.");
+        DecorationGeneratorDraftSnapshot pathBaseline = path.CreateSnapshot();
+        bool generatorNoOpRejected = !path.TrySetSelectedPointCoordinate(path.PathPoints[1], out message) &&
+                                     pathBaseline.SameAs(path.CreateSnapshot());
+        bool previousSegmentRejected = !path.TrySetSelectedPointCoordinate(path.PathPoints[0], out message) &&
+                                       pathBaseline.SameAs(path.CreateSnapshot());
+        bool nextSegmentRejected = !path.TrySetSelectedPointCoordinate(path.PathPoints[2], out message) &&
+                                   pathBaseline.SameAs(path.CreateSnapshot());
+        bool generatorNonFiniteRejected = !path.TrySetSelectedPointCoordinate(
+                                              new Vector3(float.NaN, 0f, 0f),
+                                              out message) &&
+                                          pathBaseline.SameAs(path.CreateSnapshot());
+        bool generatorOverflowRejected = !path.TrySetSelectedPointCoordinate(
+                                              new Vector3(1e30f, 1e30f, 0f),
+                                              out message) &&
+                                          pathBaseline.SameAs(path.CreateSnapshot());
+        Assert(generatorNoOpRejected && previousSegmentRejected && nextSegmentRejected &&
+               generatorNonFiniteRejected && generatorOverflowRejected,
+            "Typed generator path edits atomically reject no-ops, zero-length neighbors, and non-finite or overflowed coordinates.");
+        Vector3 typedPathCoordinate = path.PathPoints[1];
+        path.SelectPoint(2);
+        Assert(path.TrySetSelectedPointCoordinate(new Vector3(5f, 1f, 0f), out message),
+            "Generator path history roundtrip verification first mutates coordinate and selection state.");
+        path.ClearSelection();
+        path.Restore(pathBaseline);
+        Assert(pathBaseline.SameAs(path.CreateSnapshot()) &&
+               path.Tool == pathBaseline.Tool &&
+               ReferenceEquals(path.Construct, pathBaseline.Construct) &&
+               path.SelectedPoint == pathBaseline.SelectedPoint &&
+               path.PathPoints.Count == pathBaseline.PathPoints.Length &&
+               path.PathPoints.Select((point, index) =>
+                       VectorApproximately(point, pathBaseline.PathPoints[index], 0.00001f))
+                   .All(matches => matches) &&
+               VectorApproximately(path.PathPoints[1], typedPathCoordinate, 0.00001f),
+            "Generator path snapshot restore exactly recovers the inactive basis, typed coordinate, and selected path point for undo/redo.");
+
+        var center = new DecorationGeneratorDraft();
+        center.SetTool(SurfaceExtraTool.Circle);
+        Assert(center.TrySetCircleCenter(
+                   null,
+                   new Vector3(0.1f, 0.2f, 0.3f),
+                   new Vector3(0f, 0f, 1f),
+                   out message),
+            "Generator center verification creates a selected shape center.");
+        Vector3 originalNormal = center.CircleNormal;
+        Vector3 originalTangentA = center.CircleTangentA;
+        Vector3 originalTangentB = center.CircleTangentB;
+        Assert(center.TrySetSelectedPointCoordinate(
+                   new Vector3(-1.2346f, 2.3454f, 3.4566f),
+                   out message) &&
+               VectorApproximately(center.CircleCenter, new Vector3(-1.235f, 2.345f, 3.457f), 0.00001f) &&
+               VectorApproximately(center.CircleNormal, originalNormal, 0.00001f) &&
+               VectorApproximately(center.CircleTangentA, originalTangentA, 0.00001f) &&
+               VectorApproximately(center.CircleTangentB, originalTangentB, 0.00001f),
+            "Typed generator center edits change only the construct-local center coordinate and preserve the shape basis.");
+        DecorationGeneratorDraftSnapshot centerBaseline = center.CreateSnapshot();
+        Assert(!center.TrySetSelectedPointCoordinate(center.CircleCenter, out message) &&
+               centerBaseline.SameAs(center.CreateSnapshot()) &&
+               !center.TrySetSelectedPointCoordinate(
+                   new Vector3(0f, float.NegativeInfinity, 0f),
+                   out message) &&
+               centerBaseline.SameAs(center.CreateSnapshot()),
+            "No-op or invalid typed generator center input leaves center, basis, selection, and draft state untouched.");
+        Assert(center.TrySetSelectedPointCoordinate(new Vector3(4f, 5f, 6f), out message),
+            "Generator center history roundtrip verification first mutates the typed shape center.");
+        center.ClearSelection();
+        center.Restore(centerBaseline);
+        Assert(centerBaseline.SameAs(center.CreateSnapshot()) &&
+               center.SelectedPoint == 0 &&
+               VectorApproximately(center.CircleCenter, new Vector3(-1.235f, 2.345f, 3.457f), 0.00001f) &&
+               VectorApproximately(center.CircleNormal, originalNormal, 0.00001f) &&
+               VectorApproximately(center.CircleTangentA, originalTangentA, 0.00001f) &&
+               VectorApproximately(center.CircleTangentB, originalTangentB, 0.00001f),
+            "Generator shape snapshot restore recovers the typed center, selected center handle, and orientation basis for undo/redo.");
+
+        var unselectedGenerator = new DecorationGeneratorDraft();
+        DecorationGeneratorDraftSnapshot unselectedBaseline = unselectedGenerator.CreateSnapshot();
+        Assert(!unselectedGenerator.TrySetSelectedPointCoordinate(Vector3.one, out message) &&
+               unselectedBaseline.SameAs(unselectedGenerator.CreateSnapshot()),
+            "Typed generator coordinate application rejects a stale or absent point selection without mutation.");
+    }
+
+    private static void VerifySurfaceCoordinateWorkbench()
+    {
+        var defaults = new SerializationHudProfile.ProfileData();
+        SurfaceCoordinateSliderRange defaultRange =
+            SurfaceCoordinateSliderSettings.ResolveProfileData(defaults, out bool defaultsChanged);
+        Assert(!defaultsChanged &&
+               VectorApproximately(defaultRange.Minimum, Vector3.one * -10f, 0.00001f) &&
+               VectorApproximately(defaultRange.Maximum, Vector3.one * 10f, 0.00001f) &&
+               Mathf.Abs(defaults.SurfaceCoordinateSliderMinX + 10f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateSliderMaxX - 10f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateSliderMinY + 10f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateSliderMaxY - 10f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateSliderMinZ + 10f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateSliderMaxZ - 10f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateStepX - 0.1f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateStepY - 0.1f) < 0.00001f &&
+               Mathf.Abs(defaults.SurfaceCoordinateStepZ - 0.1f) < 0.00001f,
+            "Surface coordinate slider profile defaults are independently -10m through +10m with 0.1m X/Y/Z steps.");
+
+        var damagedProfile = new SerializationHudProfile.ProfileData
+        {
+            SurfaceCoordinateSliderMinX = -1.2344f,
+            SurfaceCoordinateSliderMaxX = 5.6786f,
+            SurfaceCoordinateSliderMinY = float.NaN,
+            SurfaceCoordinateSliderMaxY = 50f,
+            SurfaceCoordinateSliderMinZ = 3f,
+            SurfaceCoordinateSliderMaxZ = 3.0004f,
+            SurfaceCoordinateStepX = 0.1254f,
+            SurfaceCoordinateStepY = float.PositiveInfinity,
+            SurfaceCoordinateStepZ = 0.0004f
+        };
+        SurfaceCoordinateSliderRange repaired =
+            SurfaceCoordinateSliderSettings.ResolveProfileData(damagedProfile, out bool repairedProfile);
+        Assert(repairedProfile &&
+               Mathf.Abs(repaired.Minimum.x + 1.234f) < 0.00001f &&
+               Mathf.Abs(repaired.Maximum.x - 5.679f) < 0.00001f &&
+               Mathf.Abs(repaired.Minimum.y + 10f) < 0.00001f &&
+               Mathf.Abs(repaired.Maximum.y - 10f) < 0.00001f &&
+               Mathf.Abs(repaired.Minimum.z + 10f) < 0.00001f &&
+               Mathf.Abs(repaired.Maximum.z - 10f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateSliderMinX + 1.234f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateSliderMaxX - 5.679f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateSliderMinY + 10f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateSliderMaxY - 10f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateSliderMinZ + 10f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateSliderMaxZ - 10f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateStepX - 0.125f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateStepY - 0.1f) < 0.00001f &&
+               Mathf.Abs(damagedProfile.SurfaceCoordinateStepZ - 0.1f) < 0.00001f,
+            "Surface coordinate profile resolution normalizes valid ranges/steps to 0.001m and repairs each invalid stored axis independently.");
+
+        Assert(SurfaceCoordinateSliderSettings.TryNormalizeStep(0.1254f, out float eighthStep) &&
+               Mathf.Abs(eighthStep - 0.125f) < 0.00001f &&
+               SurfaceCoordinateSliderSettings.TryNormalizeStep(1000f, out float maximumStep) &&
+               Mathf.Abs(maximumStep - 1000f) < 0.00001f &&
+               !SurfaceCoordinateSliderSettings.TryNormalizeStep(0f, out _) &&
+               !SurfaceCoordinateSliderSettings.TryNormalizeStep(0.0004f, out _) &&
+               !SurfaceCoordinateSliderSettings.TryNormalizeStep(float.NaN, out _) &&
+               !SurfaceCoordinateSliderSettings.TryNormalizeStep(1000.001f, out _),
+            "Surface coordinate button steps accept normalized eighths and reject zero, sub-resolution, non-finite, or excessive values.");
+
+        Assert(SurfaceCoordinateSliderSettings.TryResolveUserRange(
+                   new Vector3(-12.3454f, -2.0004f, 0.1236f),
+                   new Vector3(12.3456f, 2.0006f, 4.5674f),
+                   out SurfaceCoordinateSliderRange normalized,
+                   out string message) &&
+               VectorApproximately(normalized.Minimum, new Vector3(-12.345f, -2f, 0.124f), 0.00001f) &&
+               VectorApproximately(normalized.Maximum, new Vector3(12.346f, 2.001f, 4.567f), 0.00001f),
+            "User-entered Surface slider ranges normalize every endpoint to the fixed 0.001m UI resolution.");
+
+        bool nonFiniteRejected = !SurfaceCoordinateSliderSettings.TryResolveUserRange(
+            new Vector3(float.NegativeInfinity, -10f, -10f),
+            Vector3.one * 10f,
+            out normalized,
+            out message);
+        bool reversedRejected = !SurfaceCoordinateSliderSettings.TryResolveUserRange(
+            new Vector3(2f, -10f, -10f),
+            new Vector3(1f, 10f, 10f),
+            out normalized,
+            out message);
+        bool finiteSpanRejected = !SurfaceCoordinateSliderSettings.TryResolveUserRange(
+            new Vector3(0f, -10f, -10f),
+            new Vector3(0.0004f, 10f, 10f),
+            out normalized,
+            out message);
+        bool overflowSpanRejected = !SurfaceCoordinateSliderSettings.TryResolveUserRange(
+            new Vector3(-float.MaxValue, -10f, -10f),
+            new Vector3(float.MaxValue, 10f, 10f),
+            out normalized,
+            out message);
+        Assert(nonFiniteRejected && reversedRejected && finiteSpanRejected && overflowSpanRejected,
+            "Surface slider range validation rejects non-finite, reversed, post-normalization sub-resolution, and overflowing spans.");
+
+        float configuredMinimum = -10f;
+        float configuredMaximum = 10f;
+        Assert(SurfaceCoordinateSliderSettings.TryExpandDisplayRange(
+                   configuredMinimum,
+                   configuredMaximum,
+                   new[] { -18.377f, 8.5f, 12.4f },
+                   out float expandedMinimum,
+                   out float expandedMaximum) &&
+               expandedMinimum < -18.377f &&
+               expandedMaximum > 12.4f &&
+               configuredMinimum == -10f &&
+               configuredMaximum == 10f,
+            "Out-of-range staged A/B/C values temporarily expand the effective slider range without clamping values or changing the configured range.");
+        Assert(SurfaceCoordinateSliderSettings.TryExpandDisplayRange(
+                   configuredMinimum,
+                   configuredMaximum,
+                   new[] { -9f, 0f, 9f },
+                   out float unchangedMinimum,
+                   out float unchangedMaximum) &&
+               unchangedMinimum == configuredMinimum &&
+               unchangedMaximum == configuredMaximum &&
+               !SurfaceCoordinateSliderSettings.TryExpandDisplayRange(
+                   -float.MaxValue,
+                   float.MaxValue,
+                   new[] { 0f },
+                   out _,
+               out _),
+            "In-range slider navigation remains at saved limits and unsafe effective spans are rejected.");
+
+        float normalShelf = DecorationEditSession.AllocateSurfaceCoordinateShelfHeight(
+            940f,
+            447f,
+            88f,
+            58f,
+            6f);
+        float shortDraftShelf = DecorationEditSession.AllocateSurfaceCoordinateShelfHeight(
+            940f,
+            220f,
+            88f,
+            58f,
+            6f);
+        float crowdedShelf = DecorationEditSession.AllocateSurfaceCoordinateShelfHeight(
+            940f,
+            2000f,
+            88f,
+            58f,
+            6f);
+        float compactShelf = DecorationEditSession.AllocateSurfaceCoordinateShelfHeight(
+            152f,
+            447f,
+            88f,
+            58f,
+            6f);
+        Assert(Mathf.Abs(normalShelf - 487f) < 0.0001f &&
+               Mathf.Abs(shortDraftShelf - 714f) < 0.0001f &&
+               Mathf.Abs(crowdedShelf - 58f) < 0.0001f &&
+               Mathf.Abs(compactShelf - 58f) < 0.0001f &&
+               DecorationEditSession.AllocateSurfaceCoordinateShelfHeight(
+                   float.NaN,
+                   447f,
+                   88f,
+                   58f,
+                   6f) == 1f,
+            "Surface panel allocation gives only the visible draft workspace its desired height, assigns all remaining space to Coordinates, and preserves both minimum shelves when crowded.");
+
+        string root = FindRepositoryRoot();
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string settingsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "SurfaceCoordinateSliderSettings.cs"));
+        string profileSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudProfile.cs"));
+        string surfaceDraftSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "SurfaceDecorationPlanner.cs"));
+        string surfacePanelSource = ExtractMethodSource(sessionSource, "DrawSurfacePanel");
+        string coordinateShelfSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateEditorShelf");
+        string coordinateHeaderSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateEditorHeader");
+        string coordinateSliderSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateAxisSlider");
+        string bottomPanelSource = ExtractMethodSource(sessionSource, "DrawBottomPanel");
+        string applyCoordinateSource = ExtractMethodSource(sessionSource, "ApplySurfaceCoordinateText");
+        string applyRangeSource = ExtractMethodSource(sessionSource, "ApplySurfaceCoordinateRangeText");
+        string applyLiveSource = ExtractMethodSource(sessionSource, "TryApplySurfaceCoordinateLiveValue");
+        string finalizeLiveSource = ExtractMethodSource(sessionSource, "FinalizeSurfaceCoordinateLiveInteraction");
+        string revertSource = ExtractMethodSource(sessionSource, "RevertSurfaceCoordinateText");
+        string stepContextSource = ExtractMethodSource(sessionSource, "HandleSurfaceCoordinateStepContextClick");
+        string stepEditorSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateStepEditor");
+        string draftWorkspaceSource = ExtractMethodSource(sessionSource, "SurfaceDraftWorkspaceDesiredHeight");
+        string dividerDragSource = ExtractMethodSource(sessionSource, "HandleSurfaceCoordinateDividerDrag");
+        string liveModelSource = ExtractMethodSource(surfaceDraftSource, "TrySetPointCoordinateLive");
+        Assert(profileSource.Contains("SurfaceCoordinateSliderMinX { get; set; } = -10f;") &&
+               profileSource.Contains("SurfaceCoordinateSliderMaxX { get; set; } = 10f;") &&
+               profileSource.Contains("SurfaceCoordinateSliderMinY { get; set; } = -10f;") &&
+               profileSource.Contains("SurfaceCoordinateSliderMaxY { get; set; } = 10f;") &&
+               profileSource.Contains("SurfaceCoordinateSliderMinZ { get; set; } = -10f;") &&
+               profileSource.Contains("SurfaceCoordinateSliderMaxZ { get; set; } = 10f;") &&
+               profileSource.Contains("SurfaceCoordinateStepX { get; set; } = 0.1f;") &&
+               profileSource.Contains("SurfaceCoordinateStepY { get; set; } = 0.1f;") &&
+               profileSource.Contains("SurfaceCoordinateStepZ { get; set; } = 0.1f;") &&
+               settingsSource.Contains("ResolveProfileData(data, out bool changed)") &&
+               settingsSource.Contains("TryNormalizeStep") &&
+               settingsSource.Contains("TrySetStep") &&
+               settingsSource.Contains("if (changed)") &&
+               settingsSource.Contains("SaveProfileBestEffort();") &&
+               settingsSource.Contains("ProfileManager.Instance.Save(module => module is SerializationHudProfile)"),
+            "Surface coordinate slider ranges and per-axis steps are profile-backed, self-heal invalid saved axes, and persist independently of craft data.");
+        Assert(surfacePanelSource.Contains("DrawSurfaceCoordinateEditorShelf(coordinateRect);") &&
+               surfacePanelSource.Contains("SurfaceCoordinateAutoBottomRatio(workspaceRect, gap)") &&
+               surfacePanelSource.Contains("SplitSurfaceCoordinateWorkspace(") &&
+               surfacePanelSource.Contains("HandleSurfaceCoordinateDividerDrag(") &&
+               surfacePanelSource.Contains("StackDividerKind.SurfaceCoordinates") &&
+               surfacePanelSource.Contains("Show coords") &&
+               surfacePanelSource.IndexOf("DrawSurfaceCoordinateEditorShelf(coordinateRect);", StringComparison.Ordinal) <
+               surfacePanelSource.IndexOf("DrawSurfaceSettings();", StringComparison.Ordinal) &&
+               sessionSource.Contains("SurfaceDraftWorkspaceDesiredHeight()") &&
+               sessionSource.Contains("AllocateSurfaceCoordinateShelfHeight(") &&
+               sessionSource.Contains("s_showSurfaceCoordinates = _showSurfaceCoordinates;") &&
+               sessionSource.Contains("s_surfaceCoordinateBottomRatio = _surfaceCoordinateBottomRatio;") &&
+               !sessionSource.Contains("SurfaceCoordinateShelfDesiredHeight()") &&
+               draftWorkspaceSource.Contains("0.42f / 0.58f") &&
+               dividerDragSource.Contains("_surfaceCoordinateSplitCustomized = true") &&
+               dividerDragSource.Contains("ClampSurfaceCoordinateBottomHeight(") &&
+               coordinateShelfSource.Contains("GUILayout.BeginScrollView(") &&
+               coordinateShelfSource.Contains("DrawSurfaceCoordinateRangeControls();") &&
+               coordinateShelfSource.Contains("DrawSurfaceCoordinateVectorWorkbench(") &&
+               coordinateHeaderSource.Contains("\"Coordinates\"") &&
+               !coordinateHeaderSource.Contains("construct-local metres") &&
+               !coordinateHeaderSource.Contains("New triangle") &&
+               coordinateHeaderSource.Contains("Apply text") &&
+               coordinateHeaderSource.Contains("Revert") &&
+               coordinateHeaderSource.Contains("\"Hide\"") &&
+               bottomPanelSource.Contains("DrawBottomSurfaceCoordinateSummary(") &&
+               !sessionSource.Contains("DrawBottomSurfaceCoordinateEditor("),
+            "The compact Coordinates shelf is hideable and scrolling, uses a persisted draggable Draft/Coordinates divider, accounts for the list's 42% viewport cap instead of reserving dead space, and remains above pinned material/actions.");
+        Assert(coordinateSliderSource.Contains("GUI.HorizontalSlider(") &&
+               coordinateSliderSource.Contains("DecorationEditMath.Snap(") &&
+               coordinateSliderSource.Contains("SurfaceCoordinateSliderSettings.ResolutionMetres") &&
+               coordinateSliderSource.Contains("FlexibleFloatParser.TryParse") &&
+               coordinateSliderSource.Contains("BeginSurfaceCoordinateLiveInteraction(generator)") &&
+               coordinateSliderSource.Contains("TryApplySurfaceCoordinateLiveValue(") &&
+               coordinateSliderSource.Contains("ApplySurfaceCoordinateLiveStep(") &&
+               !coordinateSliderSource.Contains("TryAddTypedTriangle") &&
+               applyLiveSource.Contains("TrySetPointCoordinateLive") &&
+               applyLiveSource.Contains("TrySetSelectedPointCoordinate") &&
+               applyLiveSource.Contains("InvalidateSurfacePlan") &&
+               applyLiveSource.Contains("InvalidateGeneratorPlan") &&
+               finalizeLiveSource.Contains("RecordSurfaceEdit(\"Adjust surface coordinate\"") &&
+               finalizeLiveSource.Contains("RecordGeneratorEdit(\"Adjust generator coordinate\"") &&
+               !coordinateSliderSource.Contains("RecordSurfaceEdit") &&
+               !coordinateSliderSource.Contains("RecordGeneratorEdit") &&
+               applyCoordinateSource.Contains("TrySetPointCoordinates") &&
+               applyCoordinateSource.Contains("TrySetSelectedPointCoordinate") &&
+               !applyCoordinateSource.Contains("TryAddTypedTriangle") &&
+               revertSource.Contains("SurfaceCoordinateBaselineMatches") &&
+               revertSource.Contains("Revert surface coordinates") &&
+               revertSource.Contains("Revert generator coordinates") &&
+               !applyRangeSource.Contains("RecordSurfaceEdit") &&
+               !applyRangeSource.Contains("InvalidateSurfacePlan") &&
+               !applyRangeSource.Contains("RecordGeneratorEdit"),
+            "Existing-point sliders update through atomic live model APIs, group each drag into one history command, preserve explicit text Apply, and keep range saves out of craft history.");
+        Assert(stepContextSource.Contains("EventType.ContextClick") &&
+               stepContextSource.Contains("current.button == 1") &&
+               stepEditorSource.Contains("ApplySurfaceCoordinateStepText") &&
+               stepEditorSource.Contains("DrawSurfaceCoordinateStepPreset(component, \"1/8\", 0.125f)") &&
+               stepEditorSource.Contains("ResetStep") &&
+               liveModelSource.Contains("NormalizeTypedCoordinate") &&
+               liveModelSource.Contains("TryValidateTypedTriangleCoordinates") &&
+               liveModelSource.IndexOf("_points[index] = normalized;", StringComparison.Ordinal) >
+               liveModelSource.IndexOf("for (int faceIndex", StringComparison.Ordinal),
+            "Coordinate +/- buttons expose a right-click custom/preset step chooser, including eighths, and the optimized live point path validates every affected face before its single mutation.");
+    }
+
+    private static void VerifyDecorationSelectionClipboardCore()
+    {
+        string root = FindRepositoryRoot();
+        string clipboardSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationSelectionClipboard.cs"));
+        string snapshotSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSnapshot.cs"));
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string tryCopySource = ExtractMethodSource(clipboardSource, "TryCopy");
+        string tryCreateSource = ExtractMethodSource(clipboardSource, "TryCreate");
+        string matchesTargetSource = ExtractMethodSource(clipboardSource, "MatchesTarget");
+        string copySnapshotsSource = ExtractMethodSource(clipboardSource, "CopySnapshots");
+
+        int primarySeed = tryCreateSource.IndexOf(
+            "var requested = new List<Decoration> { primary };",
+            StringComparison.Ordinal);
+        int managerEnumeration = tryCreateSource.IndexOf(
+            "foreach (Decoration decoration in manager.DecorationList)",
+            StringComparison.Ordinal);
+        int primaryOutput = tryCreateSource.IndexOf(
+            "var ordered = new List<Decoration>(requested.Count) { primary };",
+            StringComparison.Ordinal);
+        int remainingOutput = tryCreateSource.IndexOf(
+            "if (!ReferenceEquals(decoration, primary))",
+            StringComparison.Ordinal);
+        Assert(primarySeed >= 0 &&
+               managerEnumeration > primarySeed &&
+               primaryOutput > managerEnumeration &&
+               remainingOutput > primaryOutput &&
+               tryCreateSource.Contains("if (!ContainsReference(requested, decoration))") &&
+               tryCreateSource.Contains("managerOrdered.Count != requested.Count"),
+            "Whole-decoration clipboard canonicalization is primary-first, duplicate-free, and otherwise deterministic in live manager order.");
+
+        Assert(clipboardSource.Contains("private readonly WeakReference _construct;") &&
+               clipboardSource.Contains("private readonly WeakReference _manager;") &&
+               matchesTargetSource.Contains("ReferenceEquals(sourceConstruct, construct)") &&
+               matchesTargetSource.Contains("ReferenceEquals(sourceManager, manager)") &&
+               matchesTargetSource.Contains("construct.Decorations as AllConstructDecorations"),
+            "Whole-decoration clipboard payloads weakly scope paste to the exact live construct and decoration manager.");
+        Assert(tryCreateSource.Contains("IsLiveDecorationForManager(primary, manager)") &&
+               tryCreateSource.Contains("IsLiveDecorationForManager(decoration, manager)") &&
+               tryCreateSource.Contains("new DecorationEditSnapshot(ordered[index])") &&
+               tryCreateSource.Contains("!snapshot.HasFiniteTransform"),
+            "Whole-decoration clipboard copy rejects stale, cross-manager, and non-finite selection members before publishing a payload.");
+
+        int createBeforePublish = tryCopySource.IndexOf(
+            "DecorationSelectionClipboardPayload.TryCreate(",
+            StringComparison.Ordinal);
+        int publish = tryCopySource.IndexOf("_payload = payload;", StringComparison.Ordinal);
+        Assert(createBeforePublish >= 0 &&
+               publish > createBeforePublish &&
+               copySnapshotsSource.Contains("_snapshots[index].Copy()") &&
+               snapshotSource.Contains("private DecorationEditSnapshot(DecorationEditSnapshot source)") &&
+               snapshotSource.Contains("internal DecorationEditSnapshot Copy()"),
+            "Whole-decoration clipboard publishes only after full preflight and exposes deep snapshot copies for repeatable immutable paste.");
+
+        string settingsPasteSource = ExtractMethodSource(sessionSource, "PasteDecorationSettings");
+        string settingsRollbackSource = ExtractMethodSource(sessionSource, "RestoreSettingsPasteTargets");
+        string selectionPasteSource = ExtractMethodSource(sessionSource, "PasteDecorationSnapshotsInPlace");
+        string batchPreflightSource = ExtractMethodSource(sessionSource, "TryPreflightDecorationSnapshotBatch");
+        Assert(settingsPasteSource.Contains("CopyPaster.ReadyToPaste(target)") &&
+               settingsPasteSource.Contains("CopyPaster.Paste(target)") &&
+               settingsPasteSource.Contains("target.UniqueId = 0") &&
+               settingsPasteSource.Contains("target.UniqueId = uniqueIds[index]") &&
+               settingsPasteSource.Contains("RestoreSettingsPasteTargets") &&
+               settingsPasteSource.Contains("DecorationSnapshotBatchCommand"),
+            "Native settings paste preflights every explicit target, protects runtime identity, rolls back atomically, and records one batch history command.");
+        Assert(settingsRollbackSource.Contains("target.UniqueId != uniqueIds[index]") &&
+               settingsRollbackSource.Contains("ReferenceEquals(target.OurManager, manager)") &&
+               settingsRollbackSource.Contains("TryIsDecorationInManager(manager, target") &&
+               settingsRollbackSource.Contains("before[index].Matches(target)"),
+            "Native settings-paste rollback verifies exact snapshot, runtime identity, manager ownership, and live manager membership before reporting atomic restoration.");
+        Assert(!settingsPasteSource.Contains("IsWithinPositionLimit") &&
+               !batchPreflightSource.Contains("IsWithinPositionLimit") &&
+               batchPreflightSource.Contains("long requestedTotal") &&
+               batchPreflightSource.Contains("AllConstructDecorations._limitPerPacketManager") &&
+               batchPreflightSource.Contains("HasBlock(construct, snapshot.TetherPoint)"),
+            "Clipboard parity accepts finite live native offsets beyond the editor drag limit while preflighting capacity and every tether block with long arithmetic.");
+        Assert(selectionPasteSource.Contains("CleanupCreatedDecorationBatch") &&
+               selectionPasteSource.Contains("_transactions.MarkCreated") &&
+               selectionPasteSource.Contains("DecorationCreateBatchCommand") &&
+               !selectionPasteSource.Contains("EsuSymmetry"),
+            "Whole-selection paste creates without symmetry expansion, reverse-cleans failures, transaction-tracks the complete batch, and records one atomic create command.");
+        int pasteTracksClone = selectionPasteSource.IndexOf(
+            "created[index] = decoration;",
+            StringComparison.Ordinal);
+        int pasteRestoresClone = selectionPasteSource.IndexOf(
+            "snapshots[index].TryRestore(decoration)",
+            StringComparison.Ordinal);
+        string redoBatchSource = ExtractMethodSource(sessionSource, "TryRedoCreatedDecorationBatch");
+        int redoTracksClone = redoBatchSource.IndexOf(
+            "decorations[index] = decoration;",
+            StringComparison.Ordinal);
+        int redoRestoresClone = redoBatchSource.IndexOf(
+            "created[index].TryRestore(decoration)",
+            StringComparison.Ordinal);
+        Assert(pasteTracksClone >= 0 && pasteRestoresClone > pasteTracksClone &&
+               redoTracksClone >= 0 && redoRestoresClone > redoTracksClone,
+            "Clipboard paste and create-batch redo register each returned FTD decoration before any snapshot restore that could throw, so reverse cleanup includes the current clone.");
+        string classifyDeletedSource = ExtractMethodSource(
+            sessionSource,
+            "TryFindDeletedDecorationIndexes");
+        Assert(classifyDeletedSource.Contains("foreach (Decoration live in manager.DecorationList)") &&
+               classifyDeletedSource.Contains("ReferenceEquals(liveDecorations[liveIndex], decoration)") &&
+               classifyDeletedSource.Contains("if (!isMember)"),
+            "Creation-batch undo classifies every deleted decoration from live manager membership instead of trusting FTD's late IsDeleted flag.");
+        string undoCreatedSource = ExtractMethodSource(sessionSource, "TryUndoCreatedDecoration");
+        string redoDeletedSource = ExtractMethodSource(sessionSource, "TryRedoDeletedDecoration");
+        Assert(undoCreatedSource.Contains("TryRestoreAfterFailedDecorationDeletion") &&
+               redoDeletedSource.Contains("TryRestoreAfterFailedDecorationDeletion") &&
+               sessionSource.Contains("TryFinalizeDetachedDecoration"),
+            "Single-create undo and delete-redo snapshot and recreate manager-detached decorations when FTD deletion throws after removal.");
+        Assert(!ExtractMethodSource(sessionSource, "ApplySelection").Contains("DecorationSelectionClipboard.Clear") &&
+               !ExtractMethodSource(sessionSource, "CancelSelection").Contains("DecorationSelectionClipboard.Clear") &&
+               ExtractMethodSource(sessionSource, "DuplicateSelectedDecoration").Contains("PasteDecorationSnapshotsInPlace") &&
+               sessionSource.Contains("Duplicate in place"),
+            "The repeatable runtime selection clipboard survives Apply/Cancel and Duplicate in place shares the safe creation path without replacing clipboard contents.");
+    }
+
+    private static void VerifyEditorKeyMapCompatibility()
+    {
+        Assert((int)SerializationHudKeyInput.ToggleHud == 0 &&
+               (int)SerializationHudKeyInput.MeasureUsage == 1 &&
+               (int)SerializationHudKeyInput.ToggleDecorationEditMode == 2 &&
+               (int)SerializationHudKeyInput.ToggleSmartBuildMode == 3 &&
+               (int)SerializationHudKeyInput.SwitchEsuBuildMode == 4 &&
+               (int)SerializationHudKeyInput.UndoDecorationEdit == 5 &&
+               (int)SerializationHudKeyInput.RedoDecorationEdit == 6 &&
+               (int)SerializationHudKeyInput.ToggleAutomationBuilderMode == 7,
+            "Appending clipboard key-map IDs preserves every existing ESU key numeric mapping.");
+        Assert((int)SerializationHudKeyInput.CopyDecorationSelection == 8 &&
+               (int)SerializationHudKeyInput.PasteDecorationSelection == 9 &&
+               (int)SerializationHudKeyInput.MaxId == 10,
+            "Copy Selection and Paste Selection key-map IDs are appended immediately before MaxId.");
+
+        string profileSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudProfile.cs"));
+        Assert(profileSource.Contains("Q(Key.Control, Key.Shift, Key.C)") &&
+               profileSource.Contains("Q(Key.Control, Key.Shift, Key.V)"),
+            "Whole-selection copy/paste defaults to Ctrl+Shift+C/V without changing native settings clipboard bindings.");
+    }
+
+    private static AllConstruct NewConstructIdentityForTests() =>
+        (AllConstruct)FormatterServices.GetUninitializedObject(typeof(TelescopicPistonSubConstructable));
 
     private static void VerifySurfaceDecorationBuilder()
     {
@@ -7868,18 +9182,25 @@ f 0 2 3
             "Automation Builder graph uses shared snap candidates, drag transactions, layout normalization, magnetic-snap overlap guards, unified drag coordinates, edge auto-pan, and fit/center actions without a non-executable verifier hook.");
         Assert(automationSessionSource.Contains("private readonly struct PaletteDropPreview") &&
                automationSessionSource.Contains("PaletteNodeScreenSize(") &&
-               automationSessionSource.Contains("PaletteNodeScreenZoom(") &&
-               automationSessionSource.Contains("Mathf.Min(Mathf.Max(0.001f, _graphZoom), widthLimitedZoom)") &&
+               automationSessionSource.Contains("PaletteNodeScreenZoomFor(") &&
+               automationSessionSource.Contains("Mathf.Min(Mathf.Max(0.001f, graphZoom), widthLimitedZoom)") &&
                automationSessionSource.Contains("DrawPaletteNodePreview(") &&
+               automationSessionSource.Contains("PaletteBlockInteractionRect(row)") &&
+               automationSessionSource.Contains("PalettePreviewNode(_draggingPaletteKind)") &&
                automationSessionSource.Contains("GraphToWorkspaceRect(workspaceRect, ghostGraphRect)") &&
-               automationSessionSource.Contains("ResolvePaletteDropPreview(workspaceRect, mouse)") &&
-               automationSessionSource.Contains("ResolvePaletteDropPreview(workspaceRect, _paletteDragLastWindowMouse)") &&
-               automationSessionSource.Contains("preferredRect: preview.IntendedGraphRect") &&
-               automationSessionSource.Contains("movingNodeIds: new[] { node.Id }") &&
-               automationSessionSource.Contains("CanProduceValueBlock(kind) && IsValueFootprint(nodeRect)") &&
+               automationSessionSource.Contains("PaletteDropPreview? paletteDropPreview = CurrentPaletteDropPreview(canvasRect)") &&
+               automationSessionSource.IndexOf("DrawPaletteDragGhost(canvasRect, paletteDropPreview)", StringComparison.Ordinal) <
+               automationSessionSource.IndexOf("DrawPaletteSnapPreview(canvasRect, paletteDropPreview)", StringComparison.Ordinal) &&
+               automationSessionSource.Contains("allowFree: true") &&
+               automationSessionSource.Contains("PaletteDropCommitPlan commitPlan = PlanPaletteDropCommit(") &&
+               automationSessionSource.Contains("preferredRect: commitPlan.PreferredRect") &&
+               automationSessionSource.Contains("preferredSnap: commitPlan.UseResolvedSnap") &&
+               automationSessionSource.Contains("ExpandSnapBodyHost(snap, movingNodes);") &&
+               automationNativeBridgeSource.Contains("bool valueFootprint = DrawsAsValueBlock(node.Kind, node.Rect);") &&
+               automationNativeBridgeSource.Contains("Rect rect = NativeComponentRect(component);") &&
                !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeWidthForKind(_draggingPaletteKind)") &&
                !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeHeightForKind(_draggingPaletteKind)"),
-            "Automation Builder palette thumbnails, drag ghosts, snap previews, and final palette drops share graph-zoom sizing instead of HUD-scaled ghost dimensions.");
+            "Automation Builder palette rows render once, reuse preview nodes, resolve one layered drag preview, commit the resolved candidate once, preserve native compact value footprints, and share graph-zoom sizing instead of HUD-scaled ghost dimensions.");
         Assert(CurrentAutomationBuilderSourceContract(
                    modProjectSource,
                    automationSessionSource,
@@ -8403,6 +9724,28 @@ f 0 2 3
                sessionSource.Contains("\"Smart Block Builder\"") &&
                sessionSource.Contains("\"Mode: Smart | Tab to Automation when clean\""),
             "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm, keeps plan warnings in the shared notification/log flow, and does not clip full failure reasons into the status label.");
+        string smartGizmoHeaderSource = ExtractMethodSource(sessionSource, "DrawSmartBottomHeader");
+        string smartGizmoPickerSource = ExtractMethodSource(sessionSource, "TryPickHandle");
+        string smartGizmoDragSource = ExtractMethodSource(sessionSource, "ProjectDragDeltaToCells");
+        string smartGizmoDrawSource = ExtractMethodSource(sessionSource, "DrawHandleAxis");
+        string smartRotateDrawSource = ExtractMethodSource(sessionSource, "DrawRotationRing");
+        Assert(smartGizmoHeaderSource.Contains("DrawSmartBottomGizmoSettingsButton") &&
+               smartGizmoHeaderSource.Contains("_gizmoSettingsButtonScreenRect") &&
+               sessionSource.Contains("GUI.ModalWindow(") &&
+               sessionSource.Contains("DrawGizmoSettingsWindow") &&
+               sessionSource.Contains("ConsumeGizmoSettingsInput") &&
+               sessionSource.Contains("Close Gizmo settings before switching modes.") &&
+               behaviourSource.Contains("_session.DismissOpenPopup()") &&
+               smartGizmoPickerSource.Contains("DecorationEditMath.PickGizmo(") &&
+               smartGizmoPickerSource.Contains("style.HitAreaPixels") &&
+               smartGizmoDragSource.Contains("TryProjectMouseDeltaToAxisInvariant") &&
+               smartGizmoDrawSource.Contains("SmartGizmoHandleLength(_tool)") &&
+               smartGizmoDrawSource.Contains("style.LineWidth") &&
+               smartRotateDrawSource.Contains("RotateGizmoRadius()") &&
+               smartRotateDrawSource.Contains("style.LineWidth") &&
+               sessionSource.Contains("RotateGizmoBaseRadius() * EsuGizmoSettings.Current.RotateSize") &&
+               sessionSource.Contains("_rotateDragSensitivityScale"),
+            "Smart Builder exposes the shared modal Gizmo settings beside its bottom title and applies profile size, thickness, hit-area, hover, and sensitivity-invariant geometry to its move, scale, and rotate gizmos.");
         Assert(smartInputScopeSource.Contains("ClaimCameraInputForFrames") &&
                smartInputScopeSource.Contains("ClaimMouseWheelInputForFrames") &&
                smartInputScopeSource.Contains("SetMouseOverUiProbe") &&

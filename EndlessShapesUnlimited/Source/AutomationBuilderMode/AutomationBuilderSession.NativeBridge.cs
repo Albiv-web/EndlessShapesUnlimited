@@ -1985,7 +1985,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
             }
 
-            Rect normalizedRect = NormalizeGraphNodeRect(node.Kind, node.Rect);
+            bool valueFootprint = DrawsAsValueBlock(node.Kind, node.Rect);
+            Rect normalizedRect = NormalizeGraphNodeRect(
+                node.Kind,
+                node.Rect,
+                valueFootprint);
             node.Rect = normalizedRect;
             component.OutlineColor.Us = NodeColor(node.Kind);
             ApplyNativeNodeRect(component, normalizedRect);
@@ -2699,7 +2703,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             CircuitComponent component)
         {
             AutomationNodeKind kind = NativeKind(component);
-            Rect rect = NormalizeGraphNodeRect(kind, NativeComponentRect(component));
+            Rect rect = NativeComponentRect(component);
             var node = new AutomationGraphNode(
                 NativeGraphNodeId(component),
                 kind,
