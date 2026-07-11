@@ -33,6 +33,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private const string RetiredAutoNamePrefix = "EsuAutomation";
         private const string LegacyAutoNamePrefix = "ESU_AB_";
         private const string NativeOwnerMarkerPrefix = "ESU_AB_OWNER|";
+        private const string NativeForeverMarkerPrefix = "ESU_AB_FOREVER|v1|";
         private const int AutoNameMaxLength = 30;
         private const int AutoNameTokenLength = 8;
 
@@ -47,6 +48,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         private NativeBreadboardSnapshot _nativeSnapshot;
         private string _nativeAutomationCacheKey;
+        private readonly List<NativeBlockNameChange> _nativeApplyNameChanges =
+            new List<NativeBlockNameChange>();
 
         private void RefreshNativeAutomationCache(bool force = false)
         {
@@ -178,7 +181,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
             else
             {
-                SyncSelectedGraphFromNativeIfLoaded(force: false);
+                SyncSelectedGraphFromNativeIfLoaded(force: force);
             }
 
             PruneStaleLinkBoundGraphNodesForSelectedBreadboard();
@@ -365,7 +368,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             NativeBreadboardSnapshot snapshot = SnapshotFor(breadboard);
             List<AutomationGraphNode> nodes = snapshot.Components
-                .Where(IsSupportedAutomationNativeComponent)
+                .Where(component => component != null && !IsNativeOwnerMarker(component))
                 .Where(component => !IsPendingNativeRemoval(component))
                 .OrderBy(component => component.Y.Us)
                 .ThenBy(component => component.X.Us)
@@ -521,18 +524,25 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             if (IsEsuOwnedNativeComponent(component))
             {
-                StorePendingNativeNodeDraft(node);
+                Rect nativeRect = NativeComponentRect(component, node.Kind);
+                if (GraphRectsEquivalent(node.Rect, nativeRect))
+                    _pendingNativeNodeRects.Remove(component.UniqueId);
+                else
+                    _pendingNativeNodeRects[component.UniqueId] = node.Rect;
                 return;
             }
 
-            ApplyNativeNodeRect(component, node.Rect);
+            // Imported vanilla components are opaque/read-only in the Scratch
+            // editor. Never write expanded visual card bounds back to native data.
         }
 
         private void ApplyPendingNativeNodeDrafts(
             IEnumerable<AutomationGraphNode> nodes,
             NativeBreadBoard breadboard)
         {
-            if (nodes == null || _pendingNativeNodeDrafts.Count == 0)
+            if (nodes == null ||
+                _pendingNativeNodeDrafts.Count == 0 &&
+                _pendingNativeNodeRects.Count == 0)
                 return;
 
             var ownedIds = new HashSet<uint>(
@@ -547,12 +557,23 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 if (!ownedIds.Contains(componentId))
                 {
                     _pendingNativeNodeDrafts.Remove(componentId);
+                    _pendingNativeNodeRects.Remove(componentId);
                     continue;
                 }
 
                 if (_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft))
                     draft.ApplyTo(node);
+                if (_pendingNativeNodeRects.TryGetValue(componentId, out Rect rect))
+                    node.Rect = rect;
             }
+        }
+
+        private static bool GraphRectsEquivalent(Rect left, Rect right)
+        {
+            return Mathf.Abs(left.x - right.x) <= 0.001f &&
+                   Mathf.Abs(left.y - right.y) <= 0.001f &&
+                   Mathf.Abs(left.width - right.width) <= 0.001f &&
+                   Mathf.Abs(left.height - right.height) <= 0.001f;
         }
 
         private bool IsEsuOwnedNativeComponent(CircuitComponent component)
@@ -600,7 +621,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private bool HasPendingNativeNodeDraft(AutomationGraphNode node)
         {
             return TryGetNativeComponentId(node, out uint componentId) &&
-                   _pendingNativeNodeDrafts.ContainsKey(componentId);
+                   (_pendingNativeNodeDrafts.ContainsKey(componentId) ||
+                    _pendingNativeNodeRects.ContainsKey(componentId));
         }
 
         private bool IsPendingNativeRemoval(CircuitComponent component)
@@ -629,14 +651,20 @@ namespace DecoLimitLifter.AutomationBuilderMode
         private void ClearPendingNativeNodeDraft(AutomationGraphNode node)
         {
             if (TryGetNativeComponentId(node, out uint componentId))
+            {
                 _pendingNativeNodeDrafts.Remove(componentId);
+                _pendingNativeNodeRects.Remove(componentId);
+            }
         }
 
         private int ApplyPendingNativeNodeDraftsToNative(
             AutomationGraph graph,
             NativeBreadBoard breadboard)
         {
-            if (graph == null || breadboard == null || _pendingNativeNodeDrafts.Count == 0)
+            if (graph == null ||
+                breadboard == null ||
+                _pendingNativeNodeDrafts.Count == 0 &&
+                _pendingNativeNodeRects.Count == 0)
                 return 0;
 
             int applied = 0;
@@ -646,16 +674,29 @@ namespace DecoLimitLifter.AutomationBuilderMode
                                         ownedComponents.Contains(component))
                          .ToList())
             {
-                if (!TryGetNativeComponentId(node, out uint componentId) ||
-                    !_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft))
-                {
+                if (!TryGetNativeComponentId(node, out uint componentId))
                     continue;
+
+                bool changed = false;
+                if (_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft))
+                {
+                    draft.ApplyTo(node);
+                    ApplyNativeNodeToNativeComponent(node);
+                    changed = true;
                 }
 
-                draft.ApplyTo(node);
-                ApplyNativeNodeToNativeComponent(node);
-                ApplyNativeNodeRect((CircuitComponent)node.NativeComponent, node.Rect);
+                if (_pendingNativeNodeRects.TryGetValue(componentId, out Rect rect))
+                {
+                    node.Rect = rect;
+                    ApplyNativeNodeRect((CircuitComponent)node.NativeComponent, rect);
+                    changed = true;
+                }
+
+                if (!changed)
+                    continue;
+
                 _pendingNativeNodeDrafts.Remove(componentId);
+                _pendingNativeNodeRects.Remove(componentId);
                 applied++;
             }
 
@@ -711,22 +752,22 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 if (node.Kind == AutomationNodeKind.IfCondition)
                 {
-                    ParseIfSwitchValue(
+                    TryParseLabeledAutomationFloat(
                         node.ValueText,
-                        0.5f,
-                        switchComponent.FailValue.Us,
-                        out _,
+                        "else",
                         out float failValue);
                     switchComponent.Threshold.Us = 0.5f;
                     switchComponent.FailValue.Us = failValue;
                 }
                 else
                 {
-                    ParseIfSwitchValue(
+                    TryParseLabeledAutomationFloat(
                         node.ValueText,
-                        switchComponent.Threshold.Us,
-                        switchComponent.FailValue.Us,
-                        out float threshold,
+                        "threshold",
+                        out float threshold);
+                    TryParseLabeledAutomationFloat(
+                        node.ValueText,
+                        "else",
                         out float failValue);
                     switchComponent.Threshold.Us = threshold;
                     switchComponent.FailValue.Us = failValue;
@@ -774,8 +815,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 string commentText = string.IsNullOrWhiteSpace(node.ValueText)
                     ? node.Label
                     : node.ValueText;
-                comment.InputValue.Us = node.Kind == AutomationNodeKind.Forever && !IsForeverComment(commentText)
-                    ? "Forever: " + commentText
+                comment.InputValue.Us = node.Kind == AutomationNodeKind.Forever
+                    ? NativeForeverMarkerText(commentText)
                     : commentText;
             }
         }
@@ -814,9 +855,25 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (!present)
                 return false;
 
-            component.Delete();
-            breadboard.RemovePackage(component);
-            return true;
+            try
+            {
+                new DeleteComponentCommand(breadboard, component).Execute();
+            }
+            catch
+            {
+                try
+                {
+                    component.Delete();
+                    breadboard.RemovePackage(component);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return !breadboard.Packages.Contains(component) &&
+                   !breadboard.Components.Contains(component);
         }
 
         private void ApplyNativeNodeEdits(
@@ -827,6 +884,16 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             if (node == null)
                 return;
+
+            if (node.NativeComponent is CircuitComponent &&
+                !IsEsuOwnedNativeNode(node))
+            {
+                NotifyNativeApply(
+                    "Imported native graph blocks are read-only in Automation Builder.",
+                    EsuHudNotificationKind.Warning,
+                    "Use the vanilla breadboard editor for that component. ESU preserves it and its existing wires.");
+                return;
+            }
 
             node.Label = label ?? string.Empty;
             node.Property = ResolveNodePropertyForEdit(node, property);
@@ -870,57 +937,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return bound;
             }
 
-            if (!TryGetSelectedNativeBreadboard(out NativeBreadBoard breadboard))
-            {
-                message = "Select a live breadboard before assigning a linked target.";
-                return false;
-            }
-
-            if (node.NativeComponent is GenericBlockGetter getter &&
-                link.Kind == AutomationLinkKind.InputToBreadboard)
-            {
-                if (link.Source == null || !link.Source.TryGetBlock(out Block target))
-                {
-                    message = "The selected input target is no longer available.";
-                    return false;
-                }
-
-                var context = new NativeBuildContext(_selectedBreadboard, _links);
-                string filter = EnsureExactBlockFilterName(breadboard, target, context);
-                ConfigureGetterTarget(getter, target, filter);
-                TryConfigureGetterProperty(getter, target.GetType(), link.Property);
-                node.Label = NativeNodeLabel(getter);
-                node.Property = NativeNodeProperty(getter);
-                node.ValueText = NativeNodeValue(getter);
-                message = context.HasWarnings
-                    ? context.Detail
-                    : "Automation input block now reads " + link.Source.Name + ".";
-                return true;
-            }
-
-            if (node.NativeComponent is GenericBlockSetter setter &&
-                link.Kind == AutomationLinkKind.BreadboardToOutput)
-            {
-                if (link.Target == null || !link.Target.TryGetBlock(out Block target))
-                {
-                    message = "The selected output target is no longer available.";
-                    return false;
-                }
-
-                var context = new NativeBuildContext(_selectedBreadboard, _links);
-                string filter = EnsureExactBlockFilterName(breadboard, target, context);
-                ConfigureSetterTarget(setter, target, filter);
-                TryConfigureSetterProperty(setter, target.GetType(), link.Property);
-                node.Label = NativeNodeLabel(setter);
-                node.Property = NativeNodeProperty(setter);
-                node.ValueText = NativeNodeValue(setter);
-                message = context.HasWarnings
-                    ? context.Detail
-                    : "Automation output block now sets " + link.Target.Name + ".";
-                return true;
-            }
-
-            message = "That linked target does not match the selected block direction.";
+            message = "Imported native graph blocks are read-only in Automation Builder. Use the vanilla breadboard editor to retarget them.";
             return false;
         }
 
@@ -1125,12 +1142,24 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
             }
 
-            NativeApplyResult result = ValidateAndConnectNativeGraph(breadboard);
+            NativeApplyResult result;
+            try
+            {
+                result = ValidateAndConnectNativeGraph(breadboard);
+            }
+            catch (Exception exception)
+            {
+                NotifyNativeApply(
+                    "Apply stopped before native automation could be changed.",
+                    EsuHudNotificationKind.Warning,
+                    exception.GetType().Name + ": " + exception.Message);
+                return false;
+            }
             NotifyNativeApply(result.Message, result.Kind, result.Detail);
             if (result.Kind == EsuHudNotificationKind.Info)
             {
                 ClearAutomationDirty();
-                RefreshNativeAutomationCache(force: true);
+                ResetGraphEditHistory();
                 return true;
             }
 
@@ -1156,44 +1185,129 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
             }
 
-            List<NativeOwnerRecord> records = OwnerRecordsFor(breadboard).ToList();
+            if (_automationDirty)
+            {
+                NotifyNativeApply(
+                    "Revert requires a clean Automation Builder draft.",
+                    EsuHudNotificationKind.Warning,
+                    "Apply the current block draft or close it with explicit discard before removing the already-applied ESU-owned native graph.");
+                return false;
+            }
+
+            List<NativeOwnerRecord> records = NativeOwnerRecords(breadboard).ToList();
             if (records.Count == 0)
             {
                 NotifyNativeApply("No ESU-owned generated native automation was found on this breadboard.", EsuHudNotificationKind.Info);
                 return true;
             }
 
-            int componentsRemoved = 0;
-            int markersRemoved = 0;
-            HashSet<CircuitComponent> ownedComponents = EsuOwnedNativeComponentsFor(breadboard);
-            int wiresRemoved = RemoveNativeInputConnectionsFromSources(breadboard, ownedComponents);
+            List<NativeInputConnectionState> connectionsBeforeRevert =
+                CaptureNativeInputConnections(breadboard);
+            List<NativeComponentEditState> componentsBeforeRevert =
+                CaptureOwnedNativeComponentStates(breadboard);
+            var ownedComponents = new HashSet<CircuitComponent>(records
+                .Where(record => record?.Target != null &&
+                                 !ReferenceEquals(record.Target, record.Marker))
+                .Select(record => record.Target));
+            int expectedWires = CountNativeInputConnectionsFromSources(
+                breadboard,
+                ownedComponents);
+            int wiresRemoved = RemoveNativeInputConnectionsFromSources(
+                breadboard,
+                ownedComponents);
+            if (wiresRemoved != expectedWires)
+            {
+                bool restored = RestoreNativeInputConnections(
+                    breadboard,
+                    connectionsBeforeRevert);
+                NotifyNativeApply(
+                    "Revert stopped because vanilla did not release every ESU-owned wire.",
+                    EsuHudNotificationKind.Warning,
+                    "No owned component was removed. Previous input connections were " +
+                    (restored ? "restored." : "not fully restorable; inspect the native board."));
+                return false;
+            }
+
+            NativeRemovalBatchResult removal = RemoveNativeOwnerRecordsAtomically(
+                breadboard,
+                records);
+            if (!removal.Success)
+            {
+                bool packagesRestored = RestoreNativeComponentPackages(
+                    breadboard,
+                    removal.RemovedPackages);
+                packagesRestored &= NativeOwnerRecordsMatch(
+                    breadboard,
+                    records);
+                bool componentsRestored = RestoreOwnedNativeComponentStates(
+                    componentsBeforeRevert);
+                bool connectionsRestored = RestoreNativeInputConnections(
+                    breadboard,
+                    connectionsBeforeRevert);
+                NotifyNativeApply(
+                    "Revert rolled back because native package removal could not be verified.",
+                    EsuHudNotificationKind.Warning,
+                    CombineDetail(
+                        removal.Detail,
+                        "Removed packages were " +
+                        (packagesRestored ? "restored." : "not fully restorable; inspect the native board."),
+                        "Owned component fields were " +
+                        (componentsRestored ? "restored." : "not fully restorable; inspect the native board."),
+                        "Previous input connections were " +
+                        (connectionsRestored ? "restored." : "not fully restorable; inspect the native board.")));
+                return false;
+            }
+
+            try
+            {
+                RefreshNativeAutomationCache(force: true);
+                if (_selectedBreadboard != null)
+                    SyncedGraphFor(_selectedBreadboard, force: true);
+            }
+            catch (Exception exception)
+            {
+                bool packagesRestored = RestoreNativeComponentPackages(
+                    breadboard,
+                    removal.RemovedPackages);
+                packagesRestored &= NativeOwnerRecordsMatch(
+                    breadboard,
+                    records);
+                bool componentsRestored = RestoreOwnedNativeComponentStates(
+                    componentsBeforeRevert);
+                bool connectionsRestored = RestoreNativeInputConnections(
+                    breadboard,
+                    connectionsBeforeRevert);
+                InvalidateNativeAutomationCache();
+                NotifyNativeApply(
+                    "Revert rolled back because the resulting native graph could not be refreshed.",
+                    EsuHudNotificationKind.Warning,
+                    exception.GetType().Name + ": " + exception.Message +
+                    " Packages were " +
+                    (packagesRestored ? "restored" : "not fully restored") +
+                    ", component fields were " +
+                    (componentsRestored ? "restored" : "not fully restored") +
+                    " and input connections were " +
+                    (connectionsRestored ? "restored." : "not fully restored; inspect the native board."));
+                return false;
+            }
+
             foreach (NativeOwnerRecord record in records)
             {
                 _pendingNativeNodeDrafts.Remove(record.ComponentId);
+                _pendingNativeNodeRects.Remove(record.ComponentId);
                 _pendingNativeNodeRemovals.Remove(record.ComponentId);
-                if (record.Target != null &&
-                    !ReferenceEquals(record.Target, record.Marker) &&
-                    RemoveNativeComponentPackage(breadboard, record.Target))
-                {
-                    componentsRemoved++;
-                }
-
-                if (RemoveNativeComponentPackage(breadboard, record.Marker))
-                    markersRemoved++;
             }
 
-            RefreshNativeAutomationCache(force: true);
-            if (_selectedBreadboard != null)
-                SyncedGraphFor(_selectedBreadboard, force: true);
-            MarkAutomationDirty();
+            ClearAutomationDirty();
+            ResetGraphEditHistory();
             NotifyNativeApply(
                 string.Format(
                     CultureInfo.InvariantCulture,
                     "Revert removed {0:N0} ESU-owned native component{1}, {2:N0} marker{3}, and {4:N0} native wire{5}.",
-                    componentsRemoved,
-                    componentsRemoved == 1 ? string.Empty : "s",
-                    markersRemoved,
-                    markersRemoved == 1 ? string.Empty : "s",
+                    removal.RemovedNodes,
+                    removal.RemovedNodes == 1 ? string.Empty : "s",
+                    removal.RemovedMarkers,
+                    removal.RemovedMarkers == 1 ? string.Empty : "s",
                     wiresRemoved,
                     wiresRemoved == 1 ? string.Empty : "s"),
                 EsuHudNotificationKind.Info);
@@ -1234,7 +1348,20 @@ namespace DecoLimitLifter.AutomationBuilderMode
                         continue;
 
                     if (node.IsStaged)
+                    {
                         plan.AddCreate(NativePlanCreateLine(node));
+                        CircuitComponent preview = CreateLooseNativeComponent(node.Kind);
+                        if (preview == null)
+                        {
+                            plan.AddError(NodeTitle(node.Kind) + " has no native lowering adapter.");
+                        }
+                        else if (breadboard != null && !BoardAdvertisesNativeComponent(breadboard, preview))
+                        {
+                            plan.AddError(
+                                "The selected vanilla breadboard does not advertise " +
+                                preview.GetType().Name + " for " + NodeTitle(node.Kind) + ".");
+                        }
+                    }
                     else if (HasPendingNativeNodeDraft(node))
                         plan.AddUpdate("Apply pending ESU edits to " + NativePlanSentence(node) + ".");
                     else if (IsEsuOwnedNativeNode(node))
@@ -1419,7 +1546,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                 foreach (BInput input in component.BInputs.Us)
                 {
-                    if (input?.OurOutput?.IsLatched == true)
+                    if (input?.OurOutput?.IsLatched == true &&
+                        ShouldManageOwnedInputConnection(input, ownedComponents))
                         count++;
                 }
             }
@@ -1442,12 +1570,24 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                 foreach (BInput input in component.BInputs.Us.ToList())
                 {
-                    if (RemoveNativeInputConnection(breadboard, input))
+                    if (ShouldManageOwnedInputConnection(input, ownedComponents) &&
+                        RemoveNativeInputConnection(breadboard, input))
                         removed++;
                 }
             }
 
             return removed;
+        }
+
+        private static bool ShouldManageOwnedInputConnection(
+            BInput input,
+            ISet<CircuitComponent> ownedComponents)
+        {
+            CircuitComponent source = input?.OurOutput?.IsLatched == true
+                ? input.OurOutput.Them?.OurComponent
+                : null;
+            return source != null &&
+                   IsEsuOwnedNativeComponent(ownedComponents, source);
         }
 
         private static int CountNativeInputConnectionsFromSources(
@@ -1503,36 +1643,269 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return removed;
         }
 
-        private int ApplyPendingNativeNodeRemovalsToNative(NativeBreadBoard breadboard)
+        private NativeRemovalBatchResult ApplyPendingNativeNodeRemovalsToNative(
+            NativeBreadBoard breadboard)
         {
             if (breadboard == null || _pendingNativeNodeRemovals.Count == 0)
-                return 0;
+                return NativeRemovalBatchResult.Empty;
 
-            int removed = 0;
-            foreach (uint componentId in _pendingNativeNodeRemovals.ToList())
+            List<uint> componentIds = _pendingNativeNodeRemovals.ToList();
+            List<NativeOwnerRecord> liveRecords = NativeOwnerRecords(breadboard).ToList();
+            List<NativeOwnerRecord> records = componentIds
+                .Select(componentId => liveRecords.FirstOrDefault(candidate =>
+                    candidate.ComponentId == componentId))
+                .Where(record => record != null)
+                .ToList();
+            NativeRemovalBatchResult result = RemoveNativeOwnerRecordsAtomically(
+                breadboard,
+                records);
+            if (!result.Success)
+                return result;
+
+            foreach (uint componentId in componentIds)
             {
-                NativeOwnerRecord record = OwnerRecordsFor(breadboard)
-                    .FirstOrDefault(candidate => candidate.ComponentId == componentId);
-                if (record == null)
-                {
-                    _pendingNativeNodeDrafts.Remove(componentId);
-                    _pendingNativeNodeRemovals.Remove(componentId);
-                    continue;
-                }
-
-                if (record.Target != null &&
-                    !ReferenceEquals(record.Target, record.Marker) &&
-                    RemoveNativeComponentPackage(breadboard, record.Target))
-                {
-                    removed++;
-                }
-
-                RemoveNativeComponentPackage(breadboard, record.Marker);
                 _pendingNativeNodeDrafts.Remove(componentId);
+                _pendingNativeNodeRects.Remove(componentId);
                 _pendingNativeNodeRemovals.Remove(componentId);
             }
 
-            return removed;
+            return result;
+        }
+
+        private static NativeRemovalBatchResult RemoveNativeOwnerRecordsAtomically(
+            NativeBreadBoard breadboard,
+            IReadOnlyList<NativeOwnerRecord> records)
+        {
+            if (breadboard == null)
+            {
+                return NativeRemovalBatchResult.Failed(
+                    "The native breadboard was unavailable for component removal.",
+                    restored: true);
+            }
+
+            if (records == null || records.Count == 0)
+                return NativeRemovalBatchResult.Empty;
+
+            var removedPackages = new List<CircuitComponent>();
+            int removedNodes = 0;
+            int removedMarkers = 0;
+            string failure = null;
+            try
+            {
+                foreach (NativeOwnerRecord record in records)
+                {
+                    if (record == null)
+                        continue;
+
+                    if (record.Target != null &&
+                        !ReferenceEquals(record.Target, record.Marker) &&
+                        IsNativeComponentPresent(breadboard, record.Target))
+                    {
+                        if (!RemoveNativeComponentPackage(breadboard, record.Target))
+                        {
+                            failure = "Vanilla did not remove owned component #" +
+                                      record.ComponentId.ToString(CultureInfo.InvariantCulture) + ".";
+                            break;
+                        }
+
+                        removedPackages.Add(record.Target);
+                        removedNodes++;
+                    }
+
+                    if (record.Marker != null &&
+                        IsNativeComponentPresent(breadboard, record.Marker))
+                    {
+                        if (!RemoveNativeComponentPackage(breadboard, record.Marker))
+                        {
+                            failure = "Vanilla did not remove the ownership marker for component #" +
+                                      record.ComponentId.ToString(CultureInfo.InvariantCulture) + ".";
+                            break;
+                        }
+
+                        removedPackages.Add(record.Marker);
+                        removedMarkers++;
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                failure = "Native removal threw " + exception.GetType().Name + ".";
+            }
+
+            try
+            {
+                if (failure == null)
+                {
+                    bool allAbsent = records.All(record =>
+                        record == null ||
+                        (record.Target == null ||
+                         ReferenceEquals(record.Target, record.Marker) ||
+                         !IsNativeComponentPresent(breadboard, record.Target)) &&
+                        (record.Marker == null ||
+                         !IsNativeComponentPresent(breadboard, record.Marker)));
+                    if (allAbsent)
+                    {
+                        return NativeRemovalBatchResult.Completed(
+                            removedNodes,
+                            removedMarkers,
+                            removedPackages);
+                    }
+
+                    failure = "Vanilla retained an owned component package after its removal command.";
+                }
+            }
+            catch (Exception exception)
+            {
+                failure = "Native removal verification threw " + exception.GetType().Name + ".";
+            }
+
+            bool restored;
+            try
+            {
+                restored = RestoreNativeComponentPackages(
+                    breadboard,
+                    removedPackages);
+                restored &= NativeOwnerRecordsMatch(breadboard, records);
+            }
+            catch
+            {
+                restored = false;
+            }
+
+            return NativeRemovalBatchResult.Failed(
+                failure,
+                restored,
+                removedPackages);
+        }
+
+        private static bool RestoreNativeComponentPackages(
+            NativeBreadBoard breadboard,
+            IReadOnlyList<CircuitComponent> components,
+            IDictionary<uint, uint> componentIdRemap = null)
+        {
+            if (breadboard == null)
+                return false;
+
+            List<CircuitComponent> restore = (components ?? Array.Empty<CircuitComponent>())
+                .Where(component => component != null)
+                .Distinct()
+                .ToList();
+            List<CircuitComponent> available = breadboard.Components
+                .Concat(breadboard.Packages)
+                .Concat(restore)
+                .Where(component => component != null)
+                .Distinct()
+                .ToList();
+            var ownership = new List<NativeRestoreOwnership>();
+            foreach (CircuitComponent marker in available.Where(IsNativeOwnerMarker))
+            {
+                if (!TryParseNativeOwnerMarker(marker, out uint oldTargetId, out AutomationNodeKind kind))
+                    continue;
+
+                CircuitComponent target = available.FirstOrDefault(candidate =>
+                    !ReferenceEquals(candidate, marker) &&
+                    !IsNativeOwnerMarker(candidate) &&
+                    candidate.UniqueId == oldTargetId);
+                if (target != null)
+                    ownership.Add(new NativeRestoreOwnership(
+                        oldTargetId,
+                        target,
+                        marker,
+                        kind));
+            }
+
+            bool restored = true;
+            foreach (CircuitComponent component in restore.Where(component => !IsNativeOwnerMarker(component)))
+            {
+                if (IsNativeComponentPresent(breadboard, component))
+                    continue;
+
+                try
+                {
+                    new AddComponentCommand(breadboard, component).Execute();
+                }
+                catch
+                {
+                    // The postcondition below decides whether a command that
+                    // threw after a partial add nevertheless restored the item.
+                }
+
+                restored &= IsNativeComponentPresent(breadboard, component);
+            }
+
+            foreach (NativeRestoreOwnership pair in ownership)
+            {
+                if (componentIdRemap != null)
+                    componentIdRemap[pair.OriginalTargetId] = pair.Target.UniqueId;
+                if (!(pair.Marker is NativeComment marker))
+                {
+                    restored = false;
+                    continue;
+                }
+
+                marker.InputValue.Us = RewriteNativeOwnerMarkerComponentId(
+                    marker.InputValue.Us,
+                    pair.Target.UniqueId);
+            }
+
+            foreach (CircuitComponent component in restore.Where(IsNativeOwnerMarker))
+            {
+                if (IsNativeComponentPresent(breadboard, component))
+                    continue;
+
+                try
+                {
+                    new AddComponentCommand(breadboard, component).Execute();
+                }
+                catch
+                {
+                    // The postcondition below decides whether a command that
+                    // threw after a partial add nevertheless restored the item.
+                }
+
+                restored &= IsNativeComponentPresent(breadboard, component);
+            }
+
+            List<NativeOwnerRecord> actualRecords = NativeOwnerRecords(breadboard).ToList();
+            foreach (NativeRestoreOwnership pair in ownership)
+            {
+                restored &= actualRecords.Any(actual =>
+                    actual.Kind == pair.Kind &&
+                    ReferenceEquals(actual.Target, pair.Target) &&
+                    ReferenceEquals(actual.Marker, pair.Marker));
+            }
+
+            return restored;
+        }
+
+        private static bool NativeOwnerRecordsMatch(
+            NativeBreadBoard breadboard,
+            IReadOnlyList<NativeOwnerRecord> expectedRecords)
+        {
+            try
+            {
+                List<NativeOwnerRecord> actualRecords = NativeOwnerRecords(breadboard).ToList();
+                return (expectedRecords ?? Array.Empty<NativeOwnerRecord>()).All(expected =>
+                    expected == null ||
+                    actualRecords.Any(actual =>
+                        actual.Kind == expected.Kind &&
+                        ReferenceEquals(actual.Target, expected.Target) &&
+                        ReferenceEquals(actual.Marker, expected.Marker)));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsNativeComponentPresent(
+            NativeBreadBoard breadboard,
+            CircuitComponent component)
+        {
+            return breadboard != null &&
+                   component != null &&
+                   (breadboard.Components.Contains(component) ||
+                    breadboard.Packages.Contains(component));
         }
 
         private static bool RemoveNativeInputConnection(
@@ -1569,6 +1942,136 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return input.OurOutput?.IsLatched != true;
         }
 
+        private static List<NativeInputConnectionState> CaptureNativeInputConnections(
+            NativeBreadBoard breadboard)
+        {
+            var result = new List<NativeInputConnectionState>();
+            if (breadboard == null)
+                return result;
+
+            foreach (CircuitComponent component in breadboard.Components.ToList())
+            {
+                if (component?.BInputs == null)
+                    continue;
+
+                foreach (BInput input in component.BInputs.Us)
+                {
+                    if (input?.OurOutput?.IsLatched == true &&
+                        input.OurOutput.Them != null)
+                    {
+                        result.Add(new NativeInputConnectionState(input, input.OurOutput.Them));
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private List<NativeComponentEditState> CaptureOwnedNativeComponentStates(
+            NativeBreadBoard breadboard)
+        {
+            var result = new List<NativeComponentEditState>();
+            NativeBreadboardSnapshot snapshot = SnapshotFor(breadboard);
+            if (snapshot == null || _selectedBreadboard == null)
+                return result;
+
+            foreach (NativeOwnerRecord owner in snapshot.OwnerRecords)
+            {
+                if (owner == null)
+                    continue;
+
+                if (owner.Target != null && !ReferenceEquals(owner.Target, owner.Marker))
+                    result.Add(NativeComponentEditState.Capture(owner.Target));
+                if (owner.Marker != null && !ReferenceEquals(owner.Marker, owner.Target))
+                    result.Add(NativeComponentEditState.Capture(owner.Marker));
+            }
+
+            return result;
+        }
+
+        private static bool RestoreOwnedNativeComponentStates(
+            IReadOnlyList<NativeComponentEditState> snapshot)
+        {
+            bool restored = true;
+            foreach (NativeComponentEditState state in snapshot ?? Array.Empty<NativeComponentEditState>())
+            {
+                if (state == null)
+                    continue;
+
+                restored &= state.TryRestore();
+            }
+
+            return restored;
+        }
+
+        private static bool RestoreNativeInputConnections(
+            NativeBreadBoard breadboard,
+            IReadOnlyList<NativeInputConnectionState> snapshot)
+        {
+            if (breadboard == null)
+                return false;
+
+            var expected = (snapshot ?? Array.Empty<NativeInputConnectionState>())
+                .Where(state => state?.Input != null && state.Output != null)
+                .ToDictionary(state => state.Input, state => state.Output);
+            bool restored = true;
+            foreach (CircuitComponent component in breadboard.Components.ToList())
+            {
+                if (component?.BInputs == null)
+                    continue;
+
+                foreach (BInput input in component.BInputs.Us.ToList())
+                {
+                    if (input?.OurOutput?.IsLatched != true)
+                        continue;
+
+                    if (!expected.TryGetValue(input, out AOutput output) ||
+                        !ReferenceEquals(input.OurOutput.Them, output))
+                    {
+                        restored &= RemoveNativeInputConnection(breadboard, input);
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<BInput, AOutput> pair in expected)
+            {
+                if (pair.Key?.OurOutput?.IsLatched == true &&
+                    ReferenceEquals(pair.Key.OurOutput.Them, pair.Value))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    new CreateConnectionCommand(breadboard, pair.Value, pair.Key).Execute();
+                }
+                catch
+                {
+                    restored = false;
+                }
+
+                restored &= pair.Key?.OurOutput?.IsLatched == true &&
+                            ReferenceEquals(pair.Key.OurOutput.Them, pair.Value);
+            }
+
+            foreach (CircuitComponent component in breadboard.Components.ToList())
+            {
+                if (component?.BInputs == null)
+                    continue;
+
+                foreach (BInput input in component.BInputs.Us)
+                {
+                    if (input?.OurOutput?.IsLatched != true)
+                        continue;
+
+                    restored &= expected.TryGetValue(input, out AOutput output) &&
+                                ReferenceEquals(input.OurOutput.Them, output);
+                }
+            }
+
+            return restored;
+        }
+
         private static CircuitComponent NativeValueForGraphSlot(
             AutomationGraph graph,
             AutomationGraphNode host,
@@ -1600,253 +2103,628 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     plan.Detail);
             }
 
-            NativeLoweringResult lowering = LowerStagedGraphNodesToNative(graph, breadboard);
-            if (lowering.HasErrors)
+            AutomationGraphEditSnapshot graphBeforeApply =
+                CaptureGraphEditSnapshot(graph, _automationDirty);
+            List<NativeInputConnectionState> connectionsBeforeApply =
+                CaptureNativeInputConnections(breadboard);
+            List<NativeComponentEditState> componentsBeforeApply =
+                CaptureOwnedNativeComponentStates(breadboard);
+            _nativeApplyNameChanges.Clear();
+            NativeLoweringResult lowering = null;
+            NativeRemovalBatchResult removal = NativeRemovalBatchResult.Empty;
+            try
             {
-                return NativeApplyResult.Warning(
-                    string.Format(
-                        CultureInfo.InvariantCulture,
-                        "Apply blocked: {0:N0} staged block{1} could not be lowered.",
-                        lowering.Errors.Count,
-                        lowering.Errors.Count == 1 ? string.Empty : "s"),
-                    lowering.Detail);
-            }
-
-            if (lowering.CreatedCount > 0)
-            {
-                RefreshNativeAutomationCache(force: true);
-                graph = _selectedBreadboard == null ? null : SyncedGraphFor(_selectedBreadboard, force: true);
-                graph?.RebindConnectionsToCurrentNodes();
-            }
-
-            int removedNodes = ApplyPendingNativeNodeRemovalsToNative(breadboard);
-            int appliedNodeEdits = ApplyPendingNativeNodeDraftsToNative(graph, breadboard);
-            if (removedNodes > 0 || appliedNodeEdits > 0)
-            {
-                RefreshNativeAutomationCache(force: true);
-                graph = _selectedBreadboard == null ? null : SyncedGraphFor(_selectedBreadboard, force: true);
-                graph?.RebindConnectionsToCurrentNodes();
-            }
-
-            graph?.RebindConnectionsToCurrentNodes();
-
-            List<AutomationGraphNode> nativeNodes = graph?.Nodes
-                .Where(node => node?.NativeComponent is CircuitComponent component &&
-                               IsSupportedAutomationNativeComponent(component))
-                .OrderBy(node => node.Rect.y)
-                .ThenBy(node => node.Rect.x)
-                .ToList();
-            if (nativeNodes == null || nativeNodes.Count == 0)
-            {
-                if (removedNodes > 0 || appliedNodeEdits > 0 || lowering.CreatedCount > 0)
+                lowering = LowerStagedGraphNodesToNative(graph, breadboard);
+                if (lowering.HasErrors)
                 {
-                    return new NativeApplyResult(
+                    bool namesRestored = RestoreNativeApplyBlockNames();
+                    return NativeApplyResult.Warning(
                         string.Format(
                             CultureInfo.InvariantCulture,
-                            "Native graph applied: {0:N0} staged block{1} lowered, {2:N0} owned edit{3} applied, {4:N0} owned node{5} removed.",
-                            lowering.CreatedCount,
-                            lowering.CreatedCount == 1 ? string.Empty : "s",
-                            appliedNodeEdits,
-                            appliedNodeEdits == 1 ? string.Empty : "s",
-                            removedNodes,
-                            removedNodes == 1 ? string.Empty : "s"),
-                        EsuHudNotificationKind.Info,
-                        lowering.Detail);
+                            "Apply blocked: {0:N0} staged block{1} could not be lowered.",
+                            lowering.Errors.Count,
+                            lowering.Errors.Count == 1 ? string.Empty : "s"),
+                        CombineDetail(
+                            lowering.Detail,
+                            namesRestored
+                                ? null
+                                : "A linked block name could not be restored; inspect the target block."));
                 }
 
-                return NativeApplyResult.Warning("The native breadboard graph has no components to connect.");
-            }
-
-            HashSet<CircuitComponent> esuOwnedComponents = EsuOwnedNativeComponentsFor(breadboard);
-            int removedConnections = RemoveEsuOwnedNativeInputConnections(breadboard, esuOwnedComponents);
-            int connected = 0;
-            int alreadyConnected = 0;
-            int valueConnections = 0;
-            IReadOnlyList<AutomationGraphConnection> stackConnections = GraphConnections(graph, AutomationGraphConnectionKind.Stack);
-            foreach (AutomationGraphConnection connection in stackConnections)
-            {
-                if (!TryGetNativeComponent(connection?.From, out CircuitComponent from) ||
-                    !TryGetNativeComponent(connection.To, out CircuitComponent to))
+                if (lowering.CreatedCount > 0)
                 {
-                    continue;
-                }
-
-                if (!IsEsuOwnedNativeComponent(esuOwnedComponents, to))
-                    continue;
-
-                if (to is NativeSwitch switchTo)
-                {
-                    TryConnectComponentToInputAt(breadboard, from, switchTo, 1, ref connected, ref alreadyConnected);
-                    continue;
-                }
-
-                if (IsNativeConnected(from, to))
-                {
-                    alreadyConnected++;
-                    continue;
-                }
-
-                if (breadboard.Connect(from, to))
-                    connected++;
-            }
-
-            foreach (AutomationGraphNode hostNode in nativeNodes.Where(node =>
-                         TryGetNativeComponent(node, out CircuitComponent component) &&
-                         IsEsuOwnedNativeComponent(esuOwnedComponents, component) &&
-                         AcceptsValueSlot(node.Kind)))
-            {
-                if (!TryGetNativeComponent(hostNode, out CircuitComponent host))
-                    continue;
-
-                if (host is NativeSwitch switchComponent)
-                {
-                    AutomationNodeKind switchKind = hostNode.Kind;
-                    if (switchKind == AutomationNodeKind.IfCondition)
+                    RefreshNativeAutomationCache(force: true);
+                    graph = _selectedBreadboard == null ? null : SyncedGraphFor(_selectedBreadboard, force: true);
+                    graph?.RebindConnectionsToCurrentNodes();
+                    if (!CreatedNativeComponentsImported(
+                            breadboard,
+                            graph,
+                            lowering.CreatedComponents,
+                            out string importIssue))
                     {
-                        switchComponent.Threshold.Us = 0.5f;
+                        bool restored = RollbackFailedNativeApply(
+                            breadboard,
+                            graph,
+                            graphBeforeApply,
+                            connectionsBeforeApply,
+                            componentsBeforeApply,
+                            lowering.CreatedComponents);
+                        return NativeApplyResult.Warning(
+                            "Apply rolled back because lowered native components could not be re-imported for verification.",
+                            CombineDetail(
+                                importIssue,
+                                "Previous native state was " +
+                                (restored ? "restored." : "not fully restorable; inspect the native board.")));
                     }
-                    else
+                }
+
+                int removedNodes = 0;
+                int appliedNodeEdits = ApplyPendingNativeNodeDraftsToNative(graph, breadboard);
+                if (appliedNodeEdits > 0)
+                {
+                    RefreshNativeAutomationCache(force: true);
+                    graph = _selectedBreadboard == null ? null : SyncedGraphFor(_selectedBreadboard, force: true);
+                    graph?.RebindConnectionsToCurrentNodes();
+                }
+
+                graph?.RebindConnectionsToCurrentNodes();
+
+                List<AutomationGraphNode> nativeNodes = graph?.Nodes
+                    .Where(node => node?.NativeComponent is CircuitComponent component &&
+                                   IsSupportedAutomationNativeComponent(component))
+                    .OrderBy(node => node.Rect.y)
+                    .ThenBy(node => node.Rect.x)
+                    .ToList();
+                if (nativeNodes == null || nativeNodes.Count == 0)
+                {
+                    if (lowering.CreatedCount > 0)
                     {
+                        bool restored = RollbackFailedNativeApply(
+                            breadboard,
+                            graph,
+                            graphBeforeApply,
+                            connectionsBeforeApply,
+                            componentsBeforeApply,
+                            lowering.CreatedComponents,
+                            removal.RemovedPackages);
+                        return NativeApplyResult.Warning(
+                            "Apply rolled back because lowered native components could not be re-imported for verification.",
+                            "Previous native state was " +
+                            (restored ? "restored." : "not fully restorable; inspect the native board."));
+                    }
+
+                    removal = ApplyPendingNativeNodeRemovalsToNative(breadboard);
+                    if (!removal.Success)
+                    {
+                        bool restored = RollbackFailedNativeApply(
+                            breadboard,
+                            graph,
+                            graphBeforeApply,
+                            connectionsBeforeApply,
+                            componentsBeforeApply,
+                            lowering.CreatedComponents,
+                            removal.RemovedPackages);
+                        return NativeApplyResult.Warning(
+                            "Apply rolled back because owned component removal could not be verified.",
+                            CombineDetail(
+                                removal.Detail,
+                                "Removed packages were " +
+                                (removal.Restored ? "restored." : "not fully restorable; inspect the native board."),
+                                "Previous native state was " +
+                                (restored ? "restored." : "not fully restorable; inspect the native board.")));
+                    }
+
+                    removedNodes = removal.RemovedNodes;
+                    if (removedNodes > 0 || appliedNodeEdits > 0)
+                    {
+                        RefreshNativeAutomationCache(force: true);
+                        graph = _selectedBreadboard == null
+                            ? null
+                            : SyncedGraphFor(_selectedBreadboard, force: true);
+                        graph?.RebindConnectionsToCurrentNodes();
+                        _nativeApplyNameChanges.Clear();
+                        return new NativeApplyResult(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "Native graph applied: {0:N0} staged block{1} lowered, {2:N0} owned edit{3} applied, {4:N0} owned node{5} removed.",
+                                lowering.CreatedCount,
+                                lowering.CreatedCount == 1 ? string.Empty : "s",
+                                appliedNodeEdits,
+                                appliedNodeEdits == 1 ? string.Empty : "s",
+                                removedNodes,
+                                removedNodes == 1 ? string.Empty : "s"),
+                            EsuHudNotificationKind.Info,
+                            lowering.Detail);
+                    }
+
+                    return NativeApplyResult.Warning("The native breadboard graph has no components to connect.");
+                }
+
+                HashSet<CircuitComponent> esuOwnedComponents = EsuOwnedNativeComponentsFor(breadboard);
+                int expectedRemovedConnections = CountEsuOwnedNativeInputConnections(breadboard);
+                int removedConnections = RemoveEsuOwnedNativeInputConnections(breadboard, esuOwnedComponents);
+                if (removedConnections != expectedRemovedConnections)
+                {
+                    bool restored = RollbackFailedNativeApply(
+                        breadboard,
+                        graph,
+                        graphBeforeApply,
+                        connectionsBeforeApply,
+                        componentsBeforeApply,
+                        lowering.CreatedComponents,
+                        removal.RemovedPackages);
+                    return NativeApplyResult.Warning(
+                        "Apply rolled back because stale ESU-owned native wires could not be cleared.",
+                        "Removed " + removedConnections.ToString("N0", CultureInfo.InvariantCulture) +
+                        " of " + expectedRemovedConnections.ToString("N0", CultureInfo.InvariantCulture) +
+                        " expected wire" + (expectedRemovedConnections == 1 ? string.Empty : "s") +
+                        ". Previous native state was " +
+                        (restored ? "restored." : "not fully restorable; inspect the native board."));
+                }
+                int connected = 0;
+                int alreadyConnected = 0;
+                int valueConnections = 0;
+                int failedConnections = 0;
+                IReadOnlyList<AutomationGraphConnection> stackConnections = GraphConnections(graph, AutomationGraphConnectionKind.Stack);
+                foreach (AutomationGraphConnection connection in stackConnections)
+                {
+                    if (!TryGetNativeComponent(connection?.From, out CircuitComponent from) ||
+                        !TryGetNativeComponent(connection.To, out CircuitComponent to))
+                    {
+                        continue;
+                    }
+
+                    if (!IsEsuOwnedNativeComponent(esuOwnedComponents, to))
+                        continue;
+
+                    if (to is NativeSwitch switchTo)
+                    {
+                        if (!TryConnectComponentToInput(
+                                breadboard,
+                                from,
+                                switchTo.Switcher,
+                                ref connected,
+                                ref alreadyConnected))
+                        {
+                            failedConnections++;
+                        }
+                        continue;
+                    }
+
+                    if (!TryConnectComponentToInputAt(
+                            breadboard,
+                            from,
+                            to,
+                            0,
+                            ref connected,
+                            ref alreadyConnected))
+                    {
+                        failedConnections++;
+                    }
+                }
+
+                foreach (AutomationGraphNode hostNode in nativeNodes.Where(node =>
+                             TryGetNativeComponent(node, out CircuitComponent component) &&
+                             IsEsuOwnedNativeComponent(esuOwnedComponents, component) &&
+                             AcceptsValueSlot(node.Kind)))
+                {
+                    if (!TryGetNativeComponent(hostNode, out CircuitComponent host))
+                        continue;
+
+                    if (host is NativeSwitch switchComponent)
+                    {
+                        AutomationNodeKind switchKind = hostNode.Kind;
+                        if (switchKind == AutomationNodeKind.IfCondition)
+                        {
+                            switchComponent.Threshold.Us = 0.5f;
+                        }
+                        else
+                        {
+                            CircuitComponent thresholdValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Threshold);
+                            RecordNativeValueApply(
+                                thresholdValue,
+                                TryApplySwitchThresholdValue(switchComponent, thresholdValue),
+                                ref valueConnections,
+                                ref failedConnections);
+                        }
+
+                        CircuitComponent passValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            passValue,
+                            TryConnectComponentToInput(breadboard, passValue, switchComponent.Pass, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        CircuitComponent elseValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Else);
+                        RecordNativeValueApply(
+                            elseValue,
+                            TryApplySwitchElseValue(switchComponent, elseValue),
+                            ref valueConnections,
+                            ref failedConnections);
+                        continue;
+                    }
+
+                    if (host is Evaluator evaluator &&
+                        IsMathEvaluatorKind(hostNode.Kind))
+                    {
+                        AutomationNodeKind evaluatorKind = hostNode.Kind;
+                        CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            sourceValue,
+                            TryConnectComponentToInputAt(breadboard, sourceValue, evaluator, 0, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        CircuitComponent operandValue = NativeValueForGraphSlot(graph, hostNode, MathOperandSlotKind(evaluatorKind));
+                        if (operandValue == null)
+                        {
+                            if (TryApplyEvaluatorMathOperand(evaluator, operandValue, evaluatorKind))
+                                valueConnections++;
+                        }
+                        else
+                        {
+                            evaluator.Expression.Us = MathExpressionInputText(evaluatorKind);
+                            RecordNativeValueApply(
+                                operandValue,
+                                TryConnectComponentToInputAt(breadboard, operandValue, evaluator, 1, ref connected, ref alreadyConnected),
+                                ref valueConnections,
+                                ref failedConnections);
+                        }
+
+                        continue;
+                    }
+
+                    if (host is LogicGate logicGate &&
+                        IsLogicGateKind(hostNode.Kind))
+                    {
+                        AutomationNodeKind logicKind = hostNode.Kind;
+                        CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            sourceValue,
+                            TryConnectComponentToInputAt(breadboard, sourceValue, logicGate, 0, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        if (logicKind != AutomationNodeKind.LogicNot)
+                        {
+                            CircuitComponent secondValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.LogicB);
+                            RecordNativeValueApply(
+                                secondValue,
+                                TryConnectComponentToInputAt(breadboard, secondValue, logicGate, 1, ref connected, ref alreadyConnected),
+                                ref valueConnections,
+                                ref failedConnections);
+                        }
+
+                        continue;
+                    }
+
+                    if (host is FuzzyThreshold fuzzyThreshold &&
+                        IsFuzzyThresholdKind(hostNode.Kind))
+                    {
+                        CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            sourceValue,
+                            TryConnectComponentToHost(breadboard, sourceValue, host, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
                         CircuitComponent thresholdValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Threshold);
-                        if (TryApplySwitchThresholdValue(switchComponent, thresholdValue))
-                            valueConnections++;
+                        RecordNativeValueApply(
+                            thresholdValue,
+                            TryApplyFuzzyThresholdValue(fuzzyThreshold, thresholdValue),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        continue;
                     }
 
-                    CircuitComponent passValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToInput(breadboard, passValue, switchComponent.Pass, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    CircuitComponent elseValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Else);
-                    if (TryApplySwitchElseValue(switchComponent, elseValue))
-                        valueConnections++;
-                    continue;
-                }
-
-                if (host is Evaluator evaluator &&
-                    IsMathEvaluatorKind(hostNode.Kind))
-                {
-                    AutomationNodeKind evaluatorKind = hostNode.Kind;
-                    CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToInputAt(breadboard, sourceValue, evaluator, 0, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    CircuitComponent operandValue = NativeValueForGraphSlot(graph, hostNode, MathOperandSlotKind(evaluatorKind));
-                    if (operandValue == null)
+                    if (host is MaxMin maxMin &&
+                        IsMaxMinKind(hostNode.Kind))
                     {
-                        if (TryApplyEvaluatorMathOperand(evaluator, operandValue, evaluatorKind))
-                            valueConnections++;
+                        CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            sourceValue,
+                            TryConnectComponentToInputAt(breadboard, sourceValue, maxMin, 0, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        CircuitComponent secondValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.MathB);
+                        RecordNativeValueApply(
+                            secondValue,
+                            TryConnectComponentToInputAt(breadboard, secondValue, maxMin, 1, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        continue;
                     }
-                    else
+
+                    if (host is Clamp clamp)
                     {
-                        evaluator.Expression.Us = MathExpressionInputText(evaluatorKind);
-                        if (TryConnectComponentToInputAt(breadboard, operandValue, evaluator, 1, ref connected, ref alreadyConnected))
-                            valueConnections++;
+                        CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            sourceValue,
+                            TryConnectComponentToHost(breadboard, sourceValue, host, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        CircuitComponent minValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Min);
+                        CircuitComponent maxValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Max);
+                        bool hasClampBoundValue = minValue != null || maxValue != null;
+                        if (hasClampBoundValue)
+                        {
+                            if (TryApplyClampBounds(clamp, minValue, maxValue))
+                                valueConnections += (minValue == null ? 0 : 1) + (maxValue == null ? 0 : 1);
+                            else
+                                failedConnections++;
+                        }
+                        continue;
                     }
 
-                    continue;
-                }
-
-                if (host is LogicGate logicGate &&
-                    IsLogicGateKind(hostNode.Kind))
-                {
-                    AutomationNodeKind logicKind = hostNode.Kind;
-                    CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToInputAt(breadboard, sourceValue, logicGate, 0, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    if (logicKind != AutomationNodeKind.LogicNot)
+                    if (host is Delay delay)
                     {
-                        CircuitComponent secondValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.LogicB);
-                        if (TryConnectComponentToInputAt(breadboard, secondValue, logicGate, 1, ref connected, ref alreadyConnected))
-                            valueConnections++;
+                        CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                        RecordNativeValueApply(
+                            sourceValue,
+                            TryConnectComponentToHost(breadboard, sourceValue, host, ref connected, ref alreadyConnected),
+                            ref valueConnections,
+                            ref failedConnections);
+
+                        CircuitComponent secondsValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Seconds);
+                        RecordNativeValueApply(
+                            secondsValue,
+                            TryApplyDelaySeconds(delay, secondsValue),
+                            ref valueConnections,
+                            ref failedConnections);
+                        continue;
                     }
 
-                    continue;
+                    CircuitComponent value = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
+                    RecordNativeValueApply(
+                        value,
+                        TryConnectComponentToHost(breadboard, value, host, ref connected, ref alreadyConnected),
+                        ref valueConnections,
+                        ref failedConnections);
                 }
 
-                if (host is FuzzyThreshold fuzzyThreshold &&
-                    IsFuzzyThresholdKind(hostNode.Kind))
+                if (failedConnections > 0)
                 {
-                    CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToHost(breadboard, sourceValue, host, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    CircuitComponent thresholdValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Threshold);
-                    if (TryApplyFuzzyThresholdValue(fuzzyThreshold, thresholdValue))
-                        valueConnections++;
-
-                    continue;
+                    bool restored = RollbackFailedNativeApply(
+                        breadboard,
+                        graph,
+                        graphBeforeApply,
+                        connectionsBeforeApply,
+                        componentsBeforeApply,
+                        lowering.CreatedComponents);
+                    return NativeApplyResult.Warning(
+                        "Apply rolled back because native breadboard connections did not match the visible block program.",
+                        failedConnections.ToString("N0", CultureInfo.InvariantCulture) +
+                        " native connection" + (failedConnections == 1 ? string.Empty : "s") +
+                        " failed. Previous connections were " + (restored ? "restored." : "not fully restorable; inspect the runtime log."));
                 }
 
-                if (host is MaxMin maxMin &&
-                    IsMaxMinKind(hostNode.Kind))
+                removal = ApplyPendingNativeNodeRemovalsToNative(breadboard);
+                if (!removal.Success)
                 {
-                    CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToInputAt(breadboard, sourceValue, maxMin, 0, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    CircuitComponent secondValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.MathB);
-                    if (TryConnectComponentToInputAt(breadboard, secondValue, maxMin, 1, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    continue;
+                    bool restored = RollbackFailedNativeApply(
+                        breadboard,
+                        graph,
+                        graphBeforeApply,
+                        connectionsBeforeApply,
+                        componentsBeforeApply,
+                        lowering.CreatedComponents,
+                        removal.RemovedPackages);
+                    return NativeApplyResult.Warning(
+                        "Apply rolled back because owned component removal could not be verified.",
+                        CombineDetail(
+                            removal.Detail,
+                            "Removed packages were " +
+                            (removal.Restored ? "restored." : "not fully restorable; inspect the native board."),
+                            "Previous native state was " +
+                            (restored ? "restored." : "not fully restorable; inspect the native board.")));
                 }
 
-                if (host is Clamp clamp)
+                removedNodes = removal.RemovedNodes;
+                RefreshNativeAutomationCache(force: true);
+                graph = _selectedBreadboard == null
+                    ? null
+                    : SyncedGraphFor(_selectedBreadboard, force: true);
+                graph?.RebindConnectionsToCurrentNodes();
+                if (!CreatedNativeComponentsImported(
+                        breadboard,
+                        graph,
+                        lowering.CreatedComponents,
+                        out string finalImportIssue))
                 {
-                    CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToHost(breadboard, sourceValue, host, ref connected, ref alreadyConnected))
-                        valueConnections++;
-
-                    CircuitComponent minValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Min);
-                    if (TryApplyClampMinimum(clamp, minValue))
-                        valueConnections++;
-
-                    CircuitComponent maxValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Max);
-                    if (TryApplyClampMaximum(clamp, maxValue))
-                        valueConnections++;
-                    continue;
+                    throw new InvalidOperationException(finalImportIssue);
                 }
 
-                if (host is Delay delay)
+                string message = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Native graph applied: {0:N0} staged block{1} lowered, {2:N0} owned edit{3} applied, {4:N0} owned node{5} removed, {6:N0} stale ESU connection{7} cleared, {8:N0} new connection{9}, {10:N0} already connected, {11:N0} value slot{12}.",
+                    lowering.CreatedCount,
+                    lowering.CreatedCount == 1 ? string.Empty : "s",
+                    appliedNodeEdits,
+                    appliedNodeEdits == 1 ? string.Empty : "s",
+                    removedNodes,
+                    removedNodes == 1 ? string.Empty : "s",
+                    removedConnections,
+                    removedConnections == 1 ? string.Empty : "s",
+                    connected,
+                    connected == 1 ? string.Empty : "s",
+                    alreadyConnected,
+                    valueConnections,
+                    valueConnections == 1 ? string.Empty : "s");
+                _nativeApplyNameChanges.Clear();
+                return new NativeApplyResult(
+                    message,
+                    EsuHudNotificationKind.Info,
+                    CombineDetail(
+                        lowering.Detail,
+                        "Apply is idempotent: it lowers staged ESU blocks into ESU-owned native components, then connects visual ESU stack chains top-to-bottom and visual socketed value blocks into native inputs without appending duplicates."));
+            }
+            catch (Exception exception)
+            {
+                bool restored = RollbackFailedNativeApply(
+                    breadboard,
+                    graph,
+                    graphBeforeApply,
+                    connectionsBeforeApply,
+                    componentsBeforeApply,
+                    lowering?.CreatedComponents,
+                    removal?.RemovedPackages);
+                return NativeApplyResult.Warning(
+                    "Apply rolled back after vanilla rejected an automation operation.",
+                    exception.GetType().Name + ": " + exception.Message +
+                    " Previous native state was " +
+                    (restored
+                        ? "restored."
+                        : "not fully restorable; inspect the native board and runtime log."));
+            }
+        }
+
+        private static bool CreatedNativeComponentsImported(
+            NativeBreadBoard breadboard,
+            AutomationGraph graph,
+            IReadOnlyList<CircuitComponent> createdComponents,
+            out string issue)
+        {
+            issue = null;
+            List<CircuitComponent> created = (createdComponents ?? Array.Empty<CircuitComponent>())
+                .Where(component => component != null)
+                .ToList();
+            if (created.Count == 0)
+                return true;
+
+            try
+            {
+                List<NativeOwnerRecord> owners = NativeOwnerRecords(breadboard).ToList();
+                foreach (CircuitComponent component in created)
                 {
-                    CircuitComponent sourceValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                    if (TryConnectComponentToHost(breadboard, sourceValue, host, ref connected, ref alreadyConnected))
-                        valueConnections++;
+                    bool packagePresent = IsNativeComponentPresent(breadboard, component);
+                    bool ownerPresent = owners.Any(owner =>
+                        owner.ComponentId == component.UniqueId &&
+                        ReferenceEquals(owner.Target, component));
+                    bool graphPresent = graph?.Nodes.Any(node =>
+                        ReferenceEquals(node?.NativeComponent, component)) == true;
+                    if (packagePresent && ownerPresent && graphPresent)
+                        continue;
 
-                    CircuitComponent secondsValue = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Seconds);
-                    if (TryApplyDelaySeconds(delay, secondsValue))
-                        valueConnections++;
-                    continue;
+                    issue = "Native component #" +
+                            component.UniqueId.ToString(CultureInfo.InvariantCulture) +
+                            " was not present with the same package, owner marker, and graph node after refresh.";
+                    return false;
                 }
 
-                CircuitComponent value = NativeValueForGraphSlot(graph, hostNode, AutomationValueSlotKind.Pass);
-                if (TryConnectComponentToHost(breadboard, value, host, ref connected, ref alreadyConnected))
-                    valueConnections++;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                issue = "Native component re-import verification threw " +
+                        exception.GetType().Name + ".";
+                return false;
+            }
+        }
+
+        private static void RecordNativeValueApply(
+            CircuitComponent source,
+            bool success,
+            ref int valueConnections,
+            ref int failedConnections)
+        {
+            if (source == null)
+                return;
+
+            if (success)
+                valueConnections++;
+            else
+                failedConnections++;
+        }
+
+        private bool RollbackFailedNativeApply(
+            NativeBreadBoard breadboard,
+            AutomationGraph graph,
+            AutomationGraphEditSnapshot graphBeforeApply,
+            IReadOnlyList<NativeInputConnectionState> connectionsBeforeApply,
+            IReadOnlyList<NativeComponentEditState> componentsBeforeApply,
+            IReadOnlyList<CircuitComponent> createdComponents,
+            IReadOnlyList<CircuitComponent> removedPackages = null)
+        {
+            bool restored = true;
+            var componentIdRemap = new Dictionary<uint, uint>();
+            try
+            {
+                foreach (CircuitComponent component in (createdComponents ?? Array.Empty<CircuitComponent>())
+                             .Where(component => component != null)
+                             .Reverse())
+                {
+                    RemoveNativeOwnerMarkersForComponent(breadboard, component);
+                    RemoveNativeComponentPackage(breadboard, component);
+                    restored &= !IsNativeComponentPresent(breadboard, component) &&
+                                !NativeOwnerRecords(breadboard).Any(record =>
+                                    record.ComponentId == component.UniqueId);
+                }
+            }
+            catch
+            {
+                restored = false;
             }
 
-            string message = string.Format(
-                CultureInfo.InvariantCulture,
-                "Native graph applied: {0:N0} staged block{1} lowered, {2:N0} owned edit{3} applied, {4:N0} owned node{5} removed, {6:N0} stale ESU connection{7} cleared, {8:N0} new connection{9}, {10:N0} already connected, {11:N0} value slot{12}.",
-                lowering.CreatedCount,
-                lowering.CreatedCount == 1 ? string.Empty : "s",
-                appliedNodeEdits,
-                appliedNodeEdits == 1 ? string.Empty : "s",
-                removedNodes,
-                removedNodes == 1 ? string.Empty : "s",
-                removedConnections,
-                removedConnections == 1 ? string.Empty : "s",
-                connected,
-                connected == 1 ? string.Empty : "s",
-                alreadyConnected,
-                valueConnections,
-                valueConnections == 1 ? string.Empty : "s");
-            return new NativeApplyResult(
-                message,
-                EsuHudNotificationKind.Info,
-                CombineDetail(
-                    lowering.Detail,
-                    "Apply is idempotent: it lowers staged ESU blocks into ESU-owned native components, then connects visual ESU stack chains top-to-bottom and visual socketed value blocks into native inputs without appending duplicates."));
+            try
+            {
+                restored &= RestoreNativeComponentPackages(
+                    breadboard,
+                    removedPackages,
+                    componentIdRemap);
+            }
+            catch
+            {
+                restored = false;
+            }
+
+            try
+            {
+                restored &= RestoreNativeApplyBlockNames();
+                restored &= RestoreOwnedNativeComponentStates(componentsBeforeApply);
+                restored &= RestoreNativeInputConnections(breadboard, connectionsBeforeApply);
+            }
+            catch
+            {
+                restored = false;
+            }
+
+            try
+            {
+                InvalidateNativeAutomationCache();
+                RefreshNativeAutomationCache(force: true);
+            }
+            catch
+            {
+                restored = false;
+            }
+
+            try
+            {
+                AutomationGraph current = _selectedBreadboard == null
+                    ? graph
+                    : GraphFor(_selectedBreadboard);
+                if (current != null && graphBeforeApply != null)
+                {
+                    graphBeforeApply.Restore(current);
+                    RestoreSnapshotStagedLinks(graphBeforeApply);
+                    RestoreSnapshotPendingNativeState(
+                        current,
+                        graphBeforeApply,
+                        componentIdRemap);
+                }
+            }
+            catch
+            {
+                restored = false;
+            }
+
+            _automationDirty = graphBeforeApply?.Dirty == true || !restored;
+            InvalidateAutomationDisplayCache();
+            return restored;
         }
 
         private NativeLoweringResult LowerStagedGraphNodesToNative(
@@ -1874,33 +2752,103 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (result.HasErrors)
                 return result;
 
-            var loweredIds = new HashSet<int>();
-            var loweredIdMap = new Dictionary<int, int>();
+            var prepared = new List<PreparedNativeNode>();
             foreach (AutomationGraphNode node in stagedNodes)
             {
-                if (TryCreateNativeComponentFromStagedNode(
-                        breadboard,
-                        node,
-                        out CircuitComponent component,
-                        out string message,
-                        out string warningDetail))
+                try
                 {
-                    loweredIds.Add(node.Id);
-                    loweredIdMap[node.Id] = NativeGraphNodeId(component);
-                    result.AddCreated(
-                        "Lowered " +
-                        NativePlanSentence(node) +
-                        " into native " +
-                        NativeComponentName(NativeKind(component)) +
-                        " #" +
-                        component.UniqueId.ToString(CultureInfo.InvariantCulture) +
-                        ".");
-                    result.AddWarning(warningDetail);
+                    if (TryCreateNativeComponentFromStagedNode(
+                            breadboard,
+                            node,
+                            out CircuitComponent component,
+                            out string message,
+                            out string warningDetail))
+                    {
+                        if (!BoardAdvertisesNativeComponent(breadboard, component))
+                        {
+                            result.AddError(
+                                "The selected vanilla breadboard does not advertise " +
+                                component.GetType().Name + " for " + NodeTitle(node.Kind) + ".");
+                        }
+                        else
+                        {
+                            prepared.Add(new PreparedNativeNode(node, component, warningDetail));
+                        }
+                    }
+                    else
+                    {
+                        result.AddError(message ?? "Failed to lower staged " + NodeTitle(node.Kind) + ".");
+                    }
                 }
-                else
+                catch (Exception exception)
                 {
-                    result.AddError(message ?? "Failed to lower staged " + NodeTitle(node.Kind) + ".");
+                    result.AddError(
+                        "Failed to prepare staged " + NodeTitle(node.Kind) +
+                        ": " + exception.GetType().Name + ".");
                 }
+            }
+
+            if (result.HasErrors)
+                return result;
+
+            var committed = new List<PreparedNativeNode>();
+            try
+            {
+                foreach (PreparedNativeNode item in prepared)
+                {
+                    var addCommand = new AddComponentCommand(breadboard, item.Component);
+                    addCommand.Execute();
+                    committed.Add(item);
+                    AddNativeOwnerMarker(breadboard, item.Component, item.Node.Kind);
+                    bool componentPresent = breadboard.Components.Contains(item.Component) ||
+                                            breadboard.Packages.Contains(item.Component);
+                    bool markerPresent = NativeOwnerRecords(breadboard)
+                        .Any(record => record.ComponentId == item.Component.UniqueId &&
+                                       ReferenceEquals(record.Target, item.Component));
+                    if (!componentPresent || !markerPresent)
+                    {
+                        throw new InvalidOperationException(
+                            "Vanilla breadboard did not retain the component ownership package.");
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                bool cleanupSucceeded = true;
+                foreach (PreparedNativeNode item in prepared.AsEnumerable().Reverse())
+                {
+                    RemoveNativeOwnerMarkersForComponent(breadboard, item.Component);
+                    RemoveNativeComponentPackage(breadboard, item.Component);
+                    cleanupSucceeded &= !IsNativeComponentPresent(breadboard, item.Component) &&
+                                        !NativeOwnerRecords(breadboard).Any(record =>
+                                            record.ComponentId == item.Component.UniqueId);
+                }
+
+                result.AddError(
+                    "Native component transaction rolled back after " +
+                    exception.GetType().Name +
+                    (cleanupSucceeded
+                        ? "."
+                        : "; cleanup was incomplete, so inspect the native board."));
+                return result;
+            }
+
+            var loweredIds = new HashSet<int>();
+            var loweredIdMap = new Dictionary<int, int>();
+            foreach (PreparedNativeNode item in committed)
+            {
+                loweredIds.Add(item.Node.Id);
+                loweredIdMap[item.Node.Id] = NativeGraphNodeId(item.Component);
+                result.AddCreated(
+                    "Lowered " +
+                    NativePlanSentence(item.Node) +
+                    " into native " +
+                    NativeComponentName(NativeKind(item.Component)) +
+                    " #" +
+                    item.Component.UniqueId.ToString(CultureInfo.InvariantCulture) +
+                    ".");
+                result.CreatedComponents.Add(item.Component);
+                result.AddWarning(item.WarningDetail);
             }
 
             if (loweredIds.Count > 0)
@@ -1912,6 +2860,28 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
 
             return result;
+        }
+
+        private static bool BoardAdvertisesNativeComponent(
+            Board breadboard,
+            CircuitComponent component)
+        {
+            if (breadboard == null || component == null)
+                return false;
+
+            if (breadboard.AvailableComponentTypes == null ||
+                breadboard.AvailableComponentTypes.Count == 0)
+            {
+                return true;
+            }
+
+            Type componentType = component.GetType();
+            Guid componentGuid = component.ComponentTypeId;
+            return breadboard.AvailableComponentTypes.Any(candidate =>
+                candidate != null &&
+                candidate.Valid &&
+                (candidate.Type == componentType ||
+                 componentGuid != Guid.Empty && candidate.GuidOfComponent == componentGuid));
         }
 
         private bool CanLowerStagedNode(
@@ -2001,9 +2971,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 node.Property,
                 node.ValueText,
                 component);
-            ApplyNativeNodeEdits(nativeNode, node.Label, node.Property, node.ValueText);
-            breadboard.NewPackage(component);
-            AddNativeOwnerMarker(breadboard, component, node.Kind);
+            ApplyNativeNodeToNativeComponent(nativeNode);
             return true;
         }
 
@@ -2116,6 +3084,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             foreach (string issue in ValueSocketConflictIssues(graph))
                 yield return issue;
 
+            foreach (string issue in UnsupportedMixedOwnershipConnectionIssues(graph))
+                yield return issue;
+
             foreach (AutomationGraphNode node in graph.Nodes.OrderBy(node => node.Rect.y).ThenBy(node => node.Rect.x))
             {
                 if (node == null)
@@ -2126,33 +3097,63 @@ namespace DecoLimitLifter.AutomationBuilderMode
             }
         }
 
-        private static IEnumerable<string> ValueSocketConflictIssues(AutomationGraph graph)
+        private IEnumerable<string> UnsupportedMixedOwnershipConnectionIssues(
+            AutomationGraph graph)
         {
             if (graph == null)
                 yield break;
 
-            foreach (AutomationGraphNode host in graph.Nodes.Where(node => node != null && AcceptsValueSlot(node.Kind)))
+            foreach (AutomationGraphConnection connection in graph.Connections.Where(connection =>
+                         connection != null &&
+                         (connection.Kind == AutomationGraphConnectionKind.Stack ||
+                          connection.Kind == AutomationGraphConnectionKind.Value)))
             {
-                foreach (AutomationValueSlotKind slotKind in ActiveValueSlotKinds(graph, host))
+                bool sourceWritable = IsGraphNodeApplyWritable(connection.From);
+                bool targetWritable = IsGraphNodeApplyWritable(connection.To);
+                if (CanManageEsuConnectionOwnership(sourceWritable, targetWritable) ||
+                    !targetWritable)
                 {
-                    List<AutomationGraphNode> candidates = ValueSlotCandidateNodes(graph, host, slotKind);
-                    if (candidates.Count > 1)
-                    {
-                        yield return ShortText(BlockSentenceTitle(host), 38) + " " +
-                                     ValueSlotLabel(host.Kind, slotKind) +
-                                     " socket has multiple nearby value blocks; move extra value blocks away.";
-                    }
+                    continue;
                 }
+
+                yield return ShortText(BlockSentenceTitle(connection.To), 38) +
+                             " is fed by a read-only imported vanilla component. " +
+                             "ESU cannot own that mixed wire safely; recreate the source as an editable ESU block or connect it in the vanilla breadboard editor.";
+            }
+        }
+
+        private IEnumerable<string> ValueSocketConflictIssues(AutomationGraph graph)
+        {
+            if (graph == null)
+                yield break;
+
+            List<AutomationGraphConnection> editableValues = graph.Connections
+                .Where(connection =>
+                    connection?.Kind == AutomationGraphConnectionKind.Value &&
+                    IsGraphNodeApplyWritable(connection.To))
+                .ToList();
+            foreach (IGrouping<string, AutomationGraphConnection> socket in editableValues
+                         .GroupBy(connection =>
+                             connection.ToNodeId.ToString(CultureInfo.InvariantCulture) + ":" +
+                             connection.SlotKind))
+            {
+                if (socket.Count() <= 1)
+                    continue;
+
+                AutomationGraphConnection first = socket.First();
+                yield return ShortText(BlockSentenceTitle(first.To), 38) + " " +
+                             ValueSlotLabel(first.To.Kind, first.SlotKind) +
+                             " socket has multiple editable value connections; disconnect all but one.";
             }
 
-            foreach (IGrouping<AutomationGraphNode, Tuple<AutomationGraphNode, AutomationValueSlotKind, AutomationGraphNode>> claim in
-                     ValueSlotAssignments(graph).GroupBy(tuple => tuple.Item3))
+            foreach (IGrouping<int, AutomationGraphConnection> claim in editableValues
+                         .GroupBy(connection => connection.FromNodeId))
             {
                 if (claim.Count() <= 1)
                     continue;
 
-                yield return ShortText(BlockSentenceTitle(claim.Key), 38) +
-                             " is close enough to feed multiple value sockets; move it so only one socket owns it.";
+                yield return ShortText(BlockSentenceTitle(claim.First().From), 38) +
+                             " feeds multiple editable value sockets; keep one socket connection per value block.";
             }
         }
 
@@ -2160,7 +3161,27 @@ namespace DecoLimitLifter.AutomationBuilderMode
             AutomationGraph graph,
             AutomationGraphNode node)
         {
+            if (node == null || !IsGraphNodeApplyWritable(node))
+                yield break;
+
             string nodeName = ShortText(BlockSentenceTitle(node), 38);
+            if (!TryValidateAutomationLiteral(
+                    node.Kind,
+                    node.ValueText,
+                    out _,
+                    out string literalIssue))
+            {
+                yield return nodeName + " " + literalIssue + ".";
+            }
+
+            foreach (string issue in ImportedNativeInputConflictIssues(
+                         graph,
+                         node,
+                         nodeName))
+            {
+                yield return issue;
+            }
+
             if (node.IsStaged)
             {
                 foreach (string issue in StagedNodeReadinessIssues(graph, node, nodeName))
@@ -2191,7 +3212,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node.NativeComponent is GenericBlockSetter setter)
             {
                 bool hasIncomingSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedValue = !hasIncomingSignal && GraphValueNode(graph, node) != null;
+                bool hasSnappedValue = GraphValueNode(
+                    graph,
+                    node,
+                    AutomationValueSlotKind.Pass) != null;
                 if (IsEsuOwnedNativeNode(node))
                 {
                     if (!TryGetBoundTargetBlock(node, out _))
@@ -2209,6 +3233,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
                 if (!hasIncomingSignal && !hasSnappedValue)
                     yield return nodeName + " has no incoming signal. Snap a value block into the value socket or place a readable block directly above this setter.";
+                if (hasIncomingSignal && hasSnappedValue)
+                    yield return nodeName + " has both a stack signal and a value socket signal; remove one input path for unambiguous lowering.";
                 yield break;
             }
 
@@ -2227,7 +3253,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsLogicGateKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first boolean input; place a read/value-producing block above it or snap/wire one into its " + LogicFirstInputLabel(node.Kind) + " socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2244,7 +3270,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsFuzzyThresholdKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no signal to compare; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2256,7 +3282,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsMaxMinKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first numeric input; place a read/value-producing block above it or snap/wire one into its a socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2270,7 +3296,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 IsMathEvaluatorKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2281,7 +3307,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node.NativeComponent is Clamp)
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2293,7 +3319,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 node.Kind == AutomationNodeKind.Smooth)
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2306,6 +3332,108 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 yield return nodeName + " has no action blocks inside its body.";
             }
+        }
+
+        private static IEnumerable<string> ImportedNativeInputConflictIssues(
+            AutomationGraph graph,
+            AutomationGraphNode node,
+            string nodeName)
+        {
+            if (graph == null || node == null)
+                yield break;
+
+            List<AutomationGraphConnection> importedInputs = ImportedNativeConnections(graph)
+                .Where(connection =>
+                    connection != null &&
+                    ReferenceEquals(connection.To, node) &&
+                    (connection.Kind == AutomationGraphConnectionKind.Stack ||
+                     connection.Kind == AutomationGraphConnectionKind.Value))
+                .ToList();
+            if (importedInputs.Count == 0)
+                yield break;
+
+            List<AutomationGraphConnection> editableInputs = graph.Connections
+                .Where(connection =>
+                    connection != null &&
+                    ReferenceEquals(connection.To, node) &&
+                    (connection.Kind == AutomationGraphConnectionKind.Stack ||
+                     connection.Kind == AutomationGraphConnectionKind.Value))
+                .ToList();
+            foreach (AutomationGraphConnection imported in importedInputs)
+            {
+                int importedInput = NativeInputIdentity(node.Kind, imported);
+                foreach (AutomationGraphConnection editable in editableInputs)
+                {
+                    if (ReferenceEquals(imported.From, editable.From) ||
+                        imported.FromNodeId == editable.FromNodeId ||
+                        importedInput != NativeInputIdentity(node.Kind, editable))
+                    {
+                        continue;
+                    }
+
+                    yield return nodeName + " " +
+                                 ValueSlotLabel(node.Kind, editable.SlotKind) +
+                                 " input is already owned by a read-only imported vanilla wire; remove that wire in the native breadboard editor before replacing it.";
+                }
+            }
+        }
+
+        private static int NativeInputIdentity(
+            AutomationNodeKind hostKind,
+            AutomationGraphConnection connection)
+        {
+            if (connection == null)
+                return int.MinValue;
+
+            return NativeInputIdentity(
+                hostKind,
+                connection.Kind,
+                connection.SlotKind);
+        }
+
+        private static int NativeInputIdentity(
+            AutomationNodeKind hostKind,
+            AutomationGraphConnectionKind connectionKind,
+            AutomationValueSlotKind slotKind)
+        {
+
+            if (connectionKind == AutomationGraphConnectionKind.Stack)
+            {
+                return hostKind == AutomationNodeKind.IfCondition ||
+                       hostKind == AutomationNodeKind.IfLessThan
+                    ? 100
+                    : 0;
+            }
+
+            switch (slotKind)
+            {
+                case AutomationValueSlotKind.Pass:
+                    return 0;
+                case AutomationValueSlotKind.LogicB:
+                case AutomationValueSlotKind.MathB:
+                    return 1;
+                default:
+                    return 200 + (int)slotKind;
+            }
+        }
+
+        private static bool ImportedNativeInputOccupied(
+            AutomationGraph graph,
+            AutomationGraphNode host,
+            AutomationGraphConnectionKind connectionKind,
+            AutomationValueSlotKind slotKind)
+        {
+            if (graph == null || host == null)
+                return false;
+
+            int inputIdentity = NativeInputIdentity(
+                host.Kind,
+                connectionKind,
+                slotKind);
+            return ImportedNativeConnections(graph).Any(connection =>
+                connection != null &&
+                ReferenceEquals(connection.To, host) &&
+                NativeInputIdentity(host.Kind, connection) == inputIdentity);
         }
 
         private IEnumerable<string> StagedNodeReadinessIssues(
@@ -2331,13 +3459,18 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (node.Kind == AutomationNodeKind.OutputSetter)
             {
                 bool hasIncomingSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedValue = !hasIncomingSignal && GraphValueNode(graph, node) != null;
+                bool hasSnappedValue = GraphValueNode(
+                    graph,
+                    node,
+                    AutomationValueSlotKind.Pass) != null;
                 if (!TryGetBoundTargetBlock(node, out _))
                     yield return nodeName + " has no staged output target binding.";
                 if (!StagedNodeHasResolvedProperty(node))
                     yield return nodeName + " has no writable native property selected.";
                 if (!hasIncomingSignal && !hasSnappedValue)
                     yield return nodeName + " has no incoming signal. Snap a value block into the value socket or place a readable block directly above this setter.";
+                if (hasIncomingSignal && hasSnappedValue)
+                    yield return nodeName + " has both a stack signal and a value socket signal; remove one input path for unambiguous lowering.";
                 yield break;
             }
 
@@ -2356,7 +3489,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (IsLogicGateKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first boolean input; place a read/value-producing block above it or snap/wire one into its " + LogicFirstInputLabel(node.Kind) + " socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2372,7 +3505,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (IsFuzzyThresholdKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no signal to compare; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2383,7 +3516,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (IsMaxMinKind(node.Kind))
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no first numeric input; place a read/value-producing block above it or snap/wire one into its a socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2398,7 +3531,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 node.Kind == AutomationNodeKind.Smooth)
             {
                 bool hasStackSignal = PreviousFlowNode(graph, node) != null;
-                bool hasSnappedSource = !hasStackSignal && GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
+                bool hasSnappedSource = GraphValueNode(graph, node, AutomationValueSlotKind.Pass) != null;
                 if (!hasStackSignal && !hasSnappedSource)
                     yield return nodeName + " has no input signal; place a read/value-producing block above it or snap/wire one into its input socket.";
                 if (hasStackSignal && hasSnappedSource)
@@ -2449,6 +3582,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return null;
 
             return GraphConnections(graph, AutomationGraphConnectionKind.Stack)
+                .Concat(ImportedNativeConnections(graph).Where(connection =>
+                    connection?.Kind == AutomationGraphConnectionKind.Stack))
                 .FirstOrDefault(connection => ReferenceEquals(connection.To, node))
                 ?.From;
         }
@@ -2461,6 +3596,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return null;
 
             return GraphConnections(graph, AutomationGraphConnectionKind.Stack)
+                .Concat(ImportedNativeConnections(graph).Where(connection =>
+                    connection?.Kind == AutomationGraphConnectionKind.Stack))
                 .FirstOrDefault(connection => ReferenceEquals(connection.From, node))
                 ?.To;
         }
@@ -2702,15 +3839,20 @@ namespace DecoLimitLifter.AutomationBuilderMode
             NativeBreadboardSnapshot snapshot,
             CircuitComponent component)
         {
-            AutomationNodeKind kind = NativeKind(component);
-            Rect rect = NativeComponentRect(component);
+            NativeOwnerRecord owner = snapshot?.OwnerRecords
+                .FirstOrDefault(record => record?.Target != null &&
+                                          record.ComponentId == component.UniqueId);
+            AutomationNodeKind kind = owner?.Kind ?? NativeKind(component);
+            Rect rect = NativeComponentRect(component, kind);
             var node = new AutomationGraphNode(
                 NativeGraphNodeId(component),
                 kind,
                 rect,
-                NativeNodeLabel(component),
-                NativeNodeProperty(component),
-                NativeNodeValue(component),
+                kind == AutomationNodeKind.Forever ? "Forever" : NativeNodeLabel(component),
+                kind == AutomationNodeKind.Forever ? "body" : NativeNodeProperty(component),
+                kind == AutomationNodeKind.Forever && component is NativeComment foreverComment
+                    ? NativeForeverDisplayText(foreverComment.InputValue.Us)
+                    : NativeNodeValue(component),
                 component);
             if (component is GenericBlockGetter getter)
             {
@@ -2778,7 +3920,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 case AutomationNodeKind.Smooth:
                     return CreateNativeDelay("0.25s");
                 case AutomationNodeKind.Forever:
-                    return CreateNativeComment("Forever: native breadboard evaluates continuously");
+                    return CreateNativeComment(NativeForeverMarkerText("native breadboard evaluates continuously"));
                 case AutomationNodeKind.Comment:
                     return CreateNativeComment("Note");
                 default:
@@ -2853,9 +3995,11 @@ namespace DecoLimitLifter.AutomationBuilderMode
             string value,
             float fallback)
         {
-            List<float> numbers = ExtractFloatTokens(value).ToList();
-            return numbers.Count > 0
-                ? numbers[0]
+            return TryParseLabeledAutomationFloat(
+                    value,
+                    "threshold",
+                    out float threshold)
+                ? threshold
                 : fallback;
         }
 
@@ -2914,7 +4058,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             marker.ScaleWithZoom.Us = false;
             marker.OutlineColor.Us = new Color(0f, 0f, 0f, 0f);
             ApplyNativeNodeRect(marker, NativeOwnerMarkerRect(component));
-            breadboard.NewPackage(marker);
+            new AddComponentCommand(breadboard, marker).Execute();
         }
 
         private static Rect NativeOwnerMarkerRect(CircuitComponent component)
@@ -2928,16 +4072,29 @@ namespace DecoLimitLifter.AutomationBuilderMode
             CircuitComponent component,
             AutomationNodeKind kind)
         {
-            return NativeOwnerMarkerPrefix +
-                   "v1|component=" +
-                   component.UniqueId.ToString(CultureInfo.InvariantCulture) +
-                   "|kind=" +
-                   kind;
+            return NativeOwnerMarkerText(component?.UniqueId ?? 0u, kind);
+        }
+
+        private static string NativeOwnerMarkerText(
+            uint componentId,
+            AutomationNodeKind kind) =>
+            NativeOwnerMarkerPrefix +
+            "v1|component=" +
+            componentId.ToString(CultureInfo.InvariantCulture) +
+            "|kind=" +
+            kind;
+
+        internal static string RewriteNativeOwnerMarkerComponentId(
+            string markerText,
+            uint componentId)
+        {
+            return TryParseNativeOwnerMarkerText(markerText, out _, out AutomationNodeKind kind)
+                ? NativeOwnerMarkerText(componentId, kind)
+                : markerText;
         }
 
         private static bool IsNativeOwnerMarker(CircuitComponent component) =>
-            component is NativeComment comment &&
-            (comment.InputValue.Us ?? string.Empty).StartsWith(NativeOwnerMarkerPrefix, StringComparison.Ordinal);
+            TryParseNativeOwnerMarker(component, out _, out _);
 
         private static IEnumerable<NativeOwnerRecord> NativeOwnerRecords(NativeBreadBoard breadboard)
         {
@@ -3004,28 +4161,59 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
 
             string text = comment.InputValue.Us ?? string.Empty;
-            if (!text.StartsWith(NativeOwnerMarkerPrefix, StringComparison.Ordinal))
+            if (!TryParseNativeOwnerMarkerText(text, out componentId, out kind))
                 return false;
 
-            string[] parts = text.Substring(NativeOwnerMarkerPrefix.Length)
-                .Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (string part in parts)
+            try
             {
-                if (part.StartsWith("component=", StringComparison.OrdinalIgnoreCase))
-                {
-                    uint.TryParse(
-                        part.Substring("component=".Length),
-                        NumberStyles.Integer,
-                        CultureInfo.InvariantCulture,
-                        out componentId);
-                }
-                else if (part.StartsWith("kind=", StringComparison.OrdinalIgnoreCase))
-                {
-                    Enum.TryParse(part.Substring("kind=".Length), out kind);
-                }
+                return comment.ClipText.Us &&
+                       !comment.ScaleWithZoom.Us &&
+                       comment.OutlineColor.Us.a <= 0.001f;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal static bool TryParseNativeOwnerMarkerText(
+            string text,
+            out uint componentId,
+            out AutomationNodeKind kind)
+        {
+            componentId = 0u;
+            kind = AutomationNodeKind.Comment;
+            string value = text ?? string.Empty;
+            if (!value.StartsWith(NativeOwnerMarkerPrefix, StringComparison.Ordinal))
+                return false;
+
+            string[] parts = value.Substring(NativeOwnerMarkerPrefix.Length)
+                .Split(new[] { '|' }, StringSplitOptions.None);
+            if (parts.Length != 3 ||
+                !string.Equals(parts[0], "v1", StringComparison.Ordinal) ||
+                !parts[1].StartsWith("component=", StringComparison.Ordinal) ||
+                !parts[2].StartsWith("kind=", StringComparison.Ordinal))
+            {
+                return false;
             }
 
-            return componentId != 0u;
+            bool componentParsed = uint.TryParse(
+                parts[1].Substring("component=".Length),
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out componentId);
+            bool kindParsed = Enum.TryParse(
+                parts[2].Substring("kind=".Length),
+                ignoreCase: false,
+                out kind);
+            if (!componentParsed ||
+                !kindParsed ||
+                !CanLowerStagedNodeKind(kind))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private bool TryGetSelectedNativeBreadboard(out NativeBreadBoard breadboard)
@@ -3180,6 +4368,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 context.Warn("Auto-name was normalized by vanilla from " + candidate + " to " + stored + "; using stored name for exact filtering.");
             }
 
+            _nativeApplyNameChanges.Add(
+                new NativeBlockNameChange(target, existing, stored));
+
             context.Warn("Auto-named linked block '" + previousName + "' as " + stored + " for exact vanilla filtering.");
             return stored;
         }
@@ -3195,6 +4386,15 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 return string.Empty;
             }
+        }
+
+        private bool RestoreNativeApplyBlockNames()
+        {
+            bool restored = true;
+            foreach (NativeBlockNameChange change in _nativeApplyNameChanges.AsEnumerable().Reverse())
+                restored &= change?.RestoreIfUnchanged() != false;
+            _nativeApplyNameChanges.Clear();
+            return restored;
         }
 
         private static string GenerateStableBlockName(Block target)
@@ -3552,7 +4752,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         private static Rect NativeComponentRect(CircuitComponent component)
         {
-            AutomationNodeKind kind = NativeKind(component);
+            return NativeComponentRect(component, NativeKind(component));
+        }
+
+        private static Rect NativeComponentRect(
+            CircuitComponent component,
+            AutomationNodeKind kind)
+        {
             bool valueFootprint = NativeComponentUsesValueFootprint(component);
             float minWidth = valueFootprint
                 ? GraphValueNodeWidth
@@ -3599,8 +4805,10 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return NativeFuzzyThresholdKind(fuzzyThreshold);
             if (component is MaxMin maxMin)
                 return NativeMaxMinKind(maxMin);
-            if (component is ConstantInput)
-                return AutomationNodeKind.Constant;
+            if (component is ConstantInput constant)
+                return constant.Type.Us == ConstantInput.ConstantType.ItsAFloat
+                    ? AutomationNodeKind.Constant
+                    : AutomationNodeKind.NativeUnsupported;
             if (component is RandomInput)
                 return AutomationNodeKind.Random;
             if (component is Clamp)
@@ -3613,7 +4821,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     : AutomationNodeKind.Comment;
             if (component is Evaluator evaluator)
                 return NativeEvaluatorKind(evaluator);
-            return AutomationNodeKind.Comment;
+            return AutomationNodeKind.NativeUnsupported;
         }
 
         private static bool IsSupportedAutomationNativeComponent(CircuitComponent component)
@@ -3629,7 +4837,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 component is LogicGate ||
                 component is FuzzyThreshold ||
                 component is MaxMin ||
-                component is ConstantInput ||
                 component is RandomInput ||
                 component is Clamp ||
                 component is Delay ||
@@ -3637,6 +4844,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
             {
                 return true;
             }
+
+            if (component is ConstantInput constant)
+                return constant.Type.Us == ConstantInput.ConstantType.ItsAFloat;
 
             return component is Evaluator evaluator &&
                    IsSupportedNativeEvaluator(evaluator);
@@ -3754,11 +4964,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
             string operand = expression.Substring(prefix.Length);
             return string.Equals(operand, "b", StringComparison.Ordinal) ||
-                   float.TryParse(
-                       operand,
-                       NumberStyles.Float,
-                       CultureInfo.InvariantCulture,
-                       out _);
+                   TryParseFiniteAutomationFloat(operand, out _);
         }
 
         private static string CompactNativeExpression(string expression)
@@ -3779,23 +4985,23 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 if (NativeSwitchKind(switchComponent) == AutomationNodeKind.IfCondition)
                     return "If true";
 
-                return "Switch > " + switchComponent.Threshold.Us.ToString("0.###", CultureInfo.InvariantCulture);
+                return "Switch > " + switchComponent.Threshold.Us.ToString("G9", CultureInfo.InvariantCulture);
             }
             if (component is LogicGate logicGate)
                 return "Logic " + logicGate.SelectedGate.Us;
             if (component is FuzzyThreshold fuzzyThreshold)
                 return (fuzzyThreshold.Above.Us ? "Above " : "Below ") +
-                       FuzzyThresholdValue(fuzzyThreshold).ToString("0.###", CultureInfo.InvariantCulture);
+                       FuzzyThresholdValue(fuzzyThreshold).ToString("G9", CultureInfo.InvariantCulture);
             if (component is MaxMin maxMin)
                 return MaxMinName(NativeMaxMinKind(maxMin));
             if (component is Evaluator evaluator)
                 return evaluator.Expression.Us;
             if (component is ConstantInput constant)
-                return "Constant " + constant.InputValue.Us.ToString("0.###", CultureInfo.InvariantCulture);
+                return "Constant " + constant.InputValue.Us.ToString("G9", CultureInfo.InvariantCulture);
             if (component is RandomInput random)
                 return "Random " +
-                       random.RandomLimits.Lower.ToString("0.###", CultureInfo.InvariantCulture) + ".." +
-                       random.RandomLimits.Upper.ToString("0.###", CultureInfo.InvariantCulture);
+                       random.RandomLimits.Lower.ToString("G9", CultureInfo.InvariantCulture) + ".." +
+                       random.RandomLimits.Upper.ToString("G9", CultureInfo.InvariantCulture);
             if (component is NativeComment comment)
             {
                 if (IsForeverComment(comment.InputValue.Us))
@@ -3852,9 +5058,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     return SwitchValueText(0.5f, switchComponent.FailValue.Us);
 
                 return "threshold " +
-                       switchComponent.Threshold.Us.ToString("0.###", CultureInfo.InvariantCulture) +
+                       switchComponent.Threshold.Us.ToString("G9", CultureInfo.InvariantCulture) +
                        " else " +
-                       switchComponent.FailValue.Us.ToString("0.###", CultureInfo.InvariantCulture);
+                       switchComponent.FailValue.Us.ToString("G9", CultureInfo.InvariantCulture);
             }
             if (component is LogicGate logicGate)
                 return logicGate.SelectedGate.Us.ToString();
@@ -3865,17 +5071,19 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (component is Evaluator evaluator)
                 return evaluator.Expression.Us;
             if (component is ConstantInput constant)
-                return constant.InputValue.Us.ToString("0.###", CultureInfo.InvariantCulture);
+                return constant.InputValue.Us.ToString("G9", CultureInfo.InvariantCulture);
             if (component is RandomInput random)
-                return random.RandomLimits.Lower.ToString("0.###", CultureInfo.InvariantCulture) + ".." +
-                       random.RandomLimits.Upper.ToString("0.###", CultureInfo.InvariantCulture);
+                return random.RandomLimits.Lower.ToString("G9", CultureInfo.InvariantCulture) + ".." +
+                       random.RandomLimits.Upper.ToString("G9", CultureInfo.InvariantCulture);
             if (component is Clamp clamp)
-                return clamp.MinMax.Lower.ToString("0.###", CultureInfo.InvariantCulture) + ".." +
-                       clamp.MinMax.Upper.ToString("0.###", CultureInfo.InvariantCulture);
+                return clamp.MinMax.Lower.ToString("G9", CultureInfo.InvariantCulture) + ".." +
+                       clamp.MinMax.Upper.ToString("G9", CultureInfo.InvariantCulture);
             if (component is Delay delay)
-                return delay.DelayTime.Us.ToString("0.###", CultureInfo.InvariantCulture) + "s";
+                return delay.DelayTime.Us.ToString("G9", CultureInfo.InvariantCulture) + "s";
             if (component is NativeComment comment)
-                return comment.InputValue.Us;
+                return IsForeverComment(comment.InputValue.Us)
+                    ? NativeForeverDisplayText(comment.InputValue.Us)
+                    : comment.InputValue.Us;
             return string.Empty;
         }
 
@@ -4166,9 +5374,26 @@ namespace DecoLimitLifter.AutomationBuilderMode
 
         private static bool IsForeverComment(string text)
         {
-            string normalized = NormalizeTokenText(text);
-            return normalized.StartsWith("forever", StringComparison.Ordinal) ||
-                   normalized.Contains("nativebreadboardevaluatescontinuously");
+            return (text ?? string.Empty).StartsWith(
+                NativeForeverMarkerPrefix,
+                StringComparison.Ordinal);
+        }
+
+        private static string NativeForeverMarkerText(string displayText)
+        {
+            string value = displayText ?? string.Empty;
+            if (IsForeverComment(value))
+                return value;
+
+            return NativeForeverMarkerPrefix + value;
+        }
+
+        private static string NativeForeverDisplayText(string markerText)
+        {
+            string value = markerText ?? string.Empty;
+            return IsForeverComment(value)
+                ? value.Substring(NativeForeverMarkerPrefix.Length)
+                : value;
         }
 
         private static string NativePropertyLabel(GenericBlockGetter getter)
@@ -4502,10 +5727,9 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return Enumerable.Empty<CircuitComponent>();
             }
 
-            Rect body = ControlBodyRect(NativeComponentRect(host), NativeKind(host));
             return components
                 .Where(component => component != null && !ReferenceEquals(component, host) && IsBodyFlowComponent(component))
-                .Where(component => body.Contains(NativeComponentRect(component).center))
+                .Where(component => ReferenceEquals(NativeBodyParent(components, component), host))
                 .OrderBy(component => component.Y.Us)
                 .ThenBy(component => component.X.Us);
         }
@@ -4517,20 +5741,23 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (components == null || component == null || !IsBodyFlowComponent(component))
                 return null;
 
-            foreach (CircuitComponent host in components)
-            {
-                if (host == null ||
-                    ReferenceEquals(host, component) ||
-                    !AcceptsControlBody(NativeKind(host)))
+            Vector2 center = NativeComponentRect(component).center;
+            return components
+                .Where(host => host != null &&
+                               !ReferenceEquals(host, component) &&
+                               AcceptsControlBody(NativeKind(host)))
+                .Select(host => new
                 {
-                    continue;
-                }
-
-                if (ControlBodyRect(NativeComponentRect(host), NativeKind(host)).Contains(NativeComponentRect(component).center))
-                    return host;
-            }
-
-            return null;
+                    Host = host,
+                    Body = ControlBodyRect(NativeComponentRect(host), NativeKind(host))
+                })
+                .Where(candidate => candidate.Body.Contains(center))
+                .OrderBy(candidate => Mathf.Max(0f, candidate.Body.width) * Mathf.Max(0f, candidate.Body.height))
+                .ThenBy(candidate => candidate.Body.width)
+                .ThenBy(candidate => candidate.Body.height)
+                .ThenBy(candidate => candidate.Host.UniqueId)
+                .Select(candidate => candidate.Host)
+                .FirstOrDefault();
         }
 
         private static bool IsBodyFlowComponent(CircuitComponent component)
@@ -4673,6 +5900,40 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return true;
         }
 
+        private static bool TryApplyClampBounds(
+            Clamp clamp,
+            CircuitComponent minimumComponent,
+            CircuitComponent maximumComponent)
+        {
+            if (clamp == null)
+                return false;
+
+            float lower = clamp.MinMax.Lower;
+            float upper = clamp.MinMax.Upper;
+            if (minimumComponent != null &&
+                !TryReadValueComponentFloat(minimumComponent, out lower))
+            {
+                return false;
+            }
+
+            if (maximumComponent != null &&
+                !TryReadValueComponentFloat(maximumComponent, out upper))
+            {
+                return false;
+            }
+
+            if (lower > upper)
+            {
+                float swap = lower;
+                lower = upper;
+                upper = swap;
+            }
+
+            clamp.MinMax.Lower = lower;
+            clamp.MinMax.Upper = upper;
+            return true;
+        }
+
         private static bool TryApplyClampMaximum(
             Clamp clamp,
             CircuitComponent valueComponent)
@@ -4696,12 +5957,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             if (delay == null ||
                 valueComponent == null ||
-                !TryReadValueComponentFloat(valueComponent, out float value))
+                !TryReadValueComponentFloat(valueComponent, out float value) ||
+                value < 0f)
             {
                 return false;
             }
 
-            delay.DelayTime.Us = Mathf.Max(0f, value);
+            delay.DelayTime.Us = value;
             return true;
         }
 
@@ -4713,7 +5975,7 @@ namespace DecoLimitLifter.AutomationBuilderMode
             if (component is ConstantInput constant)
             {
                 value = constant.InputValue.Us;
-                return true;
+                return IsFiniteAutomationFloat(value);
             }
 
             return false;
@@ -4725,6 +5987,98 @@ namespace DecoLimitLifter.AutomationBuilderMode
         {
             component = node?.NativeComponent as CircuitComponent;
             return component != null;
+        }
+
+        private void AppendImportedRawNativeConnections(
+            IReadOnlyList<AutomationGraphNode> nativeNodes,
+            List<AutomationGraphConnection> editableConnections,
+            List<AutomationGraphConnection> importedConnections)
+        {
+            if (nativeNodes == null || importedConnections == null)
+                return;
+
+            var nodesByComponent = nativeNodes
+                .Where(node => node?.NativeComponent is CircuitComponent)
+                .GroupBy(node => (CircuitComponent)node.NativeComponent)
+                .ToDictionary(group => group.Key, group => group.First());
+            foreach (AutomationGraphNode targetNode in nativeNodes)
+            {
+                if (!(targetNode?.NativeComponent is CircuitComponent target) ||
+                    target.BInputs == null)
+                {
+                    continue;
+                }
+
+                for (int inputIndex = 0; inputIndex < target.BInputs.Count; inputIndex++)
+                {
+                    BInput input = target.BInputs[inputIndex];
+                    CircuitComponent source = input?.OurOutput?.IsLatched == true
+                        ? input.OurOutput.Them?.OurComponent
+                        : null;
+                    if (source == null ||
+                        !nodesByComponent.TryGetValue(source, out AutomationGraphNode sourceNode) ||
+                        IsEsuOwnedNativeNode(sourceNode) && IsEsuOwnedNativeNode(targetNode))
+                    {
+                        continue;
+                    }
+
+                    DescribeImportedNativeInput(
+                        targetNode,
+                        target,
+                        input,
+                        inputIndex,
+                        out AutomationGraphConnectionKind kind,
+                        out AutomationValueSlotKind slotKind);
+                    AddNativeGraphConnection(
+                        editableConnections,
+                        importedConnections,
+                        new AutomationGraphConnection(
+                            kind,
+                            sourceNode,
+                            targetNode,
+                            slotKind,
+                            AutomationGraphWireOrigin.NativeImported,
+                            nativeInputIndex: inputIndex));
+                }
+            }
+        }
+
+        private static void DescribeImportedNativeInput(
+            AutomationGraphNode targetNode,
+            CircuitComponent target,
+            BInput input,
+            int inputIndex,
+            out AutomationGraphConnectionKind kind,
+            out AutomationValueSlotKind slotKind)
+        {
+            kind = AutomationGraphConnectionKind.Stack;
+            slotKind = AutomationValueSlotKind.Pass;
+            if (target is NativeSwitch switchComponent)
+            {
+                if (ReferenceEquals(input, switchComponent.Pass))
+                    kind = AutomationGraphConnectionKind.Value;
+                return;
+            }
+
+            if (target is LogicGate && inputIndex == 1)
+            {
+                kind = AutomationGraphConnectionKind.Value;
+                slotKind = AutomationValueSlotKind.LogicB;
+                return;
+            }
+
+            if (target is Evaluator && inputIndex == 1)
+            {
+                kind = AutomationGraphConnectionKind.Value;
+                slotKind = MathOperandSlotKind(targetNode.Kind);
+                return;
+            }
+
+            if (target is MaxMin && inputIndex == 1)
+            {
+                kind = AutomationGraphConnectionKind.Value;
+                slotKind = AutomationValueSlotKind.MathB;
+            }
         }
 
         private static bool NativeStackConnectionExists(
@@ -4739,7 +6093,16 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return false;
             }
 
-            return IsNativeConnected(fromComponent, toComponent);
+            if (toComponent is NativeSwitch switchComponent)
+                return IsNativeConnectedToInput(fromComponent, switchComponent.Switcher);
+
+            // Secondary/native-specialised ports must never be reinterpreted as
+            // the Scratch stack input. Opaque vanilla blocks keep their exact
+            // native port topology read-only instead of guessing a primary port.
+            if (!IsSupportedAutomationNativeComponent(toComponent))
+                return false;
+
+            return IsNativeConnectedToInputAt(fromComponent, toComponent, 0);
         }
 
         private static bool NativeValueConnectionExists(
@@ -4808,28 +6171,13 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ref int connected,
             ref int alreadyConnected)
         {
-            if (board == null ||
-                from == null ||
-                to == null ||
-                !ComponentProducesOutput(from) ||
-                !ComponentAcceptsInput(to))
-            {
-                return false;
-            }
-
-            if (IsNativeConnected(from, to))
-            {
-                alreadyConnected++;
-                return true;
-            }
-
-            if (board.Connect(from, to))
-            {
-                connected++;
-                return true;
-            }
-
-            return false;
+            return TryConnectComponentToInputAt(
+                board,
+                from,
+                to,
+                0,
+                ref connected,
+                ref alreadyConnected);
         }
 
         private static bool TryConnectComponentToInput(
@@ -4853,7 +6201,23 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 return true;
             }
 
-            board.ConnectComponentToInput(input, from);
+            // A remaining latch was not removed by ESU ownership cleanup, so
+            // it belongs to imported vanilla data. Never replace that wire.
+            if (input.OurOutput?.IsLatched == true)
+                return false;
+
+            AOutput output = from.AOutputs?.Us.FirstOrDefault();
+            if (output == null)
+                return false;
+
+            try
+            {
+                new CreateConnectionCommand(board, output, input).Execute();
+            }
+            catch
+            {
+                return false;
+            }
             if (IsNativeConnectedToInput(from, input))
             {
                 connected++;
@@ -4871,7 +6235,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
             ref int connected,
             ref int alreadyConnected)
         {
-            EnsureNativeInputCount(to, inputIndex + 1);
             if (to == null ||
                 inputIndex < 0 ||
                 to.BInputs == null ||
@@ -4886,20 +6249,6 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 to.BInputs[inputIndex],
                 ref connected,
                 ref alreadyConnected);
-        }
-
-        private static void EnsureNativeInputCount(
-            CircuitComponent component,
-            int count)
-        {
-            if (component == null || count <= 0 || component.BInputs == null)
-                return;
-
-            while (component.BInputs.Count < count &&
-                   component.BInputs.Count < component.MaxInputs)
-            {
-                component.CreateInput(sync: true);
-            }
         }
 
         private static bool IsNativeConnected(
@@ -5409,7 +6758,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     (text ?? string.Empty).Trim(),
                     NumberStyles.Float,
                     CultureInfo.InvariantCulture,
-                    out float value))
+                    out float value) &&
+                IsFiniteAutomationFloat(value))
             {
                 return value;
             }
@@ -5417,11 +6767,291 @@ namespace DecoLimitLifter.AutomationBuilderMode
             return fallback;
         }
 
+        internal static bool TryValidateAutomationLiteral(
+            AutomationNodeKind kind,
+            string text,
+            out string normalized,
+            out string issue)
+        {
+            normalized = text ?? string.Empty;
+            issue = null;
+            switch (kind)
+            {
+                case AutomationNodeKind.Constant:
+                    if (!TryParseFiniteAutomationFloat(text, out float constant))
+                        return InvalidLiteral("number must be one finite invariant value", out issue);
+                    normalized = FormatAutomationFloat(constant);
+                    return true;
+
+                case AutomationNodeKind.Random:
+                case AutomationNodeKind.Clamp:
+                    if (!TryParseFiniteAutomationRange(text, out float lower, out float upper))
+                        return InvalidLiteral("range must contain two finite values, for example 0..1", out issue);
+                    if (lower > upper)
+                    {
+                        float swap = lower;
+                        lower = upper;
+                        upper = swap;
+                    }
+                    normalized = FormatAutomationFloat(lower) + ".." + FormatAutomationFloat(upper);
+                    return true;
+
+                case AutomationNodeKind.Smooth:
+                    string secondsText = TrimSingleSecondsSuffix(text);
+                    if (!TryParseFiniteAutomationFloat(secondsText, out float seconds) || seconds < 0f)
+                        return InvalidLiteral("seconds must be a finite value greater than or equal to zero", out issue);
+                    normalized = FormatAutomationFloat(seconds) + "s";
+                    return true;
+
+                case AutomationNodeKind.IfCondition:
+                    int conditionIndex = 0;
+                    string conditionText = text ?? string.Empty;
+                    SkipAutomationWhitespace(conditionText, ref conditionIndex);
+                    if (AutomationLabelAt(conditionText, conditionIndex, "threshold"))
+                    {
+                        if (!TryConsumeLabeledAutomationFloat(
+                                conditionText,
+                                ref conditionIndex,
+                                "threshold",
+                                out float fixedThreshold) ||
+                            fixedThreshold != 0.5f)
+                        {
+                            return InvalidLiteral("If True threshold must remain exactly 0.5", out issue);
+                        }
+                    }
+                    if (!TryConsumeLabeledAutomationFloat(
+                            conditionText,
+                            ref conditionIndex,
+                            "else",
+                            out float conditionElse) ||
+                        !AutomationTextConsumed(conditionText, conditionIndex))
+                        return InvalidLiteral("else value must be finite", out issue);
+                    normalized = "threshold 0.5 else " + FormatAutomationFloat(conditionElse);
+                    return true;
+
+                case AutomationNodeKind.IfLessThan:
+                    int switchIndex = 0;
+                    string switchText = text ?? string.Empty;
+                    if (!TryConsumeLabeledAutomationFloat(
+                            switchText,
+                            ref switchIndex,
+                            "threshold",
+                            out float threshold) ||
+                        !TryConsumeLabeledAutomationFloat(
+                            switchText,
+                            ref switchIndex,
+                            "else",
+                            out float failValue) ||
+                        !AutomationTextConsumed(switchText, switchIndex))
+                    {
+                        return InvalidLiteral("threshold and else values must both be finite", out issue);
+                    }
+                    normalized = "threshold " + FormatAutomationFloat(threshold) +
+                                 " else " + FormatAutomationFloat(failValue);
+                    return true;
+
+                case AutomationNodeKind.CompareAboveThreshold:
+                case AutomationNodeKind.CompareBelowThreshold:
+                    int compareIndex = 0;
+                    string compareText = text ?? string.Empty;
+                    if (!TryConsumeLabeledAutomationFloat(
+                            compareText,
+                            ref compareIndex,
+                            "threshold",
+                            out float compareThreshold) ||
+                        !AutomationTextConsumed(compareText, compareIndex))
+                        return InvalidLiteral("threshold must be finite", out issue);
+                    normalized = "threshold " + FormatAutomationFloat(compareThreshold);
+                    return true;
+
+                case AutomationNodeKind.MathAdd:
+                case AutomationNodeKind.MathSubtract:
+                case AutomationNodeKind.MathMultiply:
+                    string compact = CompactNativeExpression(text);
+                    string operation = kind == AutomationNodeKind.MathAdd
+                        ? "+"
+                        : kind == AutomationNodeKind.MathSubtract ? "-" : "*";
+                    string prefix = "a" + operation;
+                    if (!compact.StartsWith(prefix, StringComparison.Ordinal))
+                        return InvalidLiteral("math expression must use the visible a " + operation + " value shape", out issue);
+                    string operandText = compact.Substring(prefix.Length);
+                    if (string.Equals(operandText, "b", StringComparison.Ordinal))
+                    {
+                        normalized = "a " + operation + " b";
+                        return true;
+                    }
+                    if (!TryParseFiniteAutomationFloat(operandText, out float operand))
+                        return InvalidLiteral("math operand must be finite", out issue);
+                    normalized = "a " + operation + " " + FormatAutomationFloat(operand);
+                    return true;
+
+                default:
+                    return true;
+            }
+        }
+
+        private static bool InvalidLiteral(
+            string message,
+            out string issue)
+        {
+            issue = message;
+            return false;
+        }
+
+        private static bool TryParseFiniteAutomationFloat(
+            string text,
+            out float value)
+        {
+            return float.TryParse(
+                       (text ?? string.Empty).Trim(),
+                       NumberStyles.Float,
+                       CultureInfo.InvariantCulture,
+                       out value) &&
+                   IsFiniteAutomationFloat(value);
+        }
+
+        private static bool TryParseFiniteAutomationRange(
+            string text,
+            out float lower,
+            out float upper)
+        {
+            lower = 0f;
+            upper = 0f;
+            string[] parts = (text ?? string.Empty)
+                .Split(new[] { "..", ",", ";" }, StringSplitOptions.None);
+            return parts.Length == 2 &&
+                   TryParseFiniteAutomationFloat(parts[0], out lower) &&
+                   TryParseFiniteAutomationFloat(parts[1], out upper);
+        }
+
+        private static bool TryParseLabeledAutomationFloat(
+            string text,
+            string label,
+            out float value)
+        {
+            value = 0f;
+            string source = text ?? string.Empty;
+            int start = source.IndexOf(label ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+                return false;
+
+            start += (label ?? string.Empty).Length;
+            while (start < source.Length &&
+                   (char.IsWhiteSpace(source[start]) || source[start] == ':' || source[start] == '='))
+            {
+                start++;
+            }
+
+            int end = start;
+            while (end < source.Length &&
+                   !char.IsWhiteSpace(source[end]) &&
+                   source[end] != ',' &&
+                   source[end] != ';')
+            {
+                end++;
+            }
+
+            return start < end &&
+                   TryParseFiniteAutomationFloat(source.Substring(start, end - start), out value);
+        }
+
+        private static bool TryConsumeLabeledAutomationFloat(
+            string text,
+            ref int index,
+            string label,
+            out float value)
+        {
+            value = 0f;
+            string source = text ?? string.Empty;
+            SkipAutomationWhitespace(source, ref index);
+            if (!AutomationLabelAt(source, index, label))
+                return false;
+
+            index += label.Length;
+            SkipAutomationWhitespace(source, ref index);
+            if (index < source.Length && (source[index] == ':' || source[index] == '='))
+            {
+                index++;
+                SkipAutomationWhitespace(source, ref index);
+            }
+
+            int start = index;
+            while (index < source.Length &&
+                   (char.IsDigit(source[index]) ||
+                    source[index] == '+' ||
+                    source[index] == '-' ||
+                    source[index] == '.' ||
+                    source[index] == 'e' ||
+                    source[index] == 'E'))
+            {
+                index++;
+            }
+
+            if (start == index ||
+                !TryParseFiniteAutomationFloat(source.Substring(start, index - start), out value))
+            {
+                return false;
+            }
+
+            return index >= source.Length || char.IsWhiteSpace(source[index]);
+        }
+
+        private static bool AutomationLabelAt(
+            string text,
+            int index,
+            string label)
+        {
+            string source = text ?? string.Empty;
+            string expected = label ?? string.Empty;
+            return index >= 0 &&
+                   index + expected.Length <= source.Length &&
+                   string.Compare(
+                       source,
+                       index,
+                       expected,
+                       0,
+                       expected.Length,
+                       StringComparison.OrdinalIgnoreCase) == 0;
+        }
+
+        private static bool AutomationTextConsumed(
+            string text,
+            int index)
+        {
+            string source = text ?? string.Empty;
+            SkipAutomationWhitespace(source, ref index);
+            return index == source.Length;
+        }
+
+        private static void SkipAutomationWhitespace(
+            string text,
+            ref int index)
+        {
+            string source = text ?? string.Empty;
+            index = Math.Max(0, index);
+            while (index < source.Length && char.IsWhiteSpace(source[index]))
+                index++;
+        }
+
+        private static string TrimSingleSecondsSuffix(string text)
+        {
+            string value = (text ?? string.Empty).Trim();
+            return value.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+                ? value.Substring(0, value.Length - 1).TrimEnd(Array.Empty<char>())
+                : value;
+        }
+
+        private static bool IsFiniteAutomationFloat(float value) =>
+            !float.IsNaN(value) && !float.IsInfinity(value);
+
+        private static string FormatAutomationFloat(float value) =>
+            value.ToString("G9", CultureInfo.InvariantCulture);
+
         private static float ParseSeconds(
             string text,
             float fallback)
         {
-            string cleaned = (text ?? string.Empty).Trim().TrimEnd('s', 'S');
+            string cleaned = TrimSingleSecondsSuffix(text);
             return ParseFloat(cleaned, fallback);
         }
 
@@ -5475,7 +7105,12 @@ namespace DecoLimitLifter.AutomationBuilderMode
             for (int index = 0; index <= value.Length; index++)
             {
                 char c = index < value.Length ? value[index] : ' ';
-                bool numeric = char.IsDigit(c) || c == '-' || c == '+' || c == '.';
+                bool numeric = char.IsDigit(c) ||
+                               c == '-' ||
+                               c == '+' ||
+                               c == '.' ||
+                               c == 'e' ||
+                               c == 'E';
                 if (numeric)
                 {
                     token.Add(c);
@@ -5491,7 +7126,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
                         candidate,
                         NumberStyles.Float,
                         CultureInfo.InvariantCulture,
-                        out float parsed))
+                    out float parsed) &&
+                    IsFiniteAutomationFloat(parsed))
                 {
                     yield return parsed;
                 }
@@ -5675,7 +7311,32 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     }
                     else if (component is ConstantInput constant)
                     {
+                        hash = hash * 31 + constant.Type.Us.GetHashCode();
                         hash = hash * 31 + constant.InputValue.Us.GetHashCode();
+                    }
+                    else if (component is NativeSwitch switchComponent)
+                    {
+                        hash = hash * 31 + switchComponent.Threshold.Us.GetHashCode();
+                        hash = hash * 31 + switchComponent.FailValue.Us.GetHashCode();
+                    }
+                    else if (component is LogicGate logicGate)
+                    {
+                        hash = hash * 31 + logicGate.SelectedGate.Us.GetHashCode();
+                        hash = hash * 31 + logicGate.TrueLogic.Us.GetHashCode();
+                    }
+                    else if (component is FuzzyThreshold fuzzyThreshold)
+                    {
+                        hash = hash * 31 + fuzzyThreshold.Above.Us.GetHashCode();
+                        hash = hash * 31 + fuzzyThreshold.ThresholdLimits.Lower.GetHashCode();
+                        hash = hash * 31 + fuzzyThreshold.ThresholdLimits.Upper.GetHashCode();
+                    }
+                    else if (component is MaxMin maxMin)
+                    {
+                        hash = hash * 31 + maxMin.SelectedOp.Us.GetHashCode();
+                    }
+                    else if (component is Evaluator evaluator)
+                    {
+                        hash = hash * 31 + (evaluator.Expression.Us ?? string.Empty).GetHashCode();
                     }
                     else if (component is RandomInput random)
                     {
@@ -5700,8 +7361,12 @@ namespace DecoLimitLifter.AutomationBuilderMode
                     {
                         if (component.BInputs != null)
                         {
+                            hash = hash * 31 + component.BInputs.Count;
+                            int inputIndex = 0;
                             foreach (BInput input in component.BInputs.Us)
                             {
+                                hash = hash * 31 + inputIndex++;
+                                hash = hash * 31 + (input?.OurOutput?.IsLatched == true ? 1 : 0);
                                 if (input?.OurOutput?.IsLatched == true)
                                     hash = hash * 31 + (input.OurOutput.Them?.OurComponent?.UniqueId ?? 0u).GetHashCode();
                             }
@@ -5761,6 +7426,93 @@ namespace DecoLimitLifter.AutomationBuilderMode
             internal CircuitComponent Marker { get; }
         }
 
+        private sealed class NativeRestoreOwnership
+        {
+            internal NativeRestoreOwnership(
+                uint originalTargetId,
+                CircuitComponent target,
+                CircuitComponent marker,
+                AutomationNodeKind kind)
+            {
+                OriginalTargetId = originalTargetId;
+                Target = target;
+                Marker = marker;
+                Kind = kind;
+            }
+
+            internal uint OriginalTargetId { get; }
+
+            internal CircuitComponent Target { get; }
+
+            internal CircuitComponent Marker { get; }
+
+            internal AutomationNodeKind Kind { get; }
+        }
+
+        private sealed class NativeRemovalBatchResult
+        {
+            private NativeRemovalBatchResult(
+                bool success,
+                int removedNodes,
+                int removedMarkers,
+                bool restored,
+                string detail,
+                IReadOnlyList<CircuitComponent> removedPackages)
+            {
+                Success = success;
+                RemovedNodes = removedNodes;
+                RemovedMarkers = removedMarkers;
+                Restored = restored;
+                Detail = detail;
+                RemovedPackages = removedPackages ?? Array.Empty<CircuitComponent>();
+            }
+
+            internal static NativeRemovalBatchResult Empty { get; } =
+                new NativeRemovalBatchResult(
+                    true,
+                    0,
+                    0,
+                    true,
+                    null,
+                    Array.Empty<CircuitComponent>());
+
+            internal bool Success { get; }
+
+            internal int RemovedNodes { get; }
+
+            internal int RemovedMarkers { get; }
+
+            internal bool Restored { get; }
+
+            internal string Detail { get; }
+
+            internal IReadOnlyList<CircuitComponent> RemovedPackages { get; }
+
+            internal static NativeRemovalBatchResult Completed(
+                int removedNodes,
+                int removedMarkers,
+                IReadOnlyList<CircuitComponent> removedPackages) =>
+                new NativeRemovalBatchResult(
+                    true,
+                    removedNodes,
+                    removedMarkers,
+                    true,
+                    null,
+                    removedPackages);
+
+            internal static NativeRemovalBatchResult Failed(
+                string detail,
+                bool restored,
+                IReadOnlyList<CircuitComponent> removedPackages = null) =>
+                new NativeRemovalBatchResult(
+                    false,
+                    0,
+                    0,
+                    restored,
+                    detail,
+                    removedPackages);
+        }
+
         private sealed class NativeLoweringResult
         {
             internal List<string> Errors { get; } = new List<string>();
@@ -5768,6 +7520,8 @@ namespace DecoLimitLifter.AutomationBuilderMode
             internal List<string> Warnings { get; } = new List<string>();
 
             internal List<string> Created { get; } = new List<string>();
+
+            internal List<CircuitComponent> CreatedComponents { get; } = new List<CircuitComponent>();
 
             internal int CreatedCount => Created.Count;
 
@@ -5813,6 +7567,312 @@ namespace DecoLimitLifter.AutomationBuilderMode
                 string trimmed = text.Trim();
                 if (!lines.Contains(trimmed))
                     lines.Add(trimmed);
+            }
+        }
+
+        private sealed class PreparedNativeNode
+        {
+            internal PreparedNativeNode(
+                AutomationGraphNode node,
+                CircuitComponent component,
+                string warningDetail)
+            {
+                Node = node;
+                Component = component;
+                WarningDetail = warningDetail;
+            }
+
+            internal AutomationGraphNode Node { get; }
+
+            internal CircuitComponent Component { get; }
+
+            internal string WarningDetail { get; }
+        }
+
+        private sealed class NativeInputConnectionState
+        {
+            internal NativeInputConnectionState(BInput input, AOutput output)
+            {
+                Input = input;
+                Output = output;
+            }
+
+            internal BInput Input { get; }
+
+            internal AOutput Output { get; }
+        }
+
+        private sealed class NativeComponentEditState
+        {
+            private NativeComponentEditState(
+                CircuitComponent component,
+                Action restore,
+                Func<bool> verify)
+            {
+                Component = component;
+                _restore = restore;
+                _verify = verify;
+            }
+
+            internal CircuitComponent Component { get; }
+
+            private readonly Action _restore;
+
+            private readonly Func<bool> _verify;
+
+            internal static NativeComponentEditState Capture(
+                CircuitComponent component)
+            {
+                if (component == null)
+                    return new NativeComponentEditState(null, null, null);
+
+                float x = component.X.Us;
+                float y = component.Y.Us;
+                float width = component.Width.Us;
+                float height = component.Height.Us;
+                Color outlineColor = component.OutlineColor.Us;
+                Action restoreSpecific = () => { };
+                Func<bool> verifySpecific = () => true;
+
+                if (component is GenericBlockGetter getter)
+                {
+                    Type blockType = getter.BlockType;
+                    string blockTypeName = getter.BlockTypeName.Us;
+                    string blockFilter = getter.BlockFilter.Us;
+                    uint readableAttributeId = getter.ReadableAttributeId.Us;
+                    uint blockSetId = getter.BlockSetId.Us;
+                    uint blockPropertyId = getter.BlockPropertyId.Us;
+                    var affectedBlocks = getter.PotentiallyAffectedBlocks.ToList();
+                    restoreSpecific = () =>
+                    {
+                        getter.BlockType = blockType;
+                        getter.BlockTypeName.Us = blockTypeName;
+                        getter.BlockFilter.Us = blockFilter;
+                        getter.ReadableAttributeId.Us = readableAttributeId;
+                        getter.BlockSetId.Us = blockSetId;
+                        getter.BlockPropertyId.Us = blockPropertyId;
+                        getter.PotentiallyAffectedBlocks.Clear();
+                        foreach (Block block in affectedBlocks)
+                            getter.PotentiallyAffectedBlocks.Add(block);
+                    };
+                    verifySpecific = () =>
+                        getter.BlockType == blockType &&
+                        string.Equals(getter.BlockTypeName.Us, blockTypeName, StringComparison.Ordinal) &&
+                        string.Equals(getter.BlockFilter.Us, blockFilter, StringComparison.Ordinal) &&
+                        getter.ReadableAttributeId.Us == readableAttributeId &&
+                        getter.BlockSetId.Us == blockSetId &&
+                        getter.BlockPropertyId.Us == blockPropertyId &&
+                        getter.PotentiallyAffectedBlocks.SequenceEqual(affectedBlocks);
+                }
+                else if (component is GenericBlockSetter setter)
+                {
+                    Type blockType = setter.BlockType;
+                    string blockTypeName = setter.BlockTypeName.Us;
+                    string blockFilter = setter.BlockFilter.Us;
+                    uint blockSetId = setter.BlockSetId.Us;
+                    uint blockPropertyId = setter.BlockPropertyId.Us;
+                    var affectedBlocks = setter.PotentiallyAffectedBlocks.ToList();
+                    restoreSpecific = () =>
+                    {
+                        setter.BlockType = blockType;
+                        setter.BlockTypeName.Us = blockTypeName;
+                        setter.BlockFilter.Us = blockFilter;
+                        setter.BlockSetId.Us = blockSetId;
+                        setter.BlockPropertyId.Us = blockPropertyId;
+                        setter.PotentiallyAffectedBlocks.Clear();
+                        foreach (BlockStub block in affectedBlocks)
+                            setter.PotentiallyAffectedBlocks.Add(block);
+                    };
+                    verifySpecific = () =>
+                        setter.BlockType == blockType &&
+                        string.Equals(setter.BlockTypeName.Us, blockTypeName, StringComparison.Ordinal) &&
+                        string.Equals(setter.BlockFilter.Us, blockFilter, StringComparison.Ordinal) &&
+                        setter.BlockSetId.Us == blockSetId &&
+                        setter.BlockPropertyId.Us == blockPropertyId &&
+                        setter.PotentiallyAffectedBlocks.SequenceEqual(affectedBlocks);
+                }
+                else if (component is Evaluator evaluator)
+                {
+                    string expression = evaluator.Expression.Us;
+                    restoreSpecific = () => evaluator.Expression.Us = expression;
+                    verifySpecific = () => string.Equals(
+                        evaluator.Expression.Us,
+                        expression,
+                        StringComparison.Ordinal);
+                }
+                else if (component is NativeSwitch switchComponent)
+                {
+                    float threshold = switchComponent.Threshold.Us;
+                    float failValue = switchComponent.FailValue.Us;
+                    restoreSpecific = () =>
+                    {
+                        switchComponent.Threshold.Us = threshold;
+                        switchComponent.FailValue.Us = failValue;
+                    };
+                    verifySpecific = () =>
+                        switchComponent.Threshold.Us == threshold &&
+                        switchComponent.FailValue.Us == failValue;
+                }
+                else if (component is LogicGate logicGate)
+                {
+                    GateType gate = logicGate.SelectedGate.Us;
+                    TrueType trueLogic = logicGate.TrueLogic.Us;
+                    restoreSpecific = () =>
+                    {
+                        logicGate.SelectedGate.Us = gate;
+                        logicGate.TrueLogic.Us = trueLogic;
+                    };
+                    verifySpecific = () =>
+                        logicGate.SelectedGate.Us == gate &&
+                        logicGate.TrueLogic.Us == trueLogic;
+                }
+                else if (component is FuzzyThreshold fuzzyThreshold)
+                {
+                    bool above = fuzzyThreshold.Above.Us;
+                    Vector2 limits = fuzzyThreshold.ThresholdLimits.Us;
+                    restoreSpecific = () =>
+                    {
+                        fuzzyThreshold.Above.Us = above;
+                        fuzzyThreshold.ThresholdLimits.Us = limits;
+                    };
+                    verifySpecific = () =>
+                        fuzzyThreshold.Above.Us == above &&
+                        fuzzyThreshold.ThresholdLimits.Us == limits;
+                }
+                else if (component is MaxMin maxMin)
+                {
+                    OpType operation = maxMin.SelectedOp.Us;
+                    restoreSpecific = () => maxMin.SelectedOp.Us = operation;
+                    verifySpecific = () => maxMin.SelectedOp.Us == operation;
+                }
+                else if (component is ConstantInput constant)
+                {
+                    ConstantInput.ConstantType type = constant.Type.Us;
+                    float value = constant.InputValue.Us;
+                    restoreSpecific = () =>
+                    {
+                        constant.Type.Us = type;
+                        constant.InputValue.Us = value;
+                    };
+                    verifySpecific = () =>
+                        constant.Type.Us == type &&
+                        constant.InputValue.Us == value;
+                }
+                else if (component is RandomInput random)
+                {
+                    Vector2 limits = random.RandomLimits.Us;
+                    restoreSpecific = () => random.RandomLimits.Us = limits;
+                    verifySpecific = () => random.RandomLimits.Us == limits;
+                }
+                else if (component is Clamp clamp)
+                {
+                    Vector2 limits = clamp.MinMax.Us;
+                    restoreSpecific = () => clamp.MinMax.Us = limits;
+                    verifySpecific = () => clamp.MinMax.Us == limits;
+                }
+                else if (component is Delay delay)
+                {
+                    float seconds = delay.DelayTime.Us;
+                    restoreSpecific = () => delay.DelayTime.Us = seconds;
+                    verifySpecific = () => delay.DelayTime.Us == seconds;
+                }
+                else if (component is NativeComment comment)
+                {
+                    string text = comment.InputValue.Us;
+                    bool clipText = comment.ClipText.Us;
+                    bool scaleWithZoom = comment.ScaleWithZoom.Us;
+                    restoreSpecific = () =>
+                    {
+                        comment.InputValue.Us = text;
+                        comment.ClipText.Us = clipText;
+                        comment.ScaleWithZoom.Us = scaleWithZoom;
+                    };
+                    verifySpecific = () => string.Equals(
+                                              comment.InputValue.Us,
+                                              text,
+                                              StringComparison.Ordinal) &&
+                                         comment.ClipText.Us == clipText &&
+                                         comment.ScaleWithZoom.Us == scaleWithZoom;
+                }
+
+                return new NativeComponentEditState(
+                    component,
+                    () =>
+                    {
+                        component.X.Us = x;
+                        component.Y.Us = y;
+                        component.Width.Us = width;
+                        component.Height.Us = height;
+                        component.OutlineColor.Us = outlineColor;
+                        restoreSpecific();
+                    },
+                    () =>
+                        component.X.Us == x &&
+                        component.Y.Us == y &&
+                        component.Width.Us == width &&
+                        component.Height.Us == height &&
+                        component.OutlineColor.Us == outlineColor &&
+                        verifySpecific());
+            }
+
+            internal bool TryRestore()
+            {
+                if (Component == null || _restore == null || _verify == null)
+                    return false;
+
+                try
+                {
+                    _restore();
+                    return _verify();
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        private sealed class NativeBlockNameChange
+        {
+            internal NativeBlockNameChange(
+                Block block,
+                string previousName,
+                string appliedName)
+            {
+                Block = block;
+                PreviousName = previousName ?? string.Empty;
+                AppliedName = appliedName ?? string.Empty;
+            }
+
+            internal Block Block { get; }
+
+            internal string PreviousName { get; }
+
+            internal string AppliedName { get; }
+
+            internal bool RestoreIfUnchanged()
+            {
+                if (Block == null)
+                    return false;
+
+                string current = CurrentCustomName(Block);
+                if (!string.Equals(current, AppliedName, StringComparison.Ordinal))
+                    return string.Equals(current, PreviousName, StringComparison.Ordinal);
+
+                try
+                {
+                    Block.IdSet.Name.Us = PreviousName;
+                    return string.Equals(
+                        CurrentCustomName(Block),
+                        PreviousName,
+                        StringComparison.Ordinal);
+                }
+                catch
+                {
+                    // Rollback continues for graph/components even if vanilla
+                    // rejects restoring a changed target name.
+                    return false;
+                }
             }
         }
 

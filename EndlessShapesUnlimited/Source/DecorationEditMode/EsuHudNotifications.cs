@@ -20,7 +20,6 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float ExpandedMinWidth = 280f;
         private const float ExpandedMaxWidth = 520f;
         private const float ExpandedMaxHeight = 190f;
-        private const float SlotMinWidth = 120f;
         private const float AccentWidth = 3f;
         private const float TextPaddingX = 10f;
         private const float TextPaddingY = 6f;
@@ -146,10 +145,11 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector2 screenOrigin)
         {
             float height = EsuHudLayout.Scale(SlotHeight);
+            float resolvedWidth = Mathf.Max(1f, width);
             Rect rect = GUILayoutUtility.GetRect(
-                Mathf.Max(EsuHudLayout.Scale(SlotMinWidth), width),
+                resolvedWidth,
                 height,
-                GUILayout.Width(Mathf.Max(EsuHudLayout.Scale(SlotMinWidth), width)),
+                GUILayout.Width(resolvedWidth),
                 GUILayout.Height(height));
             Rect logButtonRect = LogButtonRect(rect);
             _lastSlotScreenRect = new Rect(
@@ -184,6 +184,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 : 1f;
             Color accent = AccentColor(kind);
             Color oldColor = GUI.color;
+            bool drawLogButton = true;
             try
             {
                 GUI.color = new Color(0f, 0.08f, 0.1f, 0.78f * alpha);
@@ -200,13 +201,18 @@ namespace DecoLimitLifter.DecorationEditMode
                     rect.x + EsuHudLayout.Scale(AccentWidth + TextPaddingX),
                     rect.y + EsuHudLayout.Scale(TextPaddingY),
                     Mathf.Max(
-                        EsuHudLayout.Scale(28f),
+                        0f,
                         logButtonRect.x - rect.x - EsuHudLayout.Scale(AccentWidth + TextPaddingX * 2f + LogButtonGap)),
                     rect.height - EsuHudLayout.Scale(TextPaddingY * 2f));
                 _lastMessageOverflow = hasTransientMessage && MessageOverflows(message, style, textRect);
                 if (_lastMessageOverflow)
                 {
-                    DrawCollapsedOverflow(rect, textRect, kind, alpha, logButtonRect.x - EsuHudLayout.Scale(LogButtonGap));
+                    bool narrow = rect.width < EsuHudLayout.Scale(180f);
+                    drawLogButton = !narrow;
+                    float rightLimit = drawLogButton
+                        ? logButtonRect.x - EsuHudLayout.Scale(LogButtonGap)
+                        : rect.xMax - EsuHudLayout.Scale(7f);
+                    DrawCollapsedOverflow(rect, textRect, kind, alpha, rightLimit);
                 }
                 else
                 {
@@ -220,7 +226,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUI.color = oldColor;
             }
 
-            DrawLogButton(logButtonRect);
+            if (drawLogButton)
+                DrawLogButton(logButtonRect);
         }
 
         internal static void DrawExpandedPopup()
@@ -236,10 +243,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 wordWrap = false
             };
             float margin = EsuHudLayout.Scale(8f);
-            float width = Mathf.Clamp(
-                _lastSlotScreenRect.width,
-                EsuHudLayout.Scale(ExpandedMinWidth),
-                EsuHudLayout.Scale(ExpandedMaxWidth));
+            float availableWidth = Mathf.Max(1f, Screen.width - margin * 2f);
+            float minWidth = Mathf.Min(EsuHudLayout.Scale(ExpandedMinWidth), availableWidth);
+            float maxWidth = Mathf.Min(EsuHudLayout.Scale(ExpandedMaxWidth), availableWidth);
+            float width = Mathf.Clamp(_lastSlotScreenRect.width, minWidth, maxWidth);
             float x = Mathf.Clamp(
                 _lastSlotScreenRect.x,
                 margin,
@@ -260,7 +267,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Color oldColor = GUI.color;
             try
             {
-                GUI.Box(_expandedScreenRect, GUIContent.none, DecorationEditorTheme.Panel);
+                EsuHudChrome.DrawPanel(_expandedScreenRect);
                 Color accent = AccentColor(_kind);
                 GUI.color = new Color(accent.r, accent.g, accent.b, 0.95f);
                 GUI.DrawTexture(
@@ -271,9 +278,16 @@ namespace DecoLimitLifter.DecorationEditMode
                 Rect titleRect = new Rect(
                     _expandedScreenRect.x + EsuHudLayout.Scale(12f),
                     _expandedScreenRect.y + EsuHudLayout.Scale(6f),
-                    _expandedScreenRect.width - EsuHudLayout.Scale(82f),
+                    _expandedScreenRect.width - EsuHudLayout.Scale(132f),
                     headerHeight);
                 GUI.Label(titleRect, KindLabel(_kind) + " details", titleStyle);
+
+                Rect logRect = new Rect(
+                    _expandedScreenRect.xMax - EsuHudLayout.Scale(112f),
+                    _expandedScreenRect.y + EsuHudLayout.Scale(7f),
+                    EsuHudLayout.Scale(42f),
+                    EsuHudLayout.Scale(24f));
+                DrawLogButton(logRect);
 
                 Rect hideRect = new Rect(
                     _expandedScreenRect.xMax - EsuHudLayout.Scale(64f),
@@ -306,14 +320,24 @@ namespace DecoLimitLifter.DecorationEditMode
         }
 
         internal static bool ContainsMouse(Vector2 mouse) =>
-            (_expanded &&
-             HasMessage &&
-             _expandedScreenRect.Contains(mouse)) ||
+            ExpandedPopupContainsMouse(mouse) ||
             EsuConsoleWindow.ContainsMouse(mouse);
+
+        internal static bool ExpandedPopupContainsMouse(Vector2 mouse) =>
+            _expanded &&
+            HasMessage &&
+            _expandedScreenRect.Contains(mouse);
+
+        internal static bool ExpandedPopupOwnsEvent(Event current) =>
+            current != null &&
+            ExpandedPopupContainsMouse(current.mousePosition) &&
+            DecoLimitLifter.EsuModalInputPolicy.IsBlockingEventType(current.type);
 
         private static Rect LogButtonRect(Rect slotRect)
         {
-            float buttonWidth = EsuHudLayout.Scale(LogButtonWidth);
+            float buttonWidth = Mathf.Min(
+                EsuHudLayout.Scale(LogButtonWidth),
+                Mathf.Max(1f, slotRect.width - EsuHudLayout.Scale(14f)));
             return new Rect(
                 slotRect.xMax - buttonWidth - EsuHudLayout.Scale(7f),
                 slotRect.y + EsuHudLayout.Scale(7f),
@@ -343,7 +367,9 @@ namespace DecoLimitLifter.DecorationEditMode
             float alpha,
             float rightLimit)
         {
-            float buttonWidth = EsuHudLayout.Scale(DetailsButtonWidth);
+            float buttonWidth = Mathf.Min(
+                EsuHudLayout.Scale(DetailsButtonWidth),
+                Mathf.Max(1f, slotRect.width - EsuHudLayout.Scale(14f)));
             float buttonGap = EsuHudLayout.Scale(DetailsButtonGap);
             Rect buttonRect = new Rect(
                 Mathf.Min(slotRect.xMax - buttonWidth - EsuHudLayout.Scale(7f), rightLimit - buttonWidth),
@@ -416,9 +442,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (string.IsNullOrWhiteSpace(message))
                 return false;
 
-            float textWidth = Mathf.Max(
-                EsuHudLayout.Scale(48f),
-                textRect.width);
+            float textWidth = Mathf.Max(1f, textRect.width);
             float textHeight = style.CalcHeight(new GUIContent(message), textWidth);
             return textHeight > textRect.height + EsuHudLayout.Scale(1f);
         }

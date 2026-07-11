@@ -170,8 +170,8 @@ namespace DecoLimitLifter.SerializationHud
             CreateHeader(
                 "ESU editor HUD",
                 new ToolTip(
-                    "Scale and reset the Decoration Edit, Surface Builder, and Smart Builder overlays."));
-            var editorHud = CreateTableSegment(2, 2);
+                    "Scale and customize the Decoration Edit, Surface Builder, Smart Builder, and Automation Builder overlays."));
+            var editorHud = CreateTableSegment(2, 3);
             editorHud.AddInterpretter(
                 SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
                     data,
@@ -203,6 +203,22 @@ namespace DecoLimitLifter.SerializationHud
                 StringDisplay.Quick(
                     "Current ESU editor scale",
                     EsuHudLayout.ScaleSummary()));
+            editorHud.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Fade HUD behind popups",
+                    new ToolTip(
+                        "Fade the ESU editor behind context menus, gizmo settings, and other modal popups. Off keeps the background fully visible while still blocking its input."),
+                    (profile, value) => profile.FadeHudBehindModalPopups = value,
+                    profile => profile.FadeHudBehindModalPopups));
+            editorHud.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Responsive paint palettes",
+                    new ToolTip(
+                        "Fit paint-color buttons to the available panel width and prefer at least two rows. Off keeps the basic fixed-size color grid."),
+                    (profile, value) => profile.ResponsivePaintPalettes = value,
+                    profile => profile.ResponsivePaintPalettes));
 
             CreateHeader(
                 "Decoration Edit Mode",

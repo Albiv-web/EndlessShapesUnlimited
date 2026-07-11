@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using DecoLimitLifter.SerializationHud;
 using UnityEngine;
 
 namespace DecoLimitLifter.DecorationEditMode
@@ -74,13 +75,21 @@ namespace DecoLimitLifter.DecorationEditMode
             EnsureRect();
             bool previousEnabled = GUI.enabled;
             bool canInteract = interactive && previousEnabled;
+            bool drawEnabled = canInteract ||
+                               (!interactive &&
+                                previousEnabled &&
+                                !EsuHudPreferences.FadeHudBehindModalPopups);
+            Event current = Event.current;
+            EventType originalType = !canInteract
+                ? DecoLimitLifter.EsuModalInputPolicy.SuppressForDisabledBackground(current)
+                : current?.type ?? EventType.Ignore;
             Vector2 preservedScroll = _scroll;
             if (!canInteract)
                 CancelPointerInteraction();
 
             try
             {
-                GUI.enabled = canInteract;
+                GUI.enabled = drawEnabled;
                 if (canInteract)
                 {
                     HandleDrag();
@@ -100,6 +109,12 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             finally
             {
+                if (!canInteract)
+                {
+                    DecoLimitLifter.EsuModalInputPolicy.RestoreForForeground(
+                        current,
+                        originalType);
+                }
                 GUI.enabled = previousEnabled;
             }
         }
@@ -270,7 +285,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static void DrawPanel(Rect rect)
         {
-            GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+            EsuHudChrome.DrawPanel(rect);
             Rect inner = EsuHudLayout.PanelInnerRect(rect);
             GUILayout.BeginArea(inner);
             DrawHeader(inner.width);
@@ -283,21 +298,28 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private static void DrawHeader(float width)
         {
+            IReadOnlyList<EsuRuntimeLogEntry> visibleEntries = FilteredEntries();
+            bool hasEntries = EsuRuntimeLog.Count > 0;
+            bool hasVisibleEntries = visibleEntries.Count > 0;
             GUILayout.BeginHorizontal();
             GUILayout.Label(
-                "ESU Console",
+                new GUIContent("ESU Console", DecorationEditorIconCatalog.Get("settings")),
                 HeaderTitleStyle(),
-                GUILayout.Width(EsuHudLayout.Scale(132f)),
+                GUILayout.Width(EsuHudLayout.Scale(150f)),
                 GUILayout.Height(EsuHudLayout.Scale(26f)));
             GUILayout.FlexibleSpace();
             GUILayout.Label(
-                EsuRuntimeLog.Count.ToString("N0", CultureInfo.InvariantCulture) + " entries",
+                visibleEntries.Count.ToString("N0", CultureInfo.InvariantCulture) +
+                " / " +
+                EsuRuntimeLog.Count.ToString("N0", CultureInfo.InvariantCulture),
                 HeaderCountStyle(),
                 GUILayout.Width(EsuHudLayout.Scale(78f)),
                 GUILayout.Height(EsuHudLayout.Scale(24f)));
+            bool previousEnabled = GUI.enabled;
+            GUI.enabled = previousEnabled && hasEntries;
             if (GUILayout.Button(
                     new GUIContent("Clear", "Clear the ESU runtime log."),
-                    DecorationEditorTheme.Button,
+                    hasEntries ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Width(EsuHudLayout.Scale(54f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
@@ -305,15 +327,17 @@ namespace DecoLimitLifter.DecorationEditMode
                 _scroll = Vector2.zero;
             }
 
+            GUI.enabled = previousEnabled && hasVisibleEntries;
             if (GUILayout.Button(
                     new GUIContent("Copy", "Copy visible log entries."),
-                    DecorationEditorTheme.Button,
+                    hasVisibleEntries ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
                     GUILayout.Width(EsuHudLayout.Scale(52f)),
                     GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
-                GUIUtility.systemCopyBuffer = EsuRuntimeLog.FormatForClipboard(FilteredEntries());
+                GUIUtility.systemCopyBuffer = EsuRuntimeLog.FormatForClipboard(visibleEntries);
             }
 
+            GUI.enabled = previousEnabled;
             if (GUILayout.Button(
                     new GUIContent("Close", "Close the ESU console."),
                     DecorationEditorTheme.Button,
@@ -322,6 +346,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 Close();
             }
+            GUI.enabled = previousEnabled;
             GUILayout.EndHorizontal();
         }
 
@@ -330,13 +355,14 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 alignment = TextAnchor.MiddleLeft,
                 clipping = TextClipping.Clip,
-                wordWrap = false
+                wordWrap = false,
+                imagePosition = ImagePosition.ImageLeft
             };
 
         private static GUIStyle HeaderCountStyle() =>
-            new GUIStyle(DecorationEditorTheme.Mini)
+            new GUIStyle(DecorationEditorTheme.Badge)
             {
-                alignment = TextAnchor.MiddleLeft,
+                alignment = TextAnchor.MiddleCenter,
                 clipping = TextClipping.Clip,
                 wordWrap = false
             };
@@ -414,7 +440,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 EsuRuntimeLogEntry entry = entries[index];
                 float rowHeight = rowHeights[index];
                 Rect row = new Rect(0f, rowY, content.width, rowHeight);
-                DrawEntryRow(row, entry, header, body, rowPadding);
+                DrawEntryRow(row, entry, index, header, body, rowPadding);
                 rowY += rowHeight + gap;
             }
 
@@ -423,7 +449,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUI.Label(
                     new Rect(0f, 0f, content.width, EsuHudLayout.Scale(26f)),
                     "No log entries for this filter.",
-                    DecorationEditorTheme.BodyWrap);
+                    EmptyStateStyle());
             }
             GUI.EndScrollView();
         }
@@ -431,13 +457,16 @@ namespace DecoLimitLifter.DecorationEditMode
         private static void DrawEntryRow(
             Rect row,
             EsuRuntimeLogEntry entry,
+            int index,
             GUIStyle header,
             GUIStyle body,
             float padding)
         {
             Color previous = GUI.color;
             Color accent = SeverityColor(entry.Severity);
-            GUI.color = new Color(0f, 0.08f, 0.1f, 0.76f);
+            GUI.color = index % 2 == 0
+                ? new Color(0f, 0.08f, 0.1f, 0.82f)
+                : new Color(0f, 0.12f, 0.15f, 0.82f);
             GUI.DrawTexture(row, Texture2D.whiteTexture);
             GUI.color = new Color(accent.r, accent.g, accent.b, 0.95f);
             GUI.DrawTexture(new Rect(row.x, row.y, EsuHudLayout.Scale(3f), row.height), Texture2D.whiteTexture);
@@ -484,6 +513,14 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 alignment = TextAnchor.UpperLeft,
                 clipping = TextClipping.Clip
+            };
+
+        private static GUIStyle EmptyStateStyle() =>
+            new GUIStyle(DecorationEditorTheme.BodyWrap)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Italic,
+                normal = { textColor = new Color(0.7f, 0.82f, 0.85f, 1f) }
             };
 
         private static Color SeverityColor(EsuRuntimeLogSeverity severity)

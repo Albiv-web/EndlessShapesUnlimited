@@ -23,8 +23,8 @@ namespace DecoLimitLifter.DecorationEditMode
         internal const float EditorPanelTopGapBase = 8f;
         internal const float EditorBottomPanelGapBase = 12f;
         internal const float BottomStripScreenRatio = 0.13f;
-        internal const float BottomStripMinHeightBase = 118f;
-        internal const float BottomStripMaxHeightBase = 146f;
+        internal const float BottomStripMinHeightBase = 140f;
+        internal const float BottomStripMaxHeightBase = 156f;
         internal const float CompactHeaderHeightBase = 22f;
         internal const float SectionHeaderHeightBase = 24f;
 
@@ -180,15 +180,65 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static Rect BottomStripRect(float height)
         {
             float margin = EditorBottomMargin;
+            float resolvedHeight = Mathf.Clamp(
+                height,
+                1f,
+                Mathf.Max(1f, Screen.height - margin * 2f));
             return new Rect(
                 margin,
-                Screen.height - height - margin,
-                Screen.width - margin * 2f,
-                height);
+                Mathf.Max(margin, Screen.height - resolvedHeight - margin),
+                Mathf.Max(1f, Screen.width - margin * 2f),
+                resolvedHeight);
         }
 
         internal static float BottomPanelLimit(float bottomPanelHeight) =>
             bottomPanelHeight + Scale(EditorBottomPanelGapBase);
+
+        internal static float AvailablePanelHeight(float topLimit, float bottomLimit) =>
+            Mathf.Max(1f, Screen.height - Mathf.Max(0f, topLimit) - Mathf.Max(0f, bottomLimit));
+
+        internal static float ClampPanelMinimum(float desiredMinimum, float availableSize) =>
+            Mathf.Clamp(
+                SanitizePositive(desiredMinimum),
+                1f,
+                Mathf.Max(1f, SanitizePositive(availableSize)));
+
+        internal static float ToolbarControlWidth(
+            float railWidth,
+            int controlCount,
+            float preferredBaseWidth) =>
+            ToolbarControlWidth(railWidth, controlCount, preferredBaseWidth, CurrentScale);
+
+        internal static float ToolbarControlWidth(
+            float railWidth,
+            int controlCount,
+            float preferredBaseWidth,
+            float scale)
+        {
+            if (controlCount <= 0)
+                return 1f;
+
+            float resolvedScale = ResolveLayoutScale(scale);
+            float marginAllowance = 4f * resolvedScale * controlCount;
+            float available = Mathf.Max(1f, railWidth - marginAllowance);
+            return Mathf.Max(
+                1f,
+                Mathf.Min(preferredBaseWidth * resolvedScale, available / controlCount));
+        }
+
+        internal static string ToolbarLabel(
+            string fullLabel,
+            string compactLabel,
+            float controlWidth,
+            float compactThresholdBase = 48f,
+            float iconOnlyThresholdBase = 32f)
+        {
+            if (controlWidth < Scale(iconOnlyThresholdBase))
+                return string.Empty;
+            return controlWidth < Scale(compactThresholdBase)
+                ? compactLabel ?? string.Empty
+                : fullLabel ?? string.Empty;
+        }
 
         internal static ToolbarBudget CalculateToolbarBudget(float toolbarWidth) =>
             CalculateToolbarBudget(toolbarWidth, CurrentScale);
@@ -215,16 +265,17 @@ namespace DecoLimitLifter.DecorationEditMode
             float left = Mathf.Min(ToolbarLeftRailBaseWidth * resolvedScale, width * 0.48f);
             float notification = ToolbarNotificationBaseWidth * resolvedScale;
             float right = Mathf.Min(ToolbarRightControlsBaseWidth * resolvedScale, width * 0.38f);
-            float leftFloor = Mathf.Min(54f * resolvedScale, left);
-            float rightFloor = Mathf.Min(168f * resolvedScale, right);
+            float leftFloor = Mathf.Min(360f * resolvedScale, left);
+            float notificationFloor = Mathf.Min(120f * resolvedScale, notification);
+            float rightFloor = Mathf.Min(300f * resolvedScale, right);
 
             float overflow = left + notification + right + gap * 2f - width;
-            if (overflow > 0f)
-                Reduce(ref notification, 0f, ref overflow);
             if (overflow > 0f)
                 Reduce(ref left, leftFloor, ref overflow);
             if (overflow > 0f)
                 Reduce(ref right, rightFloor, ref overflow);
+            if (overflow > 0f)
+                Reduce(ref notification, notificationFloor, ref overflow);
             if (overflow > 0f)
             {
                 float gapFloor = 0f;
@@ -279,15 +330,28 @@ namespace DecoLimitLifter.DecorationEditMode
             float bottomLimit)
         {
             float margin = Scale(8f);
-            float widthLimit = Mathf.Max(minWidth, Mathf.Min(maxWidth, Screen.width - margin * 2f));
-            float heightLimit = Mathf.Max(minHeight, Mathf.Min(maxHeight, Screen.height - topLimit - bottomLimit));
-            rect.width = Mathf.Clamp(rect.width, minWidth, widthLimit);
-            rect.height = Mathf.Clamp(rect.height, minHeight, heightLimit);
+            float availableWidth = Mathf.Max(1f, Screen.width - margin * 2f);
+            float availableHeight = AvailablePanelHeight(topLimit, bottomLimit);
+            float resolvedMinWidth = ClampPanelMinimum(minWidth, availableWidth);
+            float resolvedMinHeight = ClampPanelMinimum(minHeight, availableHeight);
+            float resolvedMaxWidth = Mathf.Clamp(
+                SanitizePositive(maxWidth),
+                resolvedMinWidth,
+                availableWidth);
+            float resolvedMaxHeight = Mathf.Clamp(
+                SanitizePositive(maxHeight),
+                resolvedMinHeight,
+                availableHeight);
+            rect.width = Mathf.Clamp(SanitizePositive(rect.width), resolvedMinWidth, resolvedMaxWidth);
+            rect.height = Mathf.Clamp(SanitizePositive(rect.height), resolvedMinHeight, resolvedMaxHeight);
 
             float minX = margin;
             float maxX = Mathf.Max(minX, Screen.width - rect.width - margin);
             rect.x = Mathf.Clamp(rect.x, minX, maxX);
-            float minY = topLimit;
+            float minY = Mathf.Clamp(
+                Mathf.Max(0f, topLimit),
+                0f,
+                Mathf.Max(0f, Screen.height - Mathf.Max(0f, bottomLimit) - rect.height));
             float maxY = Mathf.Max(minY, Screen.height - bottomLimit - rect.height);
             rect.y = Mathf.Clamp(rect.y, minY, maxY);
             return rect;
@@ -381,6 +445,13 @@ namespace DecoLimitLifter.DecorationEditMode
             if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
                 return 1f;
             return Mathf.Clamp(scale, MinEffectiveScale, MaxEffectiveScale);
+        }
+
+        private static float SanitizePositive(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
+                return 1f;
+            return value;
         }
 
         private static void Reduce(ref float value, float floor, ref float overflow)

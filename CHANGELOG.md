@@ -7,10 +7,27 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
-## 1.0.7 - 2026-07-10
+## 1.0.7 - 2026-07-11
 
 ### Added
 
+- Added two profile-backed ESU editor HUD options. **Fade HUD behind popups**
+  defaults off so modal menus keep the editor visually solid while still
+  owning input. **Responsive paint palettes** defaults on so color buttons fill
+  the available width in at least two rows; turning it off restores the legacy
+  fixed grid.
+- Added viewport drag-selection to the Decoration paint tool so one brush
+  gesture can paint every eligible decoration or block inside the selection.
+- Added a one-time, profile-persisted Automation Builder warning that clearly
+  identifies the editor as unfinished and potentially very buggy before first
+  use.
+- Completed Automation Builder as a Scratch-style editor for vanilla
+  breadboards. Stack, value-socket, and control-body snapping now share exact
+  drag previews; attached block groups support copy, paste, duplicate, delete,
+  keyboard nudging, and a 64-state Undo/Redo history.
+- Added a complete Automation Builder guide covering controller compatibility,
+  every block-to-native mapping, Forever/Switch dataflow semantics, validation,
+  native ownership, editing controls, safe discard, and craft-save round trips.
 - Added Automation Builder as a fourth ESU editor mode, focused on FtD
   breadboard workflows with AI/basic breadboard placement, input/output block
   linking, a Decoration-style HUD, view controls, number-key shortcuts, panel
@@ -80,6 +97,42 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Changed
 
+- Surface Builder now budgets the full Extra Tools panel and dynamically shares
+  the left-panel height between Draft and Coordinates. Opening, resizing, or
+  hiding Coordinates immediately gives all remaining space back to the draft
+  list instead of leaving an unused region.
+- Paint-color button groups now use the same responsive layout in every ESU
+  editor surface that exposes them, while retaining the opt-out legacy grid.
+- Clarified the Automation lifecycle throughout the HUD and documentation:
+  Check is non-mutating, Apply writes and verifies ESU-owned vanilla components,
+  Revert removes only ESU-owned components, markers, and sourced wires, and
+  imported vanilla nodes/wires remain visible but read-only—including opaque
+  unsupported component families.
+- Replaced obsolete Code-page, System Block, nested-workspace, and arbitrary
+  native-editor acceptance steps with tests for the implemented Scratch block
+  workflow. Those earlier concepts are now explicitly identified as non-features
+  rather than missing release controls.
+- Expanded the executable regression harness to 627 checks, including Scratch
+  block editing, exact native-port preservation, strict marker ownership,
+  transaction rollback, imported-component isolation, responsive HUD geometry,
+  modal input ownership, paint selection, and native Surface preview colors.
+- Polished the complete ESU editor HUD across Decoration Edit, Surface Builder,
+  Smart Builder, Automation Builder, notifications, tooltips, and the runtime
+  console. Toolbar controls now compact inside their real rail budgets, retain
+  the notification/log slot, and expose the same actions through descriptive
+  tooltips at high HUD scales.
+- Made every editor panel resolve its minimum size against the actual space
+  between the toolbar and status strip. Constrained panel bodies, Surface draft
+  coordinates/settings, Smart Scene/Selected shelves, and Automation graph
+  popovers remain reachable without overlapping the footer or leaving the
+  screen at 1366x768/1.44x and 1920x1080/2x.
+- Unified panel accents, compact headers, section disclosure controls, hover,
+  selected, disabled, and focused-field states. The ESU console now has clearer
+  filtered/total counts, empty/disabled states, alternating log rows, and the
+  same foreground chrome as the editors.
+- Tightened foreground ordering so expanded notifications, context menus,
+  graph popovers, close prompts, the console, and delayed tooltips render in a
+  predictable stack and do not expose visually covered editor controls.
 - Automation Builder now treats the selected native breadboard board as the
   source of truth: links and graph nodes are rebuilt from vanilla
   `GenericBlockGetter` / `GenericBlockSetter` and native board components
@@ -144,9 +197,10 @@ GitHub history, but short enough that it can be copied into release notes.
   buttons now have mutually exclusive active highlighting.
 - Right-click context menus now own a modal foreground input layer across
   Decoration Edit, Surface Builder, Smart Builder, and Automation Builder.
-  Controls behind a menu are rendered disabled and cannot consume its clicks,
-  wheel, keyboard, or camera input; Automation graph fields likewise yield to
-  graph popups.
+  Controls behind a menu cannot consume its clicks, wheel, keyboard, or camera
+  input; Automation graph fields likewise yield to graph popups. Their normal
+  appearance is retained unless the optional modal HUD fading preference is
+  enabled.
 - Surface Builder previews now draw the actual planned decoration meshes using
   the selected material and paint color before Apply, while keeping draft
   wireframes and points visible for editing.
@@ -192,6 +246,35 @@ GitHub history, but short enough that it can be copied into release notes.
 
 ### Fixed
 
+- Fixed Automation ownership on an empty vanilla breadboard where the first
+  generated component receives ID `0`. Failed Apply rollback now restores
+  targets before markers, rewrites markers after vanilla reassigns IDs, and
+  remaps the pending graph journals before verifying exact ownership.
+- Fixed untrackable imported-source to ESU-target wires by rejecting mixed
+  ownership consistently in graph editing and Apply readiness. Clipboard
+  target bindings now clear across constructs, safely rebind across boards on
+  the same construct, and repeated Paste/Duplicate operations cascade without
+  overlapping their connections.
+- Fixed marquee paint leaving blocks outside Decoration undo or Cancel. A
+  mixed decoration/block gesture is now one rollback-safe history command,
+  sends block restoration through the multiplayer paint RPC path, and caps
+  block, cell, visibility-ray, and result work before applying anything.
+- Fixed Surface preview caches clearing and recloning every frame above 256
+  variants. The cache now admits or evicts individual stale entries, while
+  non-readable catalog meshes use a private tinted-material fallback.
+- Fixed compact Surface layouts hiding Draft whenever Coordinates opened and
+  fixed wrapped Extra Tools summaries clipping above unused space. Coordinates
+  now shares an ordered split with Draft, and the complete Extra Tools body is
+  one full-height scroll viewport.
+- Fixed temporary small-screen Smart Builder constraints overwriting the
+  user's preferred Overview/Workspace and Scene/Selected divider ratios.
+- Fixed colored Surface triangle previews using a different color conversion
+  from committed decorations; preview and placement now resolve the same active
+  craft-palette color.
+- Fixed Smart Builder panel clicks falling through to the world and placing the
+  currently armed preview shape.
+- Fixed purely visual cyan panel outlines competing with meaningful hover,
+  focus, selection, and action color cues.
 - Fixed Tube symmetry rebuilding reflected cross-sections with a different
   winding. Symmetry now mirrors one validated segment batch exactly and applies
   the 100,000-segment limit to aggregate unique output across all variants.
@@ -335,10 +418,11 @@ GitHub history, but short enough that it can be copied into release notes.
   the active release line at `1.0.7`.
 - Added a local `*.log` ignore rule so verifier logs do not show up as
   accidental repository changes.
-- Expanded Release verification to 574 checks, including strict ordering,
-  cached Surface coordinate bindings, Tube mirror/cap/reversal boundaries,
-  modal event ownership, responsive Smart panel geometry, transactional
-  clipboard paths, and list-opened multi-selection decoration actions.
+- Expanded Release verification with strict ordering, cached Surface coordinate
+  bindings, Tube mirror/cap/reversal boundaries, modal event ownership,
+  responsive toolbar/Smart/Automation panel geometry, transactional clipboard
+  paths, and list-opened multi-selection decoration actions. The authoritative
+  v1.0.7 total is 627 checks as documented above.
 
 ## 1.0.6 - 2026-07-04
 

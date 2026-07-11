@@ -133,7 +133,9 @@ internal static class Program
             VerifyVanillaCompatibilityMode();
             VerifyBlueprintJsonStreamingSave();
             VerifyFastBlueprintLoading();
+            VerifyAutomationLiteralValidation();
             VerifyAutomationPaletteDropSnapping();
+            VerifyHudTestingPolish();
             VerifyDecorationEditModeMvp();
             VerifyEsuRuntimeConsole();
             VerifyPointerFlushPlacement();
@@ -2838,6 +2840,176 @@ f 0 2 3
         };
     }
 
+    private static void VerifyAutomationLiteralValidation()
+    {
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.Constant,
+                " 0.125 ",
+                "0.125") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.Constant,
+                "-1.25e2",
+                "-125"),
+            "Automation numeric literals accept finite invariant values and normalize exponent notation.");
+
+        Assert(
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "NaN") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "Infinity") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "-Infinity") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "1e999") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "12rpm") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, string.Empty) &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "   "),
+            "Automation numeric literals reject NaN, infinities, overflow, partial tokens, and empty input.");
+
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.Random,
+                "5; -2",
+                "-2..5") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.Clamp,
+                "-1, 3",
+                "-1..3"),
+            "Automation range literals require two finite endpoints, normalize delimiters, and order their bounds.");
+
+        Assert(
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Random, "0..") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Random, "..1") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Random, "0..1..2") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Clamp, "NaN..1") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Clamp, "0..Infinity") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Clamp, "1e999..2"),
+            "Automation range literals reject missing, extra, non-finite, and overflowing endpoints.");
+
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.Smooth,
+                "0",
+                "0s") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.Smooth,
+                "1.5S",
+                "1.5s") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "-0.01s") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "NaN") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "Infinity") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "1ss") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "1 second") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, string.Empty),
+            "Automation delays accept finite nonnegative seconds and reject negative or malformed values.");
+
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.IfCondition,
+                "else -2.5",
+                "threshold 0.5 else -2.5") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.IfLessThan,
+                "threshold -1 else 4",
+                "threshold -1 else 4") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfCondition, "else NaN") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfCondition, "threshold 0.5") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfLessThan, "threshold 1") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfLessThan, "threshold 1 else 2x"),
+            "Automation switch literals require finite else and threshold fields appropriate to their block shape.");
+
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.CompareAboveThreshold,
+                "threshold: 0.75",
+                "threshold 0.75") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold,
+                "threshold=-2",
+                "threshold -2") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.CompareAboveThreshold, "threshold NaN") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold, "threshold 2x") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold, string.Empty),
+            "Automation comparison thresholds normalize finite labels and reject non-finite, partial, or missing values.");
+
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.IfCondition,
+                "threshold 0.5 else 3",
+                "threshold 0.5 else 3") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.IfCondition,
+                "threshold 5e-1 else -2.5e1",
+                "threshold 0.5 else -25") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.IfLessThan,
+                "threshold 1e2 else -2e1",
+                "threshold 100 else -20") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.CompareAboveThreshold,
+                "threshold 2e1",
+                "threshold 20") &&
+            AutomationLiteralIsInvalid(
+                AutomationBuilderSession.AutomationNodeKind.IfCondition,
+                "threshold 2 else 1") &&
+            AutomationLiteralIsInvalid(
+                AutomationBuilderSession.AutomationNodeKind.IfCondition,
+                "else 1 trailing") &&
+            AutomationLiteralIsInvalid(
+                AutomationBuilderSession.AutomationNodeKind.IfCondition,
+                "threshold 0.5 else 1 trailing") &&
+            AutomationLiteralIsInvalid(
+                AutomationBuilderSession.AutomationNodeKind.IfLessThan,
+                "threshold 1 else 2 trailing") &&
+            AutomationLiteralIsInvalid(
+                AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold,
+                "threshold 1 trailing"),
+            "Automation labeled literals accept exact and exponent forms, enforce If True's fixed 0.5 threshold, and require full input consumption.");
+
+        Assert(
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.MathAdd,
+                "a + b",
+                "a + b") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.MathSubtract,
+                "a - -2.5",
+                "a - -2.5") &&
+            AutomationLiteralIsValid(
+                AutomationBuilderSession.AutomationNodeKind.MathMultiply,
+                "a*1e2",
+                "a * 100") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathAdd, "a +") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathAdd, "a - 1") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathSubtract, "a - NaN") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathMultiply, "a * 2x") &&
+            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathMultiply, "a * 1e999"),
+            "Automation math literals preserve the visible operator shape and reject missing, mismatched, non-finite, partial, or overflowing operands.");
+    }
+
+    private static bool AutomationLiteralIsValid(
+        AutomationBuilderSession.AutomationNodeKind kind,
+        string text,
+        string expectedNormalized)
+    {
+        return AutomationBuilderSession.TryValidateAutomationLiteral(
+                   kind,
+                   text,
+                   out string normalized,
+                   out string issue) &&
+               string.Equals(normalized, expectedNormalized, StringComparison.Ordinal) &&
+               issue == null;
+    }
+
+    private static bool AutomationLiteralIsInvalid(
+        AutomationBuilderSession.AutomationNodeKind kind,
+        string text)
+    {
+        return !AutomationBuilderSession.TryValidateAutomationLiteral(
+                   kind,
+                   text,
+                   out _,
+                   out string issue) &&
+               !string.IsNullOrWhiteSpace(issue);
+    }
+
     private static void VerifyAutomationPaletteDropSnapping()
     {
         float[] zooms = { 0.55f, 1.08f, 1.6f };
@@ -2941,6 +3113,535 @@ f 0 2 3
         Math.Abs(left.y - right.y) <= tolerance &&
         Math.Abs(left.width - right.width) <= tolerance &&
         Math.Abs(left.height - right.height) <= tolerance;
+
+    private static bool ColorApproximately(Color left, Color right, float tolerance) =>
+        Math.Abs(left.r - right.r) <= tolerance &&
+        Math.Abs(left.g - right.g) <= tolerance &&
+        Math.Abs(left.b - right.b) <= tolerance &&
+        Math.Abs(left.a - right.a) <= tolerance;
+
+    private static void VerifyHudTestingPolish()
+    {
+        var extraToolsInner = new Rect(11f, 23f, 420f, 700f);
+        DecorationEditSession.AllocateSurfaceExtraToolsRects(
+            extraToolsInner,
+            desiredPinnedHeight: 150f,
+            gap: 4f,
+            out Rect extraToolsPinned,
+            out Rect extraToolsScroll);
+        var tinyExtraToolsInner = new Rect(5f, 7f, 80f, 12f);
+        DecorationEditSession.AllocateSurfaceExtraToolsRects(
+            tinyExtraToolsInner,
+            desiredPinnedHeight: 1000f,
+            gap: 4f,
+            out Rect tinyExtraToolsPinned,
+            out Rect tinyExtraToolsScroll);
+        DecorationEditSession.AllocateSurfaceExtraToolsRects(
+            extraToolsInner,
+            desiredPinnedHeight: 0f,
+            gap: 0f,
+            out Rect allScrollPinned,
+            out Rect allScrollViewport);
+        Assert(RectApproximately(extraToolsPinned, new Rect(11f, 23f, 420f, 150f), 0.0001f) &&
+               Math.Abs(extraToolsScroll.y - extraToolsPinned.yMax - 4f) <= 0.0001f &&
+               Math.Abs(extraToolsScroll.yMax - extraToolsInner.yMax) <= 0.0001f &&
+               extraToolsScroll.width == extraToolsInner.width &&
+               extraToolsScroll.height > 0f &&
+               tinyExtraToolsPinned.height >= 0f &&
+               tinyExtraToolsScroll.height >= 0f &&
+               tinyExtraToolsPinned.yMax <= tinyExtraToolsScroll.y &&
+               Math.Abs(tinyExtraToolsScroll.yMax - tinyExtraToolsInner.yMax) <= 0.0001f &&
+               RectApproximately(
+                   allScrollPinned,
+                   new Rect(extraToolsInner.x, extraToolsInner.y, extraToolsInner.width, 0f),
+                   0.0001f) &&
+               RectApproximately(allScrollViewport, extraToolsInner, 0.0001f),
+            "Surface Extra Tools explicitly partitions its complete panel body into ordered pinned and scroll rectangles that reach the bottom edge, including cramped layouts.");
+
+        Assert(Math.Abs(DecorationEditSession.AllocateSurfaceDraftListHeight(400f, 130f, 38f) - 270f) <= 0.0001f &&
+               Math.Abs(DecorationEditSession.AllocateSurfaceDraftListHeight(100f, 80f, 38f) - 38f) <= 0.0001f &&
+               Math.Abs(DecorationEditSession.AllocateSurfaceDraftListHeight(20f, 80f, 38f) - 20f) <= 0.0001f &&
+               DecorationEditSession.AllocateSurfaceDraftListHeight(float.NaN, 80f, 38f) == 0f,
+            "Surface draft rows consume the remaining workspace body above Coordinates while respecting the minimum and never exceeding a cramped body.");
+        Assert(DecorationEditSession.SurfaceWorkspaceUsesSimultaneousPanels(
+                   innerHeight: 1f,
+                   coordinatesOpen: true) &&
+               !DecorationEditSession.SurfaceWorkspaceUsesSimultaneousPanels(
+                   innerHeight: 1f,
+                   coordinatesOpen: false) &&
+               DecorationEditSession.SurfaceWorkspaceUsesSimultaneousPanels(
+                   innerHeight: 100000f,
+                   coordinatesOpen: false),
+            "Surface Builder always keeps Draft and Coordinates visible together while Coordinates is open, while retaining compact tabs only for a cramped closed shelf.");
+        var surfaceWorkspace = new Rect(10f, 20f, 300f, 400f);
+        DecorationEditSession.SplitSurfaceCoordinateWorkspace(
+            surfaceWorkspace,
+            coordinateBottomRatio: 0.4f,
+            gap: 8f,
+            minimumDraftHeight: 100f,
+            minimumCoordinateHeight: 58f,
+            out Rect surfaceDraftRect,
+            out Rect surfaceDividerRect,
+            out Rect surfaceCoordinateRect,
+            out float surfaceCoordinateRatio);
+        var crampedSurfaceWorkspace = new Rect(3f, 4f, -10f, 3f);
+        DecorationEditSession.SplitSurfaceCoordinateWorkspace(
+            crampedSurfaceWorkspace,
+            coordinateBottomRatio: float.PositiveInfinity,
+            gap: 20f,
+            minimumDraftHeight: 100f,
+            minimumCoordinateHeight: 58f,
+            out Rect crampedSurfaceDraftRect,
+            out Rect crampedSurfaceDividerRect,
+            out Rect crampedSurfaceCoordinateRect,
+            out float crampedSurfaceCoordinateRatio);
+        var normalizedCrampedWorkspace = new Rect(
+            crampedSurfaceWorkspace.x,
+            crampedSurfaceWorkspace.y,
+            0f,
+            crampedSurfaceWorkspace.height);
+        Assert(RectPartitionIsValid(
+                   surfaceWorkspace,
+                   surfaceDraftRect,
+                   surfaceDividerRect,
+                   surfaceCoordinateRect) &&
+               RectPartitionIsValid(
+                   normalizedCrampedWorkspace,
+                   crampedSurfaceDraftRect,
+                   crampedSurfaceDividerRect,
+                   crampedSurfaceCoordinateRect) &&
+               surfaceDraftRect.height > 0f &&
+               surfaceCoordinateRect.height > 0f &&
+               surfaceCoordinateRatio >= 0f && surfaceCoordinateRatio <= 1f &&
+               crampedSurfaceCoordinateRatio >= 0f && crampedSurfaceCoordinateRatio <= 1f,
+            "Surface Draft and Coordinates split into nonnegative, ordered, nonoverlapping rectangles in roomy and severely constrained workspaces.");
+
+        int fittedColumns = DecorationEditSession.ResolvePaintPaletteColumns(
+            600f,
+            36f,
+            3f,
+            responsive: true,
+            basicColumns: 8);
+        int widestColumns = DecorationEditSession.ResolvePaintPaletteColumns(
+            5000f,
+            36f,
+            3f,
+            responsive: true,
+            basicColumns: 8);
+        int narrowColumns = DecorationEditSession.ResolvePaintPaletteColumns(
+            20f,
+            36f,
+            3f,
+            responsive: true,
+            basicColumns: 8);
+        int basicColumns = DecorationEditSession.ResolvePaintPaletteColumns(
+            5000f,
+            36f,
+            3f,
+            responsive: false,
+            basicColumns: 8);
+        var profileDefaults = new SerializationHudProfile.ProfileData();
+        Assert(fittedColumns == 15 &&
+               widestColumns == 16 &&
+               (int)Math.Ceiling(32f / widestColumns) >= 2 &&
+               narrowColumns == 1 &&
+               basicColumns == 8 &&
+               profileDefaults.ResponsivePaintPalettes &&
+               !profileDefaults.FadeHudBehindModalPopups &&
+               !profileDefaults.AutomationBuilderWipWarningAcknowledged,
+            "Responsive paint palettes default on, fit the available width, cap at sixteen columns to retain two rows, and fall back to the basic eight-column grid when disabled; modal fading and the Automation acknowledgement default off.");
+
+        MethodInfo drawPanel = typeof(EsuHudChrome).GetMethod(
+            "DrawPanel",
+            BindingFlags.Static | BindingFlags.NonPublic,
+            binder: null,
+            types: new[] { typeof(Rect), typeof(bool) },
+            modifiers: null);
+        ParameterInfo accentParameter = drawPanel?.GetParameters().ElementAtOrDefault(1);
+        Assert(accentParameter != null &&
+               accentParameter.IsOptional &&
+               accentParameter.DefaultValue is bool accentDefault &&
+               !accentDefault,
+            "Shared HUD panel chrome leaves decorative cyan accent rails off unless a caller explicitly requests them.");
+
+        Guid meshGuid = new Guid("00112233-4455-6677-8899-aabbccddeeff");
+        var placement = new SurfaceDecorationPlacement(
+            new Vector3i(1, 2, 3),
+            meshGuid,
+            Vector3.zero,
+            Vector3.one,
+            Vector3.zero,
+            7,
+            StructureBlockType.Metal,
+            Vector3.up,
+            Vector3.up,
+            0f);
+        Color rgba = (Color)new Color32(10, 20, 30, 40);
+        string resourceKey = DecorationEditSession.SurfacePreviewResourceKey(
+            placement,
+            rgba,
+            unchecked((int)0x1234ABCD));
+        string repeatedResourceKey = DecorationEditSession.SurfacePreviewResourceKey(
+            placement,
+            rgba,
+            unchecked((int)0x1234ABCD));
+        string paletteVariantKey = DecorationEditSession.SurfacePreviewResourceKey(
+            placement,
+            rgba,
+            unchecked((int)0x1234ABCE));
+        string rgbaVariantKey = DecorationEditSession.SurfacePreviewResourceKey(
+            placement,
+            (Color)new Color32(10, 20, 31, 40),
+            unchecked((int)0x1234ABCD));
+        Assert(resourceKey == repeatedResourceKey &&
+               resourceKey.Contains(meshGuid.ToString("N")) &&
+               resourceKey.Contains("1234ABCD") &&
+               resourceKey.EndsWith("0A141E28", StringComparison.Ordinal) &&
+               paletteVariantKey != resourceKey &&
+               rgbaVariantKey != resourceKey,
+            "Surface preview resources use deterministic mesh/material/color keys that include palette identity and the cleaned native RGBA value.");
+
+        var rawDamageColor = new Color(0.8f, 0.6f, 0.4f, 0.1f);
+        Color undamagedColor = DecorationEditSession.ApplyNativeDecorationDamageTint(
+            rawDamageColor,
+            1f);
+        Color halfHealthColor = DecorationEditSession.ApplyNativeDecorationDamageTint(
+            rawDamageColor,
+            0.5f);
+        Color belowAlphaFloorColor = DecorationEditSession.ApplyNativeDecorationDamageTint(
+            rawDamageColor,
+            0.05f);
+        Color atAlphaFloorColor = DecorationEditSession.ApplyNativeDecorationDamageTint(
+            rawDamageColor,
+            0.2f);
+        Color cappedAlphaColor = DecorationEditSession.ApplyNativeDecorationDamageTint(
+            new Color(0.8f, 0.6f, 0.4f, 0.5f),
+            0f);
+        Assert(ColorApproximately(undamagedColor, rawDamageColor, 0.0001f) &&
+               ColorApproximately(
+                   halfHealthColor,
+                   new Color(0.4f, 0.3f, 0.2f, 0.6f),
+                   0.0001f) &&
+               ColorApproximately(
+                   belowAlphaFloorColor,
+                   new Color(0.04f, 0.03f, 0.02f, 0.9f),
+                   0.0001f) &&
+               Math.Abs(belowAlphaFloorColor.a - atAlphaFloorColor.a) <= 0.0001f &&
+               Math.Abs(cappedAlphaColor.r) <= 0.0001f &&
+               Math.Abs(cappedAlphaColor.g) <= 0.0001f &&
+               Math.Abs(cappedAlphaColor.b) <= 0.0001f &&
+               Math.Abs(cappedAlphaColor.a - 0.99f) <= 0.0001f,
+            "Surface preview damage tint preserves undamaged palette colors and matches vanilla damaged RGB/alpha scaling, including the 0.2 health floor and 0.99 alpha cap.");
+
+        string root = FindRepositoryRoot();
+        string decorationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string smartSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildSession.cs"));
+        string automationSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderSession.cs"));
+        string automationWarningSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderSession.WipWarning.cs"));
+        string profileSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudProfile.cs"));
+        string preferencesSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "EsuHudPreferences.cs"));
+        string optionsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SerializationHud",
+            "SerializationHudOptionsScreen.cs"));
+
+        string decorationDisabledShellSource = ExtractMethodSource(
+            decorationSource,
+            "DrawDisabledEditorShellBehindPrompt");
+        string smartModalSource = ExtractMethodSource(smartSource, "DrawGui");
+        string automationModalSource = ExtractMethodSource(automationSource, "DrawGui");
+        Assert(ContainsAll(
+                   profileSource,
+                   "public bool FadeHudBehindModalPopups { get; set; }",
+                   "public bool ResponsivePaintPalettes { get; set; } = true;") &&
+               ContainsAll(
+                   preferencesSource,
+                   "SerializationHudProfile.Data?.FadeHudBehindModalPopups == true",
+                   "SerializationHudProfile.Data?.ResponsivePaintPalettes != false") &&
+               ContainsAll(
+                   optionsSource,
+                   "Fade HUD behind popups",
+                   "Off keeps the background fully visible while still blocking its input.",
+                   "Responsive paint palettes",
+                   "Off keeps the basic fixed-size color grid.") &&
+               decorationDisabledShellSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups") &&
+               smartModalSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups") &&
+               automationModalSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups"),
+            "Decoration, Smart Builder, and Automation share the profile-backed, default-off modal background fade without changing modal input ownership.");
+
+        string beginAutomationSource = ExtractMethodSource(automationSource, "Begin");
+        string acknowledgeWarningSource = ExtractMethodSource(
+            automationWarningSource,
+            "AcknowledgeWorkInProgressWarning");
+        Assert(beginAutomationSource.Contains("_workInProgressWarningOpen = ShouldShowWorkInProgressWarning()") &&
+               ContainsAll(
+                   automationWarningSource,
+                   "Automation Builder is work in progress",
+                   "Experimental and potentially very buggy",
+                   "AutomationBuilderWipWarningAcknowledged != true",
+                   "I understand - continue") &&
+               OccursBefore(
+                   acknowledgeWarningSource,
+                   "data.AutomationBuilderWipWarningAcknowledged = true",
+                   "ProfileManager.Instance.Save(module => module is SerializationHudProfile)"),
+            "Automation Builder opens a blocking first-session WIP warning and persists its acknowledgement in the current player profile.");
+
+        string handleSceneInputSource = ExtractMethodSource(decorationSource, "HandleSceneInput");
+        string beginBoxSelectionSource = ExtractMethodSource(decorationSource, "BeginBoxSelection");
+        string commitBoxSelectionSource = ExtractMethodSource(decorationSource, "CommitBoxSelectionDrag");
+        string paintBoxSource = ExtractMethodSource(decorationSource, "PaintBox");
+        string collectPaintBlocksSource = ExtractMethodSource(decorationSource, "TryCollectBoxPaintBlocks");
+        string paintVisibilitySource = ExtractMethodSource(decorationSource, "IsPaintBlockCellVisible");
+        string paintCollectedSource = ExtractMethodSource(decorationSource, "PaintCollectedBoxTargets");
+        string applyPaintSelectionSource = ExtractMethodSource(decorationSource, "TryApplyPaintSelection");
+        string restorePaintHistorySource = ExtractMethodSource(decorationSource, "TryRestorePaintSelectionHistory");
+        string restorePaintCancelSource = ExtractMethodSource(decorationSource, "RestoreOriginalBlockPaintsForCancel");
+        string cancelDecorationSelectionSource = ExtractMethodSource(decorationSource, "CancelSelection");
+        Assert(ContainsAll(
+                   handleSceneInputSource,
+                   "if (_boxSelecting)",
+                   "UpdateBoxSelectionDrag(_lastMouseGui)",
+                   "CommitBoxSelectionDrag(_lastMouseGui)",
+                   "BeginBoxSelection(_lastMouseGui, paint: true)") &&
+               ContainsAll(
+                   beginBoxSelectionSource,
+                   "_boxSelectionPaint = paint",
+                   "_boxSelectStartMouse = mouse") &&
+               ContainsAll(
+                   commitBoxSelectionSource,
+                   "BoxSelectionClickThresholdPixels",
+                   "PaintNearest(_boxSelectStartMouse)",
+                   "PaintBox(rect, _selectionXray)") &&
+               ContainsAll(
+                   paintBoxSource,
+                   "EnumerateBoxSelectionHits(",
+                   "TryCollectBoxPaintBlocks(",
+                   "PaintCollectedBoxTargets(decorationHits, blocks, construct)") &&
+               OccurrenceCount(paintCollectedSource, "TryApplyPaintSelection(") == 1 &&
+               ContainsAll(
+                   collectPaintBlocksSource,
+                   "PaintScanWithinBudget(declaredBlockCount, 0)",
+                   "var seen = new HashSet<Block>()",
+                   "block.LocalPositions",
+                   "PaintScanWithinBudget(scannedBlocks, scannedCells)",
+                   "BoxPaintCellMatches(") &&
+               OccursBefore(
+                   collectPaintBlocksSource,
+                   "PaintScanWithinBudget(declaredBlockCount, 0)",
+                   "foreach (Block block in aliveAndDead.Blocks)") &&
+               OccursBefore(
+                   collectPaintBlocksSource,
+                   "PaintScanWithinBudget(scannedBlocks, scannedCells)",
+                   "BoxPaintCellMatches(") &&
+               paintVisibilitySource.Contains("Physics.RaycastNonAlloc(") &&
+               !paintVisibilitySource.Contains("Physics.RaycastAll(") &&
+               ContainsAll(
+                   applyPaintSelectionSource,
+                   "decorationBefore.Add(new DecorationEditSnapshot(decoration))",
+                   "blockBefore.Add(block.color)",
+                   "decoration.Color.Us = color",
+                   "PaintBlock(changedBlocks[index], color)",
+                   "new PaintSelectionHistoryCommand(") &&
+               OccursBefore(
+                   applyPaintSelectionSource,
+                   "decorationBefore.Add(new DecorationEditSnapshot(decoration))",
+                   "decoration.Color.Us = color") &&
+               OccursBefore(
+                   applyPaintSelectionSource,
+                   "blockBefore.Add(block.color)",
+                   "PaintBlock(changedBlocks[index], color)") &&
+               OccursBefore(
+                   applyPaintSelectionSource,
+                   "PaintBlock(changedBlocks[index], color)",
+                   "new PaintSelectionHistoryCommand(") &&
+               OccurrenceCount(applyPaintSelectionSource, "new PaintSelectionHistoryCommand(") == 1 &&
+               ContainsAll(
+                   restorePaintHistorySource,
+                   "desiredDecorationSnapshots[index].TryRestore",
+                   "PaintBlock(blocks[index], desiredBlockColors[index])",
+                   "PaintBlock(blocks[index], blockRollback[index])",
+                   "decorationRollback[index].TryRestore",
+                   "RestorePaintHistorySelection(selectionConstruct, selection, primary)") &&
+               restorePaintCancelSource.Contains("PaintBlock(block, pair.Value)") &&
+               cancelDecorationSelectionSource.Contains("RestoreOriginalBlockPaintsForCancel()") &&
+               ContainsAll(
+                   decorationSource,
+                   "private sealed class PaintSelectionHistoryCommand : IDecorationEditCommand",
+                   "_beforeDecorations",
+                   "_afterDecorations",
+                   "_beforeBlockColors",
+                   "_afterBlockColors",
+                   "Label + \" undo\"",
+                   "Label + \" redo\""),
+            "Paint owns one click-to-box lifecycle, bounds visibility work, and records decoration, block, selection, and primary state in one rollback-safe undo/redo command.");
+
+        var paintPrimary = (Decoration)FormatterServices.GetUninitializedObject(typeof(Decoration));
+        var otherPaintDecoration = (Decoration)FormatterServices.GetUninitializedObject(typeof(Decoration));
+        Assert(DecorationEditSession.PaintScanWithinBudget(20000, 80000, 2048) &&
+               !DecorationEditSession.PaintScanWithinBudget(20001, 80000) &&
+               !DecorationEditSession.PaintScanWithinBudget(20000, 80001) &&
+               !DecorationEditSession.PaintScanWithinBudget(20000, 80000, 2049) &&
+               !DecorationEditSession.PaintScanWithinBudget(-1, 0) &&
+               !DecorationEditSession.PaintScanWithinBudget(0, -1) &&
+               !DecorationEditSession.PaintScanWithinBudget(0, 0, -1),
+            "Paint marquee scanning accepts the exact block, cell, and visibility-ray budget and rejects any overflow or invalid negative work count before further visibility tests.");
+        Assert(DecorationEditSession.ResolvePaintHistoryPrimaryIndex(
+                   new[] { otherPaintDecoration, paintPrimary },
+                   paintPrimary) == 1 &&
+               DecorationEditSession.ResolvePaintHistoryPrimaryIndex(
+                   new[] { otherPaintDecoration },
+                   paintPrimary) == 0 &&
+               DecorationEditSession.ResolvePaintHistoryPrimaryIndex(
+                   Array.Empty<Decoration>(),
+                   paintPrimary) == -1,
+            "Paint history retains the actual primary even when it was not the first changed decoration, with deterministic fallback for missing or empty selections.");
+
+        string nativePreviewColorSource = ExtractMethodSource(
+            decorationSource,
+            "NativeDecorationPreviewColor");
+        string nativeDamageTintSource = ExtractMethodSource(
+            decorationSource,
+            "ApplyNativeDecorationDamageTint");
+        string surfacePreviewResourceSource = ExtractMethodSource(
+            decorationSource,
+            "SurfacePreviewResourceFor");
+        string surfacePreviewReadableSource = ExtractMethodSource(
+            decorationSource,
+            "SurfacePreviewMeshCanAcceptVertexColors");
+        string clearSurfacePreviewSource = ExtractMethodSource(
+            decorationSource,
+            "ClearSurfacePreviewResources");
+        string releaseSurfacePreviewSource = ExtractMethodSource(
+            decorationSource,
+            "ReleaseSurfacePreviewResource");
+        string reserveSurfacePreviewSource = ExtractMethodSource(
+            decorationSource,
+            "TryReserveSurfacePreviewResourceSlot");
+        string drawSurfacePlanPreviewSource = ExtractMethodSource(
+            decorationSource,
+            "DrawSurfacePlanMeshPreview");
+        Assert(ContainsAll(
+                   nativePreviewColorSource,
+                   "colors.GetColor(colorIndex)",
+                   "colors.GetCamoFlagFor(colorIndex)",
+                   "anchorBlock.GetHealthFraction()",
+                   "ApplyNativeDecorationDamageTint(raw, healthFraction)",
+                   "Colors.DecodeFlag(raw.r)",
+                   "Colors.CleanUpColorBeforePassingOut(") &&
+               OccursBefore(
+                   nativePreviewColorSource,
+                   "int redFlag = BrilliantSkies.Core.Help.Colors.DecodeFlag(raw.r)",
+                   "raw = ApplyNativeDecorationDamageTint(raw, healthFraction)") &&
+               OccursBefore(
+                   nativePreviewColorSource,
+                   "raw = ApplyNativeDecorationDamageTint(raw, healthFraction)",
+                   "float damageFlag =") &&
+               OccursBefore(
+                   nativePreviewColorSource,
+                   "raw = ApplyNativeDecorationDamageTint(raw, healthFraction)",
+                   "Color native = BrilliantSkies.Core.Help.Colors.CleanUpColorBeforePassingOut(") &&
+               ContainsAll(
+                   nativeDamageTintSource,
+                   "Mathf.Clamp01(healthFraction)",
+                   "if (healthFraction >= 1f)",
+                   "raw.r *= healthFraction",
+                   "Mathf.Max(healthFraction, 0.2f)",
+                   "0.99f") &&
+               ContainsAll(
+                   surfacePreviewResourceSource,
+                   "NativeDecorationPreviewColor(",
+                   "RuntimeHelpers.GetHashCode(palette)",
+                   "SurfacePreviewResourceKey(",
+                   "if (SurfacePreviewMeshCanAcceptVertexColors(sourceMesh))",
+                   "UnityEngine.Object.Instantiate(sourceMesh)",
+                   "previewMesh.colors = vertexColors",
+                   "Material sourceMaterial = _previewRenderer?.GetMaterial(entry)",
+                   "previewMesh = sourceMesh",
+                   "new Material(sourceMaterial)",
+                   "ownsMesh = false",
+                   "ownsMaterial = true") &&
+               OccursBefore(
+                   surfacePreviewResourceSource,
+                   "SurfacePreviewMeshCanAcceptVertexColors(sourceMesh)",
+                   "previewMesh.colors = vertexColors") &&
+               ContainsAll(
+                   surfacePreviewReadableSource,
+                   "if (ReferenceEquals(mesh, null))",
+                   "return mesh.isReadable",
+                   "catch") &&
+               ContainsAll(
+                   clearSurfacePreviewSource,
+                   "ReleaseSurfacePreviewResource(resource)",
+                   "_surfacePreviewResources.Clear()") &&
+               ContainsAll(
+                   releaseSurfacePreviewSource,
+                   "resource?.OwnsMesh == true",
+                   "ReleasePlacementGhostObject(resource.Mesh)",
+                   "resource?.OwnsMaterial == true",
+                   "ReleasePlacementGhostObject(resource.Material)") &&
+               ContainsAll(
+                   reserveSurfacePreviewSource,
+                   "CanAdmitSurfacePreviewResource(",
+                   "_surfacePreviewResources.Remove(oldestKey)",
+                   "ReleaseSurfacePreviewResource(oldest)") &&
+               !drawSurfacePlanPreviewSource.Contains("ClearSurfacePreviewResources()"),
+            "Surface mesh previews use the vanilla palette cleanup path, guard unreadable meshes with a private tinted-material fallback, and evict only owned cache resources without mutating borrowed assets.");
+        Assert(!DecorationEditSession.SurfacePreviewMeshCanAcceptVertexColors(null),
+            "Surface preview readability rejects a missing mesh without touching Unity vertex data.");
+        Assert(DecorationEditSession.CanAdmitSurfacePreviewResource(
+                   currentCount: 255,
+                   maximumCount: 256,
+                   oldestLastUsedFrame: 100,
+                   currentFrame: 100) &&
+               !DecorationEditSession.CanAdmitSurfacePreviewResource(
+                   currentCount: 256,
+                   maximumCount: 256,
+                   oldestLastUsedFrame: 100,
+                   currentFrame: 101) &&
+               DecorationEditSession.CanAdmitSurfacePreviewResource(
+                   currentCount: 256,
+                   maximumCount: 256,
+                   oldestLastUsedFrame: 100,
+                   currentFrame: 102) &&
+               !DecorationEditSession.CanAdmitSurfacePreviewResource(
+                   currentCount: 0,
+                   maximumCount: 0,
+                   oldestLastUsedFrame: 0,
+                   currentFrame: 1),
+            "Surface preview cache admission fills to its exact limit, protects the active-frame working set, and evicts one stale entry instead of clearing and rebuilding the cache.");
+    }
 
     private static void VerifyDecorationEditModeMvp()
     {
@@ -3278,22 +3979,30 @@ f 0 2 3
         int activeBoxSelectionIndex = handleSceneInputSource.IndexOf(
             "if (_boxSelecting)",
             StringComparison.Ordinal);
-        int activeBoxRightClickIndex = handleSceneInputSource.IndexOf(
-            "if (Input.GetMouseButtonDown(1))",
-            activeBoxSelectionIndex,
-            StringComparison.Ordinal);
-        int viewportContextRightClickIndex = handleSceneInputSource.IndexOf(
-            "if (Input.GetMouseButtonDown(1))",
-            activeBoxRightClickIndex + 1,
-            StringComparison.Ordinal);
-        int viewportContextOpenIndex = handleSceneInputSource.IndexOf(
-            "if (TryOpenDecorationContextMenu())",
-            viewportContextRightClickIndex,
-            StringComparison.Ordinal);
-        int emptyBoxFallbackIndex = handleSceneInputSource.IndexOf(
-            "_selectionMode == DecorationSelectionMode.Box",
-            viewportContextOpenIndex,
-            StringComparison.Ordinal);
+        int activeBoxRightClickIndex = activeBoxSelectionIndex >= 0
+            ? handleSceneInputSource.IndexOf(
+                "if (Input.GetMouseButtonDown(1))",
+                activeBoxSelectionIndex,
+                StringComparison.Ordinal)
+            : -1;
+        int viewportContextRightClickIndex = activeBoxRightClickIndex >= 0
+            ? handleSceneInputSource.IndexOf(
+                "if (Input.GetMouseButtonDown(1))",
+                activeBoxRightClickIndex + 1,
+                StringComparison.Ordinal)
+            : -1;
+        int viewportContextOpenIndex = viewportContextRightClickIndex >= 0
+            ? handleSceneInputSource.IndexOf(
+                "if (TryOpenDecorationContextMenu())",
+                viewportContextRightClickIndex,
+                StringComparison.Ordinal)
+            : -1;
+        int emptyBoxFallbackIndex = viewportContextOpenIndex >= 0
+            ? handleSceneInputSource.IndexOf(
+                "_selectionMode == DecorationSelectionMode.Box",
+                viewportContextOpenIndex,
+                StringComparison.Ordinal)
+            : -1;
         string activeBoxSelectionPath = activeBoxSelectionIndex >= 0 &&
                                         viewportContextRightClickIndex > activeBoxSelectionIndex
             ? handleSceneInputSource.Substring(
@@ -3600,6 +4309,12 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuHudLayout.cs"));
+        string hudChromeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "EsuHudChrome.cs"));
         string transformSnapSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3666,6 +4381,10 @@ f 0 2 3
                themeSource.Contains("ImagePosition.ImageLeft") &&
                themeSource.Contains("Ensure(EsuHudLayout.CurrentScale)") &&
                themeSource.Contains("EsuHudLayout.FontSize") &&
+               themeSource.Contains("_buttonHover") &&
+               themeSource.Contains("_fieldFocused") &&
+               themeSource.Contains("CompactHeaderText") &&
+               themeSource.Contains("SectionHeader") &&
                !sessionSource.Contains("DimTextureFor(_viewMode)") &&
                !sessionSource.Contains("GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height)") &&
                themeSource.Contains("DecorationEditorViewMode") &&
@@ -3692,6 +4411,9 @@ f 0 2 3
                layoutSource.Contains("ToolbarRightControlsWidth") &&
                layoutSource.Contains("ScaleForScreen") &&
                layoutSource.Contains("ClampPanel") &&
+               layoutSource.Contains("ClampPanelMinimum") &&
+               layoutSource.Contains("AvailablePanelHeight") &&
+               layoutSource.Contains("ToolbarControlWidth") &&
                layoutSource.Contains("ResizeGripRect") &&
                layoutSource.Contains("DrawStackDividerGrip") &&
                layoutSource.Contains("RequestReset") &&
@@ -3701,6 +4423,18 @@ f 0 2 3
             "ESU editor HUD layout has shared automatic scaling, centered toolbar frames, profile options, reset, panel clamping, and resize grip helpers.");
         Assert(ToolbarBudgetsStayInsideAvailableWidth(),
             "ESU toolbar rail budget always fits inside the available toolbar width across laptop, desktop, and 200% scale cases.");
+        Assert(ResponsiveToolbarControlsFitRails(),
+            "Decoration, Surface, Smart, and Automation toolbar controls resolve inside their rail budgets at the supported high-scale layouts.");
+        Assert(ResponsivePanelMinimumsFitAvailableHeight(),
+            "Shared HUD panel minimums resolve down to the real toolbar-to-status-strip budget at supported high scales.");
+        Assert(AutomationLeftPanelSectionsRemainReachable(),
+            "Automation selection, input-link, and output-link regions retain a scrollable row without overlap at supported high scales.");
+        Assert(hudChromeSource.Contains("internal static class EsuHudChrome") &&
+               hudChromeSource.Contains("DrawPanel(Rect rect") &&
+               hudChromeSource.Contains("DrawCompactIconHeader") &&
+               hudChromeSource.Contains("DrawPanelHeader") &&
+               hudChromeSource.Contains("DrawSectionHeader"),
+            "ESU editors share panel accents, compact icon headers, panel headers, and collapsible section chrome.");
 
         Assert(cursorTooltipSource.Contains("internal static class EsuCursorTooltip") &&
                cursorTooltipSource.Contains("HoverDelaySeconds = 1f") &&
@@ -3715,6 +4449,7 @@ f 0 2 3
                cursorTooltipSource.Contains("Mathf.Clamp(rect.y") &&
                cursorTooltipSource.Contains("EventType.ScrollWheel") &&
                cursorTooltipSource.Contains("current.type != EventType.Repaint") &&
+               cursorTooltipSource.Contains("GUI.depth = Mathf.Min(previousDepth, -20000)") &&
                cursorTooltipSource.Contains("Input.GetMouseButton(0)") &&
                !cursorTooltipSource.Contains("InfoStore") &&
                !cursorTooltipSource.Contains("AdvLogger") &&
@@ -3773,8 +4508,8 @@ f 0 2 3
                sessionSource.Contains("IsLeftPanelStackVisible") &&
                sessionSource.Contains("IsRightPanelStackVisible") &&
                sessionSource.Contains("DrawBottomPanel") &&
-               sessionSource.Contains("DrawBottomPanel(bottomInner.width, bottomInner.height)") &&
-               sessionSource.Contains("private void DrawBottomPanel(float width, float height)") &&
+               sessionSource.Contains("DrawBottomPanel(bottomInner.width)") &&
+               sessionSource.Contains("private void DrawBottomPanel(float width)") &&
                sessionSource.Contains("private void DrawBottomHeader(Rect rect)") &&
                sessionSource.Contains("DrawBottomHeader(new Rect") &&
                !sessionSource.Contains("DrawPaletteDetails") &&
@@ -3790,7 +4525,7 @@ f 0 2 3
                sessionSource.Contains("startBottomHeight - deltaY") &&
                sessionSource.Contains("DrawAnchorContext(inner.height)") &&
                sessionSource.Contains("DrawCompactAnchorHeader") &&
-               sessionSource.Contains("EsuHudLayout.CompactHeaderHeightBase") &&
+               hudChromeSource.Contains("EsuHudLayout.CompactHeaderHeightBase") &&
                sessionSource.Contains("EsuHudLayout.Scale(16f)") &&
                !sessionSource.Contains("new GUIContent(\" Selected anchor\", DecorationEditorIconCatalog.Get(\"anchor\"))") &&
                sessionSource.Contains("float countHeight = Mathf.Min(EsuHudLayout.Scale(18f)") &&
@@ -3801,7 +4536,7 @@ f 0 2 3
                sessionSource.Contains("s_showInspectorPanel") &&
                sessionSource.Contains("s_showAnchorPanel") &&
                sessionSource.Contains("GUILayout.BeginArea(contentRect)") &&
-               sessionSource.Contains("DrawInspector(contentRect.height)") &&
+               sessionSourceNormalized.Contains("DrawInspector(\n                    contentRect.height,\n                    Mathf.Max(1f, contentRect.width - EsuHudLayout.Scale(22f)))") &&
                sessionSource.Contains("GUI.Button(hideRect, new GUIContent(\"Hide\", \"Hide the inspector panel.\"), DecorationEditorTheme.Button)") &&
                sessionSource.Contains("_showInspectorPanel = false") &&
                sessionSource.Contains("_showOutlinerPanel = false") &&
@@ -3861,7 +4596,8 @@ f 0 2 3
                sessionSource.Contains("ReferenceEquals(rows[anchorIndex].Construct, row.Construct)") &&
                sessionSource.Contains("!ReferenceEquals(row.Construct, clicked.Construct)") &&
                sessionSource.Contains("OutlinerRowTextStyle") &&
-               sessionSource.Contains("CompactHeaderTextStyle") &&
+               themeSource.Contains("CompactHeaderText") &&
+               hudChromeSource.Contains("DecorationEditorTheme.CompactHeaderText") &&
                smartBuildSessionSource.Contains("private const float ToolbarHeight = 54f") &&
                smartBuildSessionSource.Contains("_toolbarRect = EsuHudLayout.ToolbarRect(ToolbarHeight)") &&
                smartBuildSessionSource.Contains("EsuHudLayout.CalculateCenteredToolbarFrame(inner)") &&
@@ -3869,8 +4605,8 @@ f 0 2 3
                 smartBuildSessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
                 smartBuildSessionSource.Contains("ESU mode: Smart Builder.") &&
                 smartBuildSessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth))") &&
-                smartBuildSessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", ref _showLeftPanel") &&
-                smartBuildSessionSource.Contains("ToolbarPanelToggle(\"build\", \"Shapes\", ref _showRightPanel") &&
+                smartBuildSessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", \"I\", ref _showLeftPanel") &&
+                smartBuildSessionSource.Contains("ToolbarPanelToggle(\"build\", \"Library\", \"Lib\", ref _showRightPanel") &&
                 smartBuildSessionSource.Contains("DrawSmartSectionHeader(\"Scene\", ref _showSceneSection") &&
                 !smartBuildSessionSource.Contains("DrawPieceActionToolbar(budget.RightControlsWidth)") &&
                 !smartBuildSessionSource.Contains("private void ShapeQuickButton(") &&
@@ -3937,20 +4673,30 @@ f 0 2 3
                OccursBefore(drawEditorShellSource, "DrawViewModeMenu(toolbarRect)", "EsuCursorTooltip.Draw()"),
             "Decoration Edit Mode renders the View mode menu in the foreground overlay pass above panels and console.");
 
-        int decorationRightClick = handleSceneInputSource.IndexOf(
-            "if (Input.GetMouseButtonDown(1))",
-            handleSceneInputSource.IndexOf("if (_boxSelecting)", StringComparison.Ordinal),
+        int boxSelectionBranch = handleSceneInputSource.IndexOf(
+            "if (_boxSelecting)",
             StringComparison.Ordinal);
-        int decorationLeftClick = handleSceneInputSource.IndexOf(
-            "if (!Input.GetMouseButtonDown(0))",
-            decorationRightClick,
-            StringComparison.Ordinal);
+        int decorationRightClick = boxSelectionBranch >= 0
+            ? handleSceneInputSource.IndexOf(
+                "if (Input.GetMouseButtonDown(1))",
+                boxSelectionBranch,
+                StringComparison.Ordinal)
+            : -1;
+        int decorationLeftClick = decorationRightClick >= 0
+            ? handleSceneInputSource.IndexOf(
+                "if (!Input.GetMouseButtonDown(0))",
+                decorationRightClick,
+                StringComparison.Ordinal)
+            : -1;
+        int decorationContextOpen = decorationRightClick >= 0
+            ? handleSceneInputSource.IndexOf(
+                "TryOpenDecorationContextMenu()",
+                decorationRightClick,
+                StringComparison.Ordinal)
+            : -1;
         Assert(decorationRightClick >= 0 &&
                decorationLeftClick > decorationRightClick &&
-               handleSceneInputSource.IndexOf(
-                   "TryOpenDecorationContextMenu()",
-                   decorationRightClick,
-                   StringComparison.Ordinal) > decorationRightClick &&
+               decorationContextOpen > decorationRightClick &&
                OccursBefore(
                    drawEditorShellSource,
                    "DrawSurfaceContextMenu()",
@@ -4075,7 +4821,7 @@ f 0 2 3
                tryOpenDecorationContextMenuFromListSource.Contains("if (!GUI.enabled ||") &&
                smartBuildUpdateSource.Contains("if (_contextMenuOpen)") &&
                smartBuildUpdateSource.Contains("SmartBuildInputScope.SetMouseOverUi(true)") &&
-               smartBuildDrawGuiWrapperSource.Contains("GUI.enabled = false") &&
+               smartBuildDrawGuiWrapperSource.Contains("GUI.enabled = previousEnabled &&\n                              !EsuHudPreferences.FadeHudBehindModalPopups") &&
                OccursBefore(
                    smartBuildDrawGuiWrapperSource,
                    "DrawGuiCore(interactive: false)",
@@ -4084,7 +4830,7 @@ f 0 2 3
                smartStackDividerDragSource.Contains("if (!GUI.enabled ||\n                current == null ||\n                divider == SmartShapeStackDividerKind.None") &&
                automationUpdateSource.Contains("if (_contextBlock != null && !_canvasOpen && !_closePromptOpen)") &&
                automationUpdateSource.Contains("AutomationBuilderInputScope.SetMouseOverUi(true)") &&
-               automationDrawGuiSource.Contains("GUI.enabled = false") &&
+               automationDrawGuiSource.Contains("previousEnabled &&\n                    !EsuHudPreferences.FadeHudBehindModalPopups") &&
                OccursBefore(
                    automationDrawGuiSource,
                    "DrawGuiCore(interactive: false)",
@@ -4094,7 +4840,7 @@ f 0 2 3
                automationGraphNodeSource.Contains("DrawBlockSentence(rect, node, compact: false, graph)") &&
                automationGraphNodeSource.Contains("GUI.enabled = previousEnabled") &&
                automationGraphMouseUpSource.Contains("if (!GUI.enabled ||"),
-            "Context menus own foreground input across Decoration/Surface, Smart Builder, and Automation, rendering background controls disabled before consuming the original event; Automation graph fields also yield to graph popups.");
+            "Context menus own foreground input across Decoration/Surface, Smart Builder, and Automation, optionally fading the noninteractive background before consuming the original event; Automation graph fields also yield to graph popups.");
 
         Assert(modalInputPolicySource.Contains("internal static class EsuModalInputPolicy") &&
                modalInputPolicySource.Contains("IsBlockingEventType") &&
@@ -4107,9 +4853,15 @@ f 0 2 3
                automationContextConsumeSource.Contains("EsuModalInputPolicy.IsBlockingEventType") &&
                automationGraphConsumeSource.Contains("EsuModalInputPolicy.IsBlockingEventType") &&
                coordinateEnterSource.Contains("if (!GUI.enabled ||") &&
+               consoleWindowSource.Contains("bool drawEnabled = canInteract ||") &&
+               consoleWindowSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups") &&
+               consoleWindowSource.Contains("EventType originalType = !canInteract") &&
+               consoleWindowSource.Contains("SuppressForDisabledBackground(current)") &&
+               consoleWindowSource.Contains("GUI.enabled = drawEnabled") &&
                consoleWindowSource.Contains("Vector2 preservedScroll = _scroll") &&
                consoleWindowSource.Contains("if (!canInteract)\n                CancelPointerInteraction();") &&
                consoleWindowSource.Contains("_scroll = preservedScroll") &&
+               consoleWindowSource.Contains("Draw(interactive: false)") &&
                drawDisabledEditorShellSource.Contains("SuppressForDisabledBackground(current)") &&
                drawDisabledEditorShellSource.Contains("RestoreForForeground(") &&
                smartBuildDrawGuiWrapperSource.Contains("SuppressForDisabledBackground(") &&
@@ -4573,7 +5325,7 @@ f 0 2 3
                sessionSource.Contains("private void KeepSelectionFocused(Decoration decoration, AllConstruct construct)") &&
                toggleSelectionModeSource.Contains("TryHandleSelectionFocusBulkRequest()") &&
                cycleCreateSelectShortcutSource.Contains("TryHandleSelectionFocusBulkRequest()") &&
-               handleSceneInputSource.Contains("if (TryHandleSelectionFocusBulkRequest())\n                    return;\n\n                BeginBoxSelection(_lastMouseGui);") &&
+               handleSceneInputSource.Contains("if (TryHandleSelectionFocusBulkRequest())\n                    return;\n\n                BeginBoxSelection(_lastMouseGui, paint: false);") &&
                selectNearestSource.Contains("TryHandleSelectionFocusRequest(best.Decoration, best.Construct)") &&
                selectBoxSource.Contains("TryHandleSelectionFocusBulkRequest()") &&
                selectDecorationSource.Contains("TryHandleSelectionFocusRequest(decoration, construct)") &&
@@ -4591,9 +5343,12 @@ f 0 2 3
         Assert(activeBoxSelectionIndex >= 0 &&
                activeBoxRightClickIndex > activeBoxSelectionIndex &&
                activeBoxSelectionPath.Contains("if (Input.GetMouseButtonDown(1))") &&
+               activeBoxSelectionPath.Contains("bool wasPaint = _boxSelectionPaint") &&
                activeBoxSelectionPath.Contains("CancelBoxSelection();") &&
+               activeBoxSelectionPath.Contains("if (!wasPaint)") &&
                activeBoxSelectionPath.Contains("_selectionMode = DecorationSelectionMode.Single;") &&
-               activeBoxSelectionPath.Contains("InfoStore.Add(\"Box selection cancelled.\");") &&
+               activeBoxSelectionPath.Contains("? \"Paint selection cancelled.\"") &&
+               activeBoxSelectionPath.Contains(": \"Box selection cancelled.\"") &&
                viewportContextRightClickIndex > activeBoxSelectionIndex &&
                viewportContextOpenIndex > viewportContextRightClickIndex &&
                emptyBoxFallbackIndex > viewportContextOpenIndex &&
@@ -4611,7 +5366,7 @@ f 0 2 3
                    "InfoStore.Add(\"Box select disabled.\");",
                    emptyBoxFallbackIndex,
                    StringComparison.Ordinal) > emptyBoxFallbackIndex,
-            "Decoration Edit Mode cancels an active Box drag, but after a Box selection right-click opens the group context menu before empty-space fallback disables Box mode.");
+            "Decoration Edit Mode cancels active selection or paint-box drags, while after a Box selection right-click opens the group context menu before empty-space fallback disables Box mode.");
 
         Assert(previousSelectionIndex >= 0 &&
                additiveSetPrimaryIndex > previousSelectionIndex &&
@@ -4838,11 +5593,11 @@ f 0 2 3
                sessionSource.Contains("_showInspectorColorPicker") &&
                sessionSource.Contains("new GUIContent(_showInspectorColorPicker ? \"Hide list\" : \"Show list\"") &&
                sessionSource.Contains("DrawPaintColorButton(") &&
-               ExtractMethodSource(sessionSource, "DrawColorEditor").Contains("SelectedColorMatches(color)") &&
+               ExtractMethodSource(sessionSource, "DrawColorEditor").Contains("SelectedColorMatches,") &&
                ExtractMethodSource(sessionSource, "SetSelectedColor").Contains("SetSelectedDecorationsColor(decorations, color)") &&
                ExtractMethodSource(sessionSource, "SetSelectedDecorationsColor").Contains("DecorationSnapshotBatchCommand") &&
                ExtractMethodSource(sessionSource, "SetSelectedDecorationsColor").Contains("decoration.Color.Us = color") &&
-               OccursBefore(sessionSource, "DrawColorEditor()", "LabelRow(\"Owner\"") &&
+               OccursBefore(sessionSource, "DrawColorEditor(availableWidth)", "LabelRow(\"Owner\"") &&
                OccursBefore(sessionSource, "DrawMaterialEditor()", "LabelRow(\"Owner\"") &&
                OccursBefore(
                    sessionSourceNormalized,
@@ -4856,24 +5611,26 @@ f 0 2 3
 
         Assert(setSelectedDecorationsColorSource.Contains("DecorationSnapshotBatchCommand") &&
                setSelectedDecorationsColorSource.Contains("decoration.Color.Us = color") &&
-               setSelectedDecorationsColorSource.Contains("changedDecorations.ToArray()") &&
+               setSelectedDecorationsColorSource.Contains("historyDecorations.ToArray()") &&
                setSelectedDecorationsColorSource.Contains("primaryIndex"),
             "Decoration Edit Mode batch color edits still record DecorationSnapshotBatchCommand.");
 
         Assert(sessionSource.Contains("DrawPaintPalette") &&
                sessionSource.Contains("DrawPaintColorRow") &&
                sessionSource.Contains("DrawPaintColorButton") &&
+               sessionSource.Contains("DrawPaintColorGrid") &&
+               sessionSource.Contains("ResolvePaintPaletteColumns") &&
                sessionSource.Contains("DrawPaintSwatchLayout") &&
                sessionSource.Contains("PaintPreviewColor") &&
-               sessionSource.Contains("ColorsRestricted?.GetColor(colorIndex)") &&
-               sessionSource.Contains("VisiblePaintPreviewColor") &&
+               sessionSource.Contains("NativeDecorationPreviewColor") &&
+               sessionSource.Contains("colors.GetColor(colorIndex)") &&
+               sessionSource.Contains("colors.GetCamoFlagFor(colorIndex)") &&
+               sessionSource.Contains("Colors.CleanUpColorBeforePassingOut") &&
                sessionSource.Contains("PaintDisplayColor") &&
                sessionSource.Contains("PaintColorApplies") &&
-               sessionSource.Contains("BlendPaintOverMaterialPreview") &&
-               sessionSource.Contains("color.a = ClampVisiblePaintChannel(color.a);") &&
+               sessionSource.Contains("ClampVisiblePaintChannel") &&
                sessionSource.Contains("case 0: return new Color(0.01f, 0f, 0f, 0f);") &&
                !sessionSource.Contains("Color color = Color.Lerp(materialColor, paintColor, 0.45f);") &&
-               sessionSource.Contains("DecodeVisiblePaintRedChannel") &&
                sessionSource.Contains("FallbackPaintPreviewColor") &&
                sessionSource.Contains("PaintNearest") &&
                sessionSource.Contains("TryFindNearestDecoration") &&
@@ -4888,7 +5645,7 @@ f 0 2 3
                sessionSource.Contains("IsPaintRestorableTool") &&
                sessionSource.Contains("SetActiveTool(tool);") &&
                sessionSource.Contains("s_showMeshPalette = _tool == DecorationEditorTool.Paint") &&
-               sessionSource.Contains("Pick a color, then click decoration centers or blocks in the viewport to paint them.") &&
+               sessionSource.Contains("Pick a color. Click a decoration or block, or drag a rectangle to paint everything inside it.") &&
                sessionSource.Contains("Painted decoration color #") &&
                sessionSource.Contains("Painted \" + selectedCount.ToString(\"N0\", CultureInfo.InvariantCulture) + \" selected decorations color #") &&
                ExtractMethodSource(sessionSource, "PaintNearest").Contains("paintSelection") &&
@@ -4899,7 +5656,7 @@ f 0 2 3
                sessionSource.Contains("_tool == DecorationEditorTool.Paint)") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Surface ||") &&
                sessionSource.Contains("_tool == DecorationEditorTool.Paint);"),
-            "Decoration Edit Mode Paint has real color swatch palettes and viewport click painting for decorations and pointed blocks.");
+            "Decoration Edit Mode Paint uses native-cleaned color swatches and supports both viewport click painting and responsive box-paint entry for decorations and blocks.");
 
         Assert(!sessionSource.Contains("color = Color.white;") &&
                !sessionSource.Contains("VectorLines.i.Current") &&
@@ -5104,6 +5861,163 @@ f 0 2 3
         return true;
     }
 
+    private static bool ResponsiveToolbarControlsFitRails()
+    {
+        var layouts = new[]
+        {
+            new { Width = 1366f, Scale = 1.44f },
+            new { Width = 1920f, Scale = 2f },
+        };
+        var modes = new[]
+        {
+            new { LeftCount = 12, RightCount = 9, LeftPreferred = 58f, RightPreferred = 54f },
+            new { LeftCount = 10, RightCount = 7, LeftPreferred = 58f, RightPreferred = 54f },
+            new { LeftCount = 11, RightCount = 5, LeftPreferred = 54f, RightPreferred = 54f },
+            new { LeftCount = 7, RightCount = 5, LeftPreferred = 54f, RightPreferred = 54f },
+        };
+
+        foreach (var layout in layouts)
+        {
+            float toolbarWidth = layout.Width - 28f * layout.Scale;
+            EsuHudLayout.ToolbarBudget budget = EsuHudLayout.CalculateToolbarBudget(
+                toolbarWidth,
+                layout.Scale);
+            if (budget.NotificationWidth + 0.001f < 120f * layout.Scale)
+                return false;
+
+            foreach (var mode in modes)
+            {
+                float leftWidth = EsuHudLayout.ToolbarControlWidth(
+                    budget.LeftRailWidth,
+                    mode.LeftCount,
+                    mode.LeftPreferred,
+                    layout.Scale);
+                float rightWidth = EsuHudLayout.ToolbarControlWidth(
+                    budget.RightControlsWidth,
+                    mode.RightCount,
+                    mode.RightPreferred,
+                    layout.Scale);
+                float margin = 4f * layout.Scale;
+                if ((leftWidth + margin) * mode.LeftCount > budget.LeftRailWidth + 0.01f ||
+                    (rightWidth + margin) * mode.RightCount > budget.RightControlsWidth + 0.01f ||
+                    leftWidth < 24f * layout.Scale ||
+                    rightWidth < 24f * layout.Scale)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool ResponsivePanelMinimumsFitAvailableHeight()
+    {
+        var cases = new[]
+        {
+            new { Width = 1366, Height = 768, Scale = 1.44f },
+            new { Width = 1920, Height = 1080, Scale = 2f },
+        };
+
+        foreach (var testCase in cases)
+        {
+            float topLimit = (8f + 54f + 8f) * testCase.Scale;
+            float statusHeight = Mathf.Clamp(
+                testCase.Height * EsuHudLayout.BottomStripScreenRatio,
+                EsuHudLayout.BottomStripMinHeightBase * testCase.Scale,
+                EsuHudLayout.BottomStripMaxHeightBase * testCase.Scale);
+            float bottomLimit = statusHeight + EsuHudLayout.EditorBottomPanelGapBase * testCase.Scale;
+            float available = Mathf.Max(1f, testCase.Height - topLimit - bottomLimit);
+            float[] desiredMinimums =
+            {
+                330f * testCase.Scale,
+                390f * testCase.Scale,
+                420f * testCase.Scale,
+                520f * testCase.Scale,
+            };
+            foreach (float desired in desiredMinimums)
+            {
+                float resolved = EsuHudLayout.ClampPanelMinimum(desired, available);
+                if (resolved < 1f || resolved > available + 0.001f)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AutomationLeftPanelSectionsRemainReachable()
+    {
+        var cases = new[]
+        {
+            new { Width = 1366, Height = 768, Scale = 1.44f },
+            new { Width = 1920, Height = 1080, Scale = 2f },
+        };
+
+        foreach (var testCase in cases)
+        {
+            float topLimit = (8f + 54f + 8f) * testCase.Scale;
+            float statusHeight = Mathf.Clamp(
+                testCase.Height * EsuHudLayout.BottomStripScreenRatio,
+                EsuHudLayout.BottomStripMinHeightBase * testCase.Scale,
+                EsuHudLayout.BottomStripMaxHeightBase * testCase.Scale);
+            float bottomLimit = statusHeight + EsuHudLayout.EditorBottomPanelGapBase * testCase.Scale;
+            float panelHeight = Mathf.Max(1f, testCase.Height - topLimit - bottomLimit);
+            float innerHeight = Mathf.Max(1f, panelHeight - 16f * testCase.Scale);
+            AutomationBuilderSession.ResolveAutomationLeftPanelSections(
+                innerHeight,
+                testCase.Scale,
+                hasSelectedBreadboard: true,
+                out float selectionHeight,
+                out float linksHeight);
+            float dividerGap = 8f * testCase.Scale;
+            float minimumLinkPanelHeight = 72f * testCase.Scale;
+            var linksRect = new Rect(0f, 0f, 320f * testCase.Scale, linksHeight);
+            AutomationBuilderSession.SplitAutomationVerticalStack(
+                linksRect,
+                0.5f,
+                dividerGap,
+                minimumLinkPanelHeight,
+                out Rect inputRect,
+                out Rect dividerRect,
+                out Rect outputRect,
+                out float resolvedRatio);
+            if (selectionHeight < 1f ||
+                inputRect.height + 0.001f < minimumLinkPanelHeight ||
+                outputRect.height + 0.001f < minimumLinkPanelHeight ||
+                resolvedRatio < 0f ||
+                resolvedRatio > 1f ||
+                !RectPartitionIsValid(linksRect, inputRect, dividerRect, outputRect))
+            {
+                return false;
+            }
+        }
+
+        var tiny = new Rect(2f, 3f, -10f, 3f);
+        AutomationBuilderSession.SplitAutomationVerticalStack(
+            tiny,
+            float.PositiveInfinity,
+            20f,
+            72f,
+            out Rect tinyInput,
+            out Rect tinyDivider,
+            out Rect tinyOutput,
+            out float tinyRatio);
+        var normalizedTiny = new Rect(tiny.x, tiny.y, 0f, tiny.height);
+        if (!RectPartitionIsValid(
+                normalizedTiny,
+                tinyInput,
+                tinyDivider,
+                tinyOutput) ||
+            tinyRatio < 0f ||
+            tinyRatio > 1f)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     private static void VerifyEsuRuntimeConsole()
     {
         EsuRuntimeLog.Clear();
@@ -5182,6 +6096,12 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildSession.cs"));
+        string automationBuilderSessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderSession.cs"));
         string smartBuildDrawGuiSource = ExtractMethodSource(smartBuildSessionSource, "DrawGuiCore").Replace("\r\n", "\n");
         string decorationBehaviourSource = File.ReadAllText(Path.Combine(
             root,
@@ -5217,6 +6137,9 @@ f 0 2 3
                consoleSource.Contains("HandleDrag") &&
                consoleSource.Contains("HeaderDragRect") &&
                consoleSource.Contains("DrawPanel(Rect rect)") &&
+               consoleSource.Contains("EsuHudChrome.DrawPanel(rect)") &&
+               consoleSource.Contains("DecorationEditorTheme.Badge") &&
+               consoleSource.Contains("hasVisibleEntries") &&
                consoleSource.Contains("HeaderTitleStyle") &&
                consoleSource.Contains("wordWrap = false") &&
                consoleSource.Contains("EsuHudLayout.DrawResizeGrip") &&
@@ -5229,9 +6152,17 @@ f 0 2 3
                notificationSource.Contains("EsuRuntimeLog.FromNotification") &&
                notificationSource.Contains("ShowSystem") &&
                notificationSource.Contains("DrawLogButton") &&
+               notificationSource.Contains("float resolvedWidth = Mathf.Max(1f, width)") &&
+               !notificationSource.Contains("SlotMinWidth") &&
+               notificationSource.Contains("bool narrow = rect.width < EsuHudLayout.Scale(180f)") &&
+               notificationSource.Contains("float textWidth = Mathf.Max(1f, textRect.width)") &&
                notificationSource.Contains("\"Log\"") &&
                notificationSource.Contains("EsuConsoleWindow.Toggle") &&
                notificationSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
+               notificationSource.Contains("ExpandedPopupOwnsEvent") &&
+               sessionSource.Contains("EsuHudNotifications.ExpandedPopupOwnsEvent(foregroundEvent)") &&
+               smartBuildSessionSource.Contains("EsuHudNotifications.ExpandedPopupOwnsEvent(foregroundEvent)") &&
+               automationBuilderSessionSource.Contains("EsuHudNotifications.ExpandedPopupOwnsEvent(contextEvent)") &&
                notificationSource.Contains("Vector2 screenOrigin") &&
                notificationSource.Contains("screenOrigin.x + rect.x") &&
                notificationSource.Contains("screenOrigin.y + rect.y") &&
@@ -6233,6 +7164,12 @@ f 0 2 3
             "DecorationEditMode",
             "SurfaceDecorationPlanner.cs"));
         string surfacePanelSource = ExtractMethodSource(sessionSource, "DrawSurfacePanel");
+        string expandedSurfaceWorkspaceSource = ExtractMethodSource(
+            sessionSource,
+            "DrawExpandedSurfaceWorkspace");
+        string surfaceDraftWorkspaceDrawSource = ExtractMethodSource(
+            sessionSource,
+            "DrawSurfaceDraftWorkspace");
         string coordinateShelfSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateEditorShelf");
         string coordinateHeaderSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateEditorHeader");
         string coordinateVectorSource = ExtractMethodSource(sessionSource, "DrawSurfaceCoordinateVectorWorkbench");
@@ -6251,6 +7188,7 @@ f 0 2 3
         string draftWorkspaceSource = ExtractMethodSource(sessionSource, "SurfaceDraftWorkspaceDesiredHeight");
         string draftMinimumSource = ExtractMethodSource(sessionSource, "SurfaceDraftMinimumWorkspaceHeight");
         string draftListHeightSource = ExtractMethodSource(sessionSource, "SurfaceDraftListHeight");
+        string draftListAllocatorSource = ExtractMethodSource(sessionSource, "AllocateSurfaceDraftListHeight");
         string dividerDragSource = ExtractMethodSource(sessionSource, "HandleSurfaceCoordinateDividerDrag");
         string worldOverlaySource = ExtractMethodSource(sessionSource, "DrawWorldOverlay");
         string liveModelSource = ExtractMethodSource(surfaceDraftSource, "TrySetPointCoordinateLive");
@@ -6270,18 +7208,19 @@ f 0 2 3
                settingsSource.Contains("SaveProfileBestEffort();") &&
                settingsSource.Contains("ProfileManager.Instance.Save(module => module is SerializationHudProfile)"),
             "Surface coordinate slider ranges and per-axis steps are profile-backed, self-heal invalid saved axes, and persist independently of craft data.");
-        Assert(surfacePanelSource.Contains("DrawSurfaceCoordinateEditorShelf(coordinateRect);") &&
-               surfacePanelSource.Contains("SurfaceCoordinateAutoBottomRatio(workspaceRect, gap)") &&
-               surfacePanelSource.Contains("SplitSurfaceCoordinateWorkspace(") &&
-               surfacePanelSource.Contains("HandleSurfaceCoordinateDividerDrag(") &&
-               surfacePanelSource.Contains("StackDividerKind.SurfaceCoordinates") &&
-               surfacePanelSource.Contains("SurfaceCoordinateCollapsedShelfHeight()") &&
-               surfacePanelSource.Contains("GUILayout.ExpandHeight(true)") &&
-               !surfacePanelSource.Contains("\"Show coords\"") &&
+        Assert(surfacePanelSource.Contains("DrawCompactSurfaceWorkspace(workspaceRect)") &&
+               surfacePanelSource.Contains("DrawExpandedSurfaceWorkspace(workspaceRect, gap)") &&
                OccursBefore(
                    surfacePanelSource,
-                   "DrawSurfaceCoordinateEditorShelf(coordinateRect);",
-                   "DrawSurfaceSettings();") &&
+                   "DrawExpandedSurfaceWorkspace(workspaceRect, gap)",
+                   "DrawSurfaceSettingsShelf(settingsRect, compactWorkspace)") &&
+               expandedSurfaceWorkspaceSource.Contains("DrawSurfaceCoordinateEditorShelf(coordinateRect);") &&
+               expandedSurfaceWorkspaceSource.Contains("SurfaceCoordinateAutoBottomRatio(workspaceRect, gap)") &&
+               expandedSurfaceWorkspaceSource.Contains("SplitSurfaceCoordinateWorkspace(") &&
+               expandedSurfaceWorkspaceSource.Contains("HandleSurfaceCoordinateDividerDrag(") &&
+               expandedSurfaceWorkspaceSource.Contains("StackDividerKind.SurfaceCoordinates") &&
+               expandedSurfaceWorkspaceSource.Contains("SurfaceCoordinateCollapsedShelfHeight()") &&
+               !surfacePanelSource.Contains("\"Show coords\"") &&
                sessionSource.Contains("SurfaceDraftWorkspaceDesiredHeight()") &&
                sessionSource.Contains("SurfaceDraftMinimumWorkspaceHeight()") &&
                sessionSource.Contains("AllocateSurfaceCoordinateShelfHeight(") &&
@@ -6292,7 +7231,10 @@ f 0 2 3
                !draftWorkspaceSource.Contains("0.42f / 0.58f") &&
                draftWorkspaceSource.Contains("SurfaceDraftWorkspaceChromeHeight() + listHeight") &&
                draftMinimumSource.Contains("SurfaceDraftWorkspaceChromeHeight()") &&
-               draftListHeightSource.Contains("contentHeight - SurfaceDraftWorkspaceChromeHeight()") &&
+               draftListHeightSource.Contains("AllocateSurfaceDraftListHeight(") &&
+               draftListAllocatorSource.Contains("contentHeight - reserved") &&
+               draftListAllocatorSource.Contains("Mathf.Min(") &&
+               draftListAllocatorSource.Contains("contentHeight,") &&
                !draftListHeightSource.Contains("contentHeight * 0.42f") &&
                dividerDragSource.Contains("_surfaceCoordinateSplitCustomized = true") &&
                dividerDragSource.Contains("ClampSurfaceCoordinateBottomHeight(") &&
@@ -7689,6 +8631,7 @@ f 0 2 3
         string sharedAnchorDragSource = ExtractMethodSource(sessionSource, "TryUpdateSharedAnchorDrag");
         string surfacePanelSource = ExtractMethodSource(sessionSource, "DrawSurfacePanel");
         string surfaceExtraToolsPanelSource = ExtractMethodSource(sessionSource, "DrawSurfaceExtraToolsPanel");
+        string surfaceExtraToolsAllocatorSource = ExtractMethodSource(sessionSource, "AllocateSurfaceExtraToolsRects");
         string drawGeneratorToolButtonsSource = ExtractMethodSource(sessionSource, "DrawGeneratorToolButtons");
         string drawSurfaceDrawToolButtonSource = ExtractMethodSource(sessionSource, "DrawSurfaceDrawToolButton");
         string drawGeneratorToolButtonSource = ExtractMethodSource(sessionSource, "DrawGeneratorToolButton");
@@ -7696,7 +8639,12 @@ f 0 2 3
         string generatorMaterialListViewportHeightSource = ExtractMethodSource(sessionSource, "GeneratorMaterialListViewportHeight");
         string drawSurfaceOverlaySource = ExtractMethodSource(sessionSource, "DrawSurfaceOverlay");
         string drawSurfacePlanMeshPreviewSource = ExtractMethodSource(sessionSource, "DrawSurfacePlanMeshPreview");
-        string surfacePreviewMaterialSource = ExtractMethodSource(sessionSource, "SurfacePreviewMaterial");
+        string surfacePreviewResourceSource = ExtractMethodSource(sessionSource, "SurfacePreviewResourceFor");
+        string nativeDecorationPreviewColorSource = ExtractMethodSource(sessionSource, "NativeDecorationPreviewColor");
+        string surfacePreviewResourceKeySource = ExtractMethodSource(sessionSource, "SurfacePreviewResourceKey");
+        string clearSurfacePreviewResourcesSource = ExtractMethodSource(sessionSource, "ClearSurfacePreviewResources");
+        string releaseSurfacePreviewResourceSource = ExtractMethodSource(sessionSource, "ReleaseSurfacePreviewResource");
+        string expandedSurfaceWorkspaceSource = ExtractMethodSource(sessionSource, "DrawExpandedSurfaceWorkspace");
         string surfacePlacementMatrixSource = ExtractMethodSource(sessionSource, "SurfacePlacementMatrix");
         string createFaceFromSelectedSurfacePointsSource = ExtractMethodSource(sessionSource, "CreateFaceFromSelectedSurfacePoints");
         string commitSharedAnchorDragSource = ExtractMethodSource(sessionSource, "CommitSharedAnchorDrag");
@@ -7991,24 +8939,31 @@ f 0 2 3
                sessionSource.Contains("DrawMirroredSurfaceOverlay") &&
                plannerSource.Contains("internal StructureBlockType StructureBlockType") &&
                plannerSource.Contains("draft.Settings.StructureBlockType") &&
-               sessionSource.Contains("_surfacePreviewMaterials") &&
-               sessionSource.Contains("ApplySurfacePreviewPaint") &&
+               sessionSource.Contains("_surfacePreviewResources") &&
                sessionSource.Contains("SurfaceFallbackMaterialPreviewColor") &&
                sessionSource.Contains("SurfacePlacementMatrix") &&
                meshPreviewRendererSource.Contains("internal Material GetMaterial") &&
                meshPreviewRendererSource.Contains("definition.GetMaterial()") &&
-               drawSurfacePlanMeshPreviewSource.Contains("_previewRenderer?.GetMesh(entry)") &&
-               drawSurfacePlanMeshPreviewSource.Contains("SurfacePreviewMaterial(placement, entry)") &&
-               drawSurfacePlanMeshPreviewSource.Contains("Graphics.DrawMesh(mesh, SurfacePlacementMatrix") &&
+               drawSurfacePlanMeshPreviewSource.Contains("SurfacePreviewResourceFor(") &&
+               drawSurfacePlanMeshPreviewSource.Contains("resource.Mesh") &&
+               drawSurfacePlanMeshPreviewSource.Contains("resource.Material") &&
                drawSurfaceOverlaySource.Contains("bool drewPreviewMeshes = hasPreview && DrawSurfacePlanMeshPreview(_surfacePlan)") &&
                drawSurfaceOverlaySource.Contains("bool drawDraftFill = !hasPreview || !drewPreviewMeshes") &&
                drawSurfaceOverlaySource.Contains("if (drawDraftFill)") &&
-               surfacePreviewMaterialSource.Contains("_previewRenderer?.GetMaterial(entry)") &&
-               surfacePreviewMaterialSource.Contains("new Material(sourceMaterial)") &&
-               surfacePreviewMaterialSource.Contains("ApplySurfacePreviewPaint(material, placement.Color)") &&
-               !surfacePreviewMaterialSource.Contains("ConfigureTransparentMaterial(material)") &&
+               nativeDecorationPreviewColorSource.Contains("Colors.CleanUpColorBeforePassingOut(") &&
+               surfacePreviewResourceSource.Contains("SurfacePreviewMeshCanAcceptVertexColors(sourceMesh)") &&
+               surfacePreviewResourceSource.Contains("UnityEngine.Object.Instantiate(sourceMesh)") &&
+               surfacePreviewResourceSource.Contains("previewMesh.colors = vertexColors") &&
+               surfacePreviewResourceSource.Contains("RuntimeHelpers.GetHashCode(palette)") &&
+               surfacePreviewResourceSource.Contains("new Material(sourceMaterial)") &&
+               surfacePreviewResourceSource.Contains("previewMesh = sourceMesh") &&
+               surfacePreviewResourceKeySource.Contains("Color32 rgba = nativeColor") &&
+               surfacePreviewResourceKeySource.Contains("paletteIdentity.ToString(\"X8\"") &&
+               clearSurfacePreviewResourcesSource.Contains("ReleaseSurfacePreviewResource(resource)") &&
+               releaseSurfacePreviewResourceSource.Contains("resource?.OwnsMesh == true") &&
+               releaseSurfacePreviewResourceSource.Contains("resource?.OwnsMaterial == true") &&
                historySource.Contains("SurfaceBuilderStyleHistoryCommand"),
-            "Surface Builder shares paint color across Draw and Extra Tools, supports per-face surface colors, shows face colors in the draft list, and renders planned mesh/material previews from selected paint.");
+            "Surface Builder shares paint color across Draw and Extra Tools, supports per-face colors, and renders native-cleaned previews with a safe unreadable-mesh fallback without mutating borrowed materials.");
 
         Assert(surfacePlacementMatrixSource.Contains("Quaternion localRotation = Quaternion.Euler(placement.Orientation)") &&
                surfacePlacementMatrixSource.Contains("ConstructRotation(construct) * localRotation") &&
@@ -8024,8 +8979,18 @@ f 0 2 3
                !placeSurfacePlanSource.Contains("RebuildSurfacePreview"),
             "Surface Builder only stores material preview plans from explicit Preview actions; create-face, same-anchor guides, and Place use invalidation or temporary plans.");
 
-        Assert(surfaceExtraToolsPanelSource.Contains("_surfaceExtraToolsViewportHeight = Mathf.Max") &&
-               surfaceExtraToolsPanelSource.Contains("GUILayout.Height(_surfaceExtraToolsViewportHeight)") &&
+        Assert(surfaceExtraToolsPanelSource.Contains("AllocateSurfaceExtraToolsRects(") &&
+               surfaceExtraToolsPanelSource.Contains("desiredPinnedHeight: 0f") &&
+               surfaceExtraToolsPanelSource.Contains("gap: 0f") &&
+               surfaceExtraToolsPanelSource.Contains("GUILayout.BeginArea(scrollRect)") &&
+               surfaceExtraToolsPanelSource.Contains("GUILayout.Width(scrollRect.width)") &&
+               surfaceExtraToolsPanelSource.Contains("GUILayout.Height(scrollRect.height)") &&
+               surfaceExtraToolsPanelSource.Contains("_surfaceExtraToolsViewportHeight = Mathf.Max") &&
+               OccursBefore(
+                   surfaceExtraToolsPanelSource,
+                   "_generatorScroll = GUILayout.BeginScrollView(",
+                   "DrawGeneratorToolButtons();") &&
+               surfaceExtraToolsAllocatorSource.Contains("inner.y + safeHeight - scrollY") &&
                sessionSource.Contains("private bool _showGeneratorMaterialPicker = true;") &&
                generatorMaterialEditorSource.Contains("_generatorMaterialListHeight = 0f") &&
                generatorMaterialEditorSource.Contains("GeneratorMaterialListViewportHeight") &&
@@ -8034,7 +8999,7 @@ f 0 2 3
                generatorMaterialListViewportHeightSource.Contains("GUILayoutUtility.GetLastRect()") &&
                generatorMaterialListViewportHeightSource.Contains("_generatorScroll.y + _surfaceExtraToolsViewportHeight") &&
                generatorMaterialListViewportHeightSource.Contains("_generatorMaterialListHeight = Mathf.Clamp"),
-            "Surface Builder Extra Tools material picker opens by default and sizes from the active panel viewport instead of a fixed list height.");
+            "Surface Builder Extra Tools explicitly allocates its full-height scroll viewport, while the material picker opens by default and sizes from that viewport instead of a fixed list height.");
 
         Assert(!surfacePanelSource.Contains("new GUIContent(\"Draw\"") &&
                OccursBefore(
@@ -8049,32 +9014,59 @@ f 0 2 3
                drawGeneratorToolButtonSource.Contains("DecorationEditorTheme.ToolButton(active)"),
             "Surface Builder places Draw first in Extra Tools and gives active highlighting exclusively to Draw or the currently active generator creation mode.");
 
-        int surfacePanelIndex = sessionSource.IndexOf("private void DrawSurfacePanel", StringComparison.Ordinal);
-        int surfaceHelperIndex = sessionSource.IndexOf("Shift-click points, then right-click", surfacePanelIndex, StringComparison.Ordinal);
-        int surfaceSettingsShelfIndex = sessionSource.IndexOf("GUILayout.BeginArea(settingsRect)", surfacePanelIndex, StringComparison.Ordinal);
-        int surfaceSettingsIndex = sessionSource.IndexOf("DrawSurfaceSettings();", surfaceSettingsShelfIndex, StringComparison.Ordinal);
-        int surfaceActionBarIndex = sessionSource.IndexOf("DrawSurfaceActionBar(actionRect)", surfaceSettingsIndex, StringComparison.Ordinal);
-        Assert(surfaceHelperIndex >= 0 &&
-               surfaceSettingsShelfIndex > surfaceHelperIndex &&
-               surfaceSettingsIndex > surfaceSettingsShelfIndex &&
-               surfaceActionBarIndex > surfaceSettingsIndex &&
+        Assert(OccursBefore(
+                   surfacePanelSource,
+                   "DrawSurfaceSettingsShelf(settingsRect, compactWorkspace)",
+                   "DrawSurfaceActionBar(actionRect)") &&
+               surfacePanelSource.Contains("SurfacePanelUsesCompactWorkspace(inner.height)") &&
+               surfacePanelSource.Contains("SurfaceWorkspaceUsesSimultaneousPanels(") &&
+               surfacePanelSource.Contains("DrawExpandedSurfaceWorkspace(workspaceRect, gap)") &&
+               expandedSurfaceWorkspaceSource.Contains("SplitSurfaceCoordinateWorkspace(") &&
+               expandedSurfaceWorkspaceSource.Contains("DrawSurfaceDraftWorkspace(contentRect") &&
+               expandedSurfaceWorkspaceSource.Contains("DrawSurfaceCoordinateEditorShelf(coordinateRect)") &&
                sessionSource.Contains("private float SurfaceDraftListHeight(float contentHeight)") &&
                sessionSource.Contains("UnifiedSurfaceDraftRowCount()") &&
                sessionSource.Contains("DrawUnifiedSurfaceDraftRows();") &&
                sessionSource.Contains("Current surface paint color #") &&
                sessionSource.Contains("_showSurfaceCoordinates") &&
-               sessionSource.Contains("GUILayout.ExpandHeight(true))"),
+               sessionSource.Contains("internal static float AllocateSurfaceDraftListHeight") &&
+               sessionSource.Contains("contentHeight - reserved"),
             "Surface Builder caps the unified draft list while Coordinates is open, expands it when Coordinates is collapsed, and pins settings above the action buttons.");
 
         int drawTopToolbar = sessionSourceNormalized.IndexOf("private void DrawTopToolbar", StringComparison.Ordinal);
-        int surfaceTopbar = sessionSourceNormalized.IndexOf("if (IsSurfaceMode)\n                {", drawTopToolbar, StringComparison.Ordinal);
-        int surfaceTopbarElse = sessionSourceNormalized.IndexOf("\n                }\n                else", surfaceTopbar, StringComparison.Ordinal);
+        int surfaceTopbar = drawTopToolbar >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (IsSurfaceMode)\n                {",
+                drawTopToolbar,
+                StringComparison.Ordinal)
+            : -1;
+        int surfaceTopbarElse = surfaceTopbar >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "\n                }\n                else",
+                surfaceTopbar,
+                StringComparison.Ordinal)
+            : -1;
         string surfaceTopbarBlock = surfaceTopbar >= 0 && surfaceTopbarElse > surfaceTopbar
             ? sessionSourceNormalized.Substring(surfaceTopbar, surfaceTopbarElse - surfaceTopbar)
             : string.Empty;
-        int rightControls = sessionSourceNormalized.IndexOf("GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));", drawTopToolbar, StringComparison.Ordinal);
-        int surfaceRightControls = sessionSourceNormalized.IndexOf("if (IsSurfaceMode)\n            {", rightControls, StringComparison.Ordinal);
-        int surfaceRightControlsElse = sessionSourceNormalized.IndexOf("\n            }\n            else", surfaceRightControls, StringComparison.Ordinal);
+        int rightControls = drawTopToolbar >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "GUILayout.BeginHorizontal(GUILayout.Width(budget.RightControlsWidth));",
+                drawTopToolbar,
+                StringComparison.Ordinal)
+            : -1;
+        int surfaceRightControls = rightControls >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (IsSurfaceMode)\n            {",
+                rightControls,
+                StringComparison.Ordinal)
+            : -1;
+        int surfaceRightControlsElse = surfaceRightControls >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "\n            }\n            else",
+                surfaceRightControls,
+                StringComparison.Ordinal)
+            : -1;
         string surfaceRightControlsBlock = surfaceRightControls >= 0 && surfaceRightControlsElse > surfaceRightControls
             ? sessionSourceNormalized.Substring(surfaceRightControls, surfaceRightControlsElse - surfaceRightControls)
             : string.Empty;
@@ -8104,7 +9096,12 @@ f 0 2 3
                drawLeftPanelBlock.Contains("return;"),
             "Surface Builder uses the full left panel stack instead of splitting with the Inspector.");
 
-        int drawRightPanelEnd = sessionSourceNormalized.IndexOf("private static void SplitVerticalStack", drawRightPanel, StringComparison.Ordinal);
+        int drawRightPanelEnd = drawRightPanel >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "private static void SplitVerticalStack",
+                drawRightPanel,
+                StringComparison.Ordinal)
+            : -1;
         string drawRightPanelBlock = drawRightPanel >= 0 && drawRightPanelEnd > drawRightPanel
             ? sessionSourceNormalized.Substring(drawRightPanel, drawRightPanelEnd - drawRightPanel)
             : string.Empty;
@@ -8118,14 +9115,34 @@ f 0 2 3
             "Surface Builder right panel draws settings-only Extra Tools before returning instead of showing Outliner, Selected Anchor, or duplicate action buttons.");
 
         int surfaceInput = sessionSourceNormalized.IndexOf("private void HandleSurfaceSceneInput()", StringComparison.Ordinal);
-        int surfaceRightClick = sessionSourceNormalized.IndexOf("if (Input.GetMouseButtonDown(1))", surfaceInput, StringComparison.Ordinal);
-        int surfaceLeftClick = sessionSourceNormalized.IndexOf("if (!Input.GetMouseButtonDown(0))", surfaceRightClick, StringComparison.Ordinal);
+        int surfaceRightClick = surfaceInput >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (Input.GetMouseButtonDown(1))",
+                surfaceInput,
+                StringComparison.Ordinal)
+            : -1;
+        int surfaceLeftClick = surfaceRightClick >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (!Input.GetMouseButtonDown(0))",
+                surfaceRightClick,
+                StringComparison.Ordinal)
+            : -1;
         string surfaceRightClickBlock = surfaceRightClick >= 0 && surfaceLeftClick > surfaceRightClick
             ? sessionSourceNormalized.Substring(surfaceRightClick, surfaceLeftClick - surfaceRightClick)
             : string.Empty;
         int generatorInput = sessionSourceNormalized.IndexOf("private void HandleGeneratorSceneInput()", StringComparison.Ordinal);
-        int generatorRightClick = sessionSourceNormalized.IndexOf("if (Input.GetMouseButtonDown(1))", generatorInput, StringComparison.Ordinal);
-        int generatorLeftClick = sessionSourceNormalized.IndexOf("if (!Input.GetMouseButtonDown(0))", generatorRightClick, StringComparison.Ordinal);
+        int generatorRightClick = generatorInput >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (Input.GetMouseButtonDown(1))",
+                generatorInput,
+                StringComparison.Ordinal)
+            : -1;
+        int generatorLeftClick = generatorRightClick >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (!Input.GetMouseButtonDown(0))",
+                generatorRightClick,
+                StringComparison.Ordinal)
+            : -1;
         string generatorRightClickBlock = generatorRightClick >= 0 && generatorLeftClick > generatorRightClick
             ? sessionSourceNormalized.Substring(generatorRightClick, generatorLeftClick - generatorRightClick)
             : string.Empty;
@@ -8140,7 +9157,12 @@ f 0 2 3
                !surfaceRightClickBlock.Contains("ClearSurfaceDraft"),
             "Surface Builder right-click opens surface point/edge/face context menus first, then clears only selection state and leaves full draft removal to the Clear button.");
         int surfaceContextOpen = sessionSourceNormalized.IndexOf("private bool TryOpenSurfaceContextMenu()", StringComparison.Ordinal);
-        int surfaceContextOpenEnd = sessionSourceNormalized.IndexOf("private bool TryOpenSurfacePointContextMenu()", surfaceContextOpen, StringComparison.Ordinal);
+        int surfaceContextOpenEnd = surfaceContextOpen >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "private bool TryOpenSurfacePointContextMenu()",
+                surfaceContextOpen,
+                StringComparison.Ordinal)
+            : -1;
         string surfaceContextOpenBlock = surfaceContextOpen >= 0 && surfaceContextOpenEnd > surfaceContextOpen
             ? sessionSourceNormalized.Substring(surfaceContextOpen, surfaceContextOpenEnd - surfaceContextOpen)
             : string.Empty;
@@ -8164,14 +9186,18 @@ f 0 2 3
             "Surface Builder context menus try selected point sets, point, edge, then face targets and route preview, connect, face creation, bridge, and delete through existing helpers.");
 
         int handleScene = sessionSourceNormalized.IndexOf("private void HandleSceneInput()", StringComparison.Ordinal);
-        int pendingInScene = sessionSourceNormalized.IndexOf(
-            "if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)",
-            handleScene,
-            StringComparison.Ordinal);
-        int surfaceInScene = sessionSourceNormalized.IndexOf(
-            "if (_tool == DecorationEditorTool.Surface)",
-            handleScene,
-            StringComparison.Ordinal);
+        int pendingInScene = handleScene >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)",
+                handleScene,
+                StringComparison.Ordinal)
+            : -1;
+        int surfaceInScene = handleScene >= 0
+            ? sessionSourceNormalized.IndexOf(
+                "if (_tool == DecorationEditorTool.Surface)",
+                handleScene,
+                StringComparison.Ordinal)
+            : -1;
         Assert(handleScene >= 0 &&
                pendingInScene > handleScene &&
                surfaceInScene > pendingInScene,
@@ -10106,6 +11132,12 @@ f 0 2 3
             "Source",
             "AutomationBuilderMode",
             "AutomationBuilderSession.cs"));
+        string automationGraphEditingSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "AutomationBuilderMode",
+            "AutomationBuilderSession.GraphEditing.cs"));
         string automationNativeBridgeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -10284,7 +11316,7 @@ f 0 2 3
                automationSessionSource.Contains("preferredSnap: commitPlan.UseResolvedSnap") &&
                automationSessionSource.Contains("ExpandSnapBodyHost(snap, movingNodes);") &&
                automationNativeBridgeSource.Contains("bool valueFootprint = DrawsAsValueBlock(node.Kind, node.Rect);") &&
-               automationNativeBridgeSource.Contains("Rect rect = NativeComponentRect(component);") &&
+               automationNativeBridgeSource.Contains("Rect rect = NativeComponentRect(component, kind);") &&
                !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeWidthForKind(_draggingPaletteKind)") &&
                !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeHeightForKind(_draggingPaletteKind)"),
             "Automation Builder palette rows render once, reuse preview nodes, resolve one layered drag preview, commit the resolved candidate once, preserve native compact value footprints, and share graph-zoom sizing instead of HUD-scaled ghost dimensions.");
@@ -10294,6 +11326,739 @@ f 0 2 3
                    automationNativeBridgeSource,
                    automationBreadboardCatalogSource),
             "Automation Builder syncs links and graph nodes through native breadboard components, auto-names exact filters, draws a Tinkercad-style block palette/workspace/native-plan graph without nested GUI windows, snaps and arranges value blocks into labeled host sockets, preserves control-block mouths while arranging body actions, uses native wires and property-backed constants as reopened block relationships, snaps action blocks into visible control mouths, lowers control blocks to native Switch components with then/else sockets backed by Pass and FailValue, exposes native-linked target and property suggestion controls, persists forever/native-evaluation blocks as vanilla comments, splits input/output link panels, supports view modes/number shortcuts/AI-basic breadboards, prompts on unapplied graph close, and applies idempotent top-to-bottom connections without duplicate vanilla popups.");
+        string duplicateGraphStackSource = ExtractMethodSource(
+            automationGraphEditingSource,
+            "DuplicateSelectedGraphStack");
+        string applyGraphToNativeSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "ApplyGraphToNativeBoard");
+        string discardAutomationDraftSource = ExtractMethodSource(
+            automationSessionSource,
+            "DiscardCurrentAutomationDraft");
+        Assert(ContainsAll(
+                   automationGraphEditingSource,
+                   "GraphEditHistoryLimit = 64",
+                   "AutomationGraphEditSnapshot",
+                   "AutomationGraphClipboard",
+                   "RecordGraphEditHistoryState()",
+                   "UndoGraphEdit()",
+                   "RedoGraphEdit()",
+                   "CopySelectedGraphStack()",
+                   "PasteGraphStack()",
+                   "DuplicateSelectedGraphStack()",
+                   "KeyCode.Z",
+                   "KeyCode.Y",
+                   "KeyCode.C",
+                   "KeyCode.V",
+                   "KeyCode.D",
+                   "ImportedConnections",
+                   "PendingDraftIds",
+                   "PendingRectIds",
+                   "PendingRemovalIds") &&
+               OccursBefore(
+                   duplicateGraphStackSource,
+                   "CopySelectedGraphStack()",
+                   "PasteGraphStack()") &&
+               OccursBefore(
+                   applyGraphToNativeSource,
+                   "ClearAutomationDirty();",
+                   "ResetGraphEditHistory();") &&
+               OccursBefore(
+                   discardAutomationDraftSource,
+                   "ClearAutomationDirty();",
+                   "ResetGraphEditHistory();"),
+            "Automation block editing provides bounded full-state undo/redo plus stack copy/paste/duplicate shortcuts, and rebases history only after Apply or discard establishes a native baseline.");
+        Vector2 firstPasteOffset = AutomationBuilderSession.ResolveGraphPasteCascadeOffset(0, 24f);
+        Vector2 secondPasteOffset = AutomationBuilderSession.ResolveGraphPasteCascadeOffset(1, 24f);
+        Vector2 sanitizedPasteOffset = AutomationBuilderSession.ResolveGraphPasteCascadeOffset(-4, float.NaN);
+        Assert(firstPasteOffset == Vector2.zero &&
+               secondPasteOffset == new Vector2(24f, 24f) &&
+               sanitizedPasteOffset == Vector2.zero,
+            "Automation paste offsets cascade repeated copies and sanitize invalid ordinals or spacing.");
+        Assert(AutomationBuilderSession.ClipboardTargetBindingCompatible(
+                   "board-a",
+                   "board-a",
+                   sourceResolved: true,
+                   targetResolved: true,
+                   sourceOnDestinationConstruct: true,
+                   targetOnDestinationConstruct: true) &&
+               !AutomationBuilderSession.ClipboardTargetBindingCompatible(
+                   "board-a",
+                   "board-b",
+                   sourceResolved: true,
+                   targetResolved: true,
+                   sourceOnDestinationConstruct: false,
+                   targetOnDestinationConstruct: true) &&
+               !AutomationBuilderSession.ClipboardTargetBindingCompatible(
+                   "board-a",
+                   "board-b",
+                   sourceResolved: false,
+                   targetResolved: true,
+                   sourceOnDestinationConstruct: true,
+                   targetOnDestinationConstruct: true) &&
+               !AutomationBuilderSession.ClipboardTargetBindingNeedsBreadboardRebind("board-a", "board-a") &&
+               AutomationBuilderSession.ClipboardTargetBindingNeedsBreadboardRebind("board-a", "board-b"),
+            "Automation clipboard bindings survive only while both endpoints resolve on the destination construct, and cross-board pastes explicitly rebind the breadboard endpoint.");
+
+        string syncNativeGraphSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "SyncGraphFromNativeBreadboardCore");
+        string nativeKindSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "NativeKind");
+        string validateNativeGraphSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "ValidateAndConnectNativeGraph");
+        string shouldManageOwnedInputSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "ShouldManageOwnedInputConnection");
+        Assert(ContainsAll(
+                   automationSessionSource,
+                   "AutomationNodeKind.NativeUnsupported",
+                   "Opaque vanilla component",
+                   "read-only; preserved exactly",
+                   "use vanilla breadboard editor") &&
+               ContainsAll(
+                   syncNativeGraphSource,
+                   "snapshot.Components",
+                   "!IsNativeOwnerMarker(component)",
+                   "NativeComponentToNode(breadboardRef, snapshot, component)") &&
+               !syncNativeGraphSource.Contains("IsSupportedAutomationNativeComponent") &&
+               nativeKindSource.Contains("return AutomationNodeKind.NativeUnsupported;") &&
+               validateNativeGraphSource.Contains("IsSupportedAutomationNativeComponent(component)") &&
+               shouldManageOwnedInputSource.Contains(
+                   "IsEsuOwnedNativeComponent(ownedComponents, source)") &&
+               !shouldManageOwnedInputSource.Contains("IsSupportedAutomationNativeComponent"),
+            "Automation graph sync imports unknown vanilla components as opaque read-only blocks, excludes them from ESU mutation/lowering, and preserves unsupported sources when rebuilding owned inputs.");
+
+        string importedRawConnectionsSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "AppendImportedRawNativeConnections");
+        string connectionEquivalenceSource = ExtractMethodSource(
+            automationSessionSource,
+            "ConnectionsEquivalent");
+        string nativeComponentSignatureSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "NativeComponentSignature");
+        Assert(ContainsAll(
+                   importedRawConnectionsSource,
+                   "for (int inputIndex = 0; inputIndex < target.BInputs.Count; inputIndex++)",
+                   "input?.OurOutput?.IsLatched == true",
+                   "input.OurOutput.Them?.OurComponent",
+                   "IsEsuOwnedNativeNode(sourceNode) && IsEsuOwnedNativeNode(targetNode)",
+                   "DescribeImportedNativeInput(",
+                   "AutomationGraphWireOrigin.NativeImported",
+                   "nativeInputIndex: inputIndex") &&
+               automationSessionSource.Contains(
+                   "AppendImportedRawNativeConnections(") &&
+               ContainsAll(
+                   connectionEquivalenceSource,
+                   "left.NativeInputIndex < 0 && right.NativeInputIndex < 0",
+                   "left.NativeInputIndex == right.NativeInputIndex") &&
+               ContainsAll(
+                   automationSessionSource,
+                   "connection.NativeInputIndex >= 0",
+                   "NativeInputIndex = nativeInputIndex",
+                   "connection.NativeInputIndex)") &&
+               ContainsAll(
+                   automationGraphEditingSource,
+                   "NativeInputIndex = connection.NativeInputIndex",
+                   "Signature => Kind + \":\" + FromNodeId + \">\" + ToNodeId + \":\" + SlotKind + \":\" + Origin + \":\" + NativeInputIndex",
+                   "nativeInputIndex: NativeInputIndex") &&
+               ContainsAll(
+                   nativeComponentSignatureSource,
+                   "hash = hash * 31 + inputIndex++",
+                   "input?.OurOutput?.IsLatched == true ? 1 : 0",
+                   "input.OurOutput.Them?.OurComponent?.UniqueId ?? 0u"),
+            "Automation imports every latched vanilla input as an exact read-only wire keyed by native port index, and preserves that port through copy, rebind, graph signatures, and cache invalidation.");
+
+        string nativeConnectionOriginSource = ExtractMethodSource(
+            automationSessionSource,
+            "NativeConnectionOrigin");
+        string tryConnectNativeInputSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "TryConnectComponentToInput");
+        string nativeGraphReadinessSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "NativeGraphReadinessIssues");
+        Assert(ContainsAll(
+                   nativeConnectionOriginSource,
+                   "IsEsuOwnedNativeNode(source)",
+                   "IsEsuOwnedNativeNode(target)",
+                   "AutomationGraphWireOrigin.EsuNative",
+                   "AutomationGraphWireOrigin.NativeImported") &&
+               shouldManageOwnedInputSource.Contains(
+                   "IsEsuOwnedNativeComponent(ownedComponents, source)") &&
+               !shouldManageOwnedInputSource.Contains("IsSupportedAutomationNativeComponent") &&
+               ContainsAll(
+                   tryConnectNativeInputSource,
+                   "IsNativeConnectedToInput(from, input)",
+                   "if (input.OurOutput?.IsLatched == true)",
+                   "new CreateConnectionCommand(board, output, input).Execute()") &&
+               OccursBefore(
+                   tryConnectNativeInputSource,
+                   "IsNativeConnectedToInput(from, input)",
+                   "if (input.OurOutput?.IsLatched == true)") &&
+               OccursBefore(
+                   tryConnectNativeInputSource,
+                   "if (input.OurOutput?.IsLatched == true)",
+                   "new CreateConnectionCommand(board, output, input).Execute()") &&
+               nativeGraphReadinessSource.Contains("UnsupportedMixedOwnershipConnectionIssues(graph)"),
+            "Automation marks a wire editable only when both endpoints are ESU-owned, clears only ESU-owned source latches, and refuses to replace any remaining imported latch.");
+        Assert(AutomationBuilderSession.CanManageEsuConnectionOwnership(
+                   sourceApplyWritable: true,
+                   targetApplyWritable: true) &&
+               !AutomationBuilderSession.CanManageEsuConnectionOwnership(
+                   sourceApplyWritable: false,
+                   targetApplyWritable: true) &&
+               !AutomationBuilderSession.CanManageEsuConnectionOwnership(
+                   sourceApplyWritable: true,
+                   targetApplyWritable: false) &&
+               !AutomationBuilderSession.CanManageEsuConnectionOwnership(
+                   sourceApplyWritable: false,
+                   targetApplyWritable: false),
+            "Automation can own a connection only when both endpoints are writable ESU nodes, rejecting imported-source to owned-target wires before Apply.");
+
+        string parseOwnerMarkerSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "TryParseNativeOwnerMarker");
+        string parseOwnerMarkerTextSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "TryParseNativeOwnerMarkerText");
+        string addOwnerMarkerSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "AddNativeOwnerMarker");
+        bool parsedZeroOwnerId = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
+            "ESU_AB_OWNER|v1|component=0|kind=Constant",
+            out uint zeroOwnerId,
+            out AutomationBuilderSession.AutomationNodeKind zeroOwnerKind);
+        bool parsedMissingOwnerId = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
+            "ESU_AB_OWNER|v1|component=|kind=Constant",
+            out _,
+            out _);
+        bool parsedNegativeOwnerId = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
+            "ESU_AB_OWNER|v1|component=-1|kind=Constant",
+            out _,
+            out _);
+        bool parsedUnsupportedOwnerKind = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
+            "ESU_AB_OWNER|v1|component=7|kind=NativeUnsupported",
+            out _,
+            out _);
+        Assert(automationNativeBridgeSource.Contains(
+                   "private const string NativeOwnerMarkerPrefix = \"ESU_AB_OWNER|\";") &&
+               ContainsAll(
+                   automationNativeBridgeSource,
+                   "\"v1|component=\"",
+                   "componentId.ToString(CultureInfo.InvariantCulture)",
+                   "\"|kind=\"") &&
+               ContainsAll(
+                   parseOwnerMarkerTextSource,
+                   "parts.Length != 3",
+                   "string.Equals(parts[0], \"v1\", StringComparison.Ordinal)",
+                   "parts[1].StartsWith(\"component=\", StringComparison.Ordinal)",
+                   "parts[2].StartsWith(\"kind=\", StringComparison.Ordinal)",
+                   "NumberStyles.None",
+                   "ignoreCase: false",
+                   "!CanLowerStagedNodeKind(kind)") &&
+               ContainsAll(
+                   parseOwnerMarkerSource,
+                   "comment.ClipText.Us",
+                   "!comment.ScaleWithZoom.Us",
+                   "comment.OutlineColor.Us.a <= 0.001f") &&
+               ContainsAll(
+                   addOwnerMarkerSource,
+                   "marker.ClipText.Us = true",
+                   "marker.ScaleWithZoom.Us = false",
+                   "marker.OutlineColor.Us = new Color(0f, 0f, 0f, 0f)"),
+            "Automation ownership accepts only the exact v1 component/kind marker grammar on comments carrying every generated-marker trait.");
+        Assert(parsedZeroOwnerId &&
+               zeroOwnerId == 0u &&
+               zeroOwnerKind == AutomationBuilderSession.AutomationNodeKind.Constant &&
+               !parsedMissingOwnerId &&
+               !parsedNegativeOwnerId &&
+               !parsedUnsupportedOwnerKind,
+            "Automation ownership accepts vanilla's first component ID of zero while still rejecting an absent component ID.");
+        const string zeroOwnerMarker = "ESU_AB_OWNER|v1|component=0|kind=Constant";
+        const string invalidOwnerMarker = "not-an-owner-marker";
+        Assert(AutomationBuilderSession.RewriteNativeOwnerMarkerComponentId(
+                   zeroOwnerMarker,
+                   42u) == "ESU_AB_OWNER|v1|component=42|kind=Constant" &&
+               AutomationBuilderSession.RewriteNativeOwnerMarkerComponentId(
+                   invalidOwnerMarker,
+                   42u) == invalidOwnerMarker,
+            "Automation rollback rewrites a valid owner marker to vanilla's restored component ID without mutating unrelated comments.");
+        var restoredIdMap = new Dictionary<uint, uint> { [0u] = 42u };
+        Assert(AutomationBuilderSession.ResolveRestoredNativeComponentId(
+                   0u,
+                   restoredIdMap,
+                   snapshotComponentId: 9u) == 42u &&
+               AutomationBuilderSession.ResolveRestoredNativeComponentId(
+                   8u,
+                   restoredIdMap,
+                   snapshotComponentId: 9u) == 9u,
+            "Automation snapshot restoration gives explicit vanilla ID remaps precedence and otherwise preserves the snapshot component ID.");
+
+        string foreverMarkerSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "NativeForeverMarkerText");
+        string foreverDisplaySource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "NativeForeverDisplayText");
+        Assert(automationNativeBridgeSource.Contains(
+                   "private const string NativeForeverMarkerPrefix = \"ESU_AB_FOREVER|v1|\";") &&
+               ContainsAll(
+                   foreverMarkerSource,
+                   "IsForeverComment(value)",
+                   "NativeForeverMarkerPrefix + value") &&
+               foreverDisplaySource.Contains("value.Substring(NativeForeverMarkerPrefix.Length)") &&
+               automationNativeBridgeSource.Contains(
+                   "CreateNativeComment(NativeForeverMarkerText(\"native breadboard evaluates continuously\"))") &&
+               automationNativeBridgeSource.Contains("NativeForeverDisplayText(foreverComment.InputValue.Us)"),
+            "Automation Forever blocks use one exact versioned vanilla Comment marker and round-trip only their display text.");
+
+        string nativeStackIdentitySource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "NativeStackConnectionExists");
+        string refreshNativeConnectionsSource = ExtractMethodSource(
+            automationSessionSource,
+            "RefreshNativeGraphConnections");
+        string removeStackFedValueSource = ExtractMethodSource(
+            automationSessionSource,
+            "RemoveStackFedPrimaryValueConnections");
+        Assert(ContainsAll(
+                   validateNativeGraphSource,
+                   "to is NativeSwitch switchTo",
+                   "switchTo.Switcher") &&
+               ContainsAll(
+                   nativeStackIdentitySource,
+                   "toComponent is NativeSwitch switchComponent",
+                   "switchComponent.Switcher",
+                   "IsNativeConnectedToInputAt(fromComponent, toComponent, 0)") &&
+               ContainsAll(
+                   removeStackFedValueSource,
+                   "UsesStackAsPrimaryInput",
+                   "AutomationGraphConnectionKind.Stack",
+                   "AutomationGraphConnectionKind.Value",
+                   "AutomationValueSlotKind.Pass") &&
+               ContainsAll(
+                   refreshNativeConnectionsSource,
+                   "IsEsuOwnedNativeNode(node) && AcceptsControlBody(node.Kind)",
+                   "GeometryBodyChildrenForHost(graph, host)",
+                   "AutomationGraphConnectionKind.Body",
+                   "AutomationGraphWireOrigin.EsuNative") &&
+               OccursBefore(
+                   refreshNativeConnectionsSource,
+                   "GeometryBodyChildrenForHost(graph, host)",
+                   "graph.RebuildConnections(editableConnections)"),
+            "Automation native round trips keep Switcher and input zero as stable primary ports, remove duplicate stack-fed value wires, and reconstruct ESU-owned control bodies before publishing graph connections.");
+
+        string rollbackNativeApplySource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "RollbackFailedNativeApply");
+        string restoreNativeInputsSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "RestoreNativeInputConnections");
+        Assert(ContainsAll(
+                   validateNativeGraphSource,
+                   "CaptureGraphEditSnapshot(graph, _automationDirty)",
+                   "CaptureNativeInputConnections(breadboard)",
+                   "CaptureOwnedNativeComponentStates(breadboard)",
+                   "RollbackFailedNativeApply(") &&
+               ContainsAll(
+                   rollbackNativeApplySource,
+                   ".Reverse()",
+                   "RemoveNativeOwnerMarkersForComponent",
+                   "RemoveNativeComponentPackage",
+                   "RestoreNativeApplyBlockNames",
+                   "RestoreOwnedNativeComponentStates",
+                   "RestoreNativeInputConnections",
+                   "graphBeforeApply.Restore(current)",
+                   "RestoreSnapshotStagedLinks",
+                   "RestoreSnapshotPendingNativeState",
+                   "_automationDirty = graphBeforeApply?.Dirty == true || !restored") &&
+               !rollbackNativeApplySource.Contains("MarkAutomationDirty()") &&
+               OccursBefore(
+                   rollbackNativeApplySource,
+                   "RemoveNativeComponentPackage",
+                   "RestoreNativeApplyBlockNames") &&
+               OccursBefore(
+                   rollbackNativeApplySource,
+                   "RestoreNativeApplyBlockNames",
+                   "RestoreOwnedNativeComponentStates") &&
+               OccursBefore(
+                   rollbackNativeApplySource,
+                   "RestoreOwnedNativeComponentStates",
+                   "RestoreNativeInputConnections") &&
+               OccursBefore(
+                   rollbackNativeApplySource,
+                   "RestoreNativeInputConnections",
+                   "graphBeforeApply.Restore(current)") &&
+               ContainsAll(
+                   restoreNativeInputsSource,
+                   "ToDictionary(state => state.Input, state => state.Output)",
+                   "RemoveNativeInputConnection(breadboard, input)",
+                   "new CreateConnectionCommand(breadboard, pair.Value, pair.Key).Execute()",
+                   "ReferenceEquals(pair.Key.OurOutput.Them, pair.Value)"),
+            "Automation Apply snapshots graph, native edits, names, and exact input identities, then rolls every layer back in dependency order when lowering or connection verification fails.");
+
+        string createdNativeImportSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "CreatedNativeComponentsImported");
+        int createdNativeImportChecks = validateNativeGraphSource
+            .Split(new[] { "CreatedNativeComponentsImported(" }, StringSplitOptions.None)
+            .Length - 1;
+        Assert(ContainsAll(
+                   createdNativeImportSource,
+                   "IsNativeComponentPresent(breadboard, component)",
+                   "owner.ComponentId == component.UniqueId",
+                   "ReferenceEquals(owner.Target, component)",
+                   "ReferenceEquals(node?.NativeComponent, component)",
+                   "packagePresent && ownerPresent && graphPresent") &&
+               createdNativeImportChecks >= 2 &&
+               validateNativeGraphSource.Contains(
+                   "Apply rolled back because lowered native components could not be re-imported for verification."),
+            "Automation Apply verifies every created component by exact package, owner-target, and graph-node reference after refresh and again before success.");
+
+        string starterFlowSource = ExtractMethodSource(
+            automationSessionSource,
+            "TryAddStagedStarterFlow");
+        string collectDragGroupSource = ExtractMethodSource(
+            automationSessionSource,
+            "CollectGraphDragGroupCore");
+        string pasteGraphStackSource = ExtractMethodSource(
+            automationGraphEditingSource,
+            "PasteGraphStack");
+        string refreshGraphConnectionsCoreSource = ExtractMethodSource(
+            automationSessionSource,
+            "RefreshGraphConnectionsCore");
+        string refreshGraphCallSources = automationSessionSource + automationGraphEditingSource;
+        int refreshGraphOccurrences = refreshGraphCallSources
+            .Split(new[] { "RefreshGraphConnections(" }, StringSplitOptions.None)
+            .Length - 1;
+        int touchedGraphArguments = refreshGraphCallSources
+            .Split(new[] { "touchedNodeIds:" }, StringSplitOptions.None)
+            .Length - 1;
+        Assert(ContainsAll(
+                   starterFlowSource,
+                   "existingReadNode",
+                   "existingSetNode",
+                   "CanStarterFlowOwnNode(existingReadNode)",
+                   "CanStarterFlowOwnNode(existingSetNode)",
+                   "graph.Nodes.Any(node =>",
+                   "EnsureStagedLinkGraphNode(inputLink)",
+                   "EnsureStagedLinkGraphNode(outputLink)") &&
+               OccursBefore(
+                   starterFlowSource,
+                   "CanStarterFlowOwnNode(existingReadNode)",
+                   "EnsureStagedLinkGraphNode(inputLink)") &&
+               OccursBefore(
+                   starterFlowSource,
+                   "graph.Nodes.Any(node =>",
+                   "EnsureStagedLinkGraphNode(inputLink)") &&
+               ContainsAll(
+                   automationGraphEditingSource,
+                   "AutomationGraphConnectionCopy.Capture(graph.Connections",
+                   "Origin = connection.Origin",
+                   "SlotKind,",
+                   "NativeInputIndex = connection.NativeInputIndex",
+                   "nativeInputIndex: NativeInputIndex)") &&
+               ContainsAll(
+                   pasteGraphStackSource,
+                   "_graphClipboard.InstantiateNodes(",
+                   "_selectedBreadboard",
+                   "AutomationGraphLayout.AvoidOverlap(",
+                   "_graphClipboard.AppendConnections(graph, pasted)",
+                   "var pastedNodeIds = new HashSet<int>(pasted.Values.Select(node => node.Id))",
+                   "touchedNodeIds: pastedNodeIds") &&
+               OccursBefore(
+                   pasteGraphStackSource,
+                   "_graphClipboard.InstantiateNodes(",
+                   "AutomationGraphLayout.AvoidOverlap(") &&
+               OccursBefore(
+                   pasteGraphStackSource,
+                   "AutomationGraphLayout.AvoidOverlap(",
+                   "_graphClipboard.AppendConnections(graph, pasted)") &&
+               ContainsAll(
+                   refreshGraphConnectionsCoreSource,
+                   "IReadOnlyCollection<int> touchedNodeIds = null",
+                   "bool touchesEditedNode = touchedNodeIds == null ||",
+                   "bool touchesEditedNode = touchedNodeIds != null &&",
+                   "if (!touchesEditedNode || preserveTouchedNative)",
+                   "AddConnectionIfMissing(connections, connection)") &&
+               refreshGraphOccurrences == touchedGraphArguments + 1 &&
+               ContainsAll(
+                   collectDragGroupSource,
+                   "!IsGraphNodeApplyWritable(node)",
+                   "result.Add(node)") &&
+               OccursBefore(
+                   collectDragGroupSource,
+                   "!IsGraphNodeApplyWritable(node)",
+                   "result.Add(node)"),
+            "Automation starter flow completes every read-only/clean-graph preflight before staging link nodes; every graph mutation refreshes only its touched geometry while preserving untouched edges, and drag traversal stops at imported read-only blocks.");
+
+        string controlBodyRectSource = ExtractMethodSource(
+            automationSessionSource,
+            "ControlBodyRect");
+        string bodySnapSource = ExtractMethodSource(
+            automationSessionSource,
+            "TryFindBodySnapCandidate");
+        string stackSnapSource = ExtractMethodSource(
+            automationSessionSource,
+            "TryFindStackSnapCandidate");
+        string stackReconstructionSource = ExtractMethodSource(
+            automationSessionSource,
+            "AreStackNodesSnapped");
+        Assert(ContainsAll(
+                   automationSessionSource,
+                   "private const float GraphStackOverlap = 2f",
+                   "private const float GraphStackReconstructionTolerance = 14f",
+                   "private const float GraphBodyFirstChildTopInset = 24f",
+                   "private const float GraphBodyChildLeftInset = 14f",
+                   "private const float GraphBodySiblingGap = 8f",
+                   "private const float GraphBodyChainGap = 10f",
+                   "private const float GraphBodyBottomPadding = 24f",
+                   "hostRect.x + 58f",
+                   "hostRect.x + 50f",
+                   "hostRect.y + 172f",
+                   "hostRect.y + y") &&
+               !controlBodyRectSource.Contains("EsuHudLayout.Scale") &&
+               !automationSessionSource.Contains("hostRect.x + EsuHudLayout.Scale(") &&
+               !automationSessionSource.Contains("hostRect.y + EsuHudLayout.Scale(") &&
+               ContainsAll(
+                   bodySnapSource,
+                   "bestBody.y + GraphBodyFirstChildTopInset",
+                   "siblings.Max(child => child.Rect.yMax) + GraphBodySiblingGap",
+                   "bestBody.x + GraphBodyChildLeftInset") &&
+               !bodySnapSource.Contains("EsuHudLayout.Scale") &&
+               ContainsAll(
+                   stackSnapSource,
+                   "best.Rect.yMax - GraphStackOverlap",
+                   "best.Rect.y - node.Rect.height + GraphStackOverlap") &&
+               !stackSnapSource.Contains("EsuHudLayout.Scale") &&
+               ContainsAll(
+                   stackReconstructionSource,
+                   "from.Rect.yMax - GraphStackOverlap",
+                   "GraphStackReconstructionTolerance") &&
+               !stackReconstructionSource.Contains("EsuHudLayout.Scale") &&
+               !automationSessionSource.Contains("best.Rect.yMax - EsuHudLayout.Scale(2f)") &&
+               !automationSessionSource.Contains("from.Rect.yMax - EsuHudLayout.Scale(2f)"),
+            "Automation control mouths, value sockets, body placement, and stack snap/reconstruction use fixed graph-space units independent of HUD scale; only pointer thresholds are screen-to-graph scaled.");
+
+        string syncNativeNodeRectSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "SyncNativeNodeRect");
+        string applyPendingNodeDraftsSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "ApplyPendingNativeNodeDraftsToNative");
+        string normalizeGraphRectsSource = ExtractMethodSource(
+            automationSessionSource,
+            "NormalizeGraphNodeRects");
+        int semanticNativeApplyCalls = applyPendingNodeDraftsSource
+            .Split(new[] { "ApplyNativeNodeToNativeComponent(node)" }, StringSplitOptions.None)
+            .Length - 1;
+        Assert(ContainsAll(
+                   automationSessionSource,
+                   "private readonly Dictionary<uint, AutomationGraphNodeDraft> _pendingNativeNodeDrafts",
+                   "private readonly Dictionary<uint, Rect> _pendingNativeNodeRects") &&
+               ContainsAll(
+                   syncNativeNodeRectSource,
+                   "Rect nativeRect = NativeComponentRect(component, node.Kind)",
+                   "_pendingNativeNodeRects.Remove(component.UniqueId)",
+                   "_pendingNativeNodeRects[component.UniqueId] = node.Rect") &&
+               !syncNativeNodeRectSource.Contains("_pendingNativeNodeDrafts") &&
+               ContainsAll(
+                   applyPendingNodeDraftsSource,
+                   "_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft)",
+                   "draft.ApplyTo(node)",
+                   "ApplyNativeNodeToNativeComponent(node)",
+                   "_pendingNativeNodeRects.TryGetValue(componentId, out Rect rect)",
+                   "ApplyNativeNodeRect((CircuitComponent)node.NativeComponent, rect)") &&
+               semanticNativeApplyCalls == 1 &&
+               OccursBefore(
+                   applyPendingNodeDraftsSource,
+                   "_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft)",
+                   "ApplyNativeNodeToNativeComponent(node)") &&
+               OccursBefore(
+                   applyPendingNodeDraftsSource,
+                   "_pendingNativeNodeRects.TryGetValue(componentId, out Rect rect)",
+                   "ApplyNativeNodeRect((CircuitComponent)node.NativeComponent, rect)") &&
+               ContainsAll(
+                   automationGraphEditingSource,
+                   "_pendingNativeNodeRects.Keys",
+                   "PendingRectIds",
+                   "|x=\" + string.Join(\",\", PendingRectIds.OrderBy(id => id))"),
+            "Automation native layout changes use an independent rectangle journal, while semantic native writes run only for explicit semantic drafts and history snapshots track both channels.");
+
+        Assert(ContainsAll(
+                   normalizeGraphRectsSource,
+                   "if (node == null || !node.IsStaged)",
+                   "node => node?.IsStaged == true",
+                   "touchedNodeIds: movedNodeIds") &&
+               !normalizeGraphRectsSource.Contains("IsGraphNodeApplyWritable") &&
+               !normalizeGraphRectsSource.Contains("SyncNativeNodeRect"),
+            "Passive graph normalization only resizes staged blocks and cannot create native layout drafts for imported or already-applied components.");
+
+        string applyPendingRemovalsSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "ApplyPendingNativeNodeRemovalsToNative");
+        string atomicRemovalSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "RemoveNativeOwnerRecordsAtomically");
+        string restoreNativePackagesSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "RestoreNativeComponentPackages");
+        string revertNativeGraphSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "RevertEsuOwnedNativeGraph");
+        Assert(ContainsAll(
+                   applyPendingRemovalsSource,
+                   "RemoveNativeOwnerRecordsAtomically",
+                   "if (!result.Success)",
+                   "return result;",
+                   "_pendingNativeNodeDrafts.Remove(componentId)",
+                   "_pendingNativeNodeRects.Remove(componentId)",
+                   "_pendingNativeNodeRemovals.Remove(componentId)") &&
+               OccursBefore(
+                   applyPendingRemovalsSource,
+                   "if (!result.Success)",
+                   "_pendingNativeNodeDrafts.Remove(componentId)") &&
+               ContainsAll(
+                   validateNativeGraphSource,
+                   "removal = ApplyPendingNativeNodeRemovalsToNative(breadboard)",
+                   "if (!removal.Success)",
+                   "RollbackFailedNativeApply(",
+                   "removedNodes = removal.RemovedNodes") &&
+               OccursBefore(
+                   validateNativeGraphSource,
+                   "if (!removal.Success)",
+                   "removedNodes = removal.RemovedNodes") &&
+               ContainsAll(
+                   atomicRemovalSource,
+                   "RemoveNativeComponentPackage",
+                   "bool allAbsent = records.All",
+                   "RestoreNativeComponentPackages",
+                   "NativeRemovalBatchResult.Failed") &&
+               OccursBefore(
+                   atomicRemovalSource,
+                   "bool allAbsent = records.All",
+                   "NativeRemovalBatchResult.Completed") &&
+               ContainsAll(
+                   revertNativeGraphSource,
+                   "if (_automationDirty)",
+                   "CaptureNativeInputConnections(breadboard)",
+                   "wiresRemoved != expectedWires",
+                   "RemoveNativeOwnerRecordsAtomically",
+                   "if (!removal.Success)",
+                   "RestoreNativeInputConnections",
+                   "_pendingNativeNodeDrafts.Remove(record.ComponentId)",
+                   "_pendingNativeNodeRects.Remove(record.ComponentId)",
+                   "ClearAutomationDirty()") &&
+               OccursBefore(
+                   revertNativeGraphSource,
+                   "if (!removal.Success)",
+                   "_pendingNativeNodeDrafts.Remove(record.ComponentId)") &&
+               OccursBefore(
+                   revertNativeGraphSource,
+                   "if (!removal.Success)",
+                   "ClearAutomationDirty()"),
+            "Automation pending deletion and Revert retain dirty/pending state until native package absence is verified, restoring packages and exact input connections on an atomic removal failure.");
+        Assert(ContainsAll(
+                   restoreNativePackagesSource,
+                   "componentIdRemap[pair.OriginalTargetId] = pair.Target.UniqueId",
+                   "RewriteNativeOwnerMarkerComponentId(",
+                   "actual.Kind == pair.Kind",
+                   "ReferenceEquals(actual.Target, pair.Target)",
+                   "ReferenceEquals(actual.Marker, pair.Marker)") &&
+               OccursBefore(
+                   restoreNativePackagesSource,
+                   "restore.Where(component => !IsNativeOwnerMarker(component))",
+                   "RewriteNativeOwnerMarkerComponentId(") &&
+               OccursBefore(
+                   restoreNativePackagesSource,
+                   "RewriteNativeOwnerMarkerComponentId(",
+                   "restore.Where(IsNativeOwnerMarker)") &&
+               OccursBefore(
+                   restoreNativePackagesSource,
+                   "restore.Where(IsNativeOwnerMarker)",
+                   "List<NativeOwnerRecord> actualRecords"),
+            "Automation rollback restores targets before markers, rewrites reassigned IDs, then verifies exact target, marker, and kind ownership references.");
+
+        string captureNativeComponentStateSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "Capture");
+        string restoreOwnedNativeStatesSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "RestoreOwnedNativeComponentStates");
+        int revertComponentFieldRestores = revertNativeGraphSource
+            .Split(new[] { "RestoreOwnedNativeComponentStates(" }, StringSplitOptions.None)
+            .Length - 1;
+        Assert(ContainsAll(
+                   captureNativeComponentStateSource,
+                   "float x = component.X.Us",
+                   "float y = component.Y.Us",
+                   "float width = component.Width.Us",
+                   "float height = component.Height.Us",
+                   "Color outlineColor = component.OutlineColor.Us",
+                   "component is GenericBlockGetter getter",
+                   "getter.PotentiallyAffectedBlocks.ToList()",
+                   "component is GenericBlockSetter setter",
+                   "component is Evaluator evaluator",
+                   "component is NativeSwitch switchComponent",
+                   "component is LogicGate logicGate",
+                   "component is FuzzyThreshold fuzzyThreshold",
+                   "component is MaxMin maxMin",
+                   "component is ConstantInput constant",
+                   "component is RandomInput random",
+                   "component is Clamp clamp",
+                   "component is Delay delay",
+                   "component is NativeComment comment",
+                   "restoreSpecific()",
+                   "verifySpecific()") &&
+               ContainsAll(
+                   restoreOwnedNativeStatesSource,
+                   "restored &= state.TryRestore()",
+                   "return restored") &&
+               ContainsAll(
+                   revertNativeGraphSource,
+                   "componentsBeforeRevert =",
+                   "CaptureOwnedNativeComponentStates(breadboard)",
+                   "NativeOwnerRecordsMatch(",
+                   "RestoreNativeComponentPackages(",
+                   "RestoreNativeInputConnections(") &&
+               OccursBefore(
+                   revertNativeGraphSource,
+                   "CaptureOwnedNativeComponentStates(breadboard)",
+                   "RemoveNativeOwnerRecordsAtomically(") &&
+               revertComponentFieldRestores >= 2,
+            "Automation Revert snapshots raw native geometry and every supported component field, then verifies package identity, component fields, and connections on either removal or refresh rollback.");
+
+        string lowerGraphNodesSource = ExtractMethodSource(
+            automationNativeBridgeSource,
+            "LowerStagedGraphNodesToNative");
+        Assert(ContainsAll(
+                   lowerGraphNodesSource,
+                   "var addCommand = new AddComponentCommand(breadboard, item.Component)",
+                   "addCommand.Execute()",
+                   "committed.Add(item)",
+                   "AddNativeOwnerMarker(breadboard, item.Component, item.Node.Kind)",
+                   "foreach (PreparedNativeNode item in prepared.AsEnumerable().Reverse())",
+                   "RemoveNativeOwnerMarkersForComponent",
+                   "RemoveNativeComponentPackage") &&
+               OccursBefore(
+                   lowerGraphNodesSource,
+                   "addCommand.Execute()",
+                   "committed.Add(item)") &&
+               OccursBefore(
+                   lowerGraphNodesSource,
+                   "committed.Add(item)",
+                   "AddNativeOwnerMarker(breadboard, item.Component, item.Node.Kind)") &&
+               ContainsAll(
+                   automationGraphEditingSource,
+                   "(TargetBinding?.Kind.ToString() ?? string.Empty)",
+                   "(TargetBinding?.Source?.StableKey ?? string.Empty)",
+                   "(TargetBinding?.Target?.StableKey ?? string.Empty)",
+                   "(TargetBinding?.Property ?? string.Empty)"),
+            "Automation lowering registers each just-added component in rollback scope before ownership-marker work, and graph history signatures include complete target-binding identity.");
         Assert(!File.Exists(selectionResolverPath) &&
                !catalogSource.Contains("FromSelected(") &&
                !catalogSource.Contains("FindArmorFamily(") &&
@@ -10487,7 +12252,21 @@ f 0 2 3
                !drawShapePanelStackSource.Contains("DrawSceneSection") &&
                !drawShapePanelStackSource.Contains("DrawSelectedPieceSection") &&
                !drawShapePanelStackSource.Contains("SplitSmartVerticalStack") &&
-               !sessionSource.Contains("DrawShapeLowerStack"),
+               !sessionSource.Contains("DrawShapeLowerStack") &&
+               OccurrenceCount(
+                   sessionSource,
+                   "_leftWorkspaceBottomRatio = resolvedWorkspaceBottomRatio;") == 1 &&
+               OccurrenceCount(
+                   sessionSource,
+                   "_selectedSceneStackBottomRatio = resolvedSelectedBottomRatio;") == 1 &&
+               OccursBefore(
+                   drawLeftPanelSource,
+                   "if (HandleSmartStackDividerDrag(",
+                   "_leftWorkspaceBottomRatio = resolvedWorkspaceBottomRatio;") &&
+               OccursBefore(
+                   drawLeftSceneSelectedStackSource,
+                   "if (HandleSmartStackDividerDrag(",
+                   "_selectedSceneStackBottomRatio = resolvedSelectedBottomRatio;"),
             "Smart Builder keeps Scene above scrollable Selected actions in the persisted left workspace while the right Shapes/Generators browser uses its full height.");
         Assert(SmartBuilderLayoutFitsScreen(1366, 768, autoScale: true, manualScale: 2f) &&
                SmartBuilderLayoutFitsScreen(1920, 1080, autoScale: false, manualScale: 2f) &&
@@ -10584,6 +12363,102 @@ f 0 2 3
                itemPreviewRendererSource.Contains("return drewRenderableEdge;"),
             "Smart Builder mesh-accurate material previews, fixed-shape scene wires, mesh-aligned fixed-shape face handles, and cached/budgeted generated hull previews are derived from commit placements, with duplicate-vertex mesh seams merged, diagonal fixed-shape edges preserved, shared-face filtering, and a material-only preview mode that suppresses wire overlays.");
         string handleMouseSource = ExtractMethodSource(sessionSource, "HandleMouse");
+        bool hudPressBlocked = SmartBuildSession.ResolveHudPointerGestureOwnership(
+            ownedAtStart: false,
+            pointerOverHud: true,
+            pointerDown: true,
+            pointerHeld: true,
+            pointerUp: false,
+            out bool ownedAfterHudPress);
+        bool hudDragOutsideBlocked = SmartBuildSession.ResolveHudPointerGestureOwnership(
+            ownedAfterHudPress,
+            pointerOverHud: false,
+            pointerDown: false,
+            pointerHeld: true,
+            pointerUp: false,
+            out bool ownedAfterHudDrag);
+        bool hudReleaseOutsideBlocked = SmartBuildSession.ResolveHudPointerGestureOwnership(
+            ownedAfterHudDrag,
+            pointerOverHud: false,
+            pointerDown: false,
+            pointerHeld: false,
+            pointerUp: true,
+            out bool ownedAfterHudRelease);
+        bool worldPressBlocked = SmartBuildSession.ResolveHudPointerGestureOwnership(
+            ownedAtStart: false,
+            pointerOverHud: false,
+            pointerDown: true,
+            pointerHeld: true,
+            pointerUp: false,
+            out bool ownedAfterWorldPress);
+        bool worldDragIntoHudBlocked = SmartBuildSession.ResolveHudPointerGestureOwnership(
+            ownedAtStart: false,
+            pointerOverHud: true,
+            pointerDown: false,
+            pointerHeld: true,
+            pointerUp: false,
+            out bool ownedAfterWorldDragIntoHud);
+        bool missedReleaseSafetyBlocked = SmartBuildSession.ResolveHudPointerGestureOwnership(
+            ownedAfterHudDrag,
+            pointerOverHud: false,
+            pointerDown: false,
+            pointerHeld: false,
+            pointerUp: false,
+            out bool ownedAfterMissedReleaseSafety);
+        string drawSmartGuiSource = ExtractMethodSource(sessionSource, "DrawGui");
+        string captureHudPointerSource = ExtractMethodSource(
+            sessionSource,
+            "CaptureHudPointerEventAtStart");
+        string handleHudPointerSource = ExtractMethodSource(
+            sessionSource,
+            "HandleHudPointerInputOwnership");
+        string endSmartBuildSource = ExtractMethodSource(sessionSource, "End");
+        string suspendSmartBuildSource = ExtractMethodSource(
+            sessionSource,
+            "SuspendForModeSwitchHandoff");
+        Assert(hudPressBlocked &&
+               ownedAfterHudPress &&
+               hudDragOutsideBlocked &&
+               ownedAfterHudDrag &&
+               hudReleaseOutsideBlocked &&
+               !ownedAfterHudRelease &&
+               !worldPressBlocked &&
+               !ownedAfterWorldPress &&
+               worldDragIntoHudBlocked &&
+               ownedAfterWorldDragIntoHud &&
+               missedReleaseSafetyBlocked &&
+               !ownedAfterMissedReleaseSafety &&
+               OccursBefore(
+                   drawSmartGuiSource,
+                   "CaptureHudPointerEventAtStart(foregroundEvent, interactive)",
+                   "bool notificationWasForeground") &&
+               OccursBefore(
+                   handleMouseSource,
+                   "HandleHudPointerInputOwnership()",
+                   "Input.GetMouseButtonDown(2)") &&
+               OccursBefore(
+                   handleMouseSource,
+                   "HandleHudPointerInputOwnership()",
+                   "CreatePreviewAtPointer()") &&
+               ContainsAll(
+                   captureHudPointerSource,
+                   "EventType.MouseDown",
+                   "EventType.MouseDrag",
+                   "EventType.MouseUp",
+                   "EventType.ScrollWheel",
+                   "ClaimMouseWheelInputForFrames",
+                   "ClaimBuildInputForFrames",
+                   "ClaimCameraInputForFrames",
+                   "ownedAfterInput || (blockWorldInput && pointerUp)") &&
+               !captureHudPointerSource.Contains(".Use()") &&
+               ContainsAll(
+                   handleHudPointerSource,
+                   "ResolveHudPointerGestureOwnership",
+                   "EndDrag(resetDraft: true)",
+                   "EndRotateDrag(resetDraft: true)") &&
+               endSmartBuildSource.Contains("_hudPointerGestureOwned = false") &&
+               suspendSmartBuildSource.Contains("_hudPointerGestureOwned = false"),
+            "Smart Builder latches HUD ownership from event start through drag/release, cancels world gestures that cross onto HUD, and leaves genuine world presses unclaimed.");
         Assert(handleMouseSource.Contains("EndDrag(resetDraft: true)") &&
                handleMouseSource.Contains("CancelAddMode()") &&
                handleMouseSource.Contains("DeselectSmartBuilderPiece()") &&
@@ -10621,16 +12496,16 @@ f 0 2 3
                sessionSource.Contains("SmartBlockFamilyCatalog.TryCreateMaterialSource") &&
                !sessionSource.Contains("SmartBuildSelectionResolver") &&
                !sessionSource.Contains("MaterialButton()") &&
-               sessionSource.Contains("ViewButton()") &&
+                sessionSource.Contains("ViewButton(leftControlWidth)") &&
                sessionSource.Contains("DrawViewModeMenu") &&
                sessionSource.Contains("DecorationEditorViewModeController") &&
                sessionSource.Contains("ApplyFocusView") &&
                sessionSource.Contains("RestoreFocusView") &&
                sessionSource.Contains("DrawMaterialSelector") &&
                sessionSource.Contains("CycleSelectedMaterial") &&
-               sessionSource.Contains("SymmetryButton(DecorationEditAxis.X)") &&
-               sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y)") &&
-               sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z)") &&
+                sessionSource.Contains("SymmetryButton(DecorationEditAxis.X, leftControlWidth)") &&
+                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Y, leftControlWidth)") &&
+                sessionSource.Contains("SymmetryButton(DecorationEditAxis.Z, leftControlWidth)") &&
                sessionSource.Contains("BuildPreviewSymmetrySets") &&
                sceneSource.Contains("BuildPlanFromCells") &&
                sceneSource.Contains("ISmartBuildPattern") &&
@@ -10679,8 +12554,8 @@ f 0 2 3
                 sessionSource.Contains("SmartBuildShapeCategory.Generated") &&
                 sessionSource.Contains("length.ToString(CultureInfo.InvariantCulture)") &&
                 sessionSource.Contains("length + \"m shape size.\"") &&
-                sessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", ref _showLeftPanel") &&
-                sessionSource.Contains("ToolbarPanelToggle(\"build\", \"Shapes\", ref _showRightPanel") &&
+                sessionSource.Contains("ToolbarPanelToggle(\"settings\", \"Info\", \"I\", ref _showLeftPanel") &&
+                sessionSource.Contains("ToolbarPanelToggle(\"build\", \"Library\", \"Lib\", ref _showRightPanel") &&
                 !sessionSource.Contains("DrawPieceActionToolbar(budget.RightControlsWidth)") &&
                 sessionSource.Contains("ToolButton(SmartBuildTool.Draw, \"create\", \"Add\"") &&
                 sessionSource.Contains("_selectedShapeDescriptorKey") &&
@@ -10797,14 +12672,14 @@ f 0 2 3
                 !ExtractMethodSource(sessionSource, "HandleMouse").Contains("CancelPreview()") &&
                 !behaviourSource.Contains("AllGameControlsEnabled") &&
                 sessionSource.Contains("DecorationEditorTheme") &&
-                sessionSource.Contains("DrawSmartPanelHeader(\"Smart Block Builder\", \"build\", ref _showLeftPanel)") &&
-                sessionSource.Contains("DrawSmartPanelHeader(RightPanelTitle(), \"build\", ref _showRightPanel)") &&
-                sessionSource.Contains("RightPanelTitle()") &&
+                 sessionSource.Contains("DrawSmartPanelHeader(") &&
+                 sessionSource.Contains("\"Library\",") &&
+                 sessionSource.Contains("Hide the Smart Builder shape and generator library.") &&
                 sessionSource.Contains("DrawRightPanelPageTabs(pageTabs)") &&
                !sessionSource.Contains("new GUIContent(\" Smart Block Builder\", DecorationEditorIconCatalog.Get(\"build\"))") &&
                 sessionSource.Contains("GUILayout.BeginHorizontal(GUILayout.Width(budget.LeftRailWidth))") &&
                 sessionSource.Contains("EsuHudLayout.LocalPanelInnerRect(_toolbarRect.width, _toolbarRect.height)") &&
-                sessionSource.Contains("private void ModeSwitchButton()") &&
+                 sessionSource.Contains("private void ModeSwitchButton(float controlWidth)") &&
                 !sessionSource.Contains("IconButton(\"open\", \"Deco\"") &&
                 sessionSource.Contains("EsuHudNotifications.DrawToolbarSlot(") &&
                 sessionSource.Contains("new Vector2(_toolbarRect.x + frame.Rect.x") &&
@@ -10890,7 +12765,7 @@ f 0 2 3
                sessionSource.Contains("ShouldConsumeGuiEvent(Event.current)") &&
                sessionSource.Contains("SwitchToDecorationEditRequested") &&
                sessionSource.Contains("CanSwitchToDecorationEdit"),
-            "Smart Block Builder leaves camera/WASD live while idle and only suppresses camera input for handle drags or panel scrolls.");
+            "Smart Block Builder leaves camera/WASD live while idle and suppresses camera input only for active handles or HUD pointer gestures.");
         Assert(readmeDocumentationSource.Contains("SmartBuildDraft") &&
                readmeDocumentationSource.Contains("Middle mouse may") &&
                readmeDocumentationSource.Contains("show the FTD cursor without closing Smart Builder") &&
@@ -11000,7 +12875,7 @@ f 0 2 3
                    "TryReadGetterLiveValue",
                    "TryReadSetterLiveValue",
                    "IsForeverComment",
-                   "CreateNativeComment(\"Forever: native breadboard evaluates continuously\")",
+                   "CreateNativeComment(NativeForeverMarkerText(\"native breadboard evaluates continuously\"))",
                    "PotentiallyAffectedBlocks.Add(target)",
                    "PotentiallyAffectedBlocks.Add(new BlockStub(target))",
                    "Apply is idempotent",
@@ -11457,6 +13332,25 @@ f 0 2 3
         return firstIndex >= 0 && secondIndex >= 0 && firstIndex < secondIndex;
     }
 
+    private static int OccurrenceCount(string source, string token)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(token))
+            return 0;
+
+        int count = 0;
+        int search = 0;
+        while (search <= source.Length - token.Length)
+        {
+            int index = source.IndexOf(token, search, StringComparison.Ordinal);
+            if (index < 0)
+                break;
+            count++;
+            search = index + token.Length;
+        }
+
+        return count;
+    }
+
     private static bool SmartBuilderLayoutFitsScreen(
         int screenWidth,
         int screenHeight,
@@ -11494,8 +13388,8 @@ f 0 2 3
         float dividerGap = 8f * scale;
         float innerHeight = Mathf.Max(1f, leftMinimum - inset * 2f);
         float footerHeight = Mathf.Min(
-            72f * scale,
-            Mathf.Max(1f, innerHeight * 0.22f));
+            50f * scale,
+            innerHeight);
         float workspaceHeight = Mathf.Max(
             0f,
             innerHeight - footerHeight - dividerGap);
@@ -11506,18 +13400,19 @@ f 0 2 3
             showBottom: true,
             bottomRatio: 0.62f,
             gap: dividerGap,
-            minimumPanelHeight: 186f * scale,
+            minimumPanelHeight: 80f * scale,
             out Rect overview,
             out Rect outerDivider,
             out Rect sceneSelected,
             out float outerRatio);
-        SmartBuildSession.SplitSmartVerticalStack(
+        SmartBuildSession.SplitSmartCollapsibleStack(
             sceneSelected,
             showTop: true,
             showBottom: true,
             bottomRatio: 0.5f,
             gap: dividerGap,
             minimumPanelHeight: 96f * scale,
+            collapsedHeaderHeight: EsuHudLayout.SectionHeaderHeightBase * scale,
             out Rect scene,
             out Rect innerDivider,
             out Rect selected,
@@ -11525,6 +13420,9 @@ f 0 2 3
 
         return RectPartitionIsValid(workspace, overview, outerDivider, sceneSelected) &&
                RectPartitionIsValid(sceneSelected, scene, innerDivider, selected) &&
+               overview.height >= 36f * scale &&
+               scene.height - 32f * scale >= 28f * scale &&
+               selected.height - 32f * scale >= 28f * scale &&
                outerRatio >= 0f && outerRatio <= 1f &&
                innerRatio >= 0f && innerRatio <= 1f &&
                footerHeight >= 0f &&
@@ -11549,6 +13447,15 @@ f 0 2 3
 
     private static bool SmartBuilderSplitGeometryIsStable()
     {
+        const float preferredRatio = 0.8f;
+        float constrainedRatio = SmartBuildSession.ResolveSmartStackEffectiveRatio(
+            preferredRatio,
+            availableHeight: 160f,
+            minimumPanelHeight: 80f);
+        float restoredRatio = SmartBuildSession.ResolveSmartStackEffectiveRatio(
+            preferredRatio,
+            availableHeight: 1000f,
+            minimumPanelHeight: 80f);
         var roomy = new Rect(5f, 7f, 320f, 1000f);
         SmartBuildSession.SplitSmartVerticalStack(
             roomy,
@@ -11573,11 +13480,43 @@ f 0 2 3
             out Rect tinyDivider,
             out Rect tinyBottom,
             out float tinyRatio);
+        var collapsed = new Rect(3f, 4f, 240f, 260f);
+        SmartBuildSession.SplitSmartCollapsibleStack(
+            collapsed,
+            showTop: true,
+            showBottom: false,
+            bottomRatio: 0.41f,
+            gap: 8f,
+            minimumPanelHeight: 96f,
+            collapsedHeaderHeight: 24f,
+            out Rect expandedTop,
+            out Rect collapsedDivider,
+            out Rect collapsedBottom,
+            out float collapsedRatio);
         var normalizedTiny = new Rect(tiny.x, tiny.y, 0f, tiny.height);
-        return Math.Abs(roomyRatio - 0.37f) < 0.000001f &&
+        return Math.Abs(constrainedRatio - 0.5f) < 0.000001f &&
+               Math.Abs(restoredRatio - preferredRatio) < 0.000001f &&
+               Math.Abs(roomyRatio - 0.37f) < 0.000001f &&
                RectPartitionIsValid(roomy, roomyTop, roomyDivider, roomyBottom) &&
                RectPartitionIsValid(normalizedTiny, tinyTop, tinyDivider, tinyBottom) &&
+               RectPairIsValid(collapsed, expandedTop, collapsedBottom) &&
+               collapsedDivider.width == 0f &&
+               collapsedDivider.height == 0f &&
+               Math.Abs(collapsedBottom.height - 24f) < 0.0001f &&
+               Math.Abs(collapsedRatio - 0.41f) < 0.0001f &&
                tinyRatio >= 0f && tinyRatio <= 1f;
+    }
+
+    private static bool RectPairIsValid(Rect whole, Rect top, Rect bottom)
+    {
+        const float epsilon = 0.001f;
+        return top.width >= 0f &&
+               top.height >= 0f &&
+               bottom.width >= 0f &&
+               bottom.height >= 0f &&
+               top.y >= whole.y - epsilon &&
+               top.yMax <= bottom.y + epsilon &&
+               bottom.yMax <= whole.yMax + epsilon;
     }
 
     private static void Pass(string description)

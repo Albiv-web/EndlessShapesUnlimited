@@ -16,7 +16,10 @@ namespace DecoLimitLifter.SerializationHud
             public bool DeveloperMode { get; set; }
             public bool EsuEditorAutoScale { get; set; } = true;
             public float EsuEditorScale { get; set; } = 1f;
+            public bool FadeHudBehindModalPopups { get; set; }
+            public bool ResponsivePaintPalettes { get; set; } = true;
             public bool DecorationEditPromptBeforeHotkeyClose { get; set; } = true;
+            public bool AutomationBuilderWipWarningAcknowledged { get; set; }
             public float DecorationMoveSnap { get; set; } = 0.001f;
             public float DecorationRotateSnapDegrees { get; set; } = 0.001f;
             public float DecorationScaleSnap { get; set; } = 0.001f;

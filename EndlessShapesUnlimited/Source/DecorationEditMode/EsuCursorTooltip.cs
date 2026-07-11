@@ -89,7 +89,16 @@ namespace DecoLimitLifter.DecorationEditMode
             if (Time.unscaledTime - _hoverStartedAt < HoverDelaySeconds)
                 return;
 
-            DrawTooltip(tooltip);
+            int previousDepth = GUI.depth;
+            GUI.depth = Mathf.Min(previousDepth, -20000);
+            try
+            {
+                DrawTooltip(tooltip);
+            }
+            finally
+            {
+                GUI.depth = previousDepth;
+            }
         }
 
         private static bool ShouldResetImmediately(Event current)
@@ -136,7 +145,7 @@ namespace DecoLimitLifter.DecorationEditMode
             Color previous = GUI.color;
             try
             {
-                GUI.Box(rect, GUIContent.none, DecorationEditorTheme.Panel);
+                EsuHudChrome.DrawPanel(rect);
                 GUI.color = DecorationEditorTheme.Cyan;
                 GUI.DrawTexture(
                     new Rect(rect.x, rect.y, Mathf.Max(1f, EsuHudLayout.Scale(2f)), rect.height),

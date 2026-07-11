@@ -7,7 +7,7 @@ Installed mod folder: `%USERPROFILE%\Documents\From The Depths\Mods\EndlessShape
 Expected assembly: `EndlessShapesUnlimited.dll`
 
 Expected assembly SHA-256:
-`3844D314B82E3179E5B85452542E8766C2C55C6848452CC0EE3CA3B601D65A9B`
+`E735CB9B7365B4E1BB674F5BD4C37115F38BE583B5DE51A6B28A6ECEA647761E`
 
 Do not merge the draft PR or publish a release until every required section
 passes. Record the FTD build, test date, result, and evidence for each section.
@@ -132,21 +132,32 @@ Pass: all content survives both reload paths without truncation or corruption.
 2. Confirm the mouse remains visible, build controls do not place/remove blocks
    while the editor is active, and `Esc` or `Ctrl+D` closes the editor.
    Make a dirty preview, press `Ctrl+D`, and click the toolbar **Close** button.
-   Confirm both paths dim the editor and show the foreground
+   Confirm both paths show the foreground
    **Unapplied decorations** prompt with **Apply and close**, **Discard**, and
-   **Keep editing** buttons; there should be no dim-only state where WASD/view
-   input is captured without a visible prompt.
+   **Keep editing** buttons. The background should remain solid when modal HUD
+   fading is off and fade when it is on; both states must block background
+   input, with no prompt-less state where WASD/view input is captured.
 3. Reopen from the Decoration Builder **Decoration Edit Mode** button.
 4. Confirm the UI is the native-styled shell: compact top toolbar, independent
    **Mesh Palette**, **Inspector**, **Outliner**, and **Selected anchor** panels,
    compact icon headers with no oversized panel icons, compact bottom status
-   strip, compact cyan rows, and readable text at the current UI scale. Confirm
-   the Inspector panel title appears once.
+   strip, and readable text at the current UI scale. Confirm cyan/accent color
+   marks actionable hover, selected, active, or focused states rather than
+   decorating passive panel borders, and the Inspector panel title appears once.
 5. On a laptop-sized or 1366x768/1600x900 window, confirm the top toolbar,
    mesh palette, right outliner, and bottom transform strip all fit without
    clipped buttons or off-screen editors. In FTD options, toggle automatic ESU
    editor scaling, adjust the manual editor scale multiplier, and use
    **Reset ESU editor layout** to return panels to their responsive defaults.
+   Confirm **Fade HUD behind popups** defaults off and **Responsive paint
+   palettes** defaults on. Resize each paint grid and verify responsive buttons
+   fill the available width in at least two rows; turn the option off to verify
+   the legacy fixed grid, then restore the default.
+   Repeat specifically at 1366x768 with effective 1.44x scale and 1920x1080 at
+   2x. In Decoration, Surface, Smart, and Automation, confirm dense toolbar
+   labels compact without overlapping, every action still has its tooltip, and
+   the notification/**Log** rail remains visible. All panel rectangles must be
+   ordered, nonnegative, on-screen, and above the status strip.
 6. Trigger an ESU toolbar warning, such as selecting empty space with no
    decoration center near the cursor. Confirm the toolbar slot stays fixed-height
    and text-only with no icon. If the text does not fit, confirm it shows a
@@ -187,23 +198,84 @@ Pass: all content survives both reload paths without truncation or corruption.
    Click **Log** from the notification slot in Deco, Surface, and Smart Builder;
    confirm the same console opens, can be dragged/resized, filters entries,
    copies text, clears entries, and captures hover/scroll input without moving
-   the camera or placing blocks.
+   the camera or placing blocks. Verify its visible/total badge, alternating
+   entry rows, centered empty state, and disabled Clear/Copy controls when their
+   actions have no target.
    Continue the cycle through Automation Editor and back to Decoration Edit
    Mode. Confirm the HUD never disappears between Automation Editor and
    Decoration Edit Mode, the shared notification slot stays visible through the
    handoff, and the previous ESU panel frame bridges the transition without
    accepting input.
-   In Automation Editor, confirm every palette card has one readable caption and
+   On a fresh player profile, the first Automation Builder open must show the
+   blocking work-in-progress warning and explicitly say the feature is unfinished
+   and potentially very buggy. Verify no world, panel, console, graph, camera,
+   or build input passes behind it. Acknowledge it, reopen Automation Builder,
+   and confirm the warning stays dismissed for that profile.
+   In Automation Builder, place one loaded basic breadboard and one AI
+   breadboard. If the basic item is unavailable, confirm the card explicitly
+   reports its AI fallback. Select a target and then a board to create an input
+   link; select the board and then a target to create an output link. Confirm the
+   left shelves, direction filters, animated world lines, and `1`/`2` shortcuts
+   agree, and that Delete removes only the selected link.
+   Open a board with `E`. Confirm every palette card has one readable caption and
    that its full row starts a drag. At minimum, default, and maximum graph zoom,
    drag blocks to free space, a value socket, a control body, and a stack edge;
    confirm the ghost, highlighted snap outline, and final placement agree. Repeat
-   after changing the ESU HUD scale, and confirm occupied value sockets reject the
-   drop without replacing their current block.
-   Drag outside the workspace and back before releasing, then release outside and
-   simulate a lost mouse-up by switching mode. Confirm no stray block is created
-   and the palette does not remain stuck in a dragging state. Apply, reopen, and
-   save/reload the craft; compact value blocks must remain compact and socketed,
-   while body children remain attached inside an adequately expanded host.
+   after changing the ESU HUD scale, and confirm an occupied value socket rejects
+   the drop without replacing its current block.
+   Build and Check each supported family: Input Getter and Output Setter;
+   Forever; If True and Switch > Threshold; all seven Logic Gate operations;
+   Above/Below Threshold; Add/Subtract/Multiply; Max/Min; Clamp; Delay;
+   Constant; Random; and Comment. Confirm the native plan names the corresponding
+   vanilla component and does not mutate the breadboard before Apply.
+   Build `Read -> Switch > Threshold -> Set`. Socket a Constant into then/pass,
+   use a constant else value, and place the Setter in the Switch body. Check that
+   the incoming stack drives `Switcher`, the Switch's selected numeric result
+   feeds the Setter, and the UI never describes this as imperative branch
+   execution. Put the same chain in Forever and confirm the plan explains that
+   vanilla evaluates continuously and Forever is a marked Comment/layout
+   container, not an ESU runtime loop.
+   Exercise `Ctrl+C`, `Ctrl+V`, `Ctrl+D`, Delete/Backspace, arrow nudging,
+   Shift+Arrow nudging, `Ctrl+Z`, `Ctrl+Y`, and `Ctrl+Shift+Z`. Moving, copying,
+   and duplicating a root must carry its attached value blocks, body descendants,
+   and following stack. Undo/redo must restore bindings, connections, layout,
+   staged links, and pending ESU-owned removals without changing already-applied
+   native data. Paste the same stack repeatedly and confirm every copy cascades
+   without exact overlap and its value/body/stack connections remain inside the
+   matching copy. Copy a bound block between boards on the same construct and
+   confirm its breadboard endpoint rebinds; paste it into a graph on another
+   construct and confirm the foreign target binding is cleared.
+   On an otherwise empty vanilla breadboard, Apply one ESU block and confirm the
+   first native component (including native ID `0`) reopens as ESU-owned and
+   Revert removes both it and its invisible marker. Create or import a
+   vanilla-source wire into an ESU-owned target and confirm ESU presents it as
+   read-only and blocks replacement instead of deleting or adopting that wire.
+   Use Starter Flow with exactly one input and one output. Confirm it stages
+   `Read -> Below Threshold -> If True -> Set` with threshold `10`, then `45`,
+   and else `0`. Resolve the Getter/Setter properties, Check, Apply, reopen, and
+   save/reload the craft. Compact values must remain socketed, bodies must remain
+   nested, world links must rehydrate from native proxies, and a second clean
+   Apply must not append duplicate native packages.
+   Add a vanilla component outside the supported mapping in FtD's native editor.
+   Reopen Automation Builder and confirm it appears as an opaque Advanced Native
+   block; recognized imported nodes and all imported wires must also be
+   read-only. Move/Arrange visual cards and Apply an ESU-owned destination, then
+   verify no imported component settings, native bounds, or unrelated wires were
+   rewritten. Revert must remove only ESU-owned generated components, ownership
+   markers, and wires sourced from them.
+   Make a dirty draft and request close. Confirm **Keep editing** and Escape
+   preserve it, **Apply and close** closes only after successful validation, and
+   **Close anyway** discards staged blocks/links/owned edits while leaving the
+   native board unchanged. Open a graph popup first and confirm it is dismissed
+   before the close prompt; the editor and console must be noninteractive behind
+   that prompt, and clicks/Escape may affect only the topmost foreground.
+   At 1366x768/effective 1.44x and 1920x1080/2x, slot/property/readiness popups
+   must remain inside the visible graph workspace with all rows reachable by
+   scrolling. Back in the world HUD, the selected-board summary must scroll while
+   Input Links and Output Links each retain a complete visible row. Drag outside
+   the workspace and back before release, release outside, and simulate a lost
+   mouse-up by switching mode; no stray block may be created and no drag state
+   may remain latched.
 12. While Deco or Smart Builder is open, press Ctrl alone and confirm the vanilla
    **Press L Ctrl** control/drive HUD does not appear and the screen does not
    turn green. Confirm `Ctrl+D`, `Ctrl+Shift+B`, `Ctrl+Z`, `Ctrl+Y`,
@@ -222,6 +294,10 @@ Pass: all content survives both reload paths without truncation or corruption.
      from **Add** to **Scale**. Click an occupied cell and confirm no preview is
      created there. Click an existing block face and confirm the preview seeds
      beside that face.
+     Arm Block again, then click toolbar controls, panel rows, blank left/right
+     panel space, scrollbars, split dividers, and the pinned footer. None of
+     those clicks may place or seed a preview through the HUD; the next clear
+     viewport click must still work.
 16. Resize the Smart Builder left panel, close and reopen Smart Builder, and
     confirm its panel size persists, fits the current screen, and responds to
     the same ESU editor scale options. Confirm the left panel shows the Scene
@@ -279,6 +355,14 @@ Pass: all content survives both reload paths without truncation or corruption.
     horizontal scrollbar appears. Confirm owner, mesh, GUID, tether, and
     material metadata remain in the Inspector, while editable transform fields
     only appear in the bottom status panel.
+    Switch to Paint, drag a viewport selection across several eligible
+    decorations and blocks, and confirm every target inside is colored while
+    targets outside remain unchanged. Starting, ending, or continuing the drag
+    over an ESU panel must not paint or place through that panel. Undo and Redo
+    must restore the decorations, blocks, marquee selection, and primary as one
+    action; Cancel must restore every pre-session block color, while Apply must
+    retain the complete mixed paint gesture after reopen. Repeat once as host
+    and client to confirm block restoration follows the multiplayer paint path.
 24. Use the **Selected anchor** panel and each anchor button (`+/-X`, `+/-Y`,
     `+/-Z`) and confirm the tether changes by one block while the visible
     decoration remains in place. In Anchor tool mode, confirm ESU draws lines
@@ -390,6 +474,9 @@ Pass: all content survives both reload paths without truncation or corruption.
     40px, Set, Reset defaults, Close, and Escape. Reopen ESU and restart FtD to
     confirm profile persistence. While open, verify background buttons, fields,
     scroll views, build actions, camera/WASD, and mouse wheel do not respond.
+    Repeat with **Fade HUD behind popups** off and on. Off must keep the editor
+    visually solid; on must fade it. Input ownership, outside-click dismissal,
+    Escape priority, and console blocking must remain identical.
     Repeat at 1366x768, normal desktop resolution, automatic HUD scale, and 200%
     manual HUD scale; no controls may overlap or leave the screen.
 40. At near/far camera distances and strong foreshortening, hover and click the
@@ -419,6 +506,9 @@ Pass: all content survives both reload paths without truncation or corruption.
     must not overlap Coordinates, and resizing Coordinates should not resize the
     Draft list until its true minimum workspace is reached. The automatic split
     must not leave a second list-sized empty gap below the final draft hint.
+    Leave Coordinates open, add/remove points and triangles, resize the panel,
+    and change HUD scale. Draft must immediately occupy all remaining height,
+    keep its rows reachable, and never overlap Coordinates or leave unused space.
 43. Set independent X/Y/Z ranges, restart FtD, and verify profile persistence.
     Reject non-finite, reversed, equal, and sub-0.001 m ranges, then use **Reset
     -10/+10**. Select/stage values below -10 and above +10 across A/B/C; the
@@ -447,6 +537,10 @@ Pass: all content survives both reload paths without truncation or corruption.
     path point. Confirm 781 points x 64 sides produces 99,904 segments, while
     782 x 64 and aggregate two/eight-variant symmetry output above 100,000 reject
     before placement allocation.
+    Resize Extra Tools vertically and horizontally and confirm its controls and
+    scroll workspace use the full available panel rather than retaining a large
+    empty body. For several active craft-palette colors, Preview and Place a
+    triangle and confirm both resolve exactly the same color entry.
 
 Pass: modal input, FTD-styled shell, Smart Builder runtime previews,
 outliner/inspector synchronization, move preview, anchor retether, mesh

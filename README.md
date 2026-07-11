@@ -218,6 +218,20 @@ The editor shell includes:
 - Bottom strip with status, save forecast, live transform fields, snap settings,
   and Apply/Cancel.
 
+The four ESU editors share one responsive HUD language. At constrained window
+sizes or high editor scale, toolbar labels compact before actions are allowed to
+overlap, the notification/log slot remains available, and panel minimums resolve
+against the real space between the toolbar and status strip. Panel headers and
+footers stay pinned while long bodies scroll independently; hover, selected,
+disabled, and focused-field states use distinct visuals.
+
+The vanilla ESU options page includes two presentation preferences. **Fade HUD
+behind popups** defaults off: context menus and settings windows still block all
+background input, but the editor behind them keeps its normal opacity. **Responsive
+paint palettes** defaults on and fits every paint-button group to the available
+width while preferring at least two rows. Disable it to retain the legacy fixed
+color grid.
+
 Important Decoration Edit behavior:
 
 - Apply commits previewed edits. Cancel restores the current preview.
@@ -228,9 +242,11 @@ Important Decoration Edit behavior:
 - Move uses snapped X/Y/Z handles plus center freeform movement.
 - Rotate uses RGB rotation rings and snaps to 5 degrees by default.
 - Scale uses X/Y/Z handles and snaps to 0.05 by default.
-- Paint can paint decorations and pointed blocks.
+- Paint can paint individual decorations/blocks or drag a viewport selection
+  around multiple eligible targets and color the whole region in one gesture.
 - Material and paint color palettes use the actual selected color/material
-  swatches where available.
+  swatches where available. Paint-button grids responsively fill their panel by
+  default and can be returned to the basic fixed grid from ESU options.
 - Anchor follow retethers while preserving visual world position.
 - Mesh placement uses a pointer ray against real craft blocks, not the vanilla
   build cursor.
@@ -270,6 +286,8 @@ The left Surface Builder panel is the single draft/action home:
 - `Bridge` remains Surface-only.
 - Right-side Extra Tools starts with mutually exclusive Draw and generator
   creation buttons, followed by mesh, shape, paint color, and material settings.
+  Its controls and scroll workspace consume the full available panel instead of
+  leaving a large unused body.
 
 Surface notes:
 
@@ -277,12 +295,21 @@ Surface notes:
   Draft workspace's real content minimum. Collapsing it keeps a compact Show
   header and expands the Draft list; hovering a coordinate vector highlights
   its exact point on the construct.
+- While Coordinates is open, the Draft list continuously fits the remaining
+  height. Resizing either shelf cannot strand unused space or push draft points
+  and triangle rows behind the coordinate editor.
+- When vertical space is constrained, an open Coordinates shelf remains visible
+  beside a compact, scrolling Draft workspace; Surface settings gain their own
+  scroll region, so at least one editable row and every placement action remain
+  reachable.
 - `Nearest anchor` resolves each generated decoration to its nearest valid
   anchor.
 - `Same anchor` previews the shared anchor block with wireframe hints and
   rejects placement if no common anchor is valid.
 - Right-clicking Surface or Extra Tools points opens a small context menu.
 - Hovering generator mesh rows shows the shared mesh preview card.
+- Colored triangle previews and committed triangle decorations resolve the same
+  active craft-palette entry, so the chosen preview color is the placed color.
 
 ## Smart Block Builder
 
@@ -298,7 +325,9 @@ Core workflow:
 - Add/Build creates a `SmartBuildDraft`.
 - Move, Rotate, and Scale edit the selected preview piece.
 - The left panel keeps the Scene list above the scrollable Selected-piece
-  actions; drag the splitters to allocate its free space between them.
+  actions; drag the splitters to allocate its free space between them. A
+  collapsed shelf consumes only its header, and temporary screen constraints do
+  not overwrite the player's preferred split ratios.
 - The right panel is a full-height Shapes/Generators browser.
 - Apply commits planned vanilla block placements.
 - Cancel restores the current preview.
@@ -312,25 +341,47 @@ Input notes:
 - Middle mouse may show the FTD cursor without closing Smart Builder, and camera
   movement remains live unless a Smart Builder handle is being dragged.
 - Right click cancels context/menu selection instead of clearing the whole scene.
+- Clicking, dragging, or scrolling any Smart Builder panel is owned by the HUD
+  and cannot place the currently armed preview piece in the world behind it.
 
 ## Automation Builder
 
 Open with `Ctrl+Shift+A`, from the Decoration Builder item, or via `Tab` from
 Smart Block Builder while clean.
 
-Automation Builder is a breadboard-focused workflow editor:
+Automation Builder is a Scratch-style authoring surface for vanilla FtD
+breadboards:
 
-- The right panel can arm breadboard placement. The pending breadboard follows
-  the mouse over craft surfaces and places through the normal block command
-  path.
-- Selecting a breadboard and then a target block creates an output/setter link
-  from the breadboard to that block.
-- Selecting a target block and then a breadboard creates an input/getter link
-  from that block into the breadboard.
-- Linked blocks draw animated colored world lines so signal direction is easy
-  to read.
-- Opening the selected breadboard's graph shows a large canvas with draggable
-  top-to-bottom component blocks and a right-side breadboard component palette.
+- On its first use for a player profile, Automation Builder shows a blocking
+  work-in-progress warning. It is intentionally explicit that the editor is
+  unfinished and potentially very buggy; acknowledgement is saved for that
+  profile.
+- Place or select a basic/AI breadboard, then link readable world blocks into it
+  and writable targets out of it. Animated world lines and the selected-board
+  shelves show signal direction.
+- Open the selected board with `E` and drag native-backed blocks from Inputs,
+  Logic, Values, Math, Outputs, and Notes into stacks, value sockets, or
+  control bodies. Copy/paste/duplicate, a 64-state graph undo history, keyboard
+  nudging, Fit/Center/Arrange, and exact snap previews support normal block-editor
+  iteration.
+- **Check** is non-mutating. **Apply** validates and lowers the visible program
+  into ordinary FtD Getter, Setter, Switch, Logic, Evaluator, Threshold,
+  Constant, Random, Max/Min, Clamp, Delay, and Comment components. There is no
+  ESU automation runtime or extra craft-save schema.
+- Existing vanilla components remain the source of truth. Recognized components
+  reopen as semantic blocks; unknown components and imported wires remain
+  visible but read-only. **Revert** removes only ESU-owned generated components,
+  markers, and their wires, and requires a clean block draft.
+- `Forever` records visual grouping while vanilla breadboards evaluate
+  continuously. Switch bodies are numeric dataflow: the selected then/else value
+  feeds downstream native components, rather than executing imperative code.
+- Property/slot/readiness popups, context menus, and the dirty-close prompt own
+  foreground input. Responsive panels and independent selected-board scrolling
+  keep all actions reachable at supported high HUD scales.
+
+See [Automation Builder](docs/AUTOMATION_BUILDER.md) for the complete native
+mapping, editing controls, validation rules, round-trip behavior, and current
+compatibility limits.
 
 ## Symmetry
 

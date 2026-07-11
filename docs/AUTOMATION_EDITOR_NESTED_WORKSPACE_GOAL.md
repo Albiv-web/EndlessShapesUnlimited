@@ -2,6 +2,14 @@
 
 Source: persistent user goal captured in this Codex thread.
 
+> **Roadmap status:** This document records the earlier nested-workspace goal;
+> it is not the current release specification. The implemented editor is the
+> Scratch-style native breadboard workflow in
+> [Automation Builder](AUTOMATION_BUILDER.md). Code pages, reusable System
+> Blocks, nested internal graphs, and dedicated ACB/Missile adapters described
+> below remain future concepts unless a later release explicitly implements
+> them.
+
 ## Goal
 
 Turn the ESU Automation Editor into a Blender-like nested automation workspace

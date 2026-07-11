@@ -16,16 +16,16 @@ https://discord.gg/6Us9UamUPx
 [h2]MAIN FEATURES[/h2]
 
 [b]Decoration Edit Mode[/b]
-Move, rotate, scale, paint, retether, select, and edit decorations directly on your craft.
+Move, rotate, scale, paint, retether, select, and edit decorations directly on your craft. The paint tool can also drag a screen selection across decorations and blocks.
 
 [b]Surface Builder[/b]
-Create decoration surfaces, paths, circles, quads, polygons, tubes, cones, spheres, partial shapes, and other generated decoration layouts.
+Create decoration surfaces, paths, circles, quads, polygons, tubes, cones, spheres, partial shapes, and other generated decoration layouts. Draft lists, Coordinates, Extra Tools, and paint palettes resize with their panels.
 
 [b]Smart Block Builder[/b]
 Preview block shapes before placing them. Move, rotate, scale, change materials, and apply when ready.
 
 [b]Automation Builder[/b]
-Place breadboards, link blocks as inputs or outputs, and build readable top-to-bottom breadboard graphs.
+Place breadboards, link blocks as inputs or outputs, and build readable top-to-bottom breadboard graphs. This editor is work in progress and may be very buggy, so its first use shows a required warning.
 
 [b]OBJ Tools[/b]
 Import OBJ models and convert mesh groups into FtD decorations.
@@ -82,6 +82,7 @@ Number keys only affect ESU while an ESU editor is open. Outside ESU, vanilla co
 - Remove standalone DecoLimitLifter and EndlessShapes2 before using this combined mod.
 - Multiplayer friends need the same ESU version if the craft uses ESU extended saves.
 - Back up important craft before heavy decoration editing or huge blueprint work.
+- Verify Automation Builder output in the vanilla breadboard editor before relying on it.
 - Unsafe diagnostic fast-load probes are for testing only. Do not save from unsafe probe runs.
 
 

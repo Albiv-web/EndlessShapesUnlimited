@@ -50,10 +50,10 @@ namespace DecoLimitLifter.DecorationEditMode
     internal static class DecorationEditorTheme
     {
         internal static readonly Color Cyan = new Color(0.05f, 0.9f, 1f, 1f);
-        internal static readonly Color PanelColor = new Color(0.01f, 0.08f, 0.1f, 0.78f);
-        internal static readonly Color PanelHeaderColor = new Color(0.03f, 0.26f, 0.32f, 0.9f);
-        internal static readonly Color RowColor = new Color(0f, 0.2f, 0.25f, 0.62f);
-        internal static readonly Color SelectedRowColor = new Color(0f, 0.58f, 0.7f, 0.78f);
+        internal static readonly Color PanelColor = new Color(0.01f, 0.07f, 0.09f, 0.9f);
+        internal static readonly Color PanelHeaderColor = new Color(0.025f, 0.24f, 0.3f, 0.96f);
+        internal static readonly Color RowColor = new Color(0f, 0.18f, 0.23f, 0.74f);
+        internal static readonly Color SelectedRowColor = new Color(0f, 0.42f, 0.5f, 0.94f);
         internal static readonly Color WarningColor = new Color(1f, 0.72f, 0.2f, 1f);
         internal static readonly Color ErrorColor = new Color(1f, 0.25f, 0.2f, 1f);
 
@@ -63,9 +63,11 @@ namespace DecoLimitLifter.DecorationEditMode
         private static Texture2D _row;
         private static Texture2D _rowSelected;
         private static Texture2D _button;
+        private static Texture2D _buttonHover;
         private static Texture2D _buttonActive;
         private static Texture2D _buttonDisabled;
         private static Texture2D _field;
+        private static Texture2D _fieldFocused;
         private static Texture2D _dimLight;
         private static Texture2D _dim;
         private static Texture2D _dimStrong;
@@ -75,6 +77,9 @@ namespace DecoLimitLifter.DecorationEditMode
         internal static GUIStyle Panel { get; private set; }
         internal static GUIStyle Header { get; private set; }
         internal static GUIStyle SubHeader { get; private set; }
+        internal static GUIStyle CompactHeaderText { get; private set; }
+        internal static GUIStyle SectionHeader { get; private set; }
+        internal static GUIStyle Badge { get; private set; }
         internal static GUIStyle Body { get; private set; }
         internal static GUIStyle BodyWrap { get; private set; }
         internal static GUIStyle Mini { get; private set; }
@@ -130,16 +135,18 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_ready && Mathf.Abs(_styleScale - scale) < 0.001f)
                 return;
 
-            if (_panel == null)
+            if (_panel == null || _buttonHover == null || _fieldFocused == null)
             {
                 _panel = Solid(PanelColor, "ESU panel");
                 _header = Solid(PanelHeaderColor, "ESU header");
                 _row = Solid(RowColor, "ESU row");
                 _rowSelected = Solid(SelectedRowColor, "ESU selected row");
-                _button = Solid(new Color(0f, 0.22f, 0.28f, 0.88f), "ESU button");
-                _buttonActive = Solid(new Color(0f, 0.56f, 0.66f, 0.95f), "ESU button active");
+                _button = Solid(new Color(0f, 0.2f, 0.26f, 0.94f), "ESU button");
+                _buttonHover = Solid(new Color(0f, 0.3f, 0.37f, 0.98f), "ESU button hover");
+                _buttonActive = Solid(new Color(0f, 0.42f, 0.49f, 0.98f), "ESU button active");
                 _buttonDisabled = Solid(new Color(0.08f, 0.1f, 0.11f, 0.7f), "ESU button disabled");
                 _field = Solid(new Color(0f, 0.1f, 0.13f, 0.95f), "ESU field");
+                _fieldFocused = Solid(new Color(0f, 0.2f, 0.25f, 0.98f), "ESU field focused");
                 _dimLight = Solid(new Color(0f, 0f, 0f, 0.14f), "ESU focus dim light");
                 _dim = Solid(new Color(0f, 0f, 0f, 0.28f), "ESU focus dim");
                 _dimStrong = Solid(new Color(0f, 0f, 0f, 0.55f), "ESU decoration-only dim");
@@ -151,13 +158,13 @@ namespace DecoLimitLifter.DecorationEditMode
                 normal = { background = _panel, textColor = Color.white },
                 padding = EsuHudLayout.Offset(8, 8, 8, 8),
                 margin = new RectOffset(0, 0, 0, 0),
-                border = new RectOffset(1, 1, 1, 1)
+                border = EsuHudLayout.Offset(1, 1, 1, 1)
             };
             Header = new GUIStyle(GUI.skin.label)
             {
                 normal = { background = _header, textColor = Color.white },
                 alignment = TextAnchor.MiddleCenter,
-                fontStyle = FontStyle.BoldAndItalic,
+                fontStyle = FontStyle.Bold,
                 fontSize = EsuHudLayout.FontSize(15),
                 padding = EsuHudLayout.Offset(6, 6, 3, 3)
             };
@@ -166,6 +173,29 @@ namespace DecoLimitLifter.DecorationEditMode
                 fontSize = EsuHudLayout.FontSize(12),
                 alignment = TextAnchor.MiddleLeft,
                 fontStyle = FontStyle.Bold
+            };
+            CompactHeaderText = new GUIStyle(SubHeader)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                clipping = TextClipping.Clip,
+                padding = new RectOffset(0, 0, 0, 0),
+                wordWrap = false
+            };
+            CompactHeaderText.normal.background = null;
+            SectionHeader = new GUIStyle(SubHeader)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                fontSize = EsuHudLayout.FontSize(11),
+                padding = EsuHudLayout.Offset(7, 7, 2, 2)
+            };
+            Badge = new GUIStyle(GUI.skin.label)
+            {
+                normal = { background = _rowSelected, textColor = Color.white },
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
+                fontSize = EsuHudLayout.FontSize(10),
+                padding = EsuHudLayout.Offset(5, 5, 1, 1),
+                margin = new RectOffset(0, 0, 0, 0)
             };
             Body = new GUIStyle(GUI.skin.label)
             {
@@ -192,8 +222,9 @@ namespace DecoLimitLifter.DecorationEditMode
             Row = new GUIStyle(GUI.skin.button)
             {
                 normal = { background = _row, textColor = Color.white },
-                hover = { background = _buttonActive, textColor = Color.white },
+                hover = { background = _buttonHover, textColor = Color.white },
                 active = { background = _buttonActive, textColor = Color.white },
+                focused = { background = _buttonHover, textColor = Color.white },
                 alignment = TextAnchor.MiddleLeft,
                 fontSize = EsuHudLayout.FontSize(11),
                 padding = EsuHudLayout.Offset(6, 6, 2, 2),
@@ -207,8 +238,9 @@ namespace DecoLimitLifter.DecorationEditMode
             Button = new GUIStyle(GUI.skin.button)
             {
                 normal = { background = _button, textColor = Color.white },
-                hover = { background = _buttonActive, textColor = Color.white },
+                hover = { background = _buttonHover, textColor = Color.white },
                 active = { background = _buttonActive, textColor = Color.white },
+                focused = { background = _buttonHover, textColor = Color.white },
                 alignment = TextAnchor.MiddleCenter,
                 fontSize = EsuHudLayout.FontSize(11),
                 padding = EsuHudLayout.Offset(4, 4, 3, 3),
@@ -218,6 +250,8 @@ namespace DecoLimitLifter.DecorationEditMode
             ActiveButton = new GUIStyle(Button)
             {
                 normal = { background = _buttonActive, textColor = Color.white },
+                hover = { background = _rowSelected, textColor = Color.white },
+                focused = { background = _rowSelected, textColor = Color.white },
                 fontStyle = FontStyle.Bold
             };
             DisabledButton = new GUIStyle(Button)
@@ -277,7 +311,8 @@ namespace DecoLimitLifter.DecorationEditMode
             TextField = new GUIStyle(GUI.skin.textField)
             {
                 normal = { background = _field, textColor = Color.white },
-                focused = { background = _field, textColor = Color.white },
+                hover = { background = _fieldFocused, textColor = Color.white },
+                focused = { background = _fieldFocused, textColor = Color.white },
                 padding = EsuHudLayout.Offset(4, 4, 2, 2),
                 fontSize = EsuHudLayout.FontSize(12)
             };
@@ -311,7 +346,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal static void Separator()
         {
-            Rect rect = GUILayoutUtility.GetRect(1f, 1f, GUILayout.ExpandWidth(true));
+            float thickness = Mathf.Max(1f, EsuHudLayout.Scale(1f));
+            Rect rect = GUILayoutUtility.GetRect(thickness, thickness, GUILayout.ExpandWidth(true));
             GUI.DrawTexture(rect, _separator);
         }
 

@@ -12,19 +12,32 @@ This note tracks the current Smart Block Builder workflow and the HUD responsibi
 - Use the scene list or click a preview piece in the world to select between pieces.
 - Right click a preview piece to open the context menu for Select, Duplicate, Delete, Yaw, and Flip.
 - The context menu owns foreground input even when it overlaps panel fields or
-  buttons; background controls remain disabled until the menu closes.
+  buttons; background controls remain noninteractive until the menu closes.
+  Their normal opacity is retained by default and follows the optional modal
+  HUD fading preference.
 - **Apply** commits all preview pieces atomically. **Cancel** clears the whole scene.
 - Right click cancels the current Add mode or active drag only; it does not clear the scene.
+- Panel clicks, drags, and scrolling are claimed by Smart Builder and never
+  place an armed preview through the HUD into the world.
 
 ## HUD Areas
 
-- **Top toolbar:** mode switch, Add/Move/Scale/Rotate, draw plane, occupancy, material, symmetry, notifications/log, Undo/Redo, Yaw/Flip, Apply/Cancel/Close.
+- **Top toolbar:** mode switch, Add/Move/Scale/Rotate, draw plane, occupancy,
+  material, symmetry, notifications/log, Undo/Redo, Yaw/Flip,
+  Apply/Cancel/Close. Dense layouts compact labels and rely on the pinned left
+  footer for Apply/Cancel instead of overlapping the notification rail.
 - **Right palette:** full-height Shapes/Generators browsing, including shape
   selection and down-slope length buttons (**1m**, **2m**, **3m**, **4m**).
 - **Bottom strip:** current state, readable handle modes (**Gizmo**, **Face**, **Edge**, **Corner**), preview mode (**Wireframe** or **Material**), and down-slope support mode.
 - **Left panel:** material/tool/plane/occupancy/symmetry readout, then the Scene
   list above scrollable Selected-piece metrics and actions. Both splitters are
-  draggable and retain their ratios when Smart Builder reopens.
+  draggable and retain their requested ratios when Smart Builder reopens;
+  temporary resolution constraints do not overwrite them. Collapsed Scene or
+  Selected shelves consume header height only.
+- Every visible toolbar, left-panel, right-browser, footer, popup, and console
+  rectangle is an input barrier for world placement. The placement ghost can
+  remain armed while using the HUD, but placement requires a later unobstructed
+  viewport click.
 
 ## Add, Scale, Move, Cancel
 
@@ -66,3 +79,6 @@ This note tracks the current Smart Block Builder workflow and the HUD responsibi
   confirm both panels and the left Apply/Cancel footer stay between the toolbar
   and status strip; every overview, Scene, and Selected body remains reachable.
 - Right click a preview piece and confirm the context menu can Duplicate, Delete, Yaw, and Flip without clearing the scene.
+- Arm Block and each generator, then click buttons, rows, empty panel space,
+  split dividers, scrollbars, and the Apply/Cancel footer. Confirm no preview
+  piece is added until the next unobstructed viewport click.
