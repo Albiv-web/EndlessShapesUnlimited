@@ -7,7 +7,7 @@ Installed mod folder: `%USERPROFILE%\Documents\From The Depths\Mods\EndlessShape
 Expected assembly: `EndlessShapesUnlimited.dll`
 
 Expected assembly SHA-256:
-`E735CB9B7365B4E1BB674F5BD4C37115F38BE583B5DE51A6B28A6ECEA647761E`
+`DA8FEBD37208F37CB0FC35092438AF26FE12A4D0F4BE2805201BA95B78CAEFE6`
 
 Do not merge the draft PR or publish a release until every required section
 passes. Record the FTD build, test date, result, and evidence for each section.
@@ -123,6 +123,11 @@ or cross-builder setting contamination.
 3. Restart FTD completely and reload again.
 4. Repeat with texture-derived colors, automatic tethers, and subconstructs.
 5. Review the log for serializer ceiling, corruption, cursor, or allocation errors.
+6. Confirm **Memory-safe part status checks** is off on a fresh profile. Enable
+   it, load a status-heavy construct, and confirm existing warnings/errors still
+   appear and clear normally while the log contains no repeated
+   `StatusUpdate`/`MainConstructPartStatusChecker` allocation exception. Disable
+   it again and confirm the setting immediately returns to the vanilla path.
 
 Pass: all content survives both reload paths without truncation or corruption.
 
@@ -139,13 +144,13 @@ Pass: all content survives both reload paths without truncation or corruption.
    input, with no prompt-less state where WASD/view input is captured.
 3. Reopen from the Decoration Builder **Decoration Edit Mode** button.
 4. Confirm the UI is the native-styled shell: compact top toolbar, independent
-   **Mesh Palette**, **Inspector**, **Outliner**, and **Selected anchor** panels,
+   **Block Palette**, **Inspector**, **Outliner**, and **Selected anchor** panels,
    compact icon headers with no oversized panel icons, compact bottom status
    strip, and readable text at the current UI scale. Confirm cyan/accent color
    marks actionable hover, selected, active, or focused states rather than
    decorating passive panel borders, and the Inspector panel title appears once.
 5. On a laptop-sized or 1366x768/1600x900 window, confirm the top toolbar,
-   mesh palette, right outliner, and bottom transform strip all fit without
+   Block Palette, right outliner, and bottom transform strip all fit without
    clipped buttons or off-screen editors. In FTD options, toggle automatic ESU
    editor scaling, adjust the manual editor scale multiplier, and use
    **Reset ESU editor layout** to return panels to their responsive defaults.
@@ -178,7 +183,7 @@ Pass: all content survives both reload paths without truncation or corruption.
    independent visibility choices persist and remain clamped inside the screen.
 9. Hover ESU panels and confirm WASD/mouse-look still works after leaving them.
    Scroll over ESU panels and confirm only the panel scrolls; the camera must not
-   zoom. Drag the mesh palette, switch modes twice, and confirm its position
+   zoom. Drag the Block Palette, switch modes twice, and confirm its position
    persists.
 10. Press `Ctrl+Shift+B` from vanilla build mode and confirm Smart Block Builder
    opens, remains open after the first frame, and closes only after a separate
@@ -373,18 +378,72 @@ Pass: all content survives both reload paths without truncation or corruption.
     confirm the dropdown stays open until toggled closed. Move a decoration far
     enough from its tether over nearby valid blocks and confirm the tether
     follows while the visible decoration stays in place.
-25. Use the left mesh palette in list and 3D preview-grid modes. Confirm the
+25. Use the left Block Palette with **Build** off in list and 3D preview-grid modes. Confirm the
     mesh count strip shows total and currently shown meshes, updates while
     changing kind filters/search text, the 3D grid fills visible thumbnails
     progressively instead of freezing to load the full mesh catalog, hover
     previews draw in front of the editor, and moving the mouse over Inspector
     details does not keep or change a mesh preview.
-26. Click a mesh row to enter placement mode. Confirm the translucent mesh-shaped
-   ghost follows the pointer, snaps to the pointed craft block, shows
-   valid/invalid feedback, and left click creates one decoration anchored to that
-   block. Confirm right click and Esc cancel placement without creating a
-   decoration.
-27. Click the Decoration Edit toolbar **X** symmetry button, then click a real
+26. Confirm **Build** appears immediately left of **Hide** and is off when the
+    editor opens while the header remains **Block Palette** in either state.
+    Enable it and confirm Objects and non-block entries are not offered, and
+    locked or construct-incompatible entries are rejected without changing the
+    active block or falling back to Wood. Select several usable entries with both
+    left and right palette clicks. Confirm neither click places through the HUD. In the
+    viewport, the full-size selected block marker must follow the free mouse
+    cursor before placement and match the exact block, rotation, cell, and
+    footprint that left click commits. Test all six faces on the main craft and
+    again while focused on a rotated subobject, plus rotation controls,
+    mirror controls, attachment/collision rejection, occupied and invalid
+    targets, resources, native undo/redo, and one block whose native footprint
+    spans multiple cells. The marker must hide over every ESU panel, popup, and
+    text field, and an invalid or hidden marker must never place or remove a
+    block. Orbit the camera while clicking and confirm placement uses the final
+    current mouse ray, never the preceding frame. Hold Tab until the rotation
+    markers appear, then cross onto a panel, open a modal, point at empty space,
+    and exit Build; every rotation marker must disappear. Native attachment
+    indicators are intentionally absent at both close and far orbit distances.
+    With Simple Build Mode enabled, Shift+LMB must not replace or remove a block;
+    cursor-follow mode deliberately disables that unsafe gesture. Arm PermaBuild
+    over an occupied/invalid outside cell and confirm it cannot enter hold-remove
+    or delete anything. Focus the search field, type digits plus movement and
+    orientation keys, and confirm neither the hotbar selection nor build marker
+    changes. Click the viewport once and confirm that click only leaves the field;
+    the next click may build or sample. Native controls must resume without a
+    delayed step, rotation, placement, or removal. Right-click blocks already on
+    the craft and on a
+    subobject; confirm type and rotation are sampled without deleting the block
+    or opening a decoration context menu, and that the marker changes to the
+    sampled item/rotation immediately without showing its old mesh. Change the
+    active item through FtD's native hotbar/inventory and confirm the marker
+    refreshes immediately as well. Move from an ESU panel back into the viewport
+    and confirm the marker reappears at the current mouse target rather than its
+    last pre-panel transform. Escape, Paint, Surface, editor close,
+    and mode handoff must leave Block Palette mode cleanly. Save/reload, then
+    repeat once as multiplayer host/client and confirm normal FtD replication.
+    If practical, destroy or lose control/team ownership of the focused craft
+    while the marker is active and confirm FtD exits/cleans build state without a
+    stale ghost or command.
+27. Disable **Build** and confirm the title remains **Block Palette**. Click a
+    row to enter decoration placement mode. Confirm the translucent mesh-shaped
+    ghost follows the pointer, snaps to the pointed craft block, shows
+    valid/invalid feedback, and left click creates one decoration anchored to that
+    block. Confirm right click and Esc cancel placement without creating a
+    decoration. Place a decoration center behind a main-craft block and another
+    behind a subobject block. With **X-ray** off, hover, left/Shift-click,
+    right-click context, Paint, short Box fallback, and full Box drag must not
+    acquire either hidden center; a slightly farther visible center must still
+    win. Turn X-ray on and confirm those same viewport paths can acquire the
+    hidden centers. Turn it off again and confirm Outliner and Selected anchor
+    rows can still select and edit them. The target decoration's own tether block
+    must not falsely hide an exposed center on a wedge/partial-block surface,
+    while moving that center to the far side of the same tether block must make
+    X-ray-off reject it. Drag an X-ray-off box over exactly 512 and then more than
+    512 projected decoration centers: the first may resolve visibility, while the
+    second must reject before any selection or mixed paint change; the live label
+    must say it is a projected count. Close and reopen the editor and confirm
+    X-ray has returned to its safe off default.
+28. Click the Decoration Edit toolbar **X** symmetry button, then click a real
    craft block to place the red X symmetry plane. Place a mesh on one side of
    the plane and confirm ESU creates the original plus one mirrored decoration.
    Enable **Y** as well, place another mesh, and confirm four total decorations
@@ -392,19 +451,19 @@ Pass: all content survives both reload paths without truncation or corruption.
    a missing mirrored tether block and confirm the whole placement is rejected,
    including the original. Switch Deco -> Surf -> Build -> Deco and confirm placed
    planes persist; close ESU and confirm they clear on reopen.
-28. With an X plane active, select one decoration from a mirrored pair and move
+29. With an X plane active, select one decoration from a mirrored pair and move
    it with the Move gizmo. Confirm the matching mirrored decoration follows on
    the other side and undo/redo treats both moves as one action. Repeat with the
    position inspector fields and with an anchor move. Delete or duplicate the
    mirrored counterpart and confirm ESU skips live follow instead of moving
    unrelated decorations on the same anchor. Remove the mirrored target block and
    confirm the linked movement is rejected/restored.
-29. In Smart Block Builder, place the same X/Y planes, create a runtime preview,
+30. In Smart Block Builder, place the same X/Y planes, create a runtime preview,
    and confirm mirrored translucent preview cells and outlines appear before
    Apply. Confirm **Skip** and **Block** occupancy modes apply to the combined
    mirrored preview, every mirrored component must touch the existing construct,
    and Apply places all mirrored blocks atomically or none.
-30. In Surface Builder, place an X symmetry plane from the Surface toolbar and
+31. In Surface Builder, place an X symmetry plane from the Surface toolbar and
    first confirm **Draw** is absent beside the left Draft header and is the first
    right-panel Extra Tools button. Switch Draw -> Path -> Circle -> Draw and
    confirm only the active creation button lights each time. Then confirm the
@@ -414,27 +473,27 @@ Pass: all content survives both reload paths without truncation or corruption.
    decorations are created as one atomic batch. Enable X+Y and confirm four
    variants; put a draft on a plane and confirm no duplicate placement; remove
    mirrored-side anchor blocks and confirm the whole placement is rejected.
-31. Undo and redo the created decoration. Confirm undo removes it and redo
+32. Undo and redo the created decoration. Confirm undo removes it and redo
    recreates it with the same mesh/tether/fields.
-32. Press **Cancel** and verify tether, position, scale, orientation, mesh, color,
+33. Press **Cancel** and verify tether, position, scale, orientation, mesh, color,
    and material return to their original values. Repeat and press **Apply**,
    then save/reload and verify the edit persists.
-33. Search for a known FTD item/object mesh, switch All/Items/Objects/Recent
+34. Search for a known FTD item/object mesh, switch All/Items/Objects/Recent
     filters, hover it, and confirm the preview card plus rotating wire preview
     appear near the cursor. Select it and confirm the selected decoration changes
     mesh as a dirty preview.
-34. Load a decoration-heavy construct and confirm the outliner remains responsive
+35. Load a decoration-heavy construct and confirm the outliner remains responsive
     and viewport hints are capped rather than drawing every decoration.
-35. Repeat with AdvancedMimicUi installed and confirm its decoration UI still
+36. Repeat with AdvancedMimicUi installed and confirm its decoration UI still
     opens and works after ESU edit mode is closed.
-36. Select one decoration and use Inspector **Settings Copy**. Paste in the
+37. Select one decoration and use Inspector **Settings Copy**. Paste in the
     vanilla/Advanced Mimic UI and compare mesh, position, rotation, scale,
     color, material, and hide-mesh state. Copy there and paste onto a multi-
     selection in ESU; confirm all explicit targets change atomically while each
     tether and runtime identity stays unchanged. Include a valid native offset
     between 10 m and 20 m, and force one invalid/stale target if reproducible;
     the full batch must restore on failure.
-37. Select several decorations in a deliberately shuffled order and use
+38. Select several decorations in a deliberately shuffled order and use
     **Decorations Copy selection** / **Paste in place**, then repeat with
     `Ctrl+C/V` and explicit `Ctrl+Shift+C/V`. Confirm exact in-place clones are ordered primary first,
     selected as one Move group, do not expand active symmetry, and can be pasted
@@ -445,7 +504,7 @@ Pass: all content survives both reload paths without truncation or corruption.
     and repeat the rejection test. Finally, select one decoration, press
     `Ctrl+C/V`, and confirm the configured native shortcut returns to settings
     copy/paste instead of creating another decoration.
-38. Select several decorations, then right-click one selected row in both the
+39. Select several decorations, then right-click one selected row in both the
     **Outliner** and **Selected anchor** lists. Confirm the cursor menu opens at
     the row, retains the group, promotes that row to primary, and offers
     **Select only this**, Move/Rotate/Scale, active-state **Focus deco**, native
@@ -468,7 +527,7 @@ Pass: all content survives both reload paths without truncation or corruption.
     and inside the cyan group bounds: the same multi-selection menu must open
     before Box-off fallback. Verify an unfinished Box drag still cancels,
     while empty-space right-click can disable Box without clearing the group.
-39. In Deco, Surface, and Smart Builder modes open the bottom-left Gizmo settings
+40. In Deco, Surface, and Smart Builder modes open the bottom-left Gizmo settings
     gear. Confirm preferences are shared across all three editors, then exercise
     Move/Rotate/Scale size and Thickness at 0.5x and 3x, Click area at 8px and
     40px, Set, Reset defaults, Close, and Escape. Reopen ESU and restart FtD to
@@ -479,14 +538,14 @@ Pass: all content survives both reload paths without truncation or corruption.
     Escape priority, and console blocking must remain identical.
     Repeat at 1366x768, normal desktop resolution, automatic HUD scale, and 200%
     manual HUD scale; no controls may overlap or leave the screen.
-40. At near/far camera distances and strong foreshortening, hover and click the
+41. At near/far camera distances and strong foreshortening, hover and click the
     base, middle, and tip of Move, Scale, Smart Builder Move/Scale, Surface/generator point, decoration
     anchor, and shared-anchor shafts. Confirm collapsed axes are ignored without
     disabling visible axes, the highlight predicts the click, the center free-
     move core is only a small target, and the whole shaft remains selectable.
     Repeat identical pixel drags at every size and confirm translation, scale,
     anchor stepping, and rotation sensitivity do not change.
-41. In Surface Builder use the left-panel **Coordinates** shelf with a point,
+42. In Surface Builder use the left-panel **Coordinates** shelf with a point,
     edge, face, generator path point, and generator
     shape center. Confirm the header remains visible, vector/range rows scroll,
     and the bottom strip only points to this editor while retaining its existing
@@ -497,7 +556,7 @@ Pass: all content survives both reload paths without truncation or corruption.
     updates, one undo command per complete drag, atomic rejection of invalid
     intermediate faces, and full camera/build/text/wheel capture. Revert must
     restore the selection-time coordinates without rolling back unrelated settings.
- 42. Confirm Coordinates defaults hidden, the header is only **Coordinates**,
+43. Confirm Coordinates defaults hidden, the header is only **Coordinates**,
     and it has neither New triangle nor Apply text actions. Verify its compact
     **Coordinates | Show** header remains
     pinned above Surface settings and the Draft list fills the released area,
@@ -509,7 +568,7 @@ Pass: all content survives both reload paths without truncation or corruption.
     Leave Coordinates open, add/remove points and triangles, resize the panel,
     and change HUD scale. Draft must immediately occupy all remaining height,
     keep its rows reachable, and never overlap Coordinates or leave unused space.
-43. Set independent X/Y/Z ranges, restart FtD, and verify profile persistence.
+44. Set independent X/Y/Z ranges, restart FtD, and verify profile persistence.
     Reject non-finite, reversed, equal, and sub-0.001 m ranges, then use **Reset
     -10/+10**. Select/stage values below -10 and above +10 across A/B/C; the
     effective limits must expand for the current target without clamping values
@@ -521,13 +580,19 @@ Pass: all content survives both reload paths without truncation or corruption.
     one undo step per click, and safe rejection outside 0.001-1000 m. Finish at
     1366x768, normal resolution, and 200% HUD scale with Preview/Place, symmetry,
     undo/redo, save/reload, and no overlap with pinned material/action shelves.
-44. With point, edge, face, generator path point, and generator center targets,
+45. With point, edge, face, generator path point, and generator center targets,
     hover every coordinate vector header and slider row. Confirm the row lights
     up and a bright marker identifies exactly that bound point on the construct;
     leaving Coordinates or collapsing it must clear the marker.
-45. Confirm Extra Tools is a full-width three-by-four grid containing Draw,
+46. Confirm Extra Tools is a full-width three-by-four grid containing Draw,
     Path, Circle, Arc, 2D cone, Sphere, Part sph, Quad, Cone, Frustum, Polygon,
-    and Tube. Exercise Quad width/height and aspect-preserving Scale; Polygon
+    and Tube. For every Extra Tool, click **Preview** and confirm the selected
+    decoration mesh replaces the line-only result at the exact planned
+    transforms while cyan guides and edit handles remain visible. Repeat with
+    X/Y/Z mesh axes, limited and rotated arcs, nearest/same anchoring, paint,
+    material override, and symmetry; **Place** must match Preview. Changing the
+    draft or symmetry must remove stale meshes until Preview is clicked again.
+    Exercise Quad width/height and aspect-preserving Scale; Polygon
     radius and 3/12-side boundaries; and straight/bent Tube paths with diameter
     and 3/8/64 sides. For all three, verify move/rotate where applicable, mesh and
     strut diameter, paint/material, nearest/same anchor, symmetry, Preview/Place,
@@ -537,6 +602,9 @@ Pass: all content survives both reload paths without truncation or corruption.
     path point. Confirm 781 points x 64 sides produces 99,904 segments, while
     782 x 64 and aggregate two/eight-variant symmetry output above 100,000 reject
     before placement allocation.
+    On a plan above the exact-preview budgets, confirm sampled meshes, guide
+    segments, and Same-anchor hints span the entire shape without a frame-time
+    collapse, while Place still uses the complete uncapped plan.
     Resize Extra Tools vertically and horizontally and confirm its controls and
     scroll workspace use the full available panel rather than retaining a large
     empty body. For several active craft-palette colors, Preview and Place a

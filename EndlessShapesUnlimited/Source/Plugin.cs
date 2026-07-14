@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using Assets.Scripts;
 using Assets.Scripts.Persistence;
+using BrilliantSkies.Common.StatusChecking;
 using BrilliantSkies.Core.FilesAndFolders;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Core.Types;
@@ -15,6 +16,7 @@ using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.DataManagement.Serialisation.VariableTypes;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.Ftd.Avatar.HUD;
+using BrilliantSkies.Ftd.Avatar.Input;
 using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Ftd.Constructs.UI;
@@ -35,7 +37,7 @@ namespace DecoLimitLifter
         private const string HarmonyId = "alb.endlessshapesunlimited";
 
         public string name => "EndlessShapes Unlimited";
-        public Version version => new Version(1, 0, 7, 0);
+        public Version version => new Version(1, 0, 8, 0);
 
         public void OnLoad()
         {
@@ -152,6 +154,8 @@ namespace DecoLimitLifter
                 ResolveBlueprintLoadTarget(),
                 ResolveBlueprintFileJsonSaveTarget(),
                 ResolveBlueprintFileManagerFactoryTarget(),
+                AccessTools.Constructor(typeof(StatusUpdate), new[] { typeof(int) }),
+                AccessTools.Method(typeof(StatusUpdate), "FlushChange"),
                 ResolveFastBlueprintFileModelLoadTarget(),
                 ResolveConstructExtraInfoDataArrayTarget(),
                 ResolveConstructExtraInfoProvideInfoToBlocksTarget(),
@@ -169,6 +173,11 @@ namespace DecoLimitLifter
                 ResolveDecorationEditorHudTarget("DrawInteractionIcon"),
                 ResolveDecorationEditorHudTarget("DisplayCorrectToolBar"),
                 ResolveDecorationEditorBuildUpdateTarget(),
+                ResolveDecorationEditorBuildFixedUpdateTarget(),
+                ResolveDecorationEditorDoBuildModeTarget(),
+                ResolveDecorationEditorBuildLateUpdateTarget(),
+                ResolveDecorationEditorDrawIndicatorsTarget(),
+                ResolveDecorationEditorInputUpdateTarget(),
                 ResolveDecorationEditorCameraUpdateTarget(),
                 ResolveFtdKeyMapGetZoomTarget(),
                 ResolveHybridZoomUpdateTarget(),
@@ -281,6 +290,18 @@ namespace DecoLimitLifter
                     typeof(Patches.FileManagerMaker_CreateBlueprintFileModelSaver_BlueprintJsonStreaming_Patch),
                     "Postfix"),
                 prefix: false);
+            VerifyExactPatch(
+                AccessTools.Constructor(typeof(StatusUpdate), new[] { typeof(int) }),
+                AccessTools.Method(
+                    typeof(Patches.StatusUpdate_Constructor_PartStatusMemoryGuard_Patch),
+                    nameof(Patches.StatusUpdate_Constructor_PartStatusMemoryGuard_Patch.Prefix)),
+                prefix: true);
+            VerifyExactPatch(
+                AccessTools.Method(typeof(StatusUpdate), "FlushChange"),
+                AccessTools.Method(
+                    typeof(Patches.StatusUpdate_FlushChange_PartStatusMemoryGuard_Patch),
+                    nameof(Patches.StatusUpdate_FlushChange_PartStatusMemoryGuard_Patch.Prefix)),
+                prefix: true);
             VerifyExactPatch(
                 ResolveFastBlueprintFileModelLoadTarget(),
                 AccessTools.Method(
@@ -468,6 +489,36 @@ namespace DecoLimitLifter
                     "Prefix"),
                 prefix: true);
             VerifyExactPatch(
+                ResolveDecorationEditorBuildFixedUpdateTarget(),
+                AccessTools.Method(
+                    typeof(DecorationEditor_cBuild_RunFixedUpdate_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveDecorationEditorDoBuildModeTarget(),
+                AccessTools.Method(
+                    typeof(DecorationEditor_cBuild_DoBuildMode_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveDecorationEditorBuildLateUpdateTarget(),
+                AccessTools.Method(
+                    typeof(DecorationEditor_cBuild_RunLateUpdate_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveDecorationEditorDrawIndicatorsTarget(),
+                AccessTools.Method(
+                    typeof(DecorationEditor_cBuild_DrawIndicators_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
+                ResolveDecorationEditorInputUpdateTarget(),
+                AccessTools.Method(
+                    typeof(DecorationEditor_cInput_RunUpdate_Patch),
+                    "Prefix"),
+                prefix: true);
+            VerifyExactPatch(
                 ResolveDecorationEditorCameraUpdateTarget(),
                 AccessTools.Method(
                     typeof(DecorationEditor_BuildCameraMode_RunUpdate_Patch),
@@ -603,6 +654,24 @@ namespace DecoLimitLifter
 
         internal static MethodBase ResolveDecorationEditorBuildUpdateTarget() =>
             AccessTools.Method(typeof(cBuild), nameof(cBuild.RunUpdate));
+
+        internal static MethodBase ResolveDecorationEditorBuildFixedUpdateTarget() =>
+            AccessTools.Method(typeof(cBuild), nameof(cBuild.RunFixedUpdate));
+
+        internal static MethodBase ResolveDecorationEditorDoBuildModeTarget() =>
+            AccessTools.Method(typeof(cBuild), nameof(cBuild.DoBuildMode));
+
+        internal static MethodBase ResolveDecorationEditorBuildLateUpdateTarget() =>
+            AccessTools.Method(typeof(cBuild), nameof(cBuild.RunLateUpdate));
+
+        internal static MethodBase ResolveDecorationEditorDrawIndicatorsTarget() =>
+            AccessTools.Method(typeof(cBuild), nameof(cBuild.DrawIndicators));
+
+        internal static MethodBase ResolveDecorationEditorInputUpdateTarget() =>
+            AccessTools.Method(
+                typeof(cInput),
+                "BrilliantSkies.Ftd.Avatar.I_c_cInput.RunUpdate",
+                Type.EmptyTypes);
 
         internal static MethodBase ResolveDecorationEditorCameraUpdateTarget() =>
             AccessTools.Method(typeof(BuildCameraMode), nameof(BuildCameraMode.RunUpdate));

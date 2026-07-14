@@ -98,6 +98,20 @@ namespace DecoLimitLifter.SerializationHud
                     profile => profile.StreamLargeBlueprintJsonSaves));
 
             CreateHeader(
+                "Large-craft runtime safety",
+                new ToolTip(
+                    "Optional memory safeguards for constructs with extremely large status-check lists."));
+            var runtimeSafety = CreateTableSegment(2, 1);
+            runtimeSafety.AddInterpretter(
+                SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
+                    data,
+                    "Memory-safe part status checks",
+                    new ToolTip(
+                        "When enabled, ESU avoids vanilla's multi-million-entry temporary part-status allocation by retaining only warnings, errors, and flags that need clearing. Disabled by default; blueprint files are not changed."),
+                    (profile, value) => profile.MemorySafePartStatusChecks = value,
+                    profile => profile.MemorySafePartStatusChecks));
+
+            CreateHeader(
                 "Blueprint loading",
                 new ToolTip(
                     "Optional load acceleration for very large or block-count-heavy blueprints. The saved blueprint schema is not changed."));

@@ -42,6 +42,7 @@ namespace DecoLimitLifter.SerializationHud
             public float SmartBuildRotateSnapDegrees { get; set; } = 90f;
             public int SmartBuildScaleStepCells { get; set; } = 1;
             public bool StreamLargeBlueprintJsonSaves { get; set; }
+            public bool MemorySafePartStatusChecks { get; set; }
             public FastBlueprintLoadTier FastBlueprintLoadTier { get; set; }
             public bool FastBlueprintLoadDiagnostics { get; set; }
             public bool FastBlueprintLoadSmallBlueprintTesting { get; set; }

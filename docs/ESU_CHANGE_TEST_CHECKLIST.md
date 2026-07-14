@@ -47,47 +47,78 @@ release pass.
     Resize each visible paint-color panel and confirm its buttons fill the width
     in at least two rows. Disable **Responsive paint palettes**, confirm the
     legacy fixed grid returns, then re-enable the default.
-11. Move, rotate, axis-scale, and uniform-scale the selected group with each
+11. In Block Palette, confirm **Build** is immediately left of **Hide** and off
+    by default, with decoration-mesh behavior retained. Toggle it on; the title
+    must remain **Block Palette**, Objects
+    and non-block definitions must disappear, while locked or construct-incompatible
+    choices are rejected without changing the active block or selecting Wood.
+    Select usable entries with left and right click without placing through the
+    panel. Confirm the full-size native marker follows the free mouse before
+    placement and that its item, cell, rotation, footprint, and validity exactly
+    match the committed block on all six faces, including occupied/invalid
+    targets. Repeat all faces while focused on a rotated subobject; sample an
+    existing craft block with right click, rotate/mirror, and
+    undo/redo. The marker must hide over every ESU panel, popup, and text field,
+    and a hidden/invalid marker must never place or remove. Type
+    digits/WASD/orientation keys in the palette search and confirm
+    the hotbar and marker stay unchanged. The first viewport click must only
+    clear focus; the next may act, with no delayed action on focus loss.
+    Include a multi-cell block and a subobject. Toggle it off and
+    confirm normal decoration-mesh placement returns. Re-enable it, sample a
+    different block/rotation and change the native hotbar item; the marker must
+    refresh immediately. After moving over and then away from a panel, it must
+    reappear at the current pointer target without a stale transform. Orbit while
+    clicking to catch same-frame ray changes. Hold Tab, then enter UI/modal/empty
+    space/exit and confirm all rotation markers hide. Attachment indicators are
+    intentionally absent. Simple-mode Shift+LMB must not replace, and PermaBuild
+    over an occupied/invalid cell must never enter hold-remove. If practical,
+    destroy or lose team control of the focused craft and confirm native cleanup.
+12. Move, rotate, axis-scale, and uniform-scale the selected group with each
     pivot mode: Bounds, Average, Selected, and Anchor.
-12. Type `0.1, 0.1, 0.1` in the normal Scale XYZ fields with a group selected
+13. Type `0.1, 0.1, 0.1` in the normal Scale XYZ fields with a group selected
     and confirm the entire group scales around the selected pivot.
-13. Toggle symmetry and confirm mirrored decoration preview/anchors are visible,
+14. Toggle symmetry and confirm mirrored decoration preview/anchors are visible,
     mirrored scale/rotation match, and deleting one side deletes its counterpart.
-14. Open Surface Builder. Confirm Draw is absent beside the left Draft header,
+15. Open Surface Builder. Confirm Draw is absent beside the left Draft header,
     appears first in right-side Extra Tools, and clears every generator-button
     highlight when selected. Selecting a generator must clear Draw's highlight.
     Extra Tools must use the full available panel body without a large empty
     scroll region.
-15. Build triangles on a normal block, a spin block, and an angled subobject.
-16. Toggle normal flip and confirm preview and applied decorations match.
-17. Use Create Face, Same anchor, and right-click context actions; confirm they
+16. Build triangles on a normal block, a spin block, and an angled subobject.
+17. Toggle normal flip and confirm preview and applied decorations match.
+18. Use Create Face, Same anchor, and right-click context actions; confirm they
     do not unexpectedly enter material preview mode.
-18. Select a paint color and material override; click Preview and confirm the
+19. Select a paint color and material override; click Preview and confirm the
     preview and placed triangle use the same active craft-palette color and
     material after Apply.
-19. Open Smart Builder.
+20. Open Smart Builder.
     Arm a shape, then click every panel, blank panel area, scrollbar, splitter,
     and footer; none may place a preview through the HUD.
-20. Switch the right panel between `Shapes` and `Generators`.
-21. Create Circle, Polygon, Triangle, Hex, Octagon, Decagon, and Sphere
+21. Switch the right panel between `Shapes` and `Generators`.
+22. Create Circle, Polygon, Triangle, Hex, Octagon, Decagon, and Sphere
     generators in Shell and Filled modes.
-22. Resize each generator with face, edge, and corner handles; confirm round-lock
+23. Resize each generator with face, edge, and corner handles; confirm round-lock
     circles/spheres stay centered and scale predictably.
-23. Toggle Wireframe, Material, and Mat only preview modes.
-24. Create a large sphere shell, around 28 x 28 x 28, and confirm the editor
+24. Toggle Wireframe, Material, and Mat only preview modes.
+25. Create a large sphere shell, around 28 x 28 x 28, and confirm the editor
     remains responsive while the shape-aware hull still reads as a sphere.
-25. Trigger Smart Builder blocked/occupied warnings and confirm they use the
+26. Trigger Smart Builder blocked/occupied warnings and confirm they use the
     shared ESU notification/log UI instead of clipped status text.
-26. Apply/cancel generated pieces, then undo/redo through FtD.
-27. Save, reload, and confirm committed blocks/decorations persist.
+27. Apply/cancel generated pieces, then undo/redo through FtD.
+28. Save, reload, and confirm committed blocks/decorations persist.
 
 ## Startup And Options
 
 - Game reaches main menu with ESU installed and no required-patch popup.
 - ESU options tab opens in the vanilla options menu.
 - Defaults stay safe for normal players: vanilla compatibility remains enabled,
-  fast-load features remain opt-in, modal HUD fading is off, and responsive
-  paint palettes are on.
+  fast-load and memory-safe part-status features remain opt-in, modal HUD fading
+  is off, and responsive paint palettes are on.
+- Confirm **Memory-safe part status checks** defaults off and persists per
+  profile. With it off, the vanilla `StatusUpdate` capacity is unchanged. With
+  it on, load a status-heavy test craft and confirm warnings/errors still update,
+  cleared problems lose their flags, and no repeated part-status allocation
+  exception appears.
 - Toggle **Fade HUD behind popups**. With it off, a modal keeps the background
   at normal opacity while blocking all background input; with it on, the same
   background visibly fades and remains noninteractive.
@@ -266,6 +297,30 @@ release acceptance.
 
 ## Decoration Edit
 
+- Exercise the default-off Block Palette **Build** toggle in list and 3D-grid
+  views. The title remains **Block Palette**, Objects disappear, unavailable or
+  non-block definitions cannot silently fall back to Wood, and both mouse
+  buttons select the exact native item. HUD clicks must never place through.
+  Viewport left click uses normal FtD placement; viewport right click samples
+  an existing main-craft or subobject block and its rotation before any
+  decoration context/remove action. Verify native one-metre grid targeting,
+  valid multi-cell footprints, rotation/mirroring, collision/resource checks,
+  undo/redo, save/reload, and multiplayer replication. While a search or numeric
+  field owns keyboard input, digits/WASD/orientation controls must not alter the
+  native hotbar or marker. The first outside click only blurs the field; no input
+  may replay after focus leaves. Escape and every editor
+  handoff must restore normal input ownership.
+- Put decoration centers behind blocks on both the main craft and a subobject.
+  With X-ray off, confirm viewport hover, LMB/Shift+LMB, right-click context,
+  direct Paint, short Box fallback, and full Box drag all skip hidden centers
+  and can choose a slightly farther visible center. With X-ray on, confirm the
+  same paths acquire hidden centers. Direct Outliner/Selected anchor selection
+  must work in both states, and an exposed decoration must not be rejected just
+  because its own wedge/partial tether cell lies on the coarse fallback ray; a
+  center moved behind that same block must be rejected. Confirm 512 projected
+  X-ray-off candidates may resolve, 513 reject before selection/paint, and the
+  live marquee explicitly labels its count projected. Close/reopen and confirm
+  X-ray defaults off again.
 - Select existing decorations in viewport and outliner.
 - Right-click selected decoration rows in both Outliner and Selected anchor.
   Confirm the cursor menu opens at the row, preserves the whole explicit group,
@@ -364,6 +419,16 @@ release acceptance.
   `-0.999`. Verify 781 points x 64 sides succeeds at 99,904 segments and 782 x
   64 rejects, then confirm the 100,000-segment pre-allocation guard counts
   aggregate unique output across two- and eight-variant symmetry.
+- Click **Preview** for Path, Circle, Arc, 2D cone, Sphere, Part sphere, Quad,
+  Cone, Frustum, Polygon, and Tube. Confirm the chosen decoration mesh appears
+  at the final anchor/position/rotation/scale with matching paint, material
+  override, and symmetry, while cyan guides and handles remain on top. Include
+  X/Y/Z mesh axes plus limited and rotated arcs; Place must match Preview.
+- Change a draft setting, coordinate, handle transform, shared anchor, or active
+  symmetry plane after Preview and confirm stale real meshes disappear until
+  Preview is clicked again. Same-anchor hints alone must not enable mesh
+  preview. Exercise a generator above 768 placements and confirm deterministic
+  samples span the full shape without uncapped mesh, wire, or anchor-hint draws.
 
 - Create triangle faces from three craft-surface points.
 - Select a point, edge, and face and use the **Coordinates** shelf in the left

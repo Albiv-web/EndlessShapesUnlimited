@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using BrilliantSkies.Core.Maths;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using UnityEngine;
@@ -2183,37 +2184,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 w = s * 0.5f;
             }
 
-            return QuaternionToEulerDegrees(x, y, z, w);
-        }
-
-        private static Vector3 QuaternionToEulerDegrees(float x, float y, float z, float w)
-        {
-            double sinrCosp = 2d * (w * x + y * z);
-            double cosrCosp = 1d - 2d * (x * x + y * y);
-            double roll = Math.Atan2(sinrCosp, cosrCosp);
-
-            double sinp = 2d * (w * y - z * x);
-            double pitch = Math.Abs(sinp) >= 1d
-                ? (sinp >= 0d ? Math.PI / 2d : -Math.PI / 2d)
-                : Math.Asin(sinp);
-
-            double sinyCosp = 2d * (w * z + x * y);
-            double cosyCosp = 1d - 2d * (y * y + z * z);
-            double yaw = Math.Atan2(sinyCosp, cosyCosp);
-
-            const double radiansToDegrees = 57.29577951308232d;
-            return new Vector3(
-                NormalizeDegrees((float)(roll * radiansToDegrees)),
-                NormalizeDegrees((float)(pitch * radiansToDegrees)),
-                NormalizeDegrees((float)(yaw * radiansToDegrees)));
-        }
-
-        private static float NormalizeDegrees(float degrees)
-        {
-            if (!DecorationEditMath.IsFinite(degrees))
-                return 0f;
-            degrees %= 360f;
-            return degrees < 0f ? degrees + 360f : degrees;
+            // FtD replays decoration rotations with its managed Unity-order
+            // Euler helper. Use that same Z-X-Y convention for compound
+            // generator rotations rather than conventional roll/pitch/yaw.
+            return new Quaternion(x, y, z, w).SafeEulerAngles();
         }
 
         private static bool TryValidateSegment(

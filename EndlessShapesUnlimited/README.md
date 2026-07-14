@@ -1,4 +1,4 @@
-[b]Mod latest version 1.0.7[/b]
+[b]Mod latest version 1.0.8[/b]
 
 [h1]EndlessShapes Unlimited[/h1]
 
@@ -17,9 +17,13 @@ https://discord.gg/6Us9UamUPx
 
 [b]Decoration Edit Mode[/b]
 Move, rotate, scale, paint, retether, select, and edit decorations directly on your craft. The paint tool can also drag a screen selection across decorations and blocks.
+The Block Palette (formerly Mesh Palette) has a default-off Build toggle. With Build off, choices create decorations as before. Turn it on to select real native inventory block definitions with left or right click; FtD's full-size native marker follows the mouse and validates the exact one-metre-grid target before left-click placement. Right-click a block on the craft to sample its type and rotation. Locked or construct-incompatible items and invalid world targets are rejected safely, and native multi-cell block footprints are preserved. Simple Build Mode's Shift+LMB replacement gesture and distance-scaled attachment indicators are disabled in this cursor-following mode so neither can disagree with the full-size preview.
+
+Decoration X-ray defaults off, so viewport selection cannot grab decoration centers hidden behind craft or subobject blocks. Turn X-ray on to select through blocks; list selection remains available either way. To keep very dense craft responsive, an X-ray-off box with more than 512 projected decoration centers is rejected before visibility checks or paint changes.
 
 [b]Surface Builder[/b]
 Create decoration surfaces, paths, circles, quads, polygons, tubes, cones, spheres, partial shapes, and other generated decoration layouts. Draft lists, Coordinates, Extra Tools, and paint palettes resize with their panels.
+Extra Tools Preview draws the selected decoration mesh with the same transform, paint, material override, anchoring, and symmetry that Place will use; cyan guides and edit handles remain visible on top.
 
 [b]Smart Block Builder[/b]
 Preview block shapes before placing them. Move, rotate, scale, change materials, and apply when ready.
@@ -84,6 +88,8 @@ Number keys only affect ESU while an ESU editor is open. Outside ESU, vanilla co
 - Back up important craft before heavy decoration editing or huge blueprint work.
 - Verify Automation Builder output in the vanilla breadboard editor before relying on it.
 - Unsafe diagnostic fast-load probes are for testing only. Do not save from unsafe probe runs.
+- **Memory-safe part status checks** is available in ESU options for
+  multi-million-block craft. It is off by default and does not change blueprint files.
 
 
 [h2]CREDITS[/h2]

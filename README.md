@@ -32,6 +32,8 @@ License.
 - Grows serializer buffers on demand while preserving already-written data.
 - Adds an optional serialization HUD with last loaded/saved format, live
   forecast, decoration count, manager peak, header peak, and data peak.
+- Adds a default-off, profile-backed memory-safe part-status option for
+  multi-million-block constructs while leaving vanilla behavior as the default.
 - Imports OBJ vertices, UVs, faces, lines, object/group records, comments,
   whitespace variants, and negative indices.
 - Converts OBJ groups into FTD decorations with bounded geometry and texture
@@ -41,6 +43,9 @@ License.
   Automation Builder as modal ESU editor surfaces.
 - Adds shared X/Y/Z symmetry planes for decoration placement, generated
   surfaces, generator paths/circles, and Smart Builder commits.
+- Renders Surface Builder Extra Tools plans with the selected decoration mesh,
+  planned transforms, paint/material overrides, anchors, and symmetry before
+  placement, with bounded sampling for very large generators.
 - Adds a Deco character item for moving tether blocks with linked decorations
   as one transaction.
 
@@ -52,7 +57,7 @@ License.
    From the repository root, run:
    `powershell -ExecutionPolicy Bypass -File tools\Deploy-EndlessShapesUnlimited.ps1`
 3. Start FTD and confirm the Alerts panel reports
-   `EndlessShapes Unlimited v1.0.7 Active!`.
+   `EndlessShapes Unlimited v1.0.8 Active!`.
 
 The runtime package must contain only:
 
@@ -159,6 +164,18 @@ The HUD reports:
 Labels with `~` or `EST` are forecasts after craft changes. Loaded/saved labels
 are exact observations.
 
+## Large-Craft Runtime Safety
+
+FTD's once-per-second part-status pass normally allocates a temporary dictionary
+sized for every status-checkable block, including healthy blocks. For constructs
+with millions of such blocks, this can exhaust managed memory even after the
+blueprint has loaded and saved successfully.
+
+The ESU options tab includes **Memory-safe part status checks**. It is off by
+default. When explicitly enabled, ESU bounds the initial temporary allocation
+and retains only warnings, errors, and healthy entries needed to clear a stale
+flag. It does not change blueprint JSON or reduce the number of blocks checked.
+
 ## OBJ Tools
 
 ### Import
@@ -207,7 +224,15 @@ The editor shell includes:
 
 - Top toolbar with mode, tools, symmetry, view, notifications, log, and apply
   controls.
-- Mesh Palette with searchable list and virtualized 3D grid previews.
+- Block Palette (formerly Mesh Palette) with searchable list and virtualized 3D
+  grid previews. With its default-off **Build** toggle off, choices create
+  decorations as before. Turn **Build** on to make eligible item entries a native
+  FtD block picker: palette left/right click selects the real block, viewport
+  movement drives FtD's full-size native block marker under the mouse, viewport
+  left click places its validated one-metre-grid target, and viewport right click
+  samples an existing craft block. Simple Build Mode's Shift+LMB replacement
+  gesture is disabled in this cursor-following mode because its hidden native
+  support target cannot safely match the mouse preview.
 - Outliner grouped by construct/subconstruct, including normal Shift/Ctrl
   multi-select constrained to the same construct. Right-click selected Outliner
   or Selected Anchor rows for group-aware transform, Focus deco, settings
@@ -244,12 +269,27 @@ Important Decoration Edit behavior:
 - Scale uses X/Y/Z handles and snaps to 0.05 by default.
 - Paint can paint individual decorations/blocks or drag a viewport selection
   around multiple eligible targets and color the whole region in one gesture.
+- X-ray defaults off, so viewport hover, click, context, paint, and box targeting
+  cannot acquire decoration centers hidden by blocks on the craft or its
+  subobjects. Turn X-ray on to select through blocks; Outliner and Selected
+  Anchor rows remain directly selectable in either state. Live marquees count
+  projected candidates only; with X-ray off, releases above 512 projected
+  decoration centers are rejected before visibility work so large craft cannot
+  freeze or receive a partial selection/paint edit.
 - Material and paint color palettes use the actual selected color/material
   swatches where available. Paint-button grids responsively fill their panel by
   default and can be returned to the basic fixed grid from ESU options.
 - Anchor follow retethers while preserving visual world position.
-- Mesh placement uses a pointer ray against real craft blocks, not the vanilla
-  build cursor.
+- Decoration-mesh placement with Block Palette **Build** off uses a pointer ray
+  against real craft blocks, not the vanilla build cursor.
+- Block Palette mode uses FtD's normal build marker, validation, rotations,
+  mirroring, resource checks, undo, and networking. Blocks retain their native
+  footprint, including definitions that occupy more than one grid cell, and
+  Decoration Apply/Cancel does not defer native block placement. The native
+  marker follows the free mouse cursor, hides while ESU owns the pointer, and
+  only delegates a click while FtD reports a valid add target. Native attachment
+  indicators are suppressed because their distance-scaled offsets do not match
+  the full-size cursor marker; placement validation itself remains native.
 
 ## Surface Builder
 

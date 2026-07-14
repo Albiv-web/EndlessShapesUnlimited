@@ -23,7 +23,7 @@ using UnityEngine.Rendering;
 
 namespace DecoLimitLifter.DecorationEditMode
 {
-    internal sealed class DecorationEditSession
+    internal sealed partial class DecorationEditSession
     {
         private enum StackDividerKind
         {
@@ -85,13 +85,19 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private const float SelectionRadiusPixels = 28f;
         private const float BoxSelectionClickThresholdPixels = 6f;
+        private const float BoxSelectionLiveCountIntervalSeconds = 0.08f;
         private const float BoxSelectionVisibilityTolerance = 0.45f;
+        private const float DecorationSelectionVisibilityTolerance = 0.08f;
+        private const int MaxBoxSelectionVisibilityChecks = 512;
+        private const int DecorationSelectionVisibilityHitCapacity = 64;
         private const int MaxBoxPaintBlocks = 1024;
         private const int MaxBoxPaintScanBlocks = 20000;
         private const int MaxBoxPaintScanCells = 80000;
         private const int MaxBoxPaintVisibilityRays = 2048;
         private const int BoxPaintVisibilityHitCapacity = 48;
         private const int MaxSurfacePreviewResources = 256;
+        private const int MaxGeneratorMeshPreviewPlacements = 768;
+        private const int MaxGeneratorWirePreviewSegments = 1400;
         private const int MaxOutlinerDrawRows = 180;
         private const int MaxWorldHintLines = 650;
         private const float OutlinerRowHeight = 22f;
@@ -138,6 +144,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private static bool s_standardClipboardRoutesToDecorationSelection;
         private static readonly RaycastHit[] s_boxPaintVisibilityHits =
             new RaycastHit[BoxPaintVisibilityHitCapacity];
+        private static readonly RaycastHit[] s_decorationSelectionVisibilityHits =
+            new RaycastHit[DecorationSelectionVisibilityHitCapacity];
         private static SurfaceExtraTool s_surfaceExtraTool = SurfaceExtraTool.Path;
         private static SurfaceBuilderTool s_surfaceBuilderTool = SurfaceBuilderTool.Draw;
         private static readonly SurfaceExtraTool[] SurfaceCreateToolCycle =
@@ -207,6 +215,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private Vector2 _boxSelectStartMouse;
         private Vector2 _boxSelectCurrentMouse;
         private int _boxSelectCandidateCount;
+        private float _nextBoxSelectCandidateCountRefresh;
         private bool _showMeshPalette = s_showMeshPalette;
         private bool _showInspectorPanel = s_showInspectorPanel;
         private bool _showOutlinerPanel = s_showOutlinerPanel;
@@ -236,6 +245,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private DecorationMeshPreviewRenderer _previewRenderer;
 
         private readonly List<DecorationHit> _hits = new List<DecorationHit>();
+        private readonly List<AllConstruct> _selectionOccluderConstructs =
+            new List<AllConstruct>();
         private readonly List<OutlinerRow> _outlinerRows = new List<OutlinerRow>();
         private readonly HashSet<Decoration> _selection = new HashSet<Decoration>();
         private Decoration _outlinerRangeAnchor;
@@ -385,6 +396,7 @@ namespace DecoLimitLifter.DecorationEditMode
         private readonly DecorationGeneratorDraft _generatorDraft = new DecorationGeneratorDraft();
         private readonly DecorationGeneratorSettings _generatorSettings = s_generatorSettings;
         private DecorationGeneratorPlan _generatorPlan;
+        private DecorationGeneratorPlan _generatorAnchorGuidePlan;
         private string _generatorMessage = "Extra Tools: draw a path/tube or place a shape center.";
         private SurfaceExtraTool _surfaceExtraTool = s_surfaceExtraTool;
         private Vector2 _generatorScroll;
@@ -448,6 +460,8 @@ namespace DecoLimitLifter.DecorationEditMode
         private float _surfaceExtraToolsViewportHeight;
         private float _generatorMaterialListHeight;
         private List<MaterialCatalogEntry> _materialCatalog;
+        private readonly Dictionary<Guid, MaterialCatalogEntry> _materialByGuid =
+            new Dictionary<Guid, MaterialCatalogEntry>();
         private SurfaceBuilderTool _surfaceBuilderTool = s_surfaceBuilderTool;
         private SurfaceContextTargetKind _surfaceContextTargetKind = SurfaceContextTargetKind.None;
         private Rect _surfaceContextRect;
@@ -559,6 +573,13 @@ namespace DecoLimitLifter.DecorationEditMode
                 return true;
             }
 
+            if (_nativeBlockPaletteMode)
+            {
+                SetNativeBlockPaletteMode(false);
+                DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+                return true;
+            }
+
             if (!_unappliedClosePromptOpen)
                 return false;
 
@@ -593,6 +614,9 @@ namespace DecoLimitLifter.DecorationEditMode
             RefreshDecorationCache(force: true);
             RefreshForecast(force: true);
             _materialCatalog = BuildMaterialCatalog();
+            _materialByGuid.Clear();
+            foreach (MaterialCatalogEntry material in _materialCatalog)
+                _materialByGuid[material.Guid] = material;
             _showMaterialPicker = true;
             SyncGeneratorTextFromSettings();
             SyncSnapTextFromSettings();
@@ -716,6 +740,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (_tool == DecorationEditorTool.Paint)
                 _showMeshPalette = _showMeshPaletteBeforePaint;
+            SetNativeBlockPaletteMode(false, notify: false);
             _tool = DecorationEditorTool.Surface;
             _viewModeMenuOpen = false;
             _anchorMenuOpen = false;
@@ -739,6 +764,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             finally
             {
+                SetNativeBlockPaletteMode(false, notify: false);
                 DecoLimitLifter.EsuPanelUiHitTestRegistry.Unregister(this);
                 DecorationEditorInputScope.End();
                 Active = false;
@@ -805,6 +831,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 _previewRenderer?.Dispose();
                 _previewRenderer = null;
                 _materialCatalog = null;
+                _materialByGuid.Clear();
                 _forecast = null;
                 _lastUsage = null;
             }
@@ -813,6 +840,7 @@ namespace DecoLimitLifter.DecorationEditMode
         internal void SuspendForModeSwitchHandoff()
         {
             FinalizeSurfaceCoordinateLiveInteraction();
+            SetNativeBlockPaletteMode(false, notify: false);
             DecoLimitLifter.EsuPanelUiHitTestRegistry.Unregister(this);
             DecorationEditorInputScope.End();
             Active = false;
@@ -859,6 +887,8 @@ namespace DecoLimitLifter.DecorationEditMode
             RefreshDecorationCache(force: false);
             RefreshForecast(force: false);
             RefreshSelectionFocusLock();
+            if (_nativeBlockPaletteMode)
+                SyncNativeBlockPaletteSelection();
             _viewModes.Tick(_viewMode);
             DecorationEditorOverlay.BeginFrame();
             if (_unappliedClosePromptOpen)
@@ -906,7 +936,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 DecorationEditorInputScope.ClaimBuildInputForFrames();
                 DecorationEditorInputScope.ClaimCameraInputForFrames();
             }
-            HandleEditorKeybinds();
+            if (!_nativeBlockPaletteMode)
+                HandleEditorKeybinds();
             UpdatePlacementState();
             UpdatePlacementGhost();
             HandleSceneInput();
@@ -969,7 +1000,17 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             if (interactive)
+            {
                 _textInputFocused = GUIUtility.keyboardControl != 0;
+                DecorationEditorInputScope.SetNativeBlockPaletteAuxiliaryInputOwnership(
+                    _textInputFocused ||
+                    DecoLimitLifter.EsuInputState.IsTextInputActive(),
+                    _unappliedClosePromptOpen ||
+                    _gizmoSettingsOpen ||
+                    _viewModeMenuOpen ||
+                    _anchorMenuOpen ||
+                    ForegroundContextMenuOpen());
+            }
         }
 
         private void DrawModalEditorWindow(int id)
@@ -1211,6 +1252,16 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_placingMesh != null)
                 return current.type == EventType.MouseDown &&
                        (current.button == 0 || current.button == 1);
+
+            if (_nativeBlockPaletteMode)
+            {
+                NativeBlockPaletteInputAction action =
+                    ResolveNativeBlockPaletteWorldInput(
+                        buildMode: true,
+                        overUi: false,
+                        current.button);
+                return action == NativeBlockPaletteInputAction.SelectPointedBlock;
+            }
 
             return current.button == 0 &&
                    (_tool == DecorationEditorTool.Select ||
@@ -1996,7 +2047,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             else
             {
-                PanelToggle("mesh", "Pal", ref _showMeshPalette, "Show or hide the mesh palette.");
+                PanelToggle("mesh", "Pal", ref _showMeshPalette, "Show or hide the Block Palette.");
                 PanelToggle("outliner", "Out", ref _showOutlinerPanel, "Show or hide the decoration outliner.");
                 PanelToggle("settings", "Insp", ref _showInspectorPanel, "Show or hide the selected decoration inspector.");
                 PanelToggle("anchor", "Anch", ref _showAnchorPanel, "Show or hide decorations sharing the selected anchor.");
@@ -2086,7 +2137,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void SymmetryButton(DecorationEditAxis axis)
         {
-            bool active = DecoLimitLifter.EsuSymmetry.IsActive(axis) ||
+            bool wasActive = DecoLimitLifter.EsuSymmetry.IsActive(axis);
+            bool active = wasActive ||
                           DecoLimitLifter.EsuSymmetry.IsPending(axis);
             string label = DecoLimitLifter.EsuSymmetry.AxisName(axis);
             string tooltip = DecoLimitLifter.EsuSymmetry.IsPending(axis)
@@ -2104,6 +2156,8 @@ namespace DecoLimitLifter.DecorationEditMode
                     GUILayout.Height(EsuHudLayout.Scale(40f))))
             {
                 DecoLimitLifter.EsuSymmetry.ToggleAxis(axis);
+                if (wasActive)
+                    InvalidateSurfaceBuilderPreviewPlansForSymmetryChange();
                 InfoStore.Add(
                     active && !DecoLimitLifter.EsuSymmetry.IsPending(axis)
                         ? "Symmetry " + label + " updated."
@@ -2382,6 +2436,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void TogglePaintTool()
         {
+            SetNativeBlockPaletteMode(false, notify: false);
             CloseDecorationContextMenu();
             if (_tool == DecorationEditorTool.Paint)
             {
@@ -2431,7 +2486,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 Rect labelRect = new Rect(
                     rect.xMin,
                     Mathf.Max(0f, rect.yMin - EsuHudLayout.Scale(22f)),
-                    EsuHudLayout.Scale(_boxSelectionPaint ? 220f : 118f),
+                    EsuHudLayout.Scale(_boxSelectionPaint ? 220f : 190f),
                     EsuHudLayout.Scale(20f));
                 GUI.color = new Color(0f, 0.08f, 0.1f, 0.86f);
                 GUI.DrawTexture(labelRect, Texture2D.whiteTexture);
@@ -2439,8 +2494,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUI.Label(
                     labelRect,
                     _boxSelectionPaint
-                        ? label + " deco | blocks on release"
-                        : label + (_selectionXray ? " x-ray" : " visible"),
+                        ? label + " projected deco | blocks on release"
+                        : label + (_selectionXray ? " x-ray" : " projected | visible on release"),
                     DecorationEditorTheme.Mini);
             }
             finally
@@ -3384,7 +3439,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
             List<OutlinerRow> rows = FilterOutlinerRows();
             GUILayout.Label(
-                $"{rows.Count:N0} rows | {_hits.Count:N0} visible/projected decorations",
+                $"{rows.Count:N0} rows | {_hits.Count:N0} projected decorations",
                 DecorationEditorTheme.Mini);
 
             float rowHeight = EsuHudLayout.Scale(OutlinerRowHeight);
@@ -4085,9 +4140,14 @@ namespace DecoLimitLifter.DecorationEditMode
 
             float inset = EsuHudLayout.Scale(8f);
             Rect inner = new Rect(inset, inset, Mathf.Max(1f, rect.width - inset * 2f), Mathf.Max(1f, rect.height - inset * 2f));
-            float headerHeight = Mathf.Min(EsuHudLayout.Scale(116f), inner.height);
+            float headerHeight = Mathf.Min(
+                EsuHudLayout.Scale(_nativeBlockPaletteMode ? 132f : 116f),
+                inner.height);
             float countHeight = Mathf.Min(EsuHudLayout.Scale(18f), Mathf.Max(0f, inner.height - headerHeight));
-            float placingHeight = _placingMesh == null ? 0f : EsuHudLayout.Scale(24f);
+            float placingHeight = _placingMesh == null &&
+                                  (!_nativeBlockPaletteMode || _nativeBlockPaletteItem == null)
+                ? 0f
+                : EsuHudLayout.Scale(24f);
             Rect headerRect = new Rect(inner.x, inner.y, inner.width, headerHeight);
             Rect countRect = new Rect(inner.x, headerRect.yMax, inner.width, countHeight);
             float listBottom = inner.yMax - (placingHeight <= 0f ? 0f : placingHeight + EsuHudLayout.Scale(4f));
@@ -4098,23 +4158,40 @@ namespace DecoLimitLifter.DecorationEditMode
 
             GUILayout.BeginArea(headerRect);
             GUILayout.BeginVertical();
-            DrawCompactIconHeader("Mesh Palette", "mesh");
-            GUILayout.Label("Drag this panel. Click a mesh to place it; Set swaps the selected decoration.", DecorationEditorTheme.Mini);
+            DrawCompactIconHeader(
+                "Block Palette",
+                _nativeBlockPaletteMode ? "build" : "mesh");
+            GUILayout.Label(
+                _nativeBlockPaletteMode
+                    ? "Choose a native block. FtD validates cursor-following add placement; right-click copies type/rotation. Simple-mode Shift replacement is disabled."
+                    : "Drag this panel. Click a mesh to place it; Set swaps the selected decoration.",
+                _nativeBlockPaletteMode
+                    ? DecorationEditorTheme.MiniWrap
+                    : DecorationEditorTheme.Mini);
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(
-                    new GUIContent("List", "Show the mesh palette as a virtualized text list."),
+                    new GUIContent("List", "Show the Block Palette as a virtualized text list."),
                     DecorationEditorTheme.ToolButton(!_meshPreviewGrid),
                     GUILayout.Width(EsuHudLayout.Scale(62f))))
                 _meshPreviewGrid = false;
             if (GUILayout.Button(
-                    new GUIContent("3D grid", "Show the mesh palette as a virtualized 3D thumbnail grid."),
+                    new GUIContent("3D grid", "Show the Block Palette as a virtualized 3D thumbnail grid."),
                     DecorationEditorTheme.ToolButton(_meshPreviewGrid),
                     GUILayout.Width(EsuHudLayout.Scale(76f))))
                 _meshPreviewGrid = true;
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(
-                    new GUIContent("Hide", "Hide the mesh palette panel."),
+                    new GUIContent(
+                        "Build",
+                        "Toggle native Block Palette mode. FtD validates and commits add placement; simple-mode Shift replacement is disabled for cursor safety."),
+                    DecorationEditorTheme.ToolButton(_nativeBlockPaletteMode),
+                    GUILayout.Width(EsuHudLayout.Scale(62f))))
+            {
+                ToggleNativeBlockPaletteMode();
+            }
+            if (GUILayout.Button(
+                    new GUIContent("Hide", "Hide the block palette panel."),
                     DecorationEditorTheme.Button,
                     GUILayout.Width(EsuHudLayout.Scale(58f))))
                 _showMeshPalette = false;
@@ -4131,11 +4208,14 @@ namespace DecoLimitLifter.DecorationEditMode
                     DecorationEditorTheme.ToolButton(_meshKindFilter == "item"),
                     GUILayout.Width(EsuHudLayout.Scale(58f))))
                 _meshKindFilter = "item";
-            if (GUILayout.Button(
+            if (!_nativeBlockPaletteMode &&
+                GUILayout.Button(
                     new GUIContent("Objects", "Show object meshes."),
                     DecorationEditorTheme.ToolButton(_meshKindFilter == "object"),
                     GUILayout.Width(EsuHudLayout.Scale(68f))))
+            {
                 _meshKindFilter = "object";
+            }
             if (GUILayout.Button(
                     new GUIContent("Recent", "Show recently used meshes."),
                     DecorationEditorTheme.ToolButton(_meshKindFilter == "recent"),
@@ -4175,10 +4255,22 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUI.EndGroup();
             }
 
-            if (_placingMesh != null && placingRect.height > 1f && placingRect.y < inner.yMax)
+            if (placingRect.height > 1f && placingRect.y < inner.yMax)
             {
                 GUILayout.BeginArea(placingRect);
-                GUILayout.Label($"Placing: {_placingMesh.Name} | click a valid block, right-click/Esc cancels.", DecorationEditorTheme.Warning);
+                if (_nativeBlockPaletteMode && _nativeBlockPaletteItem != null)
+                {
+                    GUILayout.Label(
+                        "Building: " + NativeBlockName(_nativeBlockPaletteItem) +
+                        " | LMB places valid native add targets; RMB copies; Shift-replace disabled.",
+                        DecorationEditorTheme.Warning);
+                }
+                else if (_placingMesh != null)
+                {
+                    GUILayout.Label(
+                        $"Placing: {_placingMesh.Name} | click a valid block, right-click/Esc cancels.",
+                        DecorationEditorTheme.Warning);
+                }
                 GUILayout.EndArea();
             }
             GUI.EndGroup();
@@ -4660,7 +4752,11 @@ namespace DecoLimitLifter.DecorationEditMode
                 _meshKindFilter == "recent" ? "recent" :
                 "all";
             string filter = (_meshFilter ?? string.Empty).Trim();
-            string text = $"{matchingCount:N0} shown | {_meshCatalog.Count:N0} total meshes | {scope}";
+            int total = _nativeBlockPaletteMode
+                ? _meshCatalog.Count(IsNativeBlockPaletteEntry)
+                : _meshCatalog.Count;
+            string noun = _nativeBlockPaletteMode ? "native blocks" : "meshes";
+            string text = $"{matchingCount:N0} shown | {total:N0} total {noun} | {scope}";
             if (filter.Length > 0)
                 text += " | search: " + CompactText(filter, 32);
             return text;
@@ -5353,7 +5449,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorSettings.ColorIndex = color;
             _surfaceColorText = color.ToString(CultureInfo.InvariantCulture);
             _generatorColorText = color.ToString(CultureInfo.InvariantCulture);
-            _generatorPlan = null;
+            ClearGeneratorPlans();
         }
 
         private void SelectGeneratorDraftPointRow(int index)
@@ -5879,19 +5975,35 @@ namespace DecoLimitLifter.DecorationEditMode
                 bool active = ReferenceEquals(entry, _selectedMesh) || ReferenceEquals(entry, _placingMesh);
                 GUIStyle style = active ? DecorationEditorTheme.RowSelected : DecorationEditorTheme.Row;
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button($"[{entry.Kind}] {entry.Name}", style, GUILayout.Height(rowHeight)))
-                    StartMeshPlacement(entry);
-                EsuCursorTooltip.RegisterLast("Start placing this mesh.");
+                bool primaryClick = GUILayout.Button(
+                    $"[{entry.Kind}] {entry.Name}",
+                    style,
+                    GUILayout.Height(rowHeight));
+                Rect entryRect = GUILayoutUtility.GetLastRect();
+                bool secondaryClick =
+                    TryConsumeNativeBlockPaletteSecondaryClick(entryRect);
+                if (primaryClick || secondaryClick)
+                    ActivateMeshPaletteEntry(entry);
+                EsuCursorTooltip.Register(
+                    entryRect,
+                    _nativeBlockPaletteMode
+                        ? "Select this exact native block for FtD placement. LMB and RMB both work."
+                        : "Start placing this mesh as a decoration.");
 
-                bool previous = GUI.enabled;
-                GUI.enabled = previous && _selected != null && !_selected.IsDeleted;
-                if (GUILayout.Button(
-                        new GUIContent("Set", "Replace the selected decoration with this mesh."),
-                        DecorationEditorTheme.Button,
-                        GUILayout.Width(EsuHudLayout.Scale(44f)),
-                        GUILayout.Height(rowHeight)))
-                    AssignMeshToSelected(entry);
-                GUI.enabled = previous;
+                if (!_nativeBlockPaletteMode)
+                {
+                    bool previous = GUI.enabled;
+                    GUI.enabled = previous && _selected != null && !_selected.IsDeleted;
+                    if (GUILayout.Button(
+                            new GUIContent("Set", "Replace the selected decoration with this mesh."),
+                            DecorationEditorTheme.Button,
+                            GUILayout.Width(EsuHudLayout.Scale(44f)),
+                            GUILayout.Height(rowHeight)))
+                    {
+                        AssignMeshToSelected(entry);
+                    }
+                    GUI.enabled = previous;
+                }
                 GUILayout.EndHorizontal();
 
                 Rect row = GUILayoutUtility.GetLastRect();
@@ -5938,9 +6050,16 @@ namespace DecoLimitLifter.DecorationEditMode
                         rowRect.y,
                         layout.CardWidth,
                         layout.CardHeight);
-                    if (GUI.Button(card, GUIContent.none, style))
-                        StartMeshPlacement(entry);
-                    EsuCursorTooltip.Register(card, "Start placing this mesh.");
+                    bool primaryClick = GUI.Button(card, GUIContent.none, style);
+                    bool secondaryClick =
+                        TryConsumeNativeBlockPaletteSecondaryClick(card);
+                    if (primaryClick || secondaryClick)
+                        ActivateMeshPaletteEntry(entry);
+                    EsuCursorTooltip.Register(
+                        card,
+                        _nativeBlockPaletteMode
+                            ? "Select this exact native block for FtD placement. LMB and RMB both work."
+                            : "Start placing this mesh as a decoration.");
                     bool hovered =
                         Event.current != null &&
                         Event.current.type != EventType.Layout &&
@@ -6019,11 +6138,15 @@ namespace DecoLimitLifter.DecorationEditMode
         private IEnumerable<DecorationMeshCatalogEntry> FilterMeshCatalog()
         {
             IEnumerable<DecorationMeshCatalogEntry> query = _meshCatalog;
+            if (_nativeBlockPaletteMode)
+                query = query.Where(IsNativeBlockPaletteEntry);
             if (_meshKindFilter == "recent")
             {
                 query = _recentMeshes
                     .Select(guid => _meshByGuid.TryGetValue(guid, out DecorationMeshCatalogEntry entry) ? entry : null)
                     .Where(entry => entry != null);
+                if (_nativeBlockPaletteMode)
+                    query = query.Where(IsNativeBlockPaletteEntry);
             }
             else if (_meshKindFilter == "item" || _meshKindFilter == "object")
             {
@@ -6049,7 +6172,10 @@ namespace DecoLimitLifter.DecorationEditMode
                     string name = material.ComponentId.Name;
                     if (string.IsNullOrWhiteSpace(name))
                         name = "Material " + material.ComponentId.Guid.ToString("N").Substring(0, 8);
-                    result.Add(new MaterialCatalogEntry(material.ComponentId.Guid, name));
+                    result.Add(new MaterialCatalogEntry(
+                        material.ComponentId.Guid,
+                        name,
+                        material.Material));
                 }
             }
             catch
@@ -6877,9 +7003,15 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void InvalidateGeneratorPlan(string message)
         {
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             if (!string.IsNullOrEmpty(message))
                 _generatorMessage = message;
+        }
+
+        private void ClearGeneratorPlans()
+        {
+            _generatorPlan = null;
+            _generatorAnchorGuidePlan = null;
         }
 
         private GUIStyle GeneratorMessageStyle()
@@ -7495,12 +7627,12 @@ namespace DecoLimitLifter.DecorationEditMode
             x += boxWidth + gap;
             if (GUI.Button(
                     new Rect(x, y, xrayWidth, height),
-                    new GUIContent("X-ray", "When enabled, box select can select decorations behind blocks."),
+                    new GUIContent("X-ray", "When enabled, viewport hover, clicks, context selection, and box select can target decorations behind craft blocks."),
                     DecorationEditorTheme.ToolButton(_selectionXray)))
             {
                 _selectionXray = !_selectionXray;
                 if (_boxSelecting)
-                    _boxSelectCandidateCount = CountBoxSelectionCandidates(BoxSelectionRect(), _selectionXray);
+                    _boxSelectCandidateCount = CountBoxSelectionCandidates(BoxSelectionRect());
             }
 
             x += xrayWidth + gap;
@@ -9315,7 +9447,6 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (generatorBefore == null || generatorBefore.SameAs(after))
                     return;
                 RecordGeneratorEdit("Adjust generator coordinate", generatorBefore);
-                RebuildGeneratorPreview(showMessage: false);
                 InfoStore.Add("Generator coordinate adjusted.");
                 return;
             }
@@ -9486,7 +9617,6 @@ namespace DecoLimitLifter.DecorationEditMode
 
                 InvalidateGeneratorPlan(_generatorMessage);
                 RecordGeneratorEdit("Revert generator coordinates", before);
-                RebuildGeneratorPreview(showMessage: false);
                 SyncSurfaceCoordinateText(force: true);
                 InfoStore.Add("Generator coordinates reverted.");
                 return;
@@ -9958,6 +10088,12 @@ namespace DecoLimitLifter.DecorationEditMode
             if (IsMouseOverEditorUi(_lastMouseGui))
                 return;
 
+            if (TryBlurNativeBlockPaletteTextInputForWorldClick())
+                return;
+
+            if (HandleNativeBlockPaletteSceneInput())
+                return;
+
             if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
             {
                 if (Input.GetMouseButtonDown(1))
@@ -10038,7 +10174,6 @@ namespace DecoLimitLifter.DecorationEditMode
                     RecordGeneratorEdit("Move generator point", _generatorDragSnapshotStart);
                     _generatorDragSnapshotStart = null;
                     _generatorDragAxis = DecorationEditAxis.None;
-                    RebuildGeneratorPreview(showMessage: false);
                     return;
                 }
 
@@ -10057,7 +10192,6 @@ namespace DecoLimitLifter.DecorationEditMode
                     _generatorScaleSnapshotStart = null;
                     _generatorRotateDragAxis = DecorationEditAxis.None;
                     _generatorRotateDragSensitivityScale = 1f;
-                    RebuildGeneratorPreview(showMessage: false);
                     return;
                 }
 
@@ -11940,6 +12074,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _boxSelectStartMouse = mouse;
             _boxSelectCurrentMouse = mouse;
             _boxSelectCandidateCount = 0;
+            _nextBoxSelectCandidateCountRefresh = 0f;
             RefreshDecorationCache(force: true);
         }
 
@@ -11947,10 +12082,20 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             _boxSelectCurrentMouse = mouse;
             Rect rect = BoxSelectionRect();
-            _boxSelectCandidateCount = rect.width >= BoxSelectionClickThresholdPixels &&
-                                       rect.height >= BoxSelectionClickThresholdPixels
-                ? CountBoxSelectionCandidates(rect, _selectionXray)
-                : 0;
+            if (rect.width < BoxSelectionClickThresholdPixels ||
+                rect.height < BoxSelectionClickThresholdPixels)
+            {
+                _boxSelectCandidateCount = 0;
+                return;
+            }
+
+            float now = Time.unscaledTime;
+            if (now < _nextBoxSelectCandidateCountRefresh)
+                return;
+
+            _boxSelectCandidateCount = CountBoxSelectionCandidates(rect);
+            _nextBoxSelectCandidateCountRefresh =
+                now + BoxSelectionLiveCountIntervalSeconds;
         }
 
         private void CommitBoxSelectionDrag(Vector2 mouse)
@@ -12004,20 +12149,50 @@ namespace DecoLimitLifter.DecorationEditMode
             return Rect.MinMaxRect(xMin, yMin, xMax, yMax);
         }
 
-        private int CountBoxSelectionCandidates(Rect rect, bool xray)
+        private int CountBoxSelectionCandidates(Rect rect)
         {
             int count = 0;
-            foreach (DecorationHit hit in EnumerateBoxSelectionHits(rect, xray, refresh: false))
+            foreach (DecorationHit hit in EnumerateBoxSelectionHits(
+                         rect,
+                         xray: true,
+                         refresh: false,
+                         validateVisibility: false))
+            {
                 count++;
+            }
             return count;
         }
+
+        internal static bool BoxSelectionVisibilityWithinBudget(
+            bool xray,
+            int projectedCandidateCount) =>
+            projectedCandidateCount >= 0 &&
+            (xray ||
+             projectedCandidateCount <= MaxBoxSelectionVisibilityChecks);
+
+        private static string BoxSelectionVisibilityBudgetMessage() =>
+            "X-ray-off selection rejected before visibility checks: more than " +
+            MaxBoxSelectionVisibilityChecks.ToString(
+                "N0",
+                CultureInfo.InvariantCulture) +
+            " projected decoration centers are inside the box. Use a smaller box or enable X-ray.";
 
         private void SelectBox(Rect rect, bool xray)
         {
             if (TryHandleSelectionFocusBulkRequest())
                 return;
 
-            List<DecorationHit> selected = EnumerateBoxSelectionHits(rect, xray, refresh: true).ToList();
+            RefreshDecorationCache(force: true);
+            int projectedCandidateCount = CountBoxSelectionCandidates(rect);
+            if (!BoxSelectionVisibilityWithinBudget(
+                    xray,
+                    projectedCandidateCount))
+            {
+                InfoStore.Add(BoxSelectionVisibilityBudgetMessage());
+                return;
+            }
+
+            List<DecorationHit> selected = EnumerateBoxSelectionHits(rect, xray, refresh: false).ToList();
             if (selected.Count == 0)
             {
                 InfoStore.Add("No decoration centers inside the selection box.");
@@ -12047,10 +12222,20 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            RefreshDecorationCache(force: true);
+            int projectedCandidateCount = CountBoxSelectionCandidates(rect);
+            if (!BoxSelectionVisibilityWithinBudget(
+                    xray,
+                    projectedCandidateCount))
+            {
+                InfoStore.Add(BoxSelectionVisibilityBudgetMessage());
+                return;
+            }
+
             List<DecorationHit> decorationHits = EnumerateBoxSelectionHits(
                     rect,
                     xray,
-                    refresh: true)
+                    refresh: false)
                 .ToList();
             try
             {
@@ -12374,7 +12559,11 @@ namespace DecoLimitLifter.DecorationEditMode
             return nearestBlock == null || ReferenceEquals(nearestBlock, target);
         }
 
-        private IEnumerable<DecorationHit> EnumerateBoxSelectionHits(Rect rect, bool xray, bool refresh)
+        private IEnumerable<DecorationHit> EnumerateBoxSelectionHits(
+            Rect rect,
+            bool xray,
+            bool refresh,
+            bool validateVisibility = true)
         {
             if (refresh)
                 RefreshDecorationCache(force: true);
@@ -12393,7 +12582,11 @@ namespace DecoLimitLifter.DecorationEditMode
                     continue;
                 }
 
-                if (!xray && !IsDecorationHitVisible(hit, primaryConstruct))
+                if (validateVisibility &&
+                    !xray &&
+                    !ShouldIncludeDecorationHit(
+                        xray,
+                        IsDecorationHitVisible(hit)))
                     continue;
 
                 yield return hit;
@@ -12403,11 +12596,39 @@ namespace DecoLimitLifter.DecorationEditMode
         private AllConstruct BoxSelectionPrimaryConstruct() =>
             _boxSelectionConstruct ?? _selectedConstruct ?? FocusedConstruct();
 
-        private bool IsDecorationHitVisible(DecorationHit hit, AllConstruct primaryConstruct)
+        internal static bool ShouldIncludeDecorationHit(bool xray, bool visible) =>
+            xray || visible;
+
+        internal static bool ShouldReplaceNearestDecorationHit(
+            float distance,
+            float bestDistance,
+            bool xray,
+            bool visible) =>
+            DecorationEditMath.IsFinite(distance) &&
+            DecorationEditMath.IsFinite(bestDistance) &&
+            distance >= 0f &&
+            distance < bestDistance &&
+            ShouldIncludeDecorationHit(xray, visible);
+
+        internal static bool CraftCellOccludesDecoration(
+            bool blockPresent,
+            float sampleDistance,
+            float targetDistance,
+            float endpointTolerance) =>
+            blockPresent &&
+            DecorationEditMath.IsFinite(sampleDistance) &&
+            DecorationEditMath.IsFinite(targetDistance) &&
+            DecorationEditMath.IsFinite(endpointTolerance) &&
+            sampleDistance >= 0f &&
+            targetDistance >= 0f &&
+            endpointTolerance >= 0f &&
+            sampleDistance < targetDistance - endpointTolerance;
+
+        private bool IsDecorationHitVisible(DecorationHit hit)
         {
             Camera camera = Camera.main ?? Camera.current;
-            if (camera == null || hit?.Construct == null || primaryConstruct == null)
-                return true;
+            if (camera == null || hit?.Construct == null)
+                return false;
 
             Vector3 world;
             try
@@ -12422,47 +12643,57 @@ namespace DecoLimitLifter.DecorationEditMode
             Vector3 origin = camera.transform.position;
             Vector3 toCenter = world - origin;
             float distance = toCenter.magnitude;
-            if (distance <= BoxSelectionVisibilityTolerance ||
-                !DecorationEditMath.IsFinite(toCenter))
-            {
+            if (!DecorationEditMath.IsFinite(toCenter))
+                return false;
+            if (distance <= DecorationSelectionVisibilityTolerance)
                 return true;
-            }
 
             Ray ray = new Ray(origin, toCenter / distance);
-            float rayDistance = Mathf.Max(0f, distance - BoxSelectionVisibilityTolerance);
-            if (rayDistance <= 0.0001f)
-                return true;
-
-            if (CraftBlockOccludesDecorationRay(ray, rayDistance, primaryConstruct, hit))
+            if (CraftBlockOccludesDecorationRay(ray, distance))
                 return false;
 
-            return !CraftBlockSamplingOccludesDecorationRay(ray, rayDistance, primaryConstruct, hit);
+            return !CraftBlockSamplingOccludesDecorationRay(ray, distance, hit);
         }
 
         private bool CraftBlockOccludesDecorationRay(
             Ray ray,
-            float rayDistance,
-            AllConstruct construct,
-            DecorationHit hit)
+            float targetDistance)
         {
-            RaycastHit[] rayHits = Physics.RaycastAll(ray, rayDistance);
-            if (rayHits == null || rayHits.Length == 0)
+            int hitCount;
+            try
+            {
+                hitCount = Physics.RaycastNonAlloc(
+                    ray,
+                    s_decorationSelectionVisibilityHits,
+                    targetDistance);
+            }
+            catch
+            {
+                // The cell sampler below remains an independent fallback.
+                return false;
+            }
+            if (hitCount <= 0)
                 return false;
 
-            Array.Sort(rayHits, (left, right) => left.distance.CompareTo(right.distance));
             Vector3 direction = ray.direction.normalized;
-            for (int index = 0; index < rayHits.Length; index++)
+            for (int index = 0;
+                 index < hitCount &&
+                 index < s_decorationSelectionVisibilityHits.Length;
+                 index++)
             {
-                RaycastHit rayHit = rayHits[index];
-                if (rayHit.distance <= 0.0001f ||
-                    rayHit.distance >= rayDistance)
-                {
+                RaycastHit rayHit = s_decorationSelectionVisibilityHits[index];
+                if (rayHit.distance <= 0.0001f)
                     continue;
-                }
 
                 Vector3 sampleWorld = rayHit.point + direction * 0.06f;
-                if (OccludingCraftBlockAtWorld(sampleWorld, construct, hit))
+                if (CraftCellOccludesDecoration(
+                        OccludingCraftBlockAtWorld(sampleWorld),
+                        rayHit.distance,
+                        targetDistance,
+                        DecorationSelectionVisibilityTolerance))
+                {
                     return true;
+                }
             }
 
             return false;
@@ -12470,45 +12701,86 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private bool CraftBlockSamplingOccludesDecorationRay(
             Ray ray,
-            float rayDistance,
-            AllConstruct construct,
+            float targetDistance,
             DecorationHit hit)
         {
             const float step = 0.35f;
             Vector3 direction = ray.direction.normalized;
-            for (float distance = BoxSelectionVisibilityTolerance; distance < rayDistance; distance += step)
+            float rayDistance = Mathf.Max(
+                0f,
+                targetDistance - DecorationSelectionVisibilityTolerance);
+            for (float distance = DecorationSelectionVisibilityTolerance;
+                 distance < rayDistance;
+                 distance += step)
             {
                 Vector3 sampleWorld = ray.origin + direction * distance;
-                if (OccludingCraftBlockAtWorld(sampleWorld, construct, hit))
+                if (CraftCellOccludesDecoration(
+                        OccludingCraftBlockAtWorld(
+                            sampleWorld,
+                            hit,
+                            exemptTargetTetherCell: true),
+                        distance,
+                        targetDistance,
+                        DecorationSelectionVisibilityTolerance))
+                {
                     return true;
+                }
             }
 
             return false;
         }
 
+        internal static bool FallbackCraftCellOccludesDecoration(
+            bool blockPresent,
+            bool sameTargetConstruct,
+            bool sameTargetTetherCell) =>
+            blockPresent &&
+            (!sameTargetConstruct || !sameTargetTetherCell);
+
         private bool OccludingCraftBlockAtWorld(
             Vector3 world,
-            AllConstruct construct,
-            DecorationHit hit)
+            DecorationHit hit = null,
+            bool exemptTargetTetherCell = false)
         {
-            if (!TryWorldToLocal(construct, world, out Vector3 local))
-                return false;
+            for (int index = 0; index < _selectionOccluderConstructs.Count; index++)
+            {
+                AllConstruct construct = _selectionOccluderConstructs[index];
+                if (construct == null ||
+                    !TryWorldToLocal(construct, world, out Vector3 local))
+                {
+                    continue;
+                }
 
-            var cell = new Vector3i(
-                Mathf.RoundToInt(local.x),
-                Mathf.RoundToInt(local.y),
-                Mathf.RoundToInt(local.z));
-            if (SameTether(cell, hit.Decoration.TetherPoint.Us))
-                return false;
+                var cell = new Vector3i(
+                    Mathf.RoundToInt(local.x),
+                    Mathf.RoundToInt(local.y),
+                    Mathf.RoundToInt(local.z));
+                bool sameTargetConstruct =
+                    hit != null && ReferenceEquals(construct, hit.Construct);
+                bool sameTargetTetherCell =
+                    hit?.Decoration != null &&
+                    SameTether(cell, hit.Decoration.TetherPoint.Us);
+                if (HasBlock(construct, cell) &&
+                    (!exemptTargetTetherCell ||
+                     FallbackCraftCellOccludesDecoration(
+                         blockPresent: true,
+                         sameTargetConstruct,
+                         sameTargetTetherCell)))
+                {
+                    return true;
+                }
+            }
 
-            return HasBlock(construct, cell);
+            return false;
         }
 
         private void SelectNearest(Vector2 mouse, bool additive = false)
         {
             if (!TryFindNearestDecoration(mouse, out DecorationHit best))
             {
-                InfoStore.Add("No decoration center near the cursor.");
+                InfoStore.Add(_selectionXray
+                    ? "No decoration center near the cursor."
+                    : "No visible decoration center near the cursor. Enable X-ray to select through craft blocks.");
                 return;
             }
 
@@ -13622,6 +13894,17 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool TryFindNearestDecoration(Vector2 mouse, out DecorationHit best)
         {
             RefreshDecorationCache(force: true);
+            return TryFindNearestDecorationInCache(
+                mouse,
+                includeOccluded: _selectionXray,
+                out best);
+        }
+
+        private bool TryFindNearestDecorationInCache(
+            Vector2 mouse,
+            bool includeOccluded,
+            out DecorationHit best)
+        {
             best = null;
             float bestDistance = SelectionRadiusPixels;
             foreach (DecorationHit hit in _hits)
@@ -13629,11 +13912,25 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (hit.Decoration == null || hit.Decoration.IsDeleted)
                     continue;
                 float distance = Vector2.Distance(mouse, hit.ScreenPoint);
-                if (distance < bestDistance)
+                if (!DecorationEditMath.IsFinite(distance) ||
+                    distance < 0f ||
+                    distance >= bestDistance)
                 {
-                    bestDistance = distance;
-                    best = hit;
+                    continue;
                 }
+
+                bool visible = includeOccluded || IsDecorationHitVisible(hit);
+                if (!ShouldReplaceNearestDecorationHit(
+                        distance,
+                        bestDistance,
+                        includeOccluded,
+                        visible))
+                {
+                    continue;
+                }
+
+                bestDistance = distance;
+                best = hit;
             }
 
             return best != null;
@@ -16678,7 +16975,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorDraft.Restore(baseline.Draft);
             if (_generatorDraft.TryRotateCircle(_generatorRotateDragAxis, degrees, out string message))
             {
-                _generatorPlan = null;
+                ClearGeneratorPlans();
                 _generatorMessage = "Generator shape rotated.";
             }
             else if (!string.IsNullOrEmpty(message))
@@ -16743,7 +17040,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 _generatorSettings.CircleRadius = radius;
                 _generatorRadiusText = radius.ToString("0.###", CultureInfo.InvariantCulture);
             }
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             _generatorMessage = "Generator shape scaled.";
         }
 
@@ -16831,7 +17128,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_generatorDraft.TryMoveSelectedPoint(next, _generatorDraft.CircleNormal, DecorationMoveSnap, out string message))
             {
                 _generatorMessage = "Generator point moved.";
-                _generatorPlan = null;
+                ClearGeneratorPlans();
             }
             else if (!string.IsNullOrEmpty(message))
             {
@@ -17022,7 +17319,7 @@ namespace DecoLimitLifter.DecorationEditMode
             {
                 if (_generatorDraft.TryMoveSharedAnchor(next, out string message))
                 {
-                    _generatorPlan = null;
+                    ClearGeneratorPlans();
                     _generatorMessage = "Generator shared anchor moved.";
                 }
                 else if (!string.IsNullOrEmpty(message))
@@ -17053,7 +17350,6 @@ namespace DecoLimitLifter.DecorationEditMode
             if (generator)
             {
                 RecordGeneratorEdit("Move generator shared anchor", generatorBefore);
-                RebuildGeneratorPreview(showMessage: false);
             }
             else
             {
@@ -17344,33 +17640,51 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private bool RebuildGeneratorPreview(bool showMessage)
         {
-            if (!PrepareGeneratorSettings(out string reason))
-            {
-                _generatorPlan = null;
-                _generatorMessage = reason;
-                if (showMessage && !string.IsNullOrEmpty(reason))
-                    InfoStore.Add("Generator preview rejected: " + reason);
-                return false;
-            }
-
-            if (!DecorationGeneratorPlanner.TryPlanWithSymmetry(
-                    _generatorDraft,
-                    _generatorSettings,
-                    new ConstructSurfaceAnchorResolver(_generatorDraft.Construct),
-                    out _generatorPlan,
+            if (!TryBuildGeneratorPlan(
+                    out DecorationGeneratorPlan plan,
                     out string message))
             {
-                _generatorPlan = null;
+                ClearGeneratorPlans();
                 _generatorMessage = message;
                 if (showMessage && !string.IsNullOrEmpty(message))
                     InfoStore.Add("Generator preview rejected: " + message);
                 return false;
             }
 
+            _generatorPlan = plan;
+            _generatorAnchorGuidePlan = null;
+            if (plan.DecorationCount > MaxGeneratorMeshPreviewPlacements)
+            {
+                message = (string.IsNullOrWhiteSpace(message)
+                              ? string.Empty
+                              : message.TrimEnd() + " ") +
+                          "Mesh preview samples " +
+                          MaxGeneratorMeshPreviewPlacements.ToString("N0", CultureInfo.InvariantCulture) +
+                          " of " +
+                          plan.DecorationCount.ToString("N0", CultureInfo.InvariantCulture) +
+                          " placements; cyan guides span the full shape.";
+            }
+
             _generatorMessage = message;
             if (showMessage)
                 InfoStore.Add("Generator preview: " + message);
             return true;
+        }
+
+        private bool TryBuildGeneratorPlan(
+            out DecorationGeneratorPlan plan,
+            out string message)
+        {
+            plan = null;
+            if (!PrepareGeneratorSettings(out message))
+                return false;
+
+            return DecorationGeneratorPlanner.TryPlanWithSymmetry(
+                _generatorDraft,
+                _generatorSettings,
+                new ConstructSurfaceAnchorResolver(_generatorDraft.Construct),
+                out plan,
+                out message);
         }
 
         private void PlaceSurfacePlan()
@@ -17571,7 +17885,7 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             DecorationGeneratorEditSnapshot before = notify ? CaptureGeneratorEditSnapshot() : null;
             _generatorDraft.Clear();
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             _generatorDragAxis = DecorationEditAxis.None;
             _generatorDragSnapshotStart = null;
             _generatorRotateDragAxis = DecorationEditAxis.None;
@@ -17613,7 +17927,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             CloseSurfacePointContextMenu();
             RecordGeneratorEdit("Delete generator selection", before);
             InfoStore.Add(_generatorMessage);
@@ -17691,7 +18005,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceDraft.Restore(snapshot);
             _surfacePlan = null;
             _generatorSettings.ColorIndex = _surfaceDraft.Settings.ColorIndex;
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             _surfaceDragAxis = DecorationEditAxis.None;
             if (!_sharedAnchorDragGenerator)
                 ClearSharedAnchorDragState();
@@ -17723,7 +18037,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 : SurfaceBuilderTool.Path;
             s_surfaceExtraTool = _surfaceExtraTool;
             s_surfaceBuilderTool = _surfaceBuilderTool;
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             _surfaceDraft.Settings.ColorIndex = _generatorSettings.ColorIndex;
             _surfacePlan = null;
             _generatorDragAxis = DecorationEditAxis.None;
@@ -17756,7 +18070,7 @@ namespace DecoLimitLifter.DecorationEditMode
             generatorSnapshot.Settings?.Restore(_generatorSettings);
             _generatorDraft.Restore(generatorSnapshot.Draft);
             _surfacePlan = null;
-            _generatorPlan = null;
+            ClearGeneratorPlans();
             _surfaceDragAxis = DecorationEditAxis.None;
             _generatorDragAxis = DecorationEditAxis.None;
             _generatorRotateDragAxis = DecorationEditAxis.None;
@@ -17806,6 +18120,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            InvalidateSurfaceBuilderPreviewPlansForSymmetryChange();
             InfoStore.Add("Symmetry plane placed.");
         }
 
@@ -17828,13 +18143,38 @@ namespace DecoLimitLifter.DecorationEditMode
                 return true;
             }
 
-            DecoLimitLifter.EsuSymmetry.TryToggleFacingPlane(
-                construct,
-                cell,
+            bool facingAxisKnown = DecoLimitLifter.EsuSymmetry.TryFacingAxis(
                 localFacing,
-                out string message);
+                out DecorationEditAxis facingAxis);
+            bool wasFacingPlaneActive = facingAxisKnown &&
+                                        DecoLimitLifter.EsuSymmetry.IsActive(facingAxis);
+            if (DecoLimitLifter.EsuSymmetry.TryToggleFacingPlane(
+                    construct,
+                    cell,
+                    localFacing,
+                    out string message) &&
+                facingAxisKnown &&
+                (wasFacingPlaneActive ||
+                 DecoLimitLifter.EsuSymmetry.IsActive(facingAxis)))
+            {
+                InvalidateSurfaceBuilderPreviewPlansForSymmetryChange();
+            }
             InfoStore.Add(message);
             return true;
+        }
+
+        private void InvalidateSurfaceBuilderPreviewPlansForSymmetryChange()
+        {
+            if (_surfacePlan != null)
+            {
+                _surfacePlan = null;
+                _surfaceMessage = "Symmetry changed. Preview the surface again.";
+            }
+
+            bool hadGeneratorPreview = _generatorPlan != null;
+            ClearGeneratorPlans();
+            if (hadGeneratorPreview)
+                _generatorMessage = "Symmetry changed. Preview the Extra Tool again.";
         }
 
         private bool TryFacingSymmetryPlaneCandidate(out AllConstruct construct, out Vector3i cell)
@@ -18873,12 +19213,15 @@ namespace DecoLimitLifter.DecorationEditMode
             _currentMainConstruct = main;
             _nextLightRefresh = now + 1f;
             _hits.Clear();
+            _selectionOccluderConstructs.Clear();
             _outlinerRows.Clear();
             if (main == null)
                 return;
 
             var constructs = new List<AllConstruct>();
             main.AllBasicsRestricted.GetAllConstructsBelowUsAndIncludingUs(constructs);
+            _selectionOccluderConstructs.AddRange(
+                constructs.Where(construct => construct != null));
             for (int constructIndex = 0; constructIndex < constructs.Count; constructIndex++)
             {
                 AllConstruct construct = constructs[constructIndex];
@@ -19031,6 +19374,9 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void DrawWorldOverlay()
         {
+            if (_nativeBlockPaletteMode)
+                return;
+
             DrawFocusDecorationHints();
             DrawNearestHint();
             DrawPlacementGhost();
@@ -19366,15 +19712,77 @@ namespace DecoLimitLifter.DecorationEditMode
             return drewAny && drewAll;
         }
 
+        private bool DrawGeneratorPlanMeshPreview(DecorationGeneratorPlan plan)
+        {
+            if (plan?.Construct == null ||
+                plan.Placements == null ||
+                plan.Placements.Count == 0)
+            {
+                return false;
+            }
+
+            int previewCount = Math.Min(
+                plan.Placements.Count,
+                MaxGeneratorMeshPreviewPlacements);
+            bool drewAny = false;
+            for (int sampleIndex = 0; sampleIndex < previewCount; sampleIndex++)
+            {
+                int placementIndex = GeneratorPreviewPlacementIndex(
+                    sampleIndex,
+                    plan.Placements.Count,
+                    MaxGeneratorMeshPreviewPlacements);
+                if (placementIndex < 0)
+                    continue;
+
+                DecorationGeneratorPlacement placement = plan.Placements[placementIndex];
+                if (!_meshByGuid.TryGetValue(
+                        placement.MeshGuid,
+                        out DecorationMeshCatalogEntry entry))
+                {
+                    continue;
+                }
+
+                SurfacePreviewResource resource = GeneratorPreviewResourceFor(
+                    plan.Construct,
+                    placement,
+                    entry);
+                if (resource?.Mesh == null || resource.Material == null)
+                    continue;
+
+                Graphics.DrawMesh(
+                    resource.Mesh,
+                    GeneratorPlacementMatrix(plan.Construct, placement),
+                    resource.Material,
+                    0);
+                drewAny = true;
+            }
+
+            return drewAny;
+        }
+
+        internal static int GeneratorPreviewPlacementIndex(
+            int sampleIndex,
+            int placementCount,
+            int maximumPreviewCount)
+        {
+            if (placementCount <= 0 || maximumPreviewCount <= 0)
+                return -1;
+
+            int previewCount = Math.Min(placementCount, maximumPreviewCount);
+            if (sampleIndex < 0 || sampleIndex >= previewCount)
+                return -1;
+            if (previewCount == 1)
+                return 0;
+
+            return (int)((long)sampleIndex * (placementCount - 1L) /
+                         (previewCount - 1L));
+        }
+
         private SurfacePreviewResource SurfacePreviewResourceFor(
             AllConstruct construct,
             SurfaceDecorationPlacement placement,
             DecorationMeshCatalogEntry entry)
         {
-            Mesh sourceMesh = _previewRenderer?.GetMesh(entry);
-            if (sourceMesh == null)
-                return null;
-
             Color nativeColor = NativeDecorationPreviewColor(
                 construct,
                 placement.Anchor,
@@ -19389,23 +19797,111 @@ namespace DecoLimitLifter.DecorationEditMode
                 placement,
                 nativeColor,
                 paletteIdentity);
-            int currentFrame = Time.frameCount;
-            if (_surfacePreviewResources.TryGetValue(key, out SurfacePreviewResource cached))
-            {
-                if (cached?.Mesh != null && cached.Material != null)
-                {
-                    cached.LastUsedFrame = currentFrame;
-                    return cached;
-                }
+            if (TryGetDecorationPreviewResource(key, out SurfacePreviewResource cached))
+                return cached;
 
-                ReleaseSurfacePreviewResource(cached);
-                _surfacePreviewResources.Remove(key);
+            Material sourceMaterial = _previewRenderer?.GetMaterial(entry);
+            return DecorationPreviewResourceFor(
+                entry,
+                nativeColor,
+                key,
+                sourceMaterial,
+                SurfaceFallbackMaterialPreviewColor(
+                    placement.StructureBlockType,
+                    nativeColor));
+        }
+
+        private SurfacePreviewResource GeneratorPreviewResourceFor(
+            AllConstruct construct,
+            DecorationGeneratorPlacement placement,
+            DecorationMeshCatalogEntry entry)
+        {
+            Color nativeColor = NativeDecorationPreviewColor(
+                construct,
+                placement.Anchor,
+                placement.Color);
+            object palette = null;
+            try { palette = construct?.Main?.ColorsRestricted; }
+            catch { }
+            int paletteIdentity = palette == null
+                ? 0
+                : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(palette);
+            string key = GeneratorPreviewResourceKey(
+                placement,
+                nativeColor,
+                paletteIdentity);
+            if (TryGetDecorationPreviewResource(key, out SurfacePreviewResource cached))
+                return cached;
+
+            Material sourceMaterial = GeneratorPreviewMaterial(
+                entry,
+                placement.MaterialReplacement);
+            return DecorationPreviewResourceFor(
+                entry,
+                nativeColor,
+                key,
+                sourceMaterial,
+                SurfaceFallbackMaterialPreviewColor(
+                    StructureBlockType.Metal,
+                    nativeColor));
+        }
+
+        private Material GeneratorPreviewMaterial(
+            DecorationMeshCatalogEntry mesh,
+            Guid materialReplacement)
+        {
+            if (materialReplacement != Guid.Empty &&
+                _materialByGuid.TryGetValue(
+                    materialReplacement,
+                    out MaterialCatalogEntry replacement) &&
+                replacement?.Material != null)
+                return replacement.Material;
+
+            return _previewRenderer?.GetMaterial(mesh);
+        }
+
+        private bool TryGetDecorationPreviewResource(
+            string key,
+            out SurfacePreviewResource resource)
+        {
+            resource = null;
+            if (!_surfacePreviewResources.TryGetValue(
+                    key,
+                    out SurfacePreviewResource cached))
+            {
+                return false;
             }
 
+            if (cached?.Mesh != null && cached.Material != null)
+            {
+                cached.LastUsedFrame = Time.frameCount;
+                resource = cached;
+                return true;
+            }
+
+            ReleaseSurfacePreviewResource(cached);
+            _surfacePreviewResources.Remove(key);
+            return false;
+        }
+
+        private SurfacePreviewResource DecorationPreviewResourceFor(
+            DecorationMeshCatalogEntry entry,
+            Color nativeColor,
+            string key,
+            Material sourceMaterial,
+            Color fallbackMaterialColor)
+        {
+            Mesh sourceMesh = _previewRenderer?.GetMesh(entry);
+            if (sourceMesh == null)
+                return null;
+
+            if (TryGetDecorationPreviewResource(key, out SurfacePreviewResource cached))
+                return cached;
+
+            int currentFrame = Time.frameCount;
             if (!TryReserveSurfacePreviewResourceSlot(currentFrame))
                 return null;
 
-            Material sourceMaterial = _previewRenderer?.GetMaterial(entry);
             Mesh previewMesh = null;
             bool ownsMesh = false;
             try
@@ -19413,7 +19909,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 if (SurfacePreviewMeshCanAcceptVertexColors(sourceMesh))
                 {
                     previewMesh = UnityEngine.Object.Instantiate(sourceMesh);
-                    previewMesh.name = "ESU surface preview mesh " + key;
+                    previewMesh.name = "ESU decoration preview mesh " + key;
                     previewMesh.hideFlags = HideFlags.HideAndDontSave;
                     var vertexColors = new Color[previewMesh.vertexCount];
                     for (int index = 0; index < vertexColors.Length; index++)
@@ -19428,7 +19924,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 previewMesh = null;
                 ownsMesh = false;
                 AdvLogger.LogException(
-                    "[EndlessShapes Unlimited] Surface preview vertex colors unavailable",
+                    "[EndlessShapes Unlimited] Decoration preview vertex colors unavailable",
                     exception,
                     LogOptions._AlertDevInGame);
             }
@@ -19449,7 +19945,7 @@ namespace DecoLimitLifter.DecorationEditMode
                         : CreatePlacementGhostMaterial();
                     if (material != null)
                     {
-                        material.name = "ESU unreadable surface preview material " + key;
+                        material.name = "ESU unreadable decoration preview material " + key;
                         material.hideFlags = HideFlags.HideAndDontSave;
                     }
                 }
@@ -19493,9 +19989,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     SetPlacementGhostColor(
                         material,
-                        SurfaceFallbackMaterialPreviewColor(
-                            placement.StructureBlockType,
-                            nativeColor));
+                        fallbackMaterialColor);
                 }
                 catch
                 {
@@ -19610,6 +20104,23 @@ namespace DecoLimitLifter.DecorationEditMode
                    rgba.a.ToString("X2", CultureInfo.InvariantCulture);
         }
 
+        internal static string GeneratorPreviewResourceKey(
+            DecorationGeneratorPlacement placement,
+            Color nativeColor,
+            int paletteIdentity)
+        {
+            Color32 rgba = nativeColor;
+            return "generator|" +
+                   placement.MeshGuid.ToString("N") + "|" +
+                   placement.MaterialReplacement.ToString("N") + "|" +
+                   Mathf.Clamp(placement.Color, 0, 31).ToString(CultureInfo.InvariantCulture) + "|" +
+                   paletteIdentity.ToString("X8", CultureInfo.InvariantCulture) + "|" +
+                   rgba.r.ToString("X2", CultureInfo.InvariantCulture) +
+                   rgba.g.ToString("X2", CultureInfo.InvariantCulture) +
+                   rgba.b.ToString("X2", CultureInfo.InvariantCulture) +
+                   rgba.a.ToString("X2", CultureInfo.InvariantCulture);
+        }
+
         private static Color SurfaceFallbackMaterialPreviewColor(
             StructureBlockType materialType,
             Color nativeColor)
@@ -19653,6 +20164,39 @@ namespace DecoLimitLifter.DecorationEditMode
         private static Matrix4x4 SurfacePlacementMatrix(
             AllConstruct construct,
             SurfaceDecorationPlacement placement)
+        {
+            Vector3 centerLocal = ToVector3(placement.Anchor) + placement.Positioning;
+            Quaternion localRotation = Quaternion.Euler(placement.Orientation);
+            try
+            {
+                return Matrix4x4.TRS(
+                    construct.SafeLocalToGlobal(centerLocal),
+                    ConstructRotation(construct) * localRotation,
+                    placement.Scaling);
+            }
+            catch
+            {
+            }
+
+            Matrix4x4 localPlacement = Matrix4x4.TRS(
+                centerLocal,
+                localRotation,
+                placement.Scaling);
+            try
+            {
+                if (construct?.myTransform != null)
+                    return construct.myTransform.localToWorldMatrix * localPlacement;
+            }
+            catch
+            {
+            }
+
+            return localPlacement;
+        }
+
+        private static Matrix4x4 GeneratorPlacementMatrix(
+            AllConstruct construct,
+            DecorationGeneratorPlacement placement)
         {
             Vector3 centerLocal = ToVector3(placement.Anchor) + placement.Positioning;
             Quaternion localRotation = Quaternion.Euler(placement.Orientation);
@@ -19924,16 +20468,53 @@ namespace DecoLimitLifter.DecorationEditMode
             if (!_generatorDraft.HasPlaceableGeometry)
                 return;
 
-            if (_generatorPlan == null)
-                RebuildGeneratorPreview(showMessage: false);
-            if (_generatorPlan == null || _generatorPlan.Placements.Count == 0)
+            if (_generatorAnchorGuidePlan != null &&
+                _generatorDraft.HasSharedAnchor &&
+                !HasBlock(
+                    _generatorDraft.Construct,
+                    _generatorDraft.SharedAnchor))
+            {
+                _generatorAnchorGuidePlan = null;
+            }
+
+            DecorationGeneratorPlan plan = _generatorPlan ?? _generatorAnchorGuidePlan;
+            if (plan == null &&
+                !TryBuildGeneratorPlan(out plan, out _))
+            {
                 return;
+            }
+
+            if (plan == null || plan.Placements.Count == 0)
+                return;
+            if (_generatorPlan == null)
+                _generatorAnchorGuidePlan = plan;
 
             DrawSameAnchorPreview(
-                _generatorPlan.Construct,
-                _generatorPlan.Placements.Select(placement => new PlannedAnchorLine(
+                plan.Construct,
+                GeneratorSameAnchorPreviewLines(plan));
+        }
+
+        private static IEnumerable<PlannedAnchorLine> GeneratorSameAnchorPreviewLines(
+            DecorationGeneratorPlan plan)
+        {
+            if (plan?.Placements == null)
+                yield break;
+
+            int previewCount = Math.Min(plan.Placements.Count, MaxWorldHintLines);
+            for (int sampleIndex = 0; sampleIndex < previewCount; sampleIndex++)
+            {
+                int placementIndex = GeneratorPreviewPlacementIndex(
+                    sampleIndex,
+                    plan.Placements.Count,
+                    MaxWorldHintLines);
+                if (placementIndex < 0)
+                    continue;
+
+                DecorationGeneratorPlacement placement = plan.Placements[placementIndex];
+                yield return new PlannedAnchorLine(
                     placement.Anchor,
-                    ToVector3(placement.Anchor) + placement.Positioning)));
+                    ToVector3(placement.Anchor) + placement.Positioning);
+            }
         }
 
         private void DrawSameAnchorPreview(
@@ -19949,12 +20530,12 @@ namespace DecoLimitLifter.DecorationEditMode
             int drawnLines = 0;
             foreach (PlannedAnchorLine line in lines)
             {
+                if (drawnLines >= MaxWorldHintLines)
+                    break;
+
                 string key = PlacementKey(line.Anchor, Vector3.zero);
                 if (drawnAnchors.Add(key))
                     DrawBlockWireframe(construct, line.Anchor, anchorColor, 2.5f);
-
-                if (drawnLines >= MaxWorldHintLines)
-                    continue;
 
                 Vector3 anchorWorld = construct.SafeLocalToGlobal(ToVector3(line.Anchor));
                 Vector3 centerWorld = construct.SafeLocalToGlobal(line.Center);
@@ -20032,6 +20613,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             AllConstruct construct = _generatorDraft.Construct;
+            if (_generatorPlan != null)
+                DrawGeneratorPlanMeshPreview(_generatorPlan);
+
             Color lineColor = SurfaceDraftPaintColor(_generatorSettings.ColorIndex, _generatorPlan == null ? 0.88f : 0.95f);
             Color pointColor = new Color(0.1f, 0.95f, 1f, 1f);
             Color selected = new Color(1f, 0.9f, 0.2f, 1f);
@@ -20797,19 +21381,13 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (_mouseOverWindow || _placingMesh != null)
                 return;
-            DecorationHit nearest = null;
-            float nearestDistance = SelectionRadiusPixels;
-            foreach (DecorationHit hit in _hits)
+            if (!TryFindNearestDecorationInCache(
+                    _lastMouseGui,
+                    includeOccluded: _selectionXray,
+                    out DecorationHit nearest))
             {
-                float distance = Vector2.Distance(_lastMouseGui, hit.ScreenPoint);
-                if (distance < nearestDistance)
-                {
-                    nearest = hit;
-                    nearestDistance = distance;
-                }
-            }
-            if (nearest == null)
                 return;
+            }
 
             Vector3 world = nearest.Construct.SafeLocalToGlobal(nearest.LocalCenter);
             float radius = _viewMode == DecorationEditorViewMode.DecorationOnly ? 0.36f : 0.24f;
@@ -21096,11 +21674,21 @@ namespace DecoLimitLifter.DecorationEditMode
             if (construct == null || segments == null)
                 return;
 
-            for (int index = 0; index < segments.Count; index++)
+            int previewCount = Math.Min(
+                segments.Count,
+                MaxGeneratorWirePreviewSegments);
+            for (int sampleIndex = 0; sampleIndex < previewCount; sampleIndex++)
             {
+                int segmentIndex = GeneratorPreviewPlacementIndex(
+                    sampleIndex,
+                    segments.Count,
+                    MaxGeneratorWirePreviewSegments);
+                if (segmentIndex < 0)
+                    continue;
+
                 DecorationEditorOverlay.Line(
-                    construct.SafeLocalToGlobal(segments[index].Start),
-                    construct.SafeLocalToGlobal(segments[index].End),
+                    construct.SafeLocalToGlobal(segments[segmentIndex].Start),
+                    construct.SafeLocalToGlobal(segments[segmentIndex].End),
                     color,
                     _generatorPlan == null ? 2.2f : 3f);
             }
@@ -22228,16 +22816,18 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private sealed class MaterialCatalogEntry
         {
-            internal MaterialCatalogEntry(Guid guid, string name)
+            internal MaterialCatalogEntry(Guid guid, string name, Material material)
             {
                 Guid = guid;
                 Name = name ?? string.Empty;
+                Material = material;
                 DisplayName = Name + " | " + guid.ToString("N").Substring(0, 8);
                 SearchText = (Name + " " + guid.ToString("D")).ToLowerInvariant();
             }
 
             internal Guid Guid { get; }
             internal string Name { get; }
+            internal Material Material { get; }
             internal string DisplayName { get; }
             internal string SearchText { get; }
         }

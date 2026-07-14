@@ -10,6 +10,7 @@ using System.Runtime.Serialization;
 using System.Text;
 using System.Threading;
 using Assets.Scripts.Persistence;
+using BrilliantSkies.Common.StatusChecking;
 using BrilliantSkies.Core.FilesAndFolders;
 using BrilliantSkies.Core.JsonPlus.Converters;
 using BrilliantSkies.Core.Serialisation.Bytes;
@@ -17,6 +18,7 @@ using BrilliantSkies.Core.Types;
 using BrilliantSkies.DataManagement.Serialisation;
 using BrilliantSkies.DataManagement.Serialisation.VariableTypes;
 using BrilliantSkies.Ftd.Avatar.Build;
+using BrilliantSkies.Ftd.Avatar.Input;
 using BrilliantSkies.Ftd.Avatar.Build.UndoRedo;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Modding.Types;
@@ -130,6 +132,7 @@ internal static class Program
             VerifySerializationForecasting();
             VerifySerializationTelemetryScopes();
             VerifySerializationHudProfiles();
+            VerifyPartStatusMemoryGuard();
             VerifyVanillaCompatibilityMode();
             VerifyBlueprintJsonStreamingSave();
             VerifyFastBlueprintLoading();
@@ -137,6 +140,7 @@ internal static class Program
             VerifyAutomationPaletteDropSnapping();
             VerifyHudTestingPolish();
             VerifyDecorationEditModeMvp();
+            VerifyNativeBlockPalette();
             VerifyEsuRuntimeConsole();
             VerifyPointerFlushPlacement();
             VerifyGizmoSettingsAndPicking();
@@ -172,6 +176,8 @@ internal static class Program
             "DecoLimitLifter.SerializationHud.BlueprintConverter_LoadTelemetry_Patch",
             "DecoLimitLifter.SerializationHud.Decoration_SaveTelemetry_Patch",
             "DecoLimitLifter.SerializationHud.DecorationManager_LoadTelemetry_Patch",
+            "DecoLimitLifter.Patches.StatusUpdate_Constructor_PartStatusMemoryGuard_Patch",
+            "DecoLimitLifter.Patches.StatusUpdate_FlushChange_PartStatusMemoryGuard_Patch",
             "DecoLimitLifter.EsuPanelWheelZoomGate_HybridZoom_Update_Patch",
             "DecoLimitLifter.EsuPanelWheelZoomGate_HybridZoom_UpdateCurrentValue_Patch"
         };
@@ -262,6 +268,20 @@ internal static class Program
                 typeof(BlueprintConverter_LoadTelemetry_Patch),
                 nameof(BlueprintConverter_LoadTelemetry_Patch.Finalizer)),
             "Blueprint load telemetry finalizer is the exact required method.");
+        VerifyExactPatch(
+            AccessTools.Constructor(typeof(StatusUpdate), new[] { typeof(int) }),
+            AccessTools.Method(
+                typeof(StatusUpdate_Constructor_PartStatusMemoryGuard_Patch),
+                nameof(StatusUpdate_Constructor_PartStatusMemoryGuard_Patch.Prefix)),
+            prefix: true,
+            "Part-status memory guard constructor prefix is the exact required method.");
+        VerifyExactPatch(
+            AccessTools.Method(typeof(StatusUpdate), "FlushChange"),
+            AccessTools.Method(
+                typeof(StatusUpdate_FlushChange_PartStatusMemoryGuard_Patch),
+                nameof(StatusUpdate_FlushChange_PartStatusMemoryGuard_Patch.Prefix)),
+            prefix: true,
+            "Part-status memory guard sparse-flush prefix is the exact required method.");
         MethodBase getZoomTarget = Plugin.ResolveFtdKeyMapGetZoomTarget();
         Assert(getZoomTarget?.DeclaringType?.Assembly.GetName().Name == "PlayerProfiles",
             "FtdKeyMap.GetZoom resolves from PlayerProfiles.dll.");
@@ -303,11 +323,59 @@ internal static class Program
                Plugin.ResolveDecorationEditorHudTarget("DrawWeaponInfo") != null &&
                Plugin.ResolveDecorationEditorHudTarget("DisplayCorrectToolBar") != null &&
                Plugin.ResolveDecorationEditorBuildUpdateTarget() != null &&
+               Plugin.ResolveDecorationEditorBuildFixedUpdateTarget() != null &&
+               Plugin.ResolveDecorationEditorDoBuildModeTarget() != null &&
+               Plugin.ResolveDecorationEditorBuildLateUpdateTarget() != null &&
+               Plugin.ResolveDecorationEditorDrawIndicatorsTarget() != null &&
+               Plugin.ResolveDecorationEditorInputUpdateTarget() != null &&
                Plugin.ResolveDecorationEditorCameraUpdateTarget() != null &&
                Plugin.ResolveFtdKeyMapGetZoomTarget() != null &&
                Plugin.ResolveHybridZoomUpdateTarget() != null &&
                Plugin.ResolveHybridZoomUpdateCurrentValueTarget() != null,
-            "Decoration editor HUD/input and HybridZoom wheel-gate Harmony targets resolve without installing UI patches in the non-Unity verifier.");
+            "Decoration editor HUD, build update/fixed/late update, cursor DoBuildMode/indicator, explicit cInput update, camera, and HybridZoom Harmony targets resolve without installing UI patches in the non-Unity verifier.");
+
+        MethodBase buildFixedUpdateTarget =
+            Plugin.ResolveDecorationEditorBuildFixedUpdateTarget();
+        MethodBase doBuildModeTarget =
+            Plugin.ResolveDecorationEditorDoBuildModeTarget();
+        MethodBase buildLateUpdateTarget =
+            Plugin.ResolveDecorationEditorBuildLateUpdateTarget();
+        MethodBase drawIndicatorsTarget =
+            Plugin.ResolveDecorationEditorDrawIndicatorsTarget();
+        MethodBase inputUpdateTarget =
+            Plugin.ResolveDecorationEditorInputUpdateTarget();
+        Assert(buildFixedUpdateTarget?.DeclaringType == typeof(cBuild) &&
+               buildFixedUpdateTarget.Name == nameof(cBuild.RunFixedUpdate) &&
+               buildFixedUpdateTarget.GetParameters().Length == 0 &&
+               doBuildModeTarget?.DeclaringType == typeof(cBuild) &&
+               doBuildModeTarget.Name == nameof(cBuild.DoBuildMode) &&
+               doBuildModeTarget.GetParameters().Length == 0 &&
+               buildLateUpdateTarget?.DeclaringType == typeof(cBuild) &&
+               buildLateUpdateTarget.Name == nameof(cBuild.RunLateUpdate) &&
+               buildLateUpdateTarget.GetParameters().Length == 0 &&
+               drawIndicatorsTarget?.DeclaringType == typeof(cBuild) &&
+               drawIndicatorsTarget.Name == nameof(cBuild.DrawIndicators) &&
+               drawIndicatorsTarget.GetParameters().Length == 0 &&
+               inputUpdateTarget?.DeclaringType == typeof(cInput) &&
+               inputUpdateTarget.Name ==
+               "BrilliantSkies.Ftd.Avatar.I_c_cInput.RunUpdate" &&
+               inputUpdateTarget.GetParameters().Length == 0 &&
+               AccessTools.Method(
+                   typeof(DecorationEditor_cBuild_RunFixedUpdate_Patch),
+                   "Prefix") != null &&
+               AccessTools.Method(
+                   typeof(DecorationEditor_cBuild_DoBuildMode_Patch),
+                   "Prefix") != null &&
+               AccessTools.Method(
+                   typeof(DecorationEditor_cBuild_RunLateUpdate_Patch),
+                   "Prefix") != null &&
+               AccessTools.Method(
+                   typeof(DecorationEditor_cBuild_DrawIndicators_Patch),
+                   "Prefix") != null &&
+               AccessTools.Method(
+                   typeof(DecorationEditor_cInput_RunUpdate_Patch),
+                   "Prefix") != null,
+            "Decoration editor fixed-build, cursor DoBuildMode/late/indicator, and explicit cInput update gates resolve their exact zero-argument FtD targets and prefix methods.");
     }
 
     private static void VerifyExactPatch(
@@ -1456,8 +1524,8 @@ f 0 2 3
         Assert(changelogSource.Contains("Steam Workshop update notifier") &&
                changelogSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
                releaseChannelsSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
-               releaseChannelsSource.Contains("[b]Mod latest version 1.0.7[/b]") &&
-               steamReadmeSource.Contains("[b]Mod latest version 1.0.7[/b]"),
+               releaseChannelsSource.Contains("[b]Mod latest version 1.0.8[/b]") &&
+               steamReadmeSource.Contains("[b]Mod latest version 1.0.8[/b]"),
             "Changelog and release-channel workflow document the Steam Workshop update version line.");
     }
 
@@ -1840,6 +1908,8 @@ f 0 2 3
             "Vanilla compatibility mode is enabled by default for a new profile.");
         Assert(!data.StreamLargeBlueprintJsonSaves,
             "Large blueprint JSON streaming saves are disabled by default for a new profile.");
+        Assert(!data.MemorySafePartStatusChecks,
+            "Memory-safe part status checks are disabled by default for a vanilla new profile.");
         Assert(!data.DeveloperMode,
             "Developer diagnostics are disabled by default for a new profile.");
         Assert(data.FastBlueprintLoadTier == FastBlueprintLoadTier.Off &&
@@ -1892,6 +1962,7 @@ f 0 2 3
                profileSource.Contains("DeveloperMode") &&
                profileSource.Contains("DeveloperModeEnabled") &&
                profileSource.Contains("StreamLargeBlueprintJsonSaves") &&
+               profileSource.Contains("MemorySafePartStatusChecks") &&
                profileSource.Contains("EsuEditorAutoScale") &&
                profileSource.Contains("EsuEditorScale") &&
                profileSource.Contains("DecorationEditPromptBeforeHotkeyClose") &&
@@ -1929,6 +2000,9 @@ f 0 2 3
                optionsSource.Contains("Blueprint saving") &&
                optionsSource.Contains("Stream large blueprint JSON saves") &&
                optionsSource.Contains("64 MiB") &&
+               optionsSource.Contains("Large-craft runtime safety") &&
+               optionsSource.Contains("Memory-safe part status checks") &&
+               optionsSource.Contains("Disabled by default") &&
                optionsSource.Contains("Blueprint loading") &&
                optionsSource.Contains("Fast load tier") &&
                optionsSource.Contains("Fast load diagnostics") &&
@@ -2016,6 +2090,66 @@ f 0 2 3
                SerializationHudRenderer.FormatDataLimit(540UL * 1024UL) == "6.25 MiB legacy" &&
                SerializationHudRenderer.FormatDataLimit(7_000_000UL) == "64 MiB ESU",
             "Serialization HUD labels vanilla legacy limits and ESU sentinel ceilings explicitly.");
+    }
+
+    private static void VerifyPartStatusMemoryGuard()
+    {
+        const int hugeStatusCount = 4_730_502;
+        Assert(
+            PartStatusMemoryGuard.InitialCapacityForVerification(
+                hugeStatusCount,
+                enabled: false) == hugeStatusCount &&
+            PartStatusMemoryGuard.InitialCapacityForVerification(
+                hugeStatusCount,
+                enabled: true) == PartStatusMemoryGuard.MaximumInitialCapacity &&
+            PartStatusMemoryGuard.InitialCapacityForVerification(
+                PartStatusMemoryGuard.MaximumInitialCapacity - 1,
+                enabled: true) == PartStatusMemoryGuard.MaximumInitialCapacity - 1,
+            "Part-status memory safety is opt-in, caps multi-million-entry initial allocations, and leaves small updates unchanged.");
+
+        var clear = (ShaderFlagCollection)0;
+        var warning = (ShaderFlagCollection)1;
+        Assert(
+            PartStatusMemoryGuard.ShouldElideForVerification(
+                enabled: true,
+                hasFocusedPart: true,
+                focusedFlag: clear,
+                currentFlag: clear) &&
+            !PartStatusMemoryGuard.ShouldElideForVerification(
+                enabled: false,
+                hasFocusedPart: true,
+                focusedFlag: clear,
+                currentFlag: clear) &&
+            !PartStatusMemoryGuard.ShouldElideForVerification(
+                enabled: true,
+                hasFocusedPart: false,
+                focusedFlag: clear,
+                currentFlag: clear) &&
+            !PartStatusMemoryGuard.ShouldElideForVerification(
+                enabled: true,
+                hasFocusedPart: true,
+                focusedFlag: warning,
+                currentFlag: clear) &&
+            !PartStatusMemoryGuard.ShouldElideForVerification(
+                enabled: true,
+                hasFocusedPart: true,
+                focusedFlag: clear,
+                currentFlag: warning),
+            "Sparse part-status updates elide only already-clear okay parts while retaining warnings, errors, and stale-flag clearing.");
+
+        string guardSource = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "EndlessShapesUnlimited",
+            "Source",
+            "Patches",
+            "PartStatusMemoryGuard.cs"));
+        Assert(
+            guardSource.Contains("ConditionalWeakTable<StatusUpdate, EnabledMarker>") &&
+            guardSource.Contains("focusedPart.GetFlag() == 0") &&
+            guardSource.Contains("____focusedPart = null") &&
+            guardSource.Contains("____focusedDescription = string.Empty") &&
+            guardSource.Contains("MemorySafePartStatusChecks"),
+            "Part-status memory safety snapshots each opted-in update and resets the vanilla pending-status accumulator after a safe no-op.");
     }
 
     private static void VerifyVanillaCompatibilityMode()
@@ -3301,6 +3435,69 @@ f 0 2 3
                rgbaVariantKey != resourceKey,
             "Surface preview resources use deterministic mesh/material/color keys that include palette identity and the cleaned native RGBA value.");
 
+        Guid generatorMaterial = new Guid("10213243-5465-7687-98a9-bacbdcedfe0f");
+        Guid generatorMaterialVariant = new Guid("11223344-5566-7788-99aa-bbccddeeff00");
+        var generatorPlacement = new DecorationGeneratorPlacement(
+            new Vector3i(1, 2, 3),
+            meshGuid,
+            Vector3.zero,
+            Vector3.one,
+            Vector3.zero,
+            7,
+            generatorMaterial);
+        var generatorColorVariant = new DecorationGeneratorPlacement(
+            new Vector3i(1, 2, 3),
+            meshGuid,
+            Vector3.zero,
+            Vector3.one,
+            Vector3.zero,
+            8,
+            generatorMaterial);
+        var generatorMaterialVariantPlacement = new DecorationGeneratorPlacement(
+            new Vector3i(1, 2, 3),
+            meshGuid,
+            Vector3.zero,
+            Vector3.one,
+            Vector3.zero,
+            7,
+            generatorMaterialVariant);
+        string generatorResourceKey = DecorationEditSession.GeneratorPreviewResourceKey(
+            generatorPlacement,
+            rgba,
+            unchecked((int)0x1234ABCD));
+        string repeatedGeneratorResourceKey = DecorationEditSession.GeneratorPreviewResourceKey(
+            generatorPlacement,
+            rgba,
+            unchecked((int)0x1234ABCD));
+        string generatorColorVariantKey = DecorationEditSession.GeneratorPreviewResourceKey(
+            generatorColorVariant,
+            rgba,
+            unchecked((int)0x1234ABCD));
+        string generatorMaterialVariantKey = DecorationEditSession.GeneratorPreviewResourceKey(
+            generatorMaterialVariantPlacement,
+            rgba,
+            unchecked((int)0x1234ABCD));
+        string generatorPaletteVariantKey = DecorationEditSession.GeneratorPreviewResourceKey(
+            generatorPlacement,
+            rgba,
+            unchecked((int)0x1234ABCE));
+        Assert(generatorResourceKey == repeatedGeneratorResourceKey &&
+               generatorResourceKey.Contains(meshGuid.ToString("N")) &&
+               generatorResourceKey.Contains(generatorMaterial.ToString("N")) &&
+               generatorColorVariantKey != generatorResourceKey &&
+               generatorMaterialVariantKey != generatorResourceKey &&
+               generatorPaletteVariantKey != generatorResourceKey,
+            "Generator preview resources use stable plan-derived keys and separate paint-color, material-override, and craft-palette variants.");
+        Assert(DecorationEditSession.GeneratorPreviewPlacementIndex(0, 1000, 768) == 0 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(384, 1000, 768) == 500 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(767, 1000, 768) == 999 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(0, 4, 768) == 0 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(3, 4, 768) == 3 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(4, 4, 768) == -1 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(0, 0, 768) == -1 &&
+               DecorationEditSession.GeneratorPreviewPlacementIndex(0, 1000, 0) == -1,
+            "Generator real-mesh previews deterministically sample the complete plan from first through last placement, honor the exact 768 cap, and reject invalid sample ranges.");
+
         var rawDamageColor = new Color(0.8f, 0.6f, 0.4f, 0.1f);
         Color undamagedColor = DecorationEditSession.ApplyNativeDecorationDamageTint(
             rawDamageColor,
@@ -3537,6 +3734,9 @@ f 0 2 3
         string surfacePreviewResourceSource = ExtractMethodSource(
             decorationSource,
             "SurfacePreviewResourceFor");
+        string decorationPreviewResourceSource = ExtractMethodSource(
+            decorationSource,
+            "DecorationPreviewResourceFor");
         string surfacePreviewReadableSource = ExtractMethodSource(
             decorationSource,
             "SurfacePreviewMeshCanAcceptVertexColors");
@@ -3584,16 +3784,19 @@ f 0 2 3
                    "NativeDecorationPreviewColor(",
                    "RuntimeHelpers.GetHashCode(palette)",
                    "SurfacePreviewResourceKey(",
+                   "Material sourceMaterial = _previewRenderer?.GetMaterial(entry)",
+                   "DecorationPreviewResourceFor(") &&
+               ContainsAll(
+                   decorationPreviewResourceSource,
                    "if (SurfacePreviewMeshCanAcceptVertexColors(sourceMesh))",
                    "UnityEngine.Object.Instantiate(sourceMesh)",
                    "previewMesh.colors = vertexColors",
-                   "Material sourceMaterial = _previewRenderer?.GetMaterial(entry)",
                    "previewMesh = sourceMesh",
                    "new Material(sourceMaterial)",
                    "ownsMesh = false",
                    "ownsMaterial = true") &&
                OccursBefore(
-                   surfacePreviewResourceSource,
+                   decorationPreviewResourceSource,
                    "SurfacePreviewMeshCanAcceptVertexColors(sourceMesh)",
                    "previewMesh.colors = vertexColors") &&
                ContainsAll(
@@ -3651,6 +3854,84 @@ f 0 2 3
                !DecorationEditMath.IsWithinPositionLimit(new Vector3(10.01f, 0f, 0f)) &&
                !DecorationEditMath.IsWithinPositionLimit(new Vector3(float.NaN, 0f, 0f)),
             "Decoration Edit Mode movement snaps smoothly to 0.001m and enforces finite +/-10 bounds.");
+
+        Assert(DecorationEditSession.ShouldIncludeDecorationHit(
+                   xray: false,
+                   visible: true) &&
+               !DecorationEditSession.ShouldIncludeDecorationHit(
+                   xray: false,
+                   visible: false) &&
+               DecorationEditSession.ShouldIncludeDecorationHit(
+                   xray: true,
+                   visible: true) &&
+               DecorationEditSession.ShouldIncludeDecorationHit(
+                   xray: true,
+                   visible: false) &&
+               !DecorationEditSession.ShouldReplaceNearestDecorationHit(
+                   distance: 2f,
+                   bestDistance: 28f,
+                   xray: false,
+                   visible: false) &&
+               DecorationEditSession.ShouldReplaceNearestDecorationHit(
+                   distance: 7f,
+                   bestDistance: 28f,
+                   xray: false,
+                   visible: true) &&
+               DecorationEditSession.ShouldReplaceNearestDecorationHit(
+                   distance: 2f,
+                   bestDistance: 28f,
+                   xray: true,
+                   visible: false) &&
+               !DecorationEditSession.ShouldReplaceNearestDecorationHit(
+                   distance: float.NaN,
+                   bestDistance: 28f,
+                   xray: true,
+                   visible: true) &&
+               !DecorationEditSession.CraftCellOccludesDecoration(
+                   blockPresent: false,
+                   sampleDistance: 5f,
+                   targetDistance: 10f,
+                   endpointTolerance: 0.08f) &&
+               !DecorationEditSession.CraftCellOccludesDecoration(
+                   blockPresent: true,
+                   sampleDistance: 10f,
+                   targetDistance: 9.9f,
+                   endpointTolerance: 0.08f) &&
+               !DecorationEditSession.CraftCellOccludesDecoration(
+                   blockPresent: true,
+                   sampleDistance: 10f,
+                   targetDistance: 10.05f,
+                   endpointTolerance: 0.08f) &&
+               DecorationEditSession.CraftCellOccludesDecoration(
+                   blockPresent: true,
+                   sampleDistance: 10f,
+                   targetDistance: 10.6f,
+                   endpointTolerance: 0.08f) &&
+               !DecorationEditSession.FallbackCraftCellOccludesDecoration(
+                   blockPresent: true,
+                   sameTargetConstruct: true,
+                   sameTargetTetherCell: true) &&
+               DecorationEditSession.FallbackCraftCellOccludesDecoration(
+                   blockPresent: true,
+                   sameTargetConstruct: true,
+                   sameTargetTetherCell: false) &&
+               DecorationEditSession.FallbackCraftCellOccludesDecoration(
+                   blockPresent: true,
+                   sameTargetConstruct: false,
+                   sameTargetTetherCell: true) &&
+               DecorationEditSession.BoxSelectionVisibilityWithinBudget(
+                   xray: false,
+                   projectedCandidateCount: 512) &&
+               !DecorationEditSession.BoxSelectionVisibilityWithinBudget(
+                   xray: false,
+                   projectedCandidateCount: 513) &&
+               DecorationEditSession.BoxSelectionVisibilityWithinBudget(
+                   xray: true,
+                   projectedCandidateCount: 100_000) &&
+               !DecorationEditSession.BoxSelectionVisibilityWithinBudget(
+                   xray: false,
+                   projectedCandidateCount: -1),
+            "Decoration X-ray skips a nearer hidden viewport candidate for a visible candidate when off, admits it when on, treats exact blocks before the endpoint shell as occluders, exempts the target tether only from coarse partial-block fallback sampling, and bounds X-ray-off marquee visibility work.");
 
         DecorationEditAxis picked = DecorationEditMath.PickAxis(
             new Vector2(50f, 2f),
@@ -3919,6 +4200,20 @@ f 0 2 3
         string selectOutlinerDecorationRowSource = ExtractMethodSource(sessionSource, "SelectOutlinerDecorationRow").Replace("\r\n", "\n");
         string selectBoxSource = ExtractMethodSource(sessionSource, "SelectBox").Replace("\r\n", "\n");
         string selectNearestSource = ExtractMethodSource(sessionSource, "SelectNearest").Replace("\r\n", "\n");
+        string paintNearestSource = ExtractMethodSource(sessionSource, "PaintNearest").Replace("\r\n", "\n");
+        string enumerateBoxSelectionHitsSource = ExtractMethodSource(sessionSource, "EnumerateBoxSelectionHits").Replace("\r\n", "\n");
+        string countBoxSelectionCandidatesSource = ExtractMethodSource(sessionSource, "CountBoxSelectionCandidates").Replace("\r\n", "\n");
+        string updateBoxSelectionDragSource = ExtractMethodSource(sessionSource, "UpdateBoxSelectionDrag").Replace("\r\n", "\n");
+        string drawBoxSelectionMarqueeSource = ExtractMethodSource(sessionSource, "DrawBoxSelectionMarquee").Replace("\r\n", "\n");
+        string paintBoxSource = ExtractMethodSource(sessionSource, "PaintBox").Replace("\r\n", "\n");
+        string resolveBoxSelectionConstructSource = ExtractMethodSource(sessionSource, "ResolveBoxSelectionConstruct").Replace("\r\n", "\n");
+        string tryFindNearestDecorationSource = ExtractMethodSource(sessionSource, "TryFindNearestDecoration").Replace("\r\n", "\n");
+        string tryFindNearestDecorationInCacheSource = ExtractMethodSource(sessionSource, "TryFindNearestDecorationInCache").Replace("\r\n", "\n");
+        string drawNearestHintSource = ExtractMethodSource(sessionSource, "DrawNearestHint").Replace("\r\n", "\n");
+        string refreshDecorationCacheSource = ExtractMethodSource(sessionSource, "RefreshDecorationCache").Replace("\r\n", "\n");
+        string occludingCraftBlockAtWorldSource = ExtractMethodSource(sessionSource, "OccludingCraftBlockAtWorld").Replace("\r\n", "\n");
+        string craftBlockOccludesDecorationRaySource = ExtractMethodSource(sessionSource, "CraftBlockOccludesDecorationRay").Replace("\r\n", "\n");
+        string craftBlockSamplingOccludesDecorationRaySource = ExtractMethodSource(sessionSource, "CraftBlockSamplingOccludesDecorationRay").Replace("\r\n", "\n");
         string selectDecorationSource = ExtractMethodSource(sessionSource, "Select").Replace("\r\n", "\n");
         string tryOpenDecorationContextMenuSource = ExtractMethodSource(sessionSource, "TryOpenDecorationContextMenu").Replace("\r\n", "\n");
         string tryHitMultiSelectionContextSource = ExtractMethodSource(sessionSource, "TryHitMultiSelectionContext").Replace("\r\n", "\n");
@@ -4137,7 +4432,7 @@ f 0 2 3
                !inputScopeSource.Contains("SuppressBuildInput() => _active") &&
                inputScopeSource.Contains("ControlHeldWhileActive") &&
                inputScopeSource.Contains("DecoLimitLifter.EsuInputState.IsControlHeld()") &&
-               inputScopeSource.Contains("ControlHeldWhileActive ||") &&
+               inputScopeSource.Contains("(!NativeBlockPaletteMode && ControlHeldWhileActive) ||") &&
                !inputScopeSourceNormalized.Contains("ControlHeldWhileActive ||\n            OwnsCameraInputThisFrame") &&
                 inputScopeSource.Contains("HudBuildCommands") &&
                 inputScopeSource.Contains("DrawInsideBuildMode") &&
@@ -4462,7 +4757,8 @@ f 0 2 3
                smartBuildSessionSource.Contains("EsuCursorTooltip.RegisterLast(content?.tooltip)") &&
                smartBuildSessionSource.Contains("EsuCursorTooltip.Register(rect, content?.tooltip)") &&
                sessionSource.Contains("Filter meshes by name or GUID.") &&
-               sessionSource.Contains("Show the mesh palette as a virtualized 3D thumbnail grid.") &&
+               sessionSource.Contains("Show the Block Palette as a virtualized 3D thumbnail grid.") &&
+               sessionSource.Contains("Show or hide the Block Palette.") &&
                sessionSource.Contains("Select this decoration.") &&
                sessionSource.Contains("Hide the inspector panel.") &&
                notificationSource.Contains("Open the ESU runtime log.") &&
@@ -4490,7 +4786,8 @@ f 0 2 3
                sessionSource.Contains("DrawInspectorPanel") &&
                sessionSource.Contains("DrawOutlinerPanel") &&
                sessionSource.Contains("DrawAnchorPanel") &&
-               sessionSource.Contains("DrawCompactIconHeader(\"Mesh Palette\", \"mesh\")") &&
+               sessionSourceNormalized.Contains(
+                   "DrawCompactIconHeader(\n                \"Block Palette\",\n                _nativeBlockPaletteMode ? \"build\" : \"mesh\")") &&
                sessionSource.Contains("DrawCompactIconHeader(titleRect, \"Outliner\", \"outliner\")") &&
                sessionSource.Contains("DrawInspectorHeader(headerRect)") &&
                sessionSource.Contains("private void DrawInspectorHeader(Rect rect)") &&
@@ -5223,16 +5520,17 @@ f 0 2 3
                sessionSource.Contains("private void AddNearestToSelection(DecorationHit hit)") &&
                sessionSource.Contains("Selection moved to another construct.") &&
                sessionSource.Contains("Hold Shift and click to add more decorations to the current selection.") &&
-               sessionSource.Contains("EnumerateBoxSelectionHits(rect, xray, refresh: false)") &&
-               sessionSource.Contains("EnumerateBoxSelectionHits(rect, xray, refresh: true)") &&
+               selectBoxSource.Contains("EnumerateBoxSelectionHits(rect, xray, refresh: false)") &&
+               paintBoxSource.Contains("EnumerateBoxSelectionHits(") &&
                sessionSource.Contains("BoxSelectionPrimaryConstruct") &&
                sessionSource.Contains("ReferenceEquals(hit.Construct, primaryConstruct)") &&
-               sessionSource.Contains("if (!xray && !IsDecorationHitVisible(hit, primaryConstruct))") &&
+               enumerateBoxSelectionHitsSource.Contains("ShouldIncludeDecorationHit(") &&
                sessionSource.Contains("CraftBlockOccludesDecorationRay") &&
                sessionSource.Contains("CraftBlockSamplingOccludesDecorationRay") &&
                sessionSource.Contains("OccludingCraftBlockAtWorld") &&
-               sessionSource.Contains("Physics.RaycastAll(ray, rayDistance)") &&
-               sessionSource.Contains("SameTether(cell, hit.Decoration.TetherPoint.Us)") &&
+               craftBlockOccludesDecorationRaySource.Contains("Physics.RaycastNonAlloc(") &&
+               !craftBlockOccludesDecorationRaySource.Contains("Physics.RaycastAll(") &&
+               craftBlockSamplingOccludesDecorationRaySource.Contains("CraftCellOccludesDecoration(") &&
                sessionSource.Contains("HasBlock(construct, cell)") &&
                sessionSource.Contains("SetPrimarySelection(primary.Decoration, primary.Construct)") &&
                sessionSource.Contains("DrawSelectedSetHints") &&
@@ -5306,6 +5604,90 @@ f 0 2 3
                sessionSource.Contains("DrawLocalBoundsWireframe") &&
                sessionSource.Contains("DecorationSnapshotBatchCommand("),
             "Decoration Edit Mode exposes fixed-width Select/Box/X-ray controls, selectable-origin AMUI-style multi-selection move/rotate/axis-scale/uniform-scale, anchor-follow retether staging, and batch history.");
+
+        Assert(drawBottomSelectionControlsSource.Contains(
+                   "viewport hover, clicks, context selection, and box select") &&
+               tryFindNearestDecorationSource.Contains(
+                   "TryFindNearestDecorationInCache(") &&
+               tryFindNearestDecorationSource.Contains(
+                   "includeOccluded: _selectionXray") &&
+               selectNearestSource.Contains("TryFindNearestDecoration(") &&
+               paintNearestSource.Contains("TryFindNearestDecoration(") &&
+               tryOpenDecorationContextMenuSource.Contains(
+                   "TryFindNearestDecoration(") &&
+               resolveBoxSelectionConstructSource.Contains(
+                   "TryFindNearestDecoration(") &&
+               tryFindNearestDecorationInCacheSource.Contains(
+                   "distance >= bestDistance") &&
+               OccursBefore(
+                   tryFindNearestDecorationInCacheSource,
+                   "distance >= bestDistance",
+                   "IsDecorationHitVisible(hit)") &&
+               tryFindNearestDecorationInCacheSource.Contains(
+                   "ShouldReplaceNearestDecorationHit(") &&
+               OccursBefore(
+                   tryFindNearestDecorationInCacheSource,
+                   "IsDecorationHitVisible(hit)",
+                   "ShouldReplaceNearestDecorationHit(") &&
+               enumerateBoxSelectionHitsSource.Contains(
+                   "ShouldIncludeDecorationHit(") &&
+               drawNearestHintSource.Contains(
+                   "TryFindNearestDecorationInCache(") &&
+               drawNearestHintSource.Contains(
+                   "includeOccluded: _selectionXray") &&
+               refreshDecorationCacheSource.Contains(
+                   "_selectionOccluderConstructs.Clear()") &&
+               OccursBefore(
+                   refreshDecorationCacheSource,
+                   "GetAllConstructsBelowUsAndIncludingUs(constructs)",
+                   "_selectionOccluderConstructs.AddRange(") &&
+               refreshDecorationCacheSource.Contains(
+                   "_selectionOccluderConstructs.AddRange(") &&
+               occludingCraftBlockAtWorldSource.Contains(
+                   "_selectionOccluderConstructs.Count") &&
+               occludingCraftBlockAtWorldSource.Contains(
+                   "HasBlock(construct, cell)") &&
+               craftBlockOccludesDecorationRaySource.Contains(
+                   "Physics.RaycastNonAlloc(") &&
+               craftBlockOccludesDecorationRaySource.Contains(
+                   "s_decorationSelectionVisibilityHits") &&
+               !craftBlockOccludesDecorationRaySource.Contains(
+                   "Physics.RaycastAll(") &&
+               craftBlockOccludesDecorationRaySource.Contains(
+                   "CraftCellOccludesDecoration(") &&
+               craftBlockSamplingOccludesDecorationRaySource.Contains(
+                   "CraftCellOccludesDecoration(") &&
+               craftBlockSamplingOccludesDecorationRaySource.Contains(
+                   "exemptTargetTetherCell: true") &&
+               sessionSource.Contains("private bool _selectionXray;") &&
+               !sessionSource.Contains("private bool _selectionXray = true") &&
+               !selectDecorationSource.Contains(
+                   "IsDecorationHitVisible") &&
+               !selectOutlinerDecorationRowSource.Contains(
+                   "IsDecorationHitVisible") &&
+               !selectAnchorDecorationRowSource.Contains(
+                   "IsDecorationHitVisible"),
+            "Decoration X-ray centrally governs viewport hover, click, context, paint, and box acquisition across the full construct tree while direct Outliner and anchor-list selection remains available.");
+
+        Assert(updateBoxSelectionDragSource.Contains(
+                   "CountBoxSelectionCandidates(rect)") &&
+               countBoxSelectionCandidatesSource.Contains(
+                   "validateVisibility: false") &&
+               drawBoxSelectionMarqueeSource.Contains(
+                   "projected | visible on release") &&
+               selectBoxSource.Contains(
+                   "BoxSelectionVisibilityWithinBudget(") &&
+               paintBoxSource.Contains(
+                   "BoxSelectionVisibilityWithinBudget(") &&
+               OccursBefore(
+                   selectBoxSource,
+                   "BoxSelectionVisibilityWithinBudget(",
+                   "EnumerateBoxSelectionHits(") &&
+               OccursBefore(
+                   paintBoxSource,
+                   "BoxSelectionVisibilityWithinBudget(",
+                   "EnumerateBoxSelectionHits("),
+            "Decoration X-ray keeps live marquee counts projected-only, performs bounded visibility work only on release, and rejects oversized X-ray-off selection/paint batches before any partial target application.");
 
         Assert(sessionSource.Contains("_selectionFocusLocked") &&
                sessionSource.Contains("_selectionFocusDecoration") &&
@@ -5446,9 +5828,10 @@ f 0 2 3
                smartInputScopeSource.Contains("EsuEscapeCloseGuard.Active"),
             "With no foreground popup left to dismiss, Escape closes the active ESU editor mode and arms a short input guard so vanilla does not open the main menu on the same keypress.");
 
-        Assert(inputScopeSource.Contains("_active && DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()") &&
+        Assert(inputScopeSource.Contains("(!NativeBlockPaletteMode &&") &&
+               inputScopeSource.Contains("DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()") &&
                smartInputScopeSource.Contains("_active && DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()"),
-            "ESU input scopes suppress vanilla build input on 1/2/3 and N shortcut key-downs while an ESU editor is active.");
+            "ESU input scopes suppress vanilla build input on 1/2/3 and N shortcut key-downs while ESU owns those shortcuts, while Block Palette leaves them to FtD.");
 
         Assert(sessionSource.Contains("TryHandleEsuNumberShortcut()") &&
                sessionSource.Contains("CycleCreateSelectShortcut()") &&
@@ -5826,6 +6209,921 @@ f 0 2 3
                     StringComparison.OrdinalIgnoreCase));
         Assert(!copiedIconAsset,
             "Decoration Edit Mode packages no copied FTD icon texture or UI-element assets besides the required Steam Workshop header.jpg.");
+    }
+
+    private static void VerifyNativeBlockPalette()
+    {
+        Assert(
+            DecorationEditSession.ResolveNativeBlockPaletteWorldInput(
+                buildMode: false,
+                overUi: false,
+                mouseButton: 0) ==
+            DecorationEditSession.NativeBlockPaletteInputAction.None &&
+            DecorationEditSession.ResolveNativeBlockPaletteWorldInput(
+                buildMode: true,
+                overUi: true,
+                mouseButton: 0) ==
+            DecorationEditSession.NativeBlockPaletteInputAction.None &&
+            DecorationEditSession.ResolveNativeBlockPaletteWorldInput(
+                buildMode: true,
+                overUi: false,
+                mouseButton: 0) ==
+            DecorationEditSession.NativeBlockPaletteInputAction.DelegateVanillaPlacement &&
+            DecorationEditSession.ResolveNativeBlockPaletteWorldInput(
+                buildMode: true,
+                overUi: false,
+                mouseButton: 1) ==
+            DecorationEditSession.NativeBlockPaletteInputAction.SelectPointedBlock &&
+            DecorationEditSession.ResolveNativeBlockPaletteWorldInput(
+                buildMode: true,
+                overUi: false,
+                mouseButton: 2) ==
+            DecorationEditSession.NativeBlockPaletteInputAction.None,
+            "Block Palette world-input arbitration is default-off, leaves panel input owned by ESU, delegates viewport left-click to vanilla placement, and reserves viewport right-click for craft-block sampling.");
+
+        Assert(!DecorationEditorInputScope.ShouldSuppressNativeBlockPaletteAuxiliaryInput(
+                   nativeBlockPaletteMode: false,
+                   textInputFocused: true,
+                   modalInputOpen: true,
+                   ownsUiGesture: true) &&
+               !DecorationEditorInputScope.ShouldSuppressNativeBlockPaletteAuxiliaryInput(
+                   nativeBlockPaletteMode: true,
+                   textInputFocused: false,
+                   modalInputOpen: false,
+                   ownsUiGesture: false) &&
+               DecorationEditorInputScope.ShouldSuppressNativeBlockPaletteAuxiliaryInput(
+                   nativeBlockPaletteMode: true,
+                   textInputFocused: true,
+                   modalInputOpen: false,
+                   ownsUiGesture: false) &&
+               DecorationEditorInputScope.ShouldSuppressNativeBlockPaletteAuxiliaryInput(
+                   nativeBlockPaletteMode: true,
+                   textInputFocused: false,
+                   modalInputOpen: true,
+                   ownsUiGesture: false) &&
+               DecorationEditorInputScope.ShouldSuppressNativeBlockPaletteAuxiliaryInput(
+                   nativeBlockPaletteMode: true,
+                   textInputFocused: false,
+                   modalInputOpen: false,
+                   ownsUiGesture: true),
+            "Block Palette auxiliary-input arbitration suppresses FtD directional input only for active text, modal, or ESU-owned gesture states while native mode is enabled.");
+
+        var markerAnchor = new Vector3i(10, 20, 30);
+        var markerSizePos = new Vector3i(2, 3, 4);
+        var markerSizeNeg = new Vector3i(5, 6, 7);
+        var markerCases = new[]
+        {
+            new { Outward = new Vector3i(1, 0, 0), LocalInward = new Vector3i(-1, 0, 0), Expected = new Vector3i(16, 20, 30) },
+            new { Outward = new Vector3i(-1, 0, 0), LocalInward = new Vector3i(1, 0, 0), Expected = new Vector3i(7, 20, 30) },
+            new { Outward = new Vector3i(0, 1, 0), LocalInward = new Vector3i(0, -1, 0), Expected = new Vector3i(10, 27, 30) },
+            new { Outward = new Vector3i(0, -1, 0), LocalInward = new Vector3i(0, 1, 0), Expected = new Vector3i(10, 16, 30) },
+            new { Outward = new Vector3i(0, 0, 1), LocalInward = new Vector3i(0, 0, -1), Expected = new Vector3i(10, 20, 38) },
+            new { Outward = new Vector3i(0, 0, -1), LocalInward = new Vector3i(0, 0, 1), Expected = new Vector3i(10, 20, 25) },
+            new { Outward = new Vector3i(0, 0, 1), LocalInward = new Vector3i(1, 0, 0), Expected = new Vector3i(10, 20, 33) }
+        };
+        bool resolvedEveryMarkerCase = markerCases.All(test =>
+            DecorationEditSession.TryResolveNativeBlockCursorMarkerPosition(
+                markerAnchor,
+                test.Outward,
+                test.LocalInward,
+                markerSizePos,
+                markerSizeNeg,
+                out Vector3i marker) &&
+            marker.Equals(test.Expected));
+        bool rejectedMissingFace =
+            DecorationEditSession.TryResolveNativeBlockCursorMarkerPosition(
+                markerAnchor,
+                new Vector3i(0, 0, 0),
+                new Vector3i(1, 0, 0),
+                markerSizePos,
+                markerSizeNeg,
+                out _);
+        Assert(resolvedEveryMarkerCase &&
+               !rejectedMissingFace,
+            "Block Palette cursor anchoring uses the pointed outside cell, every +/- face, asymmetric native positive/negative footprint extents, and rotated item-local inward axes for exact multi-cell origins.");
+
+        Assert(!DecorationEditorInputScope.ShouldSuppressNativeBlockPalettePrimaryPlacement(
+                   primaryHeld: false,
+                   cursorPlacementReady: false,
+                   unsafeSimpleReplacementGesture: false) &&
+               DecorationEditorInputScope.ShouldSuppressNativeBlockPalettePrimaryPlacement(
+                   primaryHeld: true,
+                   cursorPlacementReady: false,
+                   unsafeSimpleReplacementGesture: false) &&
+               !DecorationEditorInputScope.ShouldSuppressNativeBlockPalettePrimaryPlacement(
+                   primaryHeld: true,
+                   cursorPlacementReady: true,
+                   unsafeSimpleReplacementGesture: false) &&
+               DecorationEditorInputScope.ShouldSuppressNativeBlockPalettePrimaryPlacement(
+                   primaryHeld: true,
+                   cursorPlacementReady: true,
+                   unsafeSimpleReplacementGesture: true) &&
+               DecorationEditSession.IsNativeBlockPalettePlacementReady(
+                   enumAddRemove.add) &&
+               !DecorationEditSession.IsNativeBlockPalettePlacementReady(
+                   enumAddRemove.remove) &&
+               !DecorationEditSession.IsNativeBlockPalettePlacementReady(
+                   enumAddRemove.neither) &&
+               DecorationEditorInputScope.CanOverrideNativeBlockPaletteDoBuildMode(
+                   nativeBlockPaletteMode: true,
+                   constructPresent: true,
+                   constructDestroyed: false,
+                   markerPresent: true,
+                   teamMatches: true) &&
+               !DecorationEditorInputScope.CanOverrideNativeBlockPaletteDoBuildMode(
+                   nativeBlockPaletteMode: true,
+                   constructPresent: true,
+                   constructDestroyed: true,
+                   markerPresent: true,
+                   teamMatches: true) &&
+               !DecorationEditorInputScope.CanOverrideNativeBlockPaletteDoBuildMode(
+                   nativeBlockPaletteMode: true,
+                   constructPresent: false,
+                   constructDestroyed: false,
+                   markerPresent: true,
+                   teamMatches: true) &&
+               !DecorationEditorInputScope.CanOverrideNativeBlockPaletteDoBuildMode(
+                   nativeBlockPaletteMode: true,
+                   constructPresent: true,
+                   constructDestroyed: false,
+                   markerPresent: false,
+                   teamMatches: true) &&
+               !DecorationEditorInputScope.CanOverrideNativeBlockPaletteDoBuildMode(
+                   nativeBlockPaletteMode: true,
+                   constructPresent: true,
+                   constructDestroyed: false,
+                   markerPresent: true,
+                   teamMatches: false),
+            "Block Palette delegates only ready native add targets, treats remove/neither as non-placeable, suppresses unsafe replacement clicks, and yields to FtD safety cleanup for missing/destroyed/wrong-team build contexts.");
+
+        Assert(!DecorationEditSession.IsNativePlaceableBlockDefinition(null) &&
+               !DecorationEditSession.IsNativeBlockPaletteEntry(null),
+            "Block Palette rejects missing block definitions and catalog entries before native selection.");
+
+        string root = FindRepositoryRoot();
+        string sessionSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.cs"));
+        string blockPaletteSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditSession.BlockPalette.cs"));
+        string inputScopeSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "DecorationEditMode",
+            "DecorationEditorInputScope.cs"));
+        string pluginSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "Plugin.cs"));
+
+        string drawPaletteSource = ExtractMethodSource(
+            sessionSource,
+            "DrawMeshPalette");
+        string drawGuiSource = ExtractMethodSource(
+            sessionSource,
+            "DrawGui");
+        string drawListSource = ExtractMethodSource(
+            sessionSource,
+            "DrawMeshListRows");
+        string drawGridSource = ExtractMethodSource(
+            sessionSource,
+            "DrawMeshPreviewGrid");
+        string filterCatalogSource = ExtractMethodSource(
+            sessionSource,
+            "FilterMeshCatalog");
+        string handleSceneInputSource = ExtractMethodSource(
+            sessionSource,
+            "HandleSceneInput");
+        string shouldConsumeGuiEventSource = ExtractMethodSource(
+            sessionSource,
+            "ShouldConsumeGuiEvent");
+        string updateSource = ExtractMethodSource(
+            sessionSource,
+            "Update");
+        string dismissPromptSource = ExtractMethodSource(
+            sessionSource,
+            "DismissOpenPrompt");
+        string switchSurfaceSource = ExtractMethodSource(
+            sessionSource,
+            "TrySwitchToSurfaceBuilder");
+        string togglePaintSource = ExtractMethodSource(
+            sessionSource,
+            "TogglePaintTool");
+        string endSource = ExtractMethodSource(
+            sessionSource,
+            "End");
+        string suspendHandoffSource = ExtractMethodSource(
+            sessionSource,
+            "SuspendForModeSwitchHandoff");
+        string eligibilitySource = ExtractMethodSource(
+            blockPaletteSource,
+            "IsNativePlaceableBlockDefinition");
+        string entryEligibilitySource = ExtractMethodSource(
+            blockPaletteSource,
+            "IsNativeBlockPaletteEntry");
+        string selectEntrySource = ExtractMethodSource(
+            blockPaletteSource,
+            "TrySelectNativeBlockEntry");
+        string setSelectionSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TrySetNativeBlockSelection");
+        string restoreSelectionSource = ExtractMethodSource(
+            blockPaletteSource,
+            "RestoreNativeBlockSelection");
+        string selectPointedSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TrySelectPointedNativeBlock");
+        string setModeSource = ExtractMethodSource(
+            blockPaletteSource,
+            "SetNativeBlockPaletteMode");
+        string activateEntrySource = ExtractMethodSource(
+            blockPaletteSource,
+            "ActivateMeshPaletteEntry");
+        string secondaryClickSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TryConsumeNativeBlockPaletteSecondaryClick");
+        string handleNativeSceneInputSource = ExtractMethodSource(
+            blockPaletteSource,
+            "HandleNativeBlockPaletteSceneInput");
+        string blurTextInputSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TryBlurNativeBlockPaletteTextInputForWorldClick");
+        string availabilitySource = ExtractMethodSource(
+            blockPaletteSource,
+            "NativeBlockDefinitionAvailableOnFocusedConstruct");
+        string syncSelectionSource = ExtractMethodSource(
+            blockPaletteSource,
+            "SyncNativeBlockPaletteSelection");
+        string prepareCursorPreviewSource = ExtractMethodSource(
+            blockPaletteSource,
+            "PrepareNativeBlockPaletteCursorPreview");
+        string resolveCursorPositionSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TryResolveNativeBlockCursorPosition");
+        string resolveCursorMarkerPositionSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TryResolveNativeBlockCursorMarkerPosition");
+        string probeCursorSource = ExtractMethodSource(
+            blockPaletteSource,
+            "TryProbeNativeBlockPaletteCursor");
+        string invalidateCursorProbeSource = ExtractMethodSource(
+            blockPaletteSource,
+            "InvalidateNativeBlockPaletteCursorProbe");
+        string hideCursorPreviewSource = ExtractMethodSource(
+            blockPaletteSource,
+            "HideNativeBlockPaletteCursorPreview");
+        string neutralizePlacementSource = ExtractMethodSource(
+            blockPaletteSource,
+            "NeutralizeNativeBlockPalettePlacement");
+        string placementReadySource = ExtractMethodSource(
+            blockPaletteSource,
+            "IsNativeBlockPalettePlacementReady");
+        string inputScopeBeginSource = ExtractMethodSource(
+            inputScopeSource,
+            "Begin");
+        string inputScopeEndSource = ExtractMethodSource(
+            inputScopeSource,
+            "End");
+        string inputScopeForceResetSource = ExtractMethodSource(
+            inputScopeSource,
+            "ForceResetIfActive");
+        string inputScopeSetModeSource = ExtractMethodSource(
+            inputScopeSource,
+            "SetNativeBlockPaletteMode");
+        string inputScopeNativeBlockSource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressBuildInputCore");
+        string suppressBuildInputSource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressBuildInput");
+        string suppressFixedBuildInputSource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressFixedBuildInput");
+        string exactNativeItemSource = ExtractMethodSource(
+            inputScopeSource,
+            "ExactNativeBlockPaletteItemSelected");
+        string primaryPlacementPolicySource = ExtractMethodSource(
+            inputScopeSource,
+            "ShouldSuppressNativeBlockPalettePrimaryPlacement");
+        string refreshCursorPreviewSource = ExtractMethodSource(
+            inputScopeSource,
+            "RefreshNativeBlockPaletteCursorPreview");
+        string hideScopeCursorPreviewSource = ExtractMethodSource(
+            inputScopeSource,
+            "HideNativeBlockPaletteCursorPreview");
+        string overrideDoBuildModeSource = ExtractMethodSource(
+            inputScopeSource,
+            "OverrideNativeBlockPaletteDoBuildMode");
+        string canOverrideDoBuildModeSource = ExtractMethodSource(
+            inputScopeSource,
+            "CanOverrideNativeBlockPaletteDoBuildMode");
+        string nativeBuildContextValidSource = ExtractMethodSource(
+            inputScopeSource,
+            "NativeBlockPaletteBuildContextValid");
+        string suppressLateUpdateSource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressNativeBlockPaletteLateUpdate");
+        string suppressIndicatorsSource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressNativeBlockPaletteIndicators");
+        string suppressCameraInputSource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressCameraInput");
+        string auxiliaryPolicySource = ExtractMethodSource(
+            inputScopeSource,
+            "ShouldSuppressNativeBlockPaletteAuxiliaryInput");
+        string requireMouseReleaseSource = ExtractMethodSource(
+            inputScopeSource,
+            "RequireNativeBlockPaletteMouseRelease");
+        string suppressAuxiliarySource = ExtractMethodSource(
+            inputScopeSource,
+            "SuppressNativeBlockPaletteAuxiliaryInput");
+        string resetDirectionalSource = ExtractMethodSource(
+            inputScopeSource,
+            "ResetNativeBlockPaletteDirectionalInput");
+        string verifyRequiredPatchesSource = ExtractMethodSource(
+            pluginSource,
+            "VerifyRequiredPatches");
+        string resolveFixedTargetSource = ExtractMethodSource(
+            pluginSource,
+            "ResolveDecorationEditorBuildFixedUpdateTarget");
+        string resolveDoBuildModeTargetSource = ExtractMethodSource(
+            pluginSource,
+            "ResolveDecorationEditorDoBuildModeTarget");
+        string resolveBuildLateUpdateTargetSource = ExtractMethodSource(
+            pluginSource,
+            "ResolveDecorationEditorBuildLateUpdateTarget");
+        string resolveDrawIndicatorsTargetSource = ExtractMethodSource(
+            pluginSource,
+            "ResolveDecorationEditorDrawIndicatorsTarget");
+        string resolveInputTargetSource = ExtractMethodSource(
+            pluginSource,
+            "ResolveDecorationEditorInputUpdateTarget");
+        string verifyRequiredPatchesSourceNormalized =
+            verifyRequiredPatchesSource.Replace("\r\n", "\n");
+
+        Assert(blockPaletteSource.Contains("private bool _nativeBlockPaletteMode;") &&
+               !blockPaletteSource.Contains("private bool _nativeBlockPaletteMode = true") &&
+               sessionSource.Contains("internal sealed partial class DecorationEditSession") &&
+               blockPaletteSource.Contains("internal sealed partial class DecorationEditSession"),
+            "Block Palette is a default-off, session-local Decoration Edit sub-mode.");
+
+        Assert(drawPaletteSource.Replace("\r\n", "\n").Contains(
+                   "DrawCompactIconHeader(\n                \"Block Palette\",\n                _nativeBlockPaletteMode ? \"build\" : \"mesh\")") &&
+               !drawPaletteSource.Contains("\"Mesh Palette\"") &&
+               drawPaletteSource.Contains(
+                   "DecorationEditorTheme.ToolButton(_nativeBlockPaletteMode)") &&
+               drawPaletteSource.Contains("ToggleNativeBlockPaletteMode()") &&
+               OccursBefore(
+                   drawPaletteSource,
+                   "\"Block Palette\"",
+                   "\"Build\",") &&
+               OccursBefore(
+                   drawPaletteSource,
+                   "\"Build\",",
+                   "new GUIContent(\"Hide\"") &&
+               drawPaletteSource.Contains(
+                   "_nativeBlockPaletteMode ? \"build\" : \"mesh\""),
+            "The panel is permanently titled Block Palette before its selected-state Build toggle and Hide button; Build changes native behavior and the header icon without reverting the title to Mesh Palette.");
+
+        Assert(entryEligibilitySource.Contains("entry?.Component is ItemDefinition definition") &&
+               entryEligibilitySource.Contains("IsNativePlaceableBlockDefinition(definition)") &&
+               entryEligibilitySource.Contains("definition.ComponentId.Guid == entry.Guid") &&
+               eligibilitySource.Contains("definition.ItemType == enumItemType.block") &&
+               eligibilitySource.Contains("definition.GetInventoryObjectType() == InventoryObjectType.Item") &&
+               !eligibilitySource.Contains("GetBlockClassType") &&
+               eligibilitySource.Contains("definition.SizeInfo.ArrayPositionsUsed > 0") &&
+               selectEntrySource.Contains("IsNativeBlockPaletteEntry(entry)") &&
+               selectEntrySource.Contains("entry.Component is ItemDefinition definition"),
+            "Block Palette exposes only exact catalog ItemDefinitions that FtD identifies as real placeable blocks with a valid native footprint; object meshes are rejected.");
+
+        Assert(filterCatalogSource.Contains(
+                   "query = query.Where(IsNativeBlockPaletteEntry)") &&
+               selectEntrySource.Contains("IsNativeBlockPaletteEntryAvailable(entry)") &&
+               availabilitySource.Contains("definition.DisplayOnInventory") &&
+               availabilitySource.Contains(
+                   "definition.InventoryTabOrVariantId.IsValidReference") &&
+               availabilitySource.Contains("definition.CanYouPlaceOnThis(_build.GetC())") &&
+               availabilitySource.Contains("definition.Unlock.Check().status") &&
+               !availabilitySource.Contains("Unlock.Check(Time.time)"),
+            "Block Palette filters rows with the cheap static native-block test, then enforces inventory visibility, unlock, and focused-construct availability on activation using WorldUnlock's cache-duration default rather than elapsed game time.");
+
+        Assert(drawListSource.Contains("bool primaryClick = GUILayout.Button(") &&
+               drawGridSource.Contains("bool primaryClick = GUI.Button(") &&
+               drawListSource.Contains(
+                   "TryConsumeNativeBlockPaletteSecondaryClick(entryRect)") &&
+               drawGridSource.Contains(
+                   "TryConsumeNativeBlockPaletteSecondaryClick(card)") &&
+               OccurrenceCount(drawListSource, "ActivateMeshPaletteEntry(entry)") == 1 &&
+               OccurrenceCount(drawGridSource, "ActivateMeshPaletteEntry(entry)") == 1 &&
+               activateEntrySource.Contains("TrySelectNativeBlockEntry(entry)") &&
+               activateEntrySource.Contains("StartMeshPlacement(entry)") &&
+               secondaryClickSource.Contains("current.type == EventType.ContextClick") &&
+               secondaryClickSource.Contains("current.type == EventType.MouseDown") &&
+               secondaryClickSource.Contains("current.button == 1") &&
+               secondaryClickSource.Contains("current.Use()"),
+            "Block Palette list rows and 3D cards share exact native selection for GUI-owned left clicks and explicitly consume right-click/context selection without placing through the panel.");
+
+        Assert(OccursBefore(
+                   setSelectionSource,
+                   "_build.SetBlockToPlace(definition)",
+                   "ReferenceEquals(selected, definition)") &&
+               setSelectionSource.Contains("BuildingWithMode previousMode") &&
+               setSelectionSource.Contains("SavedSubObject previousPrefab") &&
+               setSelectionSource.Contains("SavedSubObject previousSubconstructable") &&
+               setSelectionSource.Contains("_build.BuildingWith?.Prefab") &&
+               setSelectionSource.Contains(
+                   "_build.BuildingWith?.SubconstructableToLoad") &&
+               setSelectionSource.Contains(
+                   "_build.BuildingWith?.Mode != BuildingWithMode.Item") &&
+               setSelectionSource.Contains("RestoreNativeBlockSelection(") &&
+               restoreSelectionSource.Contains("switch (previousMode)") &&
+               restoreSelectionSource.Contains("case BuildingWithMode.Paint") &&
+               restoreSelectionSource.Contains("_build.BeginFreePaint()") &&
+               restoreSelectionSource.Contains("case BuildingWithMode.Prefab") &&
+               restoreSelectionSource.Contains("_build.SetLoadPrefab(previousPrefab)") &&
+               restoreSelectionSource.Contains("case BuildingWithMode.SubObject") &&
+               restoreSelectionSource.Contains(
+                   "_build.SetLoadConstructable(previousSubconstructable)") &&
+               restoreSelectionSource.Contains("_build.SetBlockToPlace(previousItem)") &&
+               restoreSelectionSource.Contains("_build.SetBuildMarkerLocalRotation(previousRotation)") &&
+               !blockPaletteSource.Contains("SetBlockToPlace(null)"),
+            "Native palette selection verifies FtD retained exact Item mode and restores the previous item, Paint/Prefab/SubObject mode payload, and rotation after rejection.");
+
+        Assert(OccursBefore(
+                   selectPointedSource,
+                   "GetBlockViaLocalPosition(hit.Anchor)",
+                   "definition = block?.item") &&
+               OccursBefore(
+                   selectPointedSource,
+                   "definition = block?.item",
+                   "copiedRotation = block.LocalRotation") &&
+               OccursBefore(
+                   selectPointedSource,
+                   "copiedRotation = block.LocalRotation",
+                   "if (!TrySetNativeBlockSelection(") &&
+               setSelectionSource.Contains("_build.SetBuildMarkerLocalRotation(copiedRotation.Value)"),
+            "Viewport right-click samples the pointed craft block's exact native item and rotation before updating the native build marker.");
+
+        Assert(setModeSource.Contains(
+                   "SetNativeBlockPaletteCursorPreviewUpdater(") &&
+               setModeSource.Contains(
+                   "enabled ? PrepareNativeBlockPaletteCursorPreview : null") &&
+               prepareCursorPreviewSource.Contains(
+                   "DecorationEditorInputScope.MouseOverEditorUi") &&
+               prepareCursorPreviewSource.Contains(
+                   "DecorationEditorInputScope.NativeBlockPaletteBuildContextValid(") &&
+               prepareCursorPreviewSource.Contains("_textInputFocused") &&
+               prepareCursorPreviewSource.Contains("ForegroundContextMenuOpen()") &&
+               prepareCursorPreviewSource.Contains(
+                   "ReferenceEquals(selectedItem, _nativeBlockPaletteItem)") &&
+               prepareCursorPreviewSource.Contains(
+                   "TryProbeNativeBlockPaletteCursor(") &&
+               OccursBefore(
+                   prepareCursorPreviewSource,
+                   "focusedConstruct = build.GetC()",
+                   "ReferenceEquals(hit.Construct, focusedConstruct)") &&
+               prepareCursorPreviewSource.Contains(
+                   "ReferenceEquals(hit.Construct, focusedConstruct)") &&
+               prepareCursorPreviewSource.Contains(
+                   "build.GetBuildMarkerLocalRotation()") &&
+               OccursBefore(
+                   prepareCursorPreviewSource,
+                   "build.buildMarker.transform.localPosition = markerPosition",
+                   "build.DoBuildModeComplex()") &&
+               OccursBefore(
+                   prepareCursorPreviewSource,
+                   "build.DoBuildModeComplex()",
+                   "build.buildMarker.SetScale(1f)") &&
+               OccursBefore(
+                   prepareCursorPreviewSource,
+                   "build.buildMarker.SetScale(1f)",
+                   "build.SetVisualSize()") &&
+               OccursBefore(
+                   prepareCursorPreviewSource,
+                   "build.SetVisualSize()",
+                   "SetVisibilityOfMainMarkerAndVehicleDirectionArrows(true)") &&
+               prepareCursorPreviewSource.Contains(
+                   "IsNativeBlockPalettePlacementReady(") &&
+               prepareCursorPreviewSource.Contains("if (!ready)") &&
+               prepareCursorPreviewSource.Contains(
+                   "NeutralizeNativeBlockPalettePlacement(build)") &&
+               prepareCursorPreviewSource.Contains(
+                   "build.buildMarker.DisableTheRotationMarkers()") &&
+               resolveCursorPositionSource.Contains(
+                   "DecorationPointerProbe.TryGetLocalFaceNormal(") &&
+               resolveCursorPositionSource.Contains(
+                   "definition.SizeInfo.SizePos") &&
+               resolveCursorPositionSource.Contains(
+                   "definition.SizeInfo.SizeNeg") &&
+               resolveCursorPositionSource.Contains(
+                   "Quaternion.Inverse(rotation)") &&
+               resolveCursorPositionSource.Contains(
+                   "TryResolveNativeBlockCursorMarkerPosition(") &&
+               resolveCursorMarkerPositionSource.Contains(
+                   "extent = Math.Max(0, extent)") &&
+               resolveCursorMarkerPositionSource.Contains(
+                   "outsideCell.x - inwardCell.x * extent") &&
+               hideCursorPreviewSource.Contains(
+                   "SetBlockBeingBuiltOn(null)") &&
+               hideCursorPreviewSource.Contains(
+                   "SetVisibilityOfMainMarkerAndVehicleDirectionArrows(false)") &&
+               hideCursorPreviewSource.Contains(
+                   "NeutralizeNativeBlockPalettePlacement(_build)") &&
+               hideCursorPreviewSource.Contains(
+                   "_build.buildMarker.DisableTheRotationMarkers()") &&
+               OccursBefore(
+                   hideCursorPreviewSource,
+                   "NeutralizeNativeBlockPalettePlacement(_build)",
+                   "if (_build.buildMarker == null)") &&
+               neutralizePlacementSource.Contains(
+                   "build.addRemove = enumAddRemove.neither") &&
+               neutralizePlacementSource.Contains("build.H2P = enumH2P.idle") &&
+               blockPaletteSource.Contains(
+                   "addRemove == enumAddRemove.add") &&
+               probeCursorSource.Contains("Time.frameCount") &&
+               probeCursorSource.Contains("Input.mousePosition") &&
+               probeCursorSource.Contains("Camera.main ?? Camera.current") &&
+               probeCursorSource.Contains("camera.ScreenPointToRay(mouse)") &&
+               probeCursorSource.Contains(
+                   "ReferenceEquals(_nativeBlockPaletteProbeCamera, camera)") &&
+               probeCursorSource.Contains(
+                   "_nativeBlockPaletteProbeRayOrigin - rayOrigin") &&
+               probeCursorSource.Contains(
+                   "_nativeBlockPaletteProbeRayDirection - rayDirection") &&
+               probeCursorSource.Contains(
+                   "_nativeBlockPaletteProbeConstructRayOrigin - constructRayOrigin") &&
+               probeCursorSource.Contains(
+                   "_nativeBlockPaletteProbeConstructRayDirection - constructRayDirection") &&
+               probeCursorSource.Contains(
+                   "_nativeBlockPaletteProbeConstruct") &&
+               OccurrenceCount(
+                   probeCursorSource,
+                   "_pointerProbe.TryProbe") == 1 &&
+               probeCursorSource.Contains(
+                   "DecorationPointerProbe.ProbeOptions.MeshPlacement") &&
+               invalidateCursorProbeSource.Contains(
+                   "_nativeBlockPaletteProbeFrame = -1") &&
+               setModeSource.Contains(
+                   "InvalidateNativeBlockPaletteCursorProbe()"),
+            "Block Palette drives FtD's native full-size marker from the free mouse face, current rotation, and signed multi-cell footprint, bounds expensive probing to one unchanged ray per frame, runs native complex validation, and hides the marker whenever ESU owns or cannot resolve the target.");
+
+        Assert(OccursBefore(
+                   handleSceneInputSource,
+                   "IsMouseOverEditorUi(_lastMouseGui)",
+                   "TryBlurNativeBlockPaletteTextInputForWorldClick()") &&
+               OccursBefore(
+                   handleSceneInputSource,
+                   "TryBlurNativeBlockPaletteTextInputForWorldClick()",
+                   "HandleNativeBlockPaletteSceneInput()") &&
+               OccursBefore(
+                   handleSceneInputSource,
+                   "HandleNativeBlockPaletteSceneInput()",
+                   "TryOpenDecorationContextMenu()") &&
+               handleNativeSceneInputSource.Contains(
+                   "NativeBlockPaletteInputAction.SelectPointedBlock") &&
+               handleNativeSceneInputSource.Contains(
+                   "DecorationEditorInputScope.ClaimBuildInputForFrames()") &&
+               handleNativeSceneInputSource.Contains("TrySelectPointedNativeBlock()") &&
+               OccursBefore(
+                   shouldConsumeGuiEventSource,
+                   "if (overUi)",
+                   "if (_nativeBlockPaletteMode)") &&
+               shouldConsumeGuiEventSource.Contains(
+                   "return action == NativeBlockPaletteInputAction.SelectPointedBlock"),
+            "Dynamic editor UI remains modal, focused text is blurred first, viewport right-click is then claimed for native sampling before decoration context/removal logic, and viewport left-click remains unconsumed for FtD placement.");
+
+        Assert(blurTextInputSource.Contains("!_nativeBlockPaletteMode") &&
+               blurTextInputSource.Contains("!_textInputFocused") &&
+               blurTextInputSource.Contains("Input.GetMouseButtonDown(0)") &&
+               blurTextInputSource.Contains("Input.GetMouseButtonDown(1)") &&
+               OccursBefore(
+                   blurTextInputSource,
+                   "GUIUtility.keyboardControl = 0",
+                   "_textInputFocused = false") &&
+               OccursBefore(
+                   blurTextInputSource,
+                   "_textInputFocused = false",
+                   "RequireNativeBlockPaletteMouseRelease()") &&
+               blurTextInputSource.Contains(
+                   "SetNativeBlockPaletteAuxiliaryInputOwnership(") &&
+               blurTextInputSource.Contains("EsuInputState.IsTextInputActive()") &&
+               blurTextInputSource.Contains("_unappliedClosePromptOpen") &&
+               blurTextInputSource.Contains("_gizmoSettingsOpen") &&
+               blurTextInputSource.Contains("_viewModeMenuOpen") &&
+               blurTextInputSource.Contains("_anchorMenuOpen") &&
+               blurTextInputSource.Contains("ForegroundContextMenuOpen()") &&
+               blurTextInputSource.Contains("ClaimBuildInputForFrames()") &&
+               blurTextInputSource.Contains("ClaimCameraInputForFrames()") &&
+               blurTextInputSource.Contains("_build.H2P = enumH2P.idle") &&
+               requireMouseReleaseSource.Contains("if (NativeBlockPaletteMode)") &&
+               requireMouseReleaseSource.Contains(
+                   "_nativeBlockPaletteRequiresMouseRelease = true") &&
+               handleSceneInputSource.Replace("\r\n", "\n").Contains(
+                   "if (TryBlurNativeBlockPaletteTextInputForWorldClick())\n                return;"),
+            "The first world LMB or RMB while a Block Palette field is focused only clears GUI focus, refreshes modal ownership, idles FtD, claims the click, and requires a full mouse release before native placement or sampling.");
+
+        Assert(inputScopeBeginSource.Contains("_nativeBlockPaletteMode = false") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPalettePlacementArmed = false") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteExpectedItem = null") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteRequiresMouseRelease = false") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteTextInputFocused = false") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteModalInputOpen = false") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteAuxiliaryInputWasSuppressed = false") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteCursorPreviewUpdater = null") &&
+               inputScopeBeginSource.Contains(
+                   "_nativeBlockPaletteCursorPlacementReady = false") &&
+               inputScopeEndSource.Contains("_nativeBlockPaletteMode = false") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPalettePlacementArmed = false") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteExpectedItem = null") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteRequiresMouseRelease = false") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteTextInputFocused = false") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteModalInputOpen = false") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteAuxiliaryInputWasSuppressed = false") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteCursorPreviewUpdater = null") &&
+               inputScopeEndSource.Contains(
+                   "_nativeBlockPaletteCursorPlacementReady = false") &&
+               inputScopeEndSource.Contains("nativePreviewWasActive") &&
+               OccursBefore(
+                   inputScopeEndSource,
+                   "HideNativeBlockPaletteCursorPreview(cBuild.GetSingleton())",
+                   "_active = false") &&
+               inputScopeForceResetSource.Contains(
+                   "_nativeBlockPaletteCursorPreviewUpdater == null") &&
+               inputScopeForceResetSource.Contains(
+                   "!_nativeBlockPaletteCursorPlacementReady") &&
+               inputScopeSetModeSource.Contains(
+                   "_nativeBlockPaletteRequiresMouseRelease = true") &&
+               inputScopeNativeBlockSource.Contains(
+                   "Input.GetMouseButton(0) || Input.GetMouseButton(1)") &&
+               inputScopeNativeBlockSource.Contains("MouseOverEditorUi") &&
+               inputScopeNativeBlockSource.Contains("NativeBlockPaletteOwnsRightMouse") &&
+               inputScopeNativeBlockSource.Contains(
+                   "_nativeBlockPaletteTextInputFocused") &&
+               inputScopeNativeBlockSource.Contains(
+                   "_nativeBlockPaletteModalInputOpen") &&
+               inputScopeNativeBlockSource.Contains(
+                   "auxiliaryInputOwned && primaryOrSecondaryHeld") &&
+               inputScopeNativeBlockSource.Contains(
+                   "!ExactNativeBlockPaletteItemSelected(build)") &&
+               OccurrenceCount(
+                   inputScopeNativeBlockSource,
+                   "ExactNativeBlockPaletteItemSelected(build)") == 1 &&
+               OccursBefore(
+                   inputScopeNativeBlockSource,
+                   "_nativeBlockPaletteRequiresMouseRelease = false",
+                   "!ExactNativeBlockPaletteItemSelected(build)") &&
+               inputScopeNativeBlockSource.Contains("build.H2P = enumH2P.idle") &&
+               inputScopeNativeBlockSource.Contains("allowNativeReleaseReset") &&
+               inputScopeNativeBlockSource.Contains(
+                   "!NativeBlockPaletteMode && ControlHeldWhileActive") &&
+               inputScopeNativeBlockSource.Contains(
+                   "DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()") &&
+               suppressBuildInputSource.Contains(
+                   "allowNativeReleaseReset: false") &&
+               suppressFixedBuildInputSource.Contains(
+                   "allowNativeReleaseReset: true") &&
+               exactNativeItemSource.Contains(
+                   "build.BuildingWith?.Mode == BuildingWithMode.Item") &&
+               exactNativeItemSource.Contains("ReferenceEquals(") &&
+               exactNativeItemSource.Contains(
+                   "build.BuildingWith.Item?.ItemType == enumItemType.block") &&
+               inputScopeSource.Contains(
+                   "[HarmonyPatch(typeof(cBuild), nameof(cBuild.RunUpdate))]") &&
+               inputScopeSource.Contains("SuppressBuildInput(__instance)") &&
+               inputScopeSource.Contains(
+                   "[HarmonyPatch(typeof(cBuild), nameof(cBuild.RunFixedUpdate))]") &&
+               inputScopeSource.Contains("SuppressFixedBuildInput(__instance)") &&
+               suppressCameraInputSource.Contains(
+                   "_nativeBlockPaletteTextInputFocused") &&
+               suppressCameraInputSource.Contains(
+                   "_nativeBlockPaletteModalInputOpen"),
+            "Native mode gates both FtD build loops and camera over UI, text, modal, and right-click ownership; its release latch clears without requiring an Item, the normal placement gate still requires the exact block, and force-reset neutralizes any active marker before clearing scope state.");
+
+        Assert(OccursBefore(
+                   inputScopeNativeBlockSource,
+                   "RefreshNativeBlockPaletteCursorPreview(build)",
+                   "bool sharedBlocker =") &&
+               inputScopeNativeBlockSource.Contains(
+                   "ShouldSuppressNativeBlockPalettePrimaryPlacement(") &&
+               inputScopeNativeBlockSource.Contains(
+                   "UnsafeSimpleBuildReplacementGesture(build)") &&
+               primaryPlacementPolicySource.Contains("primaryHeld &&") &&
+               primaryPlacementPolicySource.Contains("!cursorPlacementReady") &&
+               primaryPlacementPolicySource.Contains(
+                   "unsafeSimpleReplacementGesture") &&
+               refreshCursorPreviewSource.Contains(
+                   "_nativeBlockPaletteCursorPreviewUpdater(build)") &&
+               OccursBefore(
+                   refreshCursorPreviewSource,
+                   "NativeBlockPaletteBuildContextValid(build)",
+                   "_nativeBlockPaletteCursorPreviewUpdater(build)") &&
+               refreshCursorPreviewSource.Contains(
+                   "_nativeBlockPaletteCursorPreviewApplying") &&
+               refreshCursorPreviewSource.Contains(
+                   "_nativeBlockPaletteCursorPlacementReady = false") &&
+               hideScopeCursorPreviewSource.Contains(
+                   "NeutralizeNativeBlockPalettePlacement(build)") &&
+               hideScopeCursorPreviewSource.Contains(
+                   "build.buildMarker.DisableTheRotationMarkers()") &&
+               OccursBefore(
+                   hideScopeCursorPreviewSource,
+                   "NeutralizeNativeBlockPalettePlacement(build)",
+                   "if (build.buildMarker == null)") &&
+               overrideDoBuildModeSource.Contains(
+                   "NativeBlockPaletteBuildContextValid(build)") &&
+               OccursBefore(
+                   overrideDoBuildModeSource,
+                   "NativeBlockPaletteBuildContextValid(build)",
+                   "RefreshNativeBlockPaletteCursorPreview(build)") &&
+               overrideDoBuildModeSource.Contains(
+                   "HideNativeBlockPaletteCursorPreview(build)") &&
+               canOverrideDoBuildModeSource.Contains(
+                   "!constructDestroyed") &&
+               canOverrideDoBuildModeSource.Contains("markerPresent") &&
+               canOverrideDoBuildModeSource.Contains("teamMatches") &&
+               nativeBuildContextValidSource.Contains("construct.GetTeam()") &&
+               nativeBuildContextValidSource.Contains("build.team") &&
+               nativeBuildContextValidSource.Contains("construct.Destroyed") &&
+               nativeBuildContextValidSource.Contains("build?.buildMarker != null") &&
+               suppressLateUpdateSource.Contains(
+                   "return !RefreshNativeBlockPaletteCursorPreview(build)") &&
+               suppressIndicatorsSource.Contains("NativeBlockPaletteMode") &&
+               inputScopeSource.Contains(
+                   "[HarmonyPatch(typeof(cBuild), nameof(cBuild.DoBuildMode))]") &&
+               inputScopeSource.Contains(
+                   "[HarmonyPatch(typeof(cBuild), nameof(cBuild.RunLateUpdate))]") &&
+               inputScopeSource.Contains(
+                   "[HarmonyPatch(typeof(cBuild), nameof(cBuild.DrawIndicators))]") &&
+               inputScopeSource.Contains(
+                   "OverrideNativeBlockPaletteDoBuildMode(") &&
+               inputScopeSource.Contains(
+                   "SuppressNativeBlockPaletteLateUpdate(") &&
+               inputScopeSource.Contains(
+                   "SuppressNativeBlockPaletteIndicators()") &&
+               !blockPaletteSource.Contains("PlaceBlockCommand") &&
+               !blockPaletteSource.Contains("SmartBlockItemPreviewRenderer"),
+            "Block Palette refreshes its native cursor target before each build-input decision, suppresses invalid or unsafe primary placement, neutralizes stale native add state, intercepts FtD marker updates without custom placement commands, and guards reentrant preview refreshes.");
+
+        Assert(inputScopeNativeBlockSource.Contains(
+                   "bool editorUiMouseGesture =") &&
+               inputScopeNativeBlockSource.Contains("_active &&") &&
+               inputScopeNativeBlockSource.Contains("MouseOverEditorUi &&") &&
+               inputScopeNativeBlockSource.Contains(
+                   "Input.GetMouseButton(0) || Input.GetMouseButton(1)") &&
+               OccursBefore(
+                   inputScopeNativeBlockSource,
+                   "editorUiMouseGesture ||",
+                   "if (!NativeBlockPaletteMode)") &&
+               OccursBefore(
+                   inputScopeNativeBlockSource,
+                   "bool sharedBlocker =",
+                   "if (!NativeBlockPaletteMode)"),
+            "An active Decoration UI LMB/RMB gesture enters the shared native-build blocker before the Block Palette mode branch, so the Build toggle click cannot place or remove a block while enabling the mode.");
+
+        Assert(auxiliaryPolicySource.Contains("nativeBlockPaletteMode &&") &&
+               auxiliaryPolicySource.Contains("textInputFocused") &&
+               auxiliaryPolicySource.Contains("modalInputOpen") &&
+               auxiliaryPolicySource.Contains("ownsUiGesture") &&
+               suppressAuxiliarySource.Contains("OwnsBuildInputThisFrame") &&
+               suppressAuxiliarySource.Contains("NativeBlockPaletteOwnsRightMouse") &&
+               suppressAuxiliarySource.Contains(
+                   "NativeBlockPaletteRequiresMouseRelease") &&
+               suppressAuxiliarySource.Contains("EsuEscapeCloseGuard.Active") &&
+               suppressAuxiliarySource.Replace("\r\n", "\n").Contains(
+                   "pointerGestureOwned) ||\n                DecoLimitLifter.EsuEscapeCloseGuard.Active") &&
+               suppressAuxiliarySource.Contains("MouseOverEditorUi") &&
+               suppressAuxiliarySource.Contains("Input.GetMouseButton(0)") &&
+               suppressAuxiliarySource.Contains("Input.GetMouseButton(1)") &&
+               drawGuiSource.Contains(
+                   "DecorationEditorInputScope.SetNativeBlockPaletteAuxiliaryInputOwnership(") &&
+               drawGuiSource.Contains("_textInputFocused ||") &&
+               drawGuiSource.Contains("EsuInputState.IsTextInputActive()") &&
+               drawGuiSource.Contains("_unappliedClosePromptOpen") &&
+               drawGuiSource.Contains("_gizmoSettingsOpen") &&
+               drawGuiSource.Contains("_viewModeMenuOpen") &&
+               drawGuiSource.Contains("_anchorMenuOpen") &&
+               drawGuiSource.Contains("ForegroundContextMenuOpen()"),
+            "Decoration Edit reports text focus and every foreground modal to the native auxiliary gate, which also owns active gestures and release cleanup while Escape suppresses cInput even outside Block Palette mode.");
+
+        Assert(inputScopeSource.Contains(
+                   "AccessTools.Field(typeof(cInput), \"_i_cInput_cBuild\")") &&
+               inputScopeSource.Contains(
+                   "AccessTools.Method(typeof(cBuild), \"ResetCursorDirectionStates\")") &&
+               suppressAuxiliarySource.Contains(
+                   "if (!_nativeBlockPaletteAuxiliaryInputWasSuppressed)") &&
+               suppressAuxiliarySource.Contains(
+                   "ResetNativeBlockPaletteDirectionalInput(input)") &&
+               suppressAuxiliarySource.Contains(
+                   "_nativeBlockPaletteAuxiliaryInputWasSuppressed = false") &&
+               resetDirectionalSource.Contains(
+                   "NativeInputBuildField?.GetValue(input) as cBuild ??") &&
+               resetDirectionalSource.Contains("cBuild.GetSingleton()") &&
+               resetDirectionalSource.Contains("build.H2P = enumH2P.idle") &&
+               resetDirectionalSource.Contains("build.TabHeld(false)") &&
+               resetDirectionalSource.Contains("build.ShiftHeld(false)") &&
+               resetDirectionalSource.Contains("build.useDoubleTapSpeed = false") &&
+               resetDirectionalSource.Contains(
+                   "build.OrientationKeyPressed(Vector3.zero)") &&
+               resetDirectionalSource.Contains(
+                   "ResetCursorDirectionStatesMethod?.Invoke(build, null)"),
+            "The cInput gate clears FtD's H2P, Tab, Shift, double-tap, orientation, and private cursor-direction state once per ownership transition, resolving the bound cBuild with a singleton fallback.");
+
+        Assert(resolveFixedTargetSource.Contains(
+                   "AccessTools.Method(typeof(cBuild), nameof(cBuild.RunFixedUpdate))") &&
+               resolveDoBuildModeTargetSource.Contains(
+                   "AccessTools.Method(typeof(cBuild), nameof(cBuild.DoBuildMode))") &&
+               resolveBuildLateUpdateTargetSource.Contains(
+                   "AccessTools.Method(typeof(cBuild), nameof(cBuild.RunLateUpdate))") &&
+               resolveDrawIndicatorsTargetSource.Contains(
+                   "AccessTools.Method(typeof(cBuild), nameof(cBuild.DrawIndicators))") &&
+               resolveInputTargetSource.Contains("typeof(cInput)") &&
+               resolveInputTargetSource.Contains(
+                   "\"BrilliantSkies.Ftd.Avatar.I_c_cInput.RunUpdate\"") &&
+               resolveInputTargetSource.Contains("Type.EmptyTypes") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "VerifyExactPatch(\n                ResolveDecorationEditorBuildFixedUpdateTarget(),") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "typeof(DecorationEditor_cBuild_RunFixedUpdate_Patch)") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "VerifyExactPatch(\n                ResolveDecorationEditorDoBuildModeTarget(),") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "typeof(DecorationEditor_cBuild_DoBuildMode_Patch)") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "VerifyExactPatch(\n                ResolveDecorationEditorBuildLateUpdateTarget(),") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "typeof(DecorationEditor_cBuild_RunLateUpdate_Patch)") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "VerifyExactPatch(\n                ResolveDecorationEditorDrawIndicatorsTarget(),") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "typeof(DecorationEditor_cBuild_DrawIndicators_Patch)") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "VerifyExactPatch(\n                ResolveDecorationEditorInputUpdateTarget(),") &&
+               verifyRequiredPatchesSourceNormalized.Contains(
+                   "typeof(DecorationEditor_cInput_RunUpdate_Patch)") &&
+               inputScopeSource.Contains(
+                   "Plugin.ResolveDecorationEditorInputUpdateTarget()") &&
+               inputScopeSource.Contains(
+                   "SuppressNativeBlockPaletteAuxiliaryInput("),
+            "Plugin startup requires and exactly verifies the native fixed-build, cursor-marker DoBuildMode/late-update/indicator, and explicit cInput targets used by Block Palette's Harmony gates.");
+
+        Assert(setModeSource.Contains("_build.H2P = enumH2P.idle") &&
+               setModeSource.Contains("HideNativeBlockPaletteCursorPreview()") &&
+               setModeSource.Contains(
+                   "DecorationEditorInputScope.SetNativeBlockPalettePlacementArmed(false)") &&
+               syncSelectionSource.Contains(
+                   "_build.BuildingWith?.Mode == BuildingWithMode.Item") &&
+               syncSelectionSource.Contains("current = _build.BuildingWith.Item") &&
+               syncSelectionSource.Contains(
+                   "bool armed = IsNativePlaceableBlockDefinition(current)") &&
+               syncSelectionSource.Contains("_nativeBlockPaletteItem = armed ? current : null") &&
+               syncSelectionSource.Contains(
+                   "DecorationEditorInputScope.SetNativeBlockPaletteExpectedItem(") &&
+               setSelectionSource.Contains(
+                   "DecorationEditorInputScope.SetNativeBlockPaletteExpectedItem(") &&
+               setSelectionSource.Contains("HideNativeBlockPaletteCursorPreview()") &&
+               updateSource.Contains("SyncNativeBlockPaletteSelection()") &&
+               updateSource.Contains("if (!_nativeBlockPaletteMode)") &&
+               updateSource.Contains("HandleEditorKeybinds()"),
+            "Block Palette resets FtD's click phase on transitions, tracks native hotbar/inventory changes, and delegates only when BuildingWith is an exact Item-mode block while ESU shortcuts stand down.");
+
+        Assert(dismissPromptSource.Contains("if (_nativeBlockPaletteMode)") &&
+               dismissPromptSource.Contains("SetNativeBlockPaletteMode(false)") &&
+               switchSurfaceSource.Contains(
+                   "SetNativeBlockPaletteMode(false, notify: false)") &&
+               togglePaintSource.Contains(
+                   "SetNativeBlockPaletteMode(false, notify: false)") &&
+               endSource.Contains("SetNativeBlockPaletteMode(false, notify: false)") &&
+               suspendHandoffSource.Contains(
+                   "SetNativeBlockPaletteMode(false, notify: false)"),
+            "Escape, Paint, Surface Builder, session end, and mode-switch handoff all disarm native Block Palette input before another editor path can own the viewport.");
+
+        Assert(!blockPaletteSource.Contains("PlaceBlockCommand") &&
+               !blockPaletteSource.Contains("SmartBuildCommitter"),
+            "Block Palette delegates placement to FtD's native build loop instead of issuing direct Smart Builder placement commands.");
     }
 
     private static bool ToolbarBudgetsStayInsideAvailableWidth()
@@ -8083,6 +9381,28 @@ f 0 2 3
             generatorShapeSettings,
             4,
             "Decoration generator partial circle creates one open arc segment per requested segment.");
+        var reportedPartialArcSettings = new DecorationGeneratorSettings
+        {
+            MeshGuid = generatorMesh,
+            LengthAxis = DecorationEditAxis.Y,
+            Diameter = 1f,
+            CircleRadius = 2.5f,
+            CircleSegments = 4,
+            ArcDegrees = 90f,
+            ShapeHeight = 2f,
+            TopRadius = 1f,
+            NearestAnchor = false
+        };
+        Assert(GeneratorPlacementsSpanPreviewSegments(
+                   SurfaceExtraTool.PartialCircle,
+                   reportedPartialArcSettings,
+                   expectedCount: 4),
+            "The reported 4-segment 90-degree Y-axis partial circle keeps every block centered, scaled, and aligned to its arc segment before and after tilting the shape basis.");
+        Assert(GeneratorPlacementsSpanPreviewSegments(
+                   SurfaceExtraTool.Frustum,
+                   reportedPartialArcSettings,
+                   expectedCount: 13),
+            "The reported 4-segment 90-degree Y-axis frustum keeps every block centered, scaled, and aligned to its ring or rail segment before and after tilting the shape basis.");
         AssertGeneratorShapePlanCount(
             SurfaceExtraTool.Cone2D,
             generatorShapeSettings,
@@ -8639,16 +9959,37 @@ f 0 2 3
         string generatorMaterialListViewportHeightSource = ExtractMethodSource(sessionSource, "GeneratorMaterialListViewportHeight");
         string drawSurfaceOverlaySource = ExtractMethodSource(sessionSource, "DrawSurfaceOverlay");
         string drawSurfacePlanMeshPreviewSource = ExtractMethodSource(sessionSource, "DrawSurfacePlanMeshPreview");
+        string drawGeneratorPlanMeshPreviewSource = ExtractMethodSource(sessionSource, "DrawGeneratorPlanMeshPreview");
+        string drawGeneratorSegmentsSource = ExtractMethodSource(sessionSource, "DrawGeneratorSegments");
         string surfacePreviewResourceSource = ExtractMethodSource(sessionSource, "SurfacePreviewResourceFor");
+        string generatorPreviewResourceSource = ExtractMethodSource(sessionSource, "GeneratorPreviewResourceFor");
+        string generatorPreviewMaterialSource = ExtractMethodSource(sessionSource, "GeneratorPreviewMaterial");
+        string decorationPreviewResourceSource = ExtractMethodSource(sessionSource, "DecorationPreviewResourceFor");
         string nativeDecorationPreviewColorSource = ExtractMethodSource(sessionSource, "NativeDecorationPreviewColor");
         string surfacePreviewResourceKeySource = ExtractMethodSource(sessionSource, "SurfacePreviewResourceKey");
+        string generatorPreviewResourceKeySource = ExtractMethodSource(sessionSource, "GeneratorPreviewResourceKey");
         string clearSurfacePreviewResourcesSource = ExtractMethodSource(sessionSource, "ClearSurfacePreviewResources");
         string releaseSurfacePreviewResourceSource = ExtractMethodSource(sessionSource, "ReleaseSurfacePreviewResource");
         string expandedSurfaceWorkspaceSource = ExtractMethodSource(sessionSource, "DrawExpandedSurfaceWorkspace");
         string surfacePlacementMatrixSource = ExtractMethodSource(sessionSource, "SurfacePlacementMatrix");
+        string generatorPlacementMatrixSource = ExtractMethodSource(sessionSource, "GeneratorPlacementMatrix");
         string createFaceFromSelectedSurfacePointsSource = ExtractMethodSource(sessionSource, "CreateFaceFromSelectedSurfacePoints");
         string commitSharedAnchorDragSource = ExtractMethodSource(sessionSource, "CommitSharedAnchorDrag");
+        string clearGeneratorPlansSource = ExtractMethodSource(sessionSource, "ClearGeneratorPlans");
+        string previewSurfaceActionTargetSource = ExtractMethodSource(sessionSource, "PreviewSurfaceActionTarget");
+        string placeGeneratorPlanSource = ExtractMethodSource(sessionSource, "PlaceGeneratorPlan");
+        string finalizeSurfaceCoordinateLiveSource = ExtractMethodSource(sessionSource, "FinalizeSurfaceCoordinateLiveInteraction");
+        string revertSurfaceCoordinateTextSource = ExtractMethodSource(sessionSource, "RevertSurfaceCoordinateText");
+        string handleSurfaceSceneInputSource = ExtractMethodSource(sessionSource, "HandleSceneInput");
         string drawSurfaceSameAnchorPreviewSource = ExtractMethodSource(sessionSource, "DrawSurfaceSameAnchorPreview");
+        string drawGeneratorSameAnchorPreviewSource = ExtractMethodSource(sessionSource, "DrawGeneratorSameAnchorPreview");
+        string generatorSameAnchorPreviewLinesSource = ExtractMethodSource(sessionSource, "GeneratorSameAnchorPreviewLines");
+        string symmetryButtonSource = ExtractMethodSource(sessionSource, "SymmetryButton");
+        string placePendingSymmetryPlaneSource = ExtractMethodSource(sessionSource, "PlacePendingSymmetryPlane");
+        string facingSymmetryShortcutSource = ExtractMethodSource(sessionSource, "TryHandleFacingSymmetryShortcut");
+        string invalidateSurfaceBuilderSymmetryPreviewSource = ExtractMethodSource(
+            sessionSource,
+            "InvalidateSurfaceBuilderPreviewPlansForSymmetryChange");
         string placeSurfacePlanSource = ExtractMethodSource(sessionSource, "PlaceSurfacePlan");
         string selectGeneratorDraftPointRowSource = ExtractMethodSource(sessionSource, "SelectGeneratorDraftPointRow").Replace("\r\n", "\n");
         string activateGeneratorDraftSelectionToolSource = ExtractMethodSource(sessionSource, "ActivateGeneratorDraftSelectionTool").Replace("\r\n", "\n");
@@ -8951,12 +10292,13 @@ f 0 2 3
                drawSurfaceOverlaySource.Contains("bool drawDraftFill = !hasPreview || !drewPreviewMeshes") &&
                drawSurfaceOverlaySource.Contains("if (drawDraftFill)") &&
                nativeDecorationPreviewColorSource.Contains("Colors.CleanUpColorBeforePassingOut(") &&
-               surfacePreviewResourceSource.Contains("SurfacePreviewMeshCanAcceptVertexColors(sourceMesh)") &&
-               surfacePreviewResourceSource.Contains("UnityEngine.Object.Instantiate(sourceMesh)") &&
-               surfacePreviewResourceSource.Contains("previewMesh.colors = vertexColors") &&
                surfacePreviewResourceSource.Contains("RuntimeHelpers.GetHashCode(palette)") &&
-               surfacePreviewResourceSource.Contains("new Material(sourceMaterial)") &&
-               surfacePreviewResourceSource.Contains("previewMesh = sourceMesh") &&
+               surfacePreviewResourceSource.Contains("DecorationPreviewResourceFor(") &&
+               decorationPreviewResourceSource.Contains("SurfacePreviewMeshCanAcceptVertexColors(sourceMesh)") &&
+               decorationPreviewResourceSource.Contains("UnityEngine.Object.Instantiate(sourceMesh)") &&
+               decorationPreviewResourceSource.Contains("previewMesh.colors = vertexColors") &&
+               decorationPreviewResourceSource.Contains("new Material(sourceMaterial)") &&
+               decorationPreviewResourceSource.Contains("previewMesh = sourceMesh") &&
                surfacePreviewResourceKeySource.Contains("Color32 rgba = nativeColor") &&
                surfacePreviewResourceKeySource.Contains("paletteIdentity.ToString(\"X8\"") &&
                clearSurfacePreviewResourcesSource.Contains("ReleaseSurfacePreviewResource(resource)") &&
@@ -8970,6 +10312,124 @@ f 0 2 3
                surfacePreviewSafeTransformIndex >= 0 &&
                surfacePreviewFullMatrixFallbackIndex > surfacePreviewSafeTransformIndex,
             "Surface Builder material previews use construct local-to-global position/rotation before the full matrix fallback, avoiding subobject scale or shear distortion.");
+
+        Assert(sessionSource.Contains("private const int MaxGeneratorMeshPreviewPlacements = 768;") &&
+               ContainsAll(
+                   drawGeneratorPlanMeshPreviewSource,
+                   "plan.Placements.Count",
+                   "MaxGeneratorMeshPreviewPlacements",
+                   "DecorationGeneratorPlacement placement = plan.Placements[",
+                   "GeneratorPreviewResourceFor(",
+                   "GeneratorPlacementMatrix(plan.Construct, placement)",
+                   "Graphics.DrawMesh(") &&
+               !drawGeneratorPlanMeshPreviewSource.Contains("ClearSurfacePreviewResources()") &&
+               ContainsAll(
+                   generatorPlacementMatrixSource,
+                   "ToVector3(placement.Anchor) + placement.Positioning",
+                   "Quaternion.Euler(placement.Orientation)",
+                   "ConstructRotation(construct) * localRotation",
+                   "placement.Scaling") &&
+               generatorPreviewResourceSource.Contains("GeneratorPreviewResourceKey(") &&
+               generatorPreviewResourceKeySource.Contains("placement.MaterialReplacement"),
+            "Surface Builder Extra Tools draw at most 768 authoritative planned meshes with their exact anchor, position, rotation, scale, color, and material-aware cached resources.");
+
+        Assert(sessionSource.Contains("private const int MaxGeneratorWirePreviewSegments = 1400;") &&
+               ContainsAll(
+                   drawGeneratorSegmentsSource,
+                   "Math.Min(",
+                   "segments.Count",
+                   "MaxGeneratorWirePreviewSegments",
+                   "GeneratorPreviewPlacementIndex(",
+                   "segments[segmentIndex].Start",
+                   "segments[segmentIndex].End") &&
+               !drawGeneratorSegmentsSource.Contains("index < segments.Count"),
+            "Extra Tools wire guides evenly sample each complete generator batch at a hard 1,400-segment cap instead of traversing every large-plan segment each frame.");
+
+        Assert(sessionSource.Contains("private readonly Dictionary<Guid, MaterialCatalogEntry> _materialByGuid") &&
+               sessionSource.Contains("_materialByGuid[material.Guid] = material") &&
+               OccurrenceCount(sessionSource, "_materialByGuid.Clear()") >= 2 &&
+               generatorPreviewResourceSource.Contains("GeneratorPreviewMaterial(") &&
+               generatorPreviewMaterialSource.Contains("_materialByGuid.TryGetValue(") &&
+               generatorPreviewMaterialSource.Contains("replacement?.Material != null") &&
+               !generatorPreviewMaterialSource.Contains("FirstOrDefault") &&
+               !generatorPreviewMaterialSource.Contains("_materialCatalog"),
+            "Generator material overrides resolve through the session's GUID index and fall back to the mesh material without a per-preview linear material-catalog scan.");
+
+        Assert(drawGeneratorOverlaySource.Contains("if (_generatorPlan != null)") &&
+               drawGeneratorOverlaySource.Contains("DrawGeneratorPlanMeshPreview(_generatorPlan)") &&
+               OccursBefore(
+                   drawGeneratorOverlaySource,
+                   "if (_generatorPlan != null)",
+                   "DrawGeneratorPlanMeshPreview(_generatorPlan)") &&
+               drawGeneratorOverlaySource.Contains("DrawGeneratorDraftOverlay(") &&
+               drawGeneratorOverlaySource.Contains("DrawGeneratorSameAnchorPreview()") &&
+               !drawGeneratorOverlaySource.Contains("RebuildGeneratorPreview("),
+            "Extra Tools real-mesh previews are gated by the explicit stored Preview plan while wire guides, editable points, and shared-anchor hints remain visible.");
+
+        Assert(sessionSource.Contains("private DecorationGeneratorPlan _generatorAnchorGuidePlan;") &&
+               drawGeneratorSameAnchorPreviewSource.Contains("DecorationGeneratorPlan plan = _generatorPlan ?? _generatorAnchorGuidePlan") &&
+               drawGeneratorSameAnchorPreviewSource.Contains("TryBuildGeneratorPlan(out plan") &&
+               drawGeneratorSameAnchorPreviewSource.Contains("if (_generatorPlan == null)") &&
+               drawGeneratorSameAnchorPreviewSource.Contains("_generatorAnchorGuidePlan = plan") &&
+               drawGeneratorSameAnchorPreviewSource.Contains("GeneratorSameAnchorPreviewLines(plan)") &&
+               !drawGeneratorSameAnchorPreviewSource.Contains("RebuildGeneratorPreview(") &&
+               !drawGeneratorSameAnchorPreviewSource.Contains("_generatorPlan = plan") &&
+               !drawGeneratorSameAnchorPreviewSource.Contains("_generatorPlan = null") &&
+               ContainsAll(
+                   generatorSameAnchorPreviewLinesSource,
+                   "Math.Min(plan.Placements.Count, MaxWorldHintLines)",
+                   "GeneratorPreviewPlacementIndex(",
+                   "plan.Placements.Count",
+                   "MaxWorldHintLines",
+                   "plan.Placements[placementIndex]") &&
+               ContainsAll(
+                   clearGeneratorPlansSource,
+                   "_generatorPlan = null",
+                   "_generatorAnchorGuidePlan = null"),
+            "Generator Same-anchor hints cache and evenly sample a bounded guide-only plan without populating the explicit real-mesh Preview state, and every generator invalidation clears both plans.");
+
+        Assert(OccurrenceCount(sessionSource, "RebuildGeneratorPreview(") == 3 &&
+               previewSurfaceActionTargetSource.Contains("RebuildGeneratorPreview(showMessage)") &&
+               placeGeneratorPlanSource.Contains("RebuildGeneratorPreview(showMessage: false)") &&
+               finalizeSurfaceCoordinateLiveSource.Contains("RecordGeneratorEdit(\"Adjust generator coordinate\"") &&
+               revertSurfaceCoordinateTextSource.Contains("InvalidateGeneratorPlan(_generatorMessage)") &&
+               handleSurfaceSceneInputSource.Contains("RecordGeneratorEdit(\"Move generator point\"") &&
+               handleSurfaceSceneInputSource.Contains("RecordGeneratorEdit(\"Transform generator shape\"") &&
+               commitSharedAnchorDragSource.Contains("RecordGeneratorEdit(\"Move generator shared anchor\"") &&
+               !finalizeSurfaceCoordinateLiveSource.Contains("RebuildGeneratorPreview(") &&
+               !revertSurfaceCoordinateTextSource.Contains("RebuildGeneratorPreview(") &&
+               !handleSurfaceSceneInputSource.Contains("RebuildGeneratorPreview(") &&
+               !commitSharedAnchorDragSource.Contains("RebuildGeneratorPreview("),
+            "Only explicit Preview dispatch and final Place validation rebuild the stored Extra Tools plan; coordinate, drag, rotate/scale, and shared-anchor completion paths only invalidate or record edits.");
+
+        Assert(ContainsAll(
+                   symmetryButtonSource,
+                   "bool wasActive = DecoLimitLifter.EsuSymmetry.IsActive(axis)",
+                   "DecoLimitLifter.EsuSymmetry.ToggleAxis(axis)",
+                   "if (wasActive)",
+                   "InvalidateSurfaceBuilderPreviewPlansForSymmetryChange()") &&
+               ContainsAll(
+                   placePendingSymmetryPlaneSource,
+                   "DecoLimitLifter.EsuSymmetry.TryPlacePending(",
+                   "InvalidateSurfaceBuilderPreviewPlansForSymmetryChange()",
+                   "Symmetry plane placed.") &&
+               ContainsAll(
+                   facingSymmetryShortcutSource,
+                   "bool facingAxisKnown = DecoLimitLifter.EsuSymmetry.TryFacingAxis(",
+                   "bool wasFacingPlaneActive = facingAxisKnown",
+                   "DecoLimitLifter.EsuSymmetry.TryToggleFacingPlane(",
+                   "facingAxisKnown &&",
+                   "wasFacingPlaneActive ||",
+                   "DecoLimitLifter.EsuSymmetry.IsActive(facingAxis)",
+                   "InvalidateSurfaceBuilderPreviewPlansForSymmetryChange()") &&
+               ContainsAll(
+                   invalidateSurfaceBuilderSymmetryPreviewSource,
+                   "if (_surfacePlan != null)",
+                   "_surfacePlan = null",
+                   "bool hadGeneratorPreview = _generatorPlan != null",
+                   "ClearGeneratorPlans()",
+                   "if (hadGeneratorPreview)"),
+            "Removing or placing symmetry invalidates stored Surface and Extra Tools plans, while facing-toggle cancellation without an active-plane change leaves valid previews intact.");
 
         Assert(!createFaceFromSelectedSurfacePointsSource.Contains("RebuildSurfacePreview") &&
                !commitSharedAnchorDragSource.Contains("RebuildSurfacePreview") &&
@@ -9708,8 +11168,134 @@ f 0 2 3
         Assert(segments.Count == expected &&
                plan.DecorationCount == expected,
             description + " Expected " + expected.ToString(CultureInfo.InvariantCulture) +
-            ", got preview " + segments.Count.ToString(CultureInfo.InvariantCulture) +
-            " and plan " + plan.DecorationCount.ToString(CultureInfo.InvariantCulture) + ".");
+                ", got preview " + segments.Count.ToString(CultureInfo.InvariantCulture) +
+                " and plan " + plan.DecorationCount.ToString(CultureInfo.InvariantCulture) + ".");
+    }
+
+    private static bool GeneratorPlacementsSpanPreviewSegments(
+        SurfaceExtraTool tool,
+        DecorationGeneratorSettings settings,
+        int expectedCount)
+    {
+        return GeneratorPlacementsSpanPreviewSegments(
+                   tool,
+                   settings,
+                   expectedCount,
+                   tiltedBasis: false) &&
+               GeneratorPlacementsSpanPreviewSegments(
+                   tool,
+                   settings,
+                   expectedCount,
+                   tiltedBasis: true);
+    }
+
+    private static bool GeneratorPlacementsSpanPreviewSegments(
+        SurfaceExtraTool tool,
+        DecorationGeneratorSettings settings,
+        int expectedCount,
+        bool tiltedBasis)
+    {
+        var draft = new DecorationGeneratorDraft();
+        draft.SetTool(tool);
+        bool centerSet = tiltedBasis
+            ? draft.TrySetCircleCenterWithBasis(
+                null,
+                Vector3.zero,
+                new Vector3(1f, 1f, 0f).normalized,
+                Vector3.forward,
+                out string _)
+            : draft.TrySetCircleCenter(
+                null,
+                Vector3.zero,
+                Vector3.up,
+                out string _);
+        if (!centerSet ||
+            !DecorationGeneratorPlanner.TryBuildPreviewSegments(
+                draft,
+                settings,
+                out IReadOnlyList<DecorationGeneratorSegment> segments,
+                out string _) ||
+            !DecorationGeneratorPlanner.TryPlan(
+                draft,
+                settings,
+                new SetSurfaceAnchorResolver(new[] { new Vector3i(0, 0, 0) }),
+                out DecorationGeneratorPlan plan,
+                out string _) ||
+            segments.Count != expectedCount ||
+            plan.DecorationCount != expectedCount)
+        {
+            return false;
+        }
+
+        Vector3 localLengthAxis = DecorationEditMath.AxisVector(settings.LengthAxis);
+        for (int index = 0; index < segments.Count; index++)
+        {
+            DecorationGeneratorSegment segment = segments[index];
+            DecorationGeneratorPlacement placement = plan.Placements[index];
+            Vector3 delta = segment.End - segment.Start;
+            float length = delta.magnitude;
+            Vector3 placedDirection = RotateUnityEulerForVerification(
+                placement.Orientation,
+                localLengthAxis).normalized;
+            Vector3 placedCenter = new Vector3(
+                placement.Anchor.x,
+                placement.Anchor.y,
+                placement.Anchor.z) + placement.Positioning;
+            float placedLength;
+            switch (settings.LengthAxis)
+            {
+                case DecorationEditAxis.Y:
+                    placedLength = placement.Scaling.y;
+                    break;
+                case DecorationEditAxis.Z:
+                    placedLength = placement.Scaling.z;
+                    break;
+                default:
+                    placedLength = placement.Scaling.x;
+                    break;
+            }
+
+            if (length <= 0.000001f ||
+                Vector3.Dot(placedDirection, delta / length) < 0.9999f ||
+                Math.Abs(placedLength - length) > 0.0001f ||
+                !VectorApproximately(
+                    placedCenter,
+                    (segment.Start + segment.End) * 0.5f,
+                    0.0001f))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static Vector3 RotateUnityEulerForVerification(Vector3 degrees, Vector3 vector)
+    {
+        double x = degrees.x * Mathf.Deg2Rad;
+        double y = degrees.y * Mathf.Deg2Rad;
+        double z = degrees.z * Mathf.Deg2Rad;
+        double sx = Math.Sin(x);
+        double cx = Math.Cos(x);
+        double sy = Math.Sin(y);
+        double cy = Math.Cos(y);
+        double sz = Math.Sin(z);
+        double cz = Math.Cos(z);
+
+        double m00 = cy * cz + sy * sx * sz;
+        double m01 = -cy * sz + sy * sx * cz;
+        double m02 = sy * cx;
+        double m10 = cx * sz;
+        double m11 = cx * cz;
+        double m12 = -sx;
+        double m20 = -sy * cz + cy * sx * sz;
+        double m21 = sy * sz + cy * sx * cz;
+        double m22 = cy * cx;
+
+        return new Vector3(
+            (float)(m00 * vector.x + m01 * vector.y + m02 * vector.z),
+            (float)(m10 * vector.x + m11 * vector.y + m12 * vector.z),
+            (float)(m20 * vector.x + m21 * vector.y + m22 * vector.z));
     }
 
     private static DecorationGeneratorDraft StraightTubeDraft(int pointCount)
@@ -12916,7 +14502,7 @@ f 0 2 3
             "tools",
             "Deploy-EndlessShapesUnlimited.ps1"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
-               manifest.Contains("\"version\": \"1.0.7\"") &&
+               manifest.Contains("\"version\": \"1.0.8\"") &&
                manifest.Contains("\"workshop_id\": 3755667314") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&

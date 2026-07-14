@@ -7,7 +7,67 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
-## 1.0.7 - 2026-07-11
+## 1.0.8 - 2026-07-11
+
+### Added
+
+- Renamed Decoration Edit's Mesh Palette to **Block Palette** and added a
+  default-off **Build** sub-mode. With Build off it retains decoration-mesh
+  selection; while enabled it accepts native inventory block definitions by
+  left or right click, rejects locked or construct-incompatible choices, uses
+  FtD's native grid placement path, and right-click samples craft blocks with
+  their rotation.
+
+### Changed
+
+- Block Palette placement retains every item's native footprint and FtD's own
+  marker, rotation, mirroring, attachment, collision, resource, undo, and
+  networking behavior. Its authoritative full-size marker follows the free
+  mouse cursor and only hands an actual click to FtD while the exact target is
+  valid for add. Simple-mode Shift replacement and distance-scaled attachment
+  indicators are disabled because their hidden targets or offsets cannot safely
+  match that cursor preview.
+- Expanded the executable regression harness from 627 to 672 checks with
+  Decoration X-ray occlusion, native cursor-following Block Palette targets,
+  native footprint math, input isolation, cursor lifecycle, partial-arc
+  generator alignment, real-mesh Extra Tools preview/render-budget lifecycle,
+  and opt-in large-craft part-status memory-safety coverage.
+
+### Fixed
+
+- Fixed Circle and Frustum blocks scattering when a partial arc used an X- or
+  Y-axis mesh, including after rotating the generator plane. The segment
+  quaternion was correct, but its stored Euler angles used a different rotation
+  order from FtD; generated blocks now replay the same Unity-order rotation and
+  span their intended arc or rail endpoints.
+- Fixed Surface Builder **Extra Tools** Preview showing only cyan guide lines.
+  Preview now draws the selected decoration mesh at the exact planned anchor,
+  position, rotation, scale, paint color, material override, and symmetry
+  variants used by Place. Large plans deterministically sample up to 768 meshes,
+  1,400 guide segments, and 650 Same-anchor hints across the complete shape so
+  a 100,000-placement draft cannot flood the render overlay.
+- Added a default-off **Memory-safe part status checks** option for constructs
+  with millions of status-checkable blocks. When enabled, ESU bounds FtD's
+  once-per-second temporary status dictionary and omits already-clear healthy
+  entries while retaining warnings, errors, and entries needed to clear stale
+  flags. This addresses repeated `StatusUpdate` dictionary out-of-memory
+  failures without changing blueprint JSON or the default vanilla path.
+- Fixed Decoration X-ray affecting Box selection only. With X-ray off,
+  viewport hover, single/Shift-click, right-click context, paint, and box
+  acquisition now reject decoration centers occluded by any block in the main
+  craft/subobject tree; X-ray on restores through-block acquisition, while
+  Outliner and Selected anchor rows remain directly selectable. Visibility rays
+  use a nonalloc buffer plus bounded cell fallback, treat exact backside tether
+  geometry as occluding while avoiding coarse partial-block false hits, and
+  reject X-ray-off boxes above 512 projected centers before partial work.
+
+### Packaging
+
+- Advanced the manifest, assembly, player documentation, release checklist,
+  and deterministic release package to version 1.0.8 while preserving the
+  published 1.0.7 history.
+
+## 1.0.7 - 2026-07-06
 
 ### Added
 
