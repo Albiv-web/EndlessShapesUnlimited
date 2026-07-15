@@ -3,7 +3,8 @@ param(
     [string]$SourceRoot = '',
     [string]$ModsRoot = (Join-Path $env:USERPROFILE 'Documents\From The Depths\Mods'),
     [string]$ModName = 'EndlessShapesUnlimited',
-    [string[]]$AdditionalModsRoots = @()
+    [string[]]$AdditionalModsRoots = @(),
+    [switch]$OnlyModsRoot
 )
 
 Set-StrictMode -Version Latest
@@ -49,6 +50,11 @@ function Resolve-FullPathText {
 function Get-KnownModsRoots {
     $roots = New-Object System.Collections.Generic.List[string]
     $roots.Add($ModsRoot)
+    if ($OnlyModsRoot)
+    {
+        return $roots
+    }
+
     $documents = [Environment]::GetFolderPath('MyDocuments')
     if (![string]::IsNullOrWhiteSpace($documents))
     {

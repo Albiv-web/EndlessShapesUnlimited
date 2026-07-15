@@ -10,7 +10,6 @@ using BrilliantSkies.Ftd.Cameras;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Modding.Types;
 using BrilliantSkies.Ui.Displayer;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.SmartBuildMode;
 using HarmonyLib;
 using UnityEngine;
@@ -313,8 +312,7 @@ namespace DecoLimitLifter.DecorationEditMode
                  _active &&
                  DecoLimitLifter.EsuInputState.AnyEsuBuildShortcutDown()) ||
                 ScrollWheelOverEditorUi ||
-                SmartBuildInputScope.SuppressBuildInput() ||
-                AutomationBuilderInputScope.SuppressBuildInput();
+                SmartBuildInputScope.SuppressBuildInput();
             if (!NativeBlockPaletteMode)
                 return sharedBlocker;
 
@@ -608,8 +606,7 @@ namespace DecoLimitLifter.DecorationEditMode
               NativeBlockPaletteRequiresMouseRelease)) ||
             OwnsCameraInputThisFrame ||
             ScrollWheelOverEditorUi ||
-            SmartBuildInputScope.SuppressCameraInput() ||
-            AutomationBuilderInputScope.SuppressCameraInput();
+            SmartBuildInputScope.SuppressCameraInput();
 
         internal static bool IsPaintHoverMessage(object[] arguments)
         {

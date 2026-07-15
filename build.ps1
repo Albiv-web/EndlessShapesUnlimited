@@ -28,7 +28,7 @@ if ([string]::IsNullOrWhiteSpace($env:FTD_DIR) -or -not (Test-Path -LiteralPath 
     throw 'FTD_DIR must point to the From The Depths installation.'
 }
 
-dotnet build $project -c Release --nologo
+dotnet build $project -c Release --nologo -p:CopyReleaseAssemblyToModFolder=true
 if ($LASTEXITCODE -ne 0) { throw 'Mod Release build failed.' }
 
 dotnet format $project --verify-no-changes --no-restore --verbosity minimal

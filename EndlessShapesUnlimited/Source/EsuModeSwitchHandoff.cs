@@ -19,8 +19,7 @@ namespace DecoLimitLifter
             !s_targetEditorClaimed &&
             s_beginFrame != Time.frameCount &&
             !DecorationEditMode.DecorationEditModeRegistration.Active &&
-            !SmartBuildMode.SmartBuildModeRegistration.Active &&
-            !AutomationBuilderMode.AutomationBuilderModeRegistration.Active;
+            !SmartBuildMode.SmartBuildModeRegistration.Active;
 
         internal static void Begin()
         {

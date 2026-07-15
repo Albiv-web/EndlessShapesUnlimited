@@ -23,7 +23,6 @@ using BrilliantSkies.Ftd.Avatar.Build.UndoRedo;
 using BrilliantSkies.Ftd.Constructs.Modules.All.Decorations;
 using BrilliantSkies.Modding.Types;
 using DecoLimitLifter;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.ExtendedSerialization;
 using DecoLimitLifter.Patches;
@@ -36,7 +35,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-internal static class Program
+internal static partial class Program
 {
     private const string Owner = "alb.endlessshapesunlimited.verification";
     private static PropertyInfo _headerCountProperty;
@@ -136,8 +135,6 @@ internal static class Program
             VerifyVanillaCompatibilityMode();
             VerifyBlueprintJsonStreamingSave();
             VerifyFastBlueprintLoading();
-            VerifyAutomationLiteralValidation();
-            VerifyAutomationPaletteDropSnapping();
             VerifyHudTestingPolish();
             VerifyDecorationEditModeMvp();
             VerifyNativeBlockPalette();
@@ -1524,8 +1521,8 @@ f 0 2 3
         Assert(changelogSource.Contains("Steam Workshop update notifier") &&
                changelogSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
                releaseChannelsSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
-               releaseChannelsSource.Contains("[b]Mod latest version 1.0.8[/b]") &&
-               steamReadmeSource.Contains("[b]Mod latest version 1.0.8[/b]"),
+               releaseChannelsSource.Contains("[b]Mod latest version 1.0.10[/b]") &&
+               steamReadmeSource.Contains("[b]Mod latest version 1.0.10[/b]"),
             "Changelog and release-channel workflow document the Steam Workshop update version line.");
     }
 
@@ -2974,274 +2971,6 @@ f 0 2 3
         };
     }
 
-    private static void VerifyAutomationLiteralValidation()
-    {
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.Constant,
-                " 0.125 ",
-                "0.125") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.Constant,
-                "-1.25e2",
-                "-125"),
-            "Automation numeric literals accept finite invariant values and normalize exponent notation.");
-
-        Assert(
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "NaN") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "Infinity") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "-Infinity") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "1e999") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "12rpm") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, string.Empty) &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Constant, "   "),
-            "Automation numeric literals reject NaN, infinities, overflow, partial tokens, and empty input.");
-
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.Random,
-                "5; -2",
-                "-2..5") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.Clamp,
-                "-1, 3",
-                "-1..3"),
-            "Automation range literals require two finite endpoints, normalize delimiters, and order their bounds.");
-
-        Assert(
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Random, "0..") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Random, "..1") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Random, "0..1..2") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Clamp, "NaN..1") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Clamp, "0..Infinity") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Clamp, "1e999..2"),
-            "Automation range literals reject missing, extra, non-finite, and overflowing endpoints.");
-
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.Smooth,
-                "0",
-                "0s") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.Smooth,
-                "1.5S",
-                "1.5s") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "-0.01s") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "NaN") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "Infinity") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "1ss") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, "1 second") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.Smooth, string.Empty),
-            "Automation delays accept finite nonnegative seconds and reject negative or malformed values.");
-
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.IfCondition,
-                "else -2.5",
-                "threshold 0.5 else -2.5") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.IfLessThan,
-                "threshold -1 else 4",
-                "threshold -1 else 4") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfCondition, "else NaN") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfCondition, "threshold 0.5") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfLessThan, "threshold 1") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.IfLessThan, "threshold 1 else 2x"),
-            "Automation switch literals require finite else and threshold fields appropriate to their block shape.");
-
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.CompareAboveThreshold,
-                "threshold: 0.75",
-                "threshold 0.75") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold,
-                "threshold=-2",
-                "threshold -2") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.CompareAboveThreshold, "threshold NaN") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold, "threshold 2x") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold, string.Empty),
-            "Automation comparison thresholds normalize finite labels and reject non-finite, partial, or missing values.");
-
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.IfCondition,
-                "threshold 0.5 else 3",
-                "threshold 0.5 else 3") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.IfCondition,
-                "threshold 5e-1 else -2.5e1",
-                "threshold 0.5 else -25") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.IfLessThan,
-                "threshold 1e2 else -2e1",
-                "threshold 100 else -20") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.CompareAboveThreshold,
-                "threshold 2e1",
-                "threshold 20") &&
-            AutomationLiteralIsInvalid(
-                AutomationBuilderSession.AutomationNodeKind.IfCondition,
-                "threshold 2 else 1") &&
-            AutomationLiteralIsInvalid(
-                AutomationBuilderSession.AutomationNodeKind.IfCondition,
-                "else 1 trailing") &&
-            AutomationLiteralIsInvalid(
-                AutomationBuilderSession.AutomationNodeKind.IfCondition,
-                "threshold 0.5 else 1 trailing") &&
-            AutomationLiteralIsInvalid(
-                AutomationBuilderSession.AutomationNodeKind.IfLessThan,
-                "threshold 1 else 2 trailing") &&
-            AutomationLiteralIsInvalid(
-                AutomationBuilderSession.AutomationNodeKind.CompareBelowThreshold,
-                "threshold 1 trailing"),
-            "Automation labeled literals accept exact and exponent forms, enforce If True's fixed 0.5 threshold, and require full input consumption.");
-
-        Assert(
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.MathAdd,
-                "a + b",
-                "a + b") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.MathSubtract,
-                "a - -2.5",
-                "a - -2.5") &&
-            AutomationLiteralIsValid(
-                AutomationBuilderSession.AutomationNodeKind.MathMultiply,
-                "a*1e2",
-                "a * 100") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathAdd, "a +") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathAdd, "a - 1") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathSubtract, "a - NaN") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathMultiply, "a * 2x") &&
-            AutomationLiteralIsInvalid(AutomationBuilderSession.AutomationNodeKind.MathMultiply, "a * 1e999"),
-            "Automation math literals preserve the visible operator shape and reject missing, mismatched, non-finite, partial, or overflowing operands.");
-    }
-
-    private static bool AutomationLiteralIsValid(
-        AutomationBuilderSession.AutomationNodeKind kind,
-        string text,
-        string expectedNormalized)
-    {
-        return AutomationBuilderSession.TryValidateAutomationLiteral(
-                   kind,
-                   text,
-                   out string normalized,
-                   out string issue) &&
-               string.Equals(normalized, expectedNormalized, StringComparison.Ordinal) &&
-               issue == null;
-    }
-
-    private static bool AutomationLiteralIsInvalid(
-        AutomationBuilderSession.AutomationNodeKind kind,
-        string text)
-    {
-        return !AutomationBuilderSession.TryValidateAutomationLiteral(
-                   kind,
-                   text,
-                   out _,
-                   out string issue) &&
-               !string.IsNullOrWhiteSpace(issue);
-    }
-
-    private static void VerifyAutomationPaletteDropSnapping()
-    {
-        float[] zooms = { 0.55f, 1.08f, 1.6f };
-        bool zoomCasesPassed = true;
-        foreach (float zoom in zooms)
-        {
-            float expected = Math.Min(Math.Max(0.001f, zoom), 250f / 330f);
-            float actual = AutomationBuilderSession.PaletteNodeScreenZoomFor(
-                zoom,
-                graphWidth: 330f,
-                availableWidth: 250f);
-            zoomCasesPassed &= Math.Abs(actual - expected) <= 0.0001f;
-        }
-
-        Assert(zoomCasesPassed,
-            "Automation palette thumbnails stay within their measured row width at minimum, default, and maximum graph zoom.");
-
-        var freeRect = new Rect(40f, 50f, 330f, 284f);
-        var valueTarget = new Rect(600f, 220f, 206f, 78f);
-        var bodyTarget = new Rect(116f, 220f, 330f, 420f);
-        var stackTarget = new Rect(100f, 384f, 330f, 284f);
-        Rect valueIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
-            AutomationBuilderSession.AutomationNodeKind.InputGetter,
-            freeRect,
-            AutomationBuilderSession.AutomationSnapKind.Value,
-            valueTarget);
-        Rect bodyIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
-            AutomationBuilderSession.AutomationNodeKind.IfCondition,
-            freeRect,
-            AutomationBuilderSession.AutomationSnapKind.Body,
-            bodyTarget);
-        Rect stackIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
-            AutomationBuilderSession.AutomationNodeKind.OutputSetter,
-            freeRect,
-            AutomationBuilderSession.AutomationSnapKind.Stack,
-            stackTarget);
-        Rect freeIntended = AutomationBuilderSession.PaletteIntendedGraphRect(
-            AutomationBuilderSession.AutomationNodeKind.OutputSetter,
-            freeRect,
-            AutomationBuilderSession.AutomationSnapKind.Free,
-            freeRect);
-        Assert(RectApproximately(valueIntended, valueTarget, 0.001f) &&
-               RectApproximately(bodyIntended, bodyTarget, 0.001f) &&
-               RectApproximately(stackIntended, stackTarget, 0.001f) &&
-               RectApproximately(freeIntended, freeRect, 0.001f),
-            "Automation palette previews preserve the resolved value, body, stack, and free-drop rectangles.");
-
-        bool snappedPlansPassed = true;
-        AutomationBuilderSession.AutomationSnapKind[] snappedKinds =
-        {
-            AutomationBuilderSession.AutomationSnapKind.Free,
-            AutomationBuilderSession.AutomationSnapKind.Value,
-            AutomationBuilderSession.AutomationSnapKind.Body,
-            AutomationBuilderSession.AutomationSnapKind.Stack
-        };
-        foreach (AutomationBuilderSession.AutomationSnapKind snapKind in snappedKinds)
-        {
-            AutomationBuilderSession.PaletteDropCommitPlan plan =
-                AutomationBuilderSession.PlanPaletteDropCommit(freeRect, snapKind);
-            snappedPlansPassed &=
-                plan.UseResolvedSnap &&
-                RectApproximately(plan.PreferredRect, freeRect, 0.001f);
-        }
-
-        AutomationBuilderSession.PaletteDropCommitPlan unsnappedPlan =
-            AutomationBuilderSession.PlanPaletteDropCommit(
-                freeRect,
-                AutomationBuilderSession.AutomationSnapKind.None);
-        Assert(snappedPlansPassed &&
-               !unsnappedPlan.UseResolvedSnap &&
-               RectApproximately(unsnappedPlan.PreferredRect, freeRect, 0.001f),
-            "Automation palette drops commit value, body, stack, and free candidates exactly once from the pointer-centered rectangle.");
-
-        var hostRect = new Rect(100f, 100f, 330f, 244f);
-        Rect expandedHost = AutomationBuilderSession.ExpandedSnapBodyHostRect(
-            AutomationBuilderSession.AutomationNodeKind.Forever,
-            hostRect,
-            placedBottom: 620f,
-            bottomPadding: 28f);
-        Rect unchangedHost = AutomationBuilderSession.ExpandedSnapBodyHostRect(
-            AutomationBuilderSession.AutomationNodeKind.Forever,
-            hostRect,
-            placedBottom: 250f,
-            bottomPadding: 28f);
-        Assert(Math.Abs(expandedHost.height - 548f) <= 0.001f &&
-               expandedHost.yMax >= 648f &&
-               RectApproximately(unchangedHost, hostRect, 0.001f),
-            "Automation body drops expand only undersized hosts and retain enough padded space for the placed child.");
-
-        var compactRect = new Rect(10f, 20f, 206f, 78f);
-        Rect compactNormalized = AutomationBuilderSession.NormalizeGraphNodeRect(
-            AutomationBuilderSession.AutomationNodeKind.InputGetter,
-            compactRect,
-            valueFootprint: true);
-        Assert(RectApproximately(compactNormalized, compactRect, 0.001f),
-            "Automation native lowering can preserve compact value-producing node footprints.");
-    }
-
     private static bool RectApproximately(Rect left, Rect right, float tolerance) =>
         Math.Abs(left.x - right.x) <= tolerance &&
         Math.Abs(left.y - right.y) <= tolerance &&
@@ -3381,9 +3110,8 @@ f 0 2 3
                narrowColumns == 1 &&
                basicColumns == 8 &&
                profileDefaults.ResponsivePaintPalettes &&
-               !profileDefaults.FadeHudBehindModalPopups &&
-               !profileDefaults.AutomationBuilderWipWarningAcknowledged,
-            "Responsive paint palettes default on, fit the available width, cap at sixteen columns to retain two rows, and fall back to the basic eight-column grid when disabled; modal fading and the Automation acknowledgement default off.");
+               !profileDefaults.FadeHudBehindModalPopups,
+            "Responsive paint palettes default on, fit the available width, cap at sixteen columns to retain two rows, and fall back to the basic eight-column grid when disabled; modal fading defaults off.");
 
         MethodInfo drawPanel = typeof(EsuHudChrome).GetMethod(
             "DrawPanel",
@@ -3543,18 +3271,6 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildSession.cs"));
-        string automationSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.cs"));
-        string automationWarningSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.WipWarning.cs"));
         string profileSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -3578,7 +3294,6 @@ f 0 2 3
             decorationSource,
             "DrawDisabledEditorShellBehindPrompt");
         string smartModalSource = ExtractMethodSource(smartSource, "DrawGui");
-        string automationModalSource = ExtractMethodSource(automationSource, "DrawGui");
         Assert(ContainsAll(
                    profileSource,
                    "public bool FadeHudBehindModalPopups { get; set; }",
@@ -3594,26 +3309,8 @@ f 0 2 3
                    "Responsive paint palettes",
                    "Off keeps the basic fixed-size color grid.") &&
                decorationDisabledShellSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups") &&
-               smartModalSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups") &&
-               automationModalSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups"),
-            "Decoration, Smart Builder, and Automation share the profile-backed, default-off modal background fade without changing modal input ownership.");
-
-        string beginAutomationSource = ExtractMethodSource(automationSource, "Begin");
-        string acknowledgeWarningSource = ExtractMethodSource(
-            automationWarningSource,
-            "AcknowledgeWorkInProgressWarning");
-        Assert(beginAutomationSource.Contains("_workInProgressWarningOpen = ShouldShowWorkInProgressWarning()") &&
-               ContainsAll(
-                   automationWarningSource,
-                   "Automation Builder is work in progress",
-                   "Experimental and potentially very buggy",
-                   "AutomationBuilderWipWarningAcknowledged != true",
-                   "I understand - continue") &&
-               OccursBefore(
-                   acknowledgeWarningSource,
-                   "data.AutomationBuilderWipWarningAcknowledged = true",
-                   "ProfileManager.Instance.Save(module => module is SerializationHudProfile)"),
-            "Automation Builder opens a blocking first-session WIP warning and persists its acknowledgement in the current player profile.");
+               smartModalSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups"),
+            "Decoration and Smart Builder share the profile-backed, default-off modal background fade without changing modal input ownership.");
 
         string handleSceneInputSource = ExtractMethodSource(decorationSource, "HandleSceneInput");
         string beginBoxSelectionSource = ExtractMethodSource(decorationSource, "BeginBoxSelection");
@@ -4033,12 +3730,6 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildModeBehaviour.cs"));
-        string automationBuilderBehaviourSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderModeBehaviour.cs"));
         string modeSwitchHandoffSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -4237,36 +3928,14 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildSession.cs"));
-        string contextAutomationSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.cs"));
         string smartBuildUpdateSource = ExtractMethodSource(contextSmartBuildSource, "Update").Replace("\r\n", "\n");
         string smartBuildDrawGuiWrapperSource = ExtractMethodSource(contextSmartBuildSource, "DrawGui").Replace("\r\n", "\n");
         string smartStackDividerDragSource = ExtractMethodSource(contextSmartBuildSource, "HandleSmartStackDividerDrag").Replace("\r\n", "\n");
-        string automationUpdateSource = ExtractMethodSource(contextAutomationSource, "Update").Replace("\r\n", "\n");
-        string automationDrawGuiSource = ExtractMethodSource(contextAutomationSource, "DrawGui").Replace("\r\n", "\n");
-        string automationGraphNodeSource = ExtractMethodSource(contextAutomationSource, "DrawGraphNodeCard").Replace("\r\n", "\n");
-        string automationGraphMouseUpSource = ExtractMethodSource(contextAutomationSource, "TryConsumeGraphLeftMouseUp").Replace("\r\n", "\n");
         string decorationModalPredicateSource = ExtractMethodSource(sessionSource, "IsPromptBlockingEventType").Replace("\r\n", "\n");
         string coordinateEnterSource = ExtractMethodSource(sessionSource, "HandleSurfaceCoordinateTextCommitKeyboard").Replace("\r\n", "\n");
         string decorationDismissPopupSource = ExtractMethodSource(sessionSource, "DismissOpenPrompt").Replace("\r\n", "\n");
         string smartContextConsumeSource = ExtractMethodSource(contextSmartBuildSource, "ConsumePreviewContextMenuInput").Replace("\r\n", "\n");
         string smartDismissPopupSource = ExtractMethodSource(contextSmartBuildSource, "DismissOpenPopup").Replace("\r\n", "\n");
-        string automationContextConsumeSource = ExtractMethodSource(contextAutomationSource, "ConsumeForegroundAutomationContextInput").Replace("\r\n", "\n");
-        string automationGraphConsumeSource = ExtractMethodSource(contextAutomationSource, "ConsumeGraphForegroundInput").Replace("\r\n", "\n");
-        string automationGraphForegroundOpenSource = ExtractMethodSource(contextAutomationSource, "GraphForegroundMenuOpen").Replace("\r\n", "\n");
-        string automationGraphOverlaySource = ExtractMethodSource(contextAutomationSource, "DrawGraphForegroundOverlay").Replace("\r\n", "\n");
-        string automationGraphMenusSource = ExtractMethodSource(contextAutomationSource, "DrawGraphForegroundMenus").Replace("\r\n", "\n");
-        string automationGraphOutsideClickSource = ExtractMethodSource(contextAutomationSource, "ConsumeGraphForegroundOutsideMouseDown").Replace("\r\n", "\n");
-        string automationGraphWorkspaceSource = ExtractMethodSource(contextAutomationSource, "DrawGraphWorkspace").Replace("\r\n", "\n");
-        string automationPaletteBlockSource = ExtractMethodSource(contextAutomationSource, "DrawPaletteBlock").Replace("\r\n", "\n");
-        string automationEditableValueSource = ExtractMethodSource(contextAutomationSource, "DrawEditableValueSlot").Replace("\r\n", "\n");
-        string automationDividerSource = ExtractMethodSource(contextAutomationSource, "HandleAutomationDividerDrag").Replace("\r\n", "\n");
-        string automationDismissCanvasSource = ExtractMethodSource(contextAutomationSource, "DismissCanvas").Replace("\r\n", "\n");
-        string automationDismissGraphSource = ExtractMethodSource(contextAutomationSource, "DismissGraphForeground").Replace("\r\n", "\n");
         Assert(OccursBefore("first middle second", "first", "second") &&
                !OccursBefore("second only", "first", "second") &&
                !OccursBefore("second then first", "first", "second"),
@@ -4452,7 +4121,6 @@ f 0 2 3
                editorScopeSource.Contains("AnyRegisteredEditorActive") &&
                editorScopeSource.Contains("DecorationEditModeRegistration.Active") &&
                editorScopeSource.Contains("SmartBuildModeRegistration.Active") &&
-               editorScopeSource.Contains("AutomationBuilderModeRegistration.Active") &&
                editorScopeSource.Contains("ClaimGuiOwnership") &&
                editorScopeSource.Contains("gui_lease_owner") &&
                editorScopeSource.Contains("mode_switch_handoff_active") &&
@@ -4542,7 +4210,6 @@ f 0 2 3
                panelWheelZoomGateSource.Contains("return true;") &&
                panelWheelZoomGateSource.Contains("DecorationEditorInputScope.MouseOverEditorUi") &&
                panelWheelZoomGateSource.Contains("SmartBuildInputScope.MouseOverUi") &&
-               panelWheelZoomGateSource.Contains("AutomationBuilderInputScope.MouseOverUi") &&
                !panelWheelZoomGateSource.Contains("Event.Use(") &&
                pluginSource.Contains("ResolveFtdKeyMapGetZoomTarget") &&
                pluginSource.Contains("ResolveHybridZoomUpdateTarget") &&
@@ -4719,11 +4386,9 @@ f 0 2 3
         Assert(ToolbarBudgetsStayInsideAvailableWidth(),
             "ESU toolbar rail budget always fits inside the available toolbar width across laptop, desktop, and 200% scale cases.");
         Assert(ResponsiveToolbarControlsFitRails(),
-            "Decoration, Surface, Smart, and Automation toolbar controls resolve inside their rail budgets at the supported high-scale layouts.");
+            "Decoration, Surface, and Smart toolbar controls resolve inside their rail budgets at the supported high-scale layouts.");
         Assert(ResponsivePanelMinimumsFitAvailableHeight(),
             "Shared HUD panel minimums resolve down to the real toolbar-to-status-strip budget at supported high scales.");
-        Assert(AutomationLeftPanelSectionsRemainReachable(),
-            "Automation selection, input-link, and output-link regions retain a scrollable row without overlap at supported high scales.");
         Assert(hudChromeSource.Contains("internal static class EsuHudChrome") &&
                hudChromeSource.Contains("DrawPanel(Rect rect") &&
                hudChromeSource.Contains("DrawCompactIconHeader") &&
@@ -5108,115 +4773,34 @@ f 0 2 3
 
         Assert(decorationUpdateSource.Contains("if (ForegroundContextMenuOpen())") &&
                decorationUpdateSource.Contains("DecorationEditorInputScope.SetMouseOverEditorUi(true)") &&
-               drawModalEditorWindowSource.Contains("bool contextMenuWasOpen = ForegroundContextMenuOpen()") &&
                drawModalEditorWindowSource.Contains("DrawDisabledEditorShellBehindPrompt()") &&
-               OccursBefore(
-                   drawModalEditorWindowSource,
-                   "DrawDisabledEditorShellBehindPrompt()",
-                   "DrawDecorationContextMenu()") &&
                drawModalEditorWindowSource.Contains("ConsumeForegroundContextMenuInput(contextEvent, contextEventType)") &&
-               tryOpenDecorationContextMenuFromListSource.Contains("if (!GUI.enabled ||") &&
                smartBuildUpdateSource.Contains("if (_contextMenuOpen)") &&
                smartBuildUpdateSource.Contains("SmartBuildInputScope.SetMouseOverUi(true)") &&
-               smartBuildDrawGuiWrapperSource.Contains("GUI.enabled = previousEnabled &&\n                              !EsuHudPreferences.FadeHudBehindModalPopups") &&
-               OccursBefore(
-                   smartBuildDrawGuiWrapperSource,
-                   "DrawGuiCore(interactive: false)",
-                   "DrawPreviewContextMenu()") &&
                smartBuildDrawGuiWrapperSource.Contains("ConsumePreviewContextMenuInput(foregroundEvent, foregroundEventType)") &&
-               smartStackDividerDragSource.Contains("if (!GUI.enabled ||\n                current == null ||\n                divider == SmartShapeStackDividerKind.None") &&
-               automationUpdateSource.Contains("if (_contextBlock != null && !_canvasOpen && !_closePromptOpen)") &&
-               automationUpdateSource.Contains("AutomationBuilderInputScope.SetMouseOverUi(true)") &&
-               automationDrawGuiSource.Contains("previousEnabled &&\n                    !EsuHudPreferences.FadeHudBehindModalPopups") &&
-               OccursBefore(
-                   automationDrawGuiSource,
-                   "DrawGuiCore(interactive: false)",
-                   "DrawAutomationContextMenu()") &&
-               automationDrawGuiSource.Contains("ConsumeForegroundAutomationContextInput(contextEvent, contextEventType)") &&
-               automationGraphNodeSource.Contains("if (foregroundOwnsInput)\n                GUI.enabled = false") &&
-               automationGraphNodeSource.Contains("DrawBlockSentence(rect, node, compact: false, graph)") &&
-               automationGraphNodeSource.Contains("GUI.enabled = previousEnabled") &&
-               automationGraphMouseUpSource.Contains("if (!GUI.enabled ||"),
-            "Context menus own foreground input across Decoration/Surface, Smart Builder, and Automation, optionally fading the noninteractive background before consuming the original event; Automation graph fields also yield to graph popups.");
+               smartStackDividerDragSource.Contains("if (!GUI.enabled ||\n                current == null ||\n                divider == SmartShapeStackDividerKind.None"),
+            "Context menus own foreground input across Decoration/Surface and Smart Builder.");
 
         Assert(modalInputPolicySource.Contains("internal static class EsuModalInputPolicy") &&
                modalInputPolicySource.Contains("IsBlockingEventType") &&
                modalInputPolicySource.Contains("SuppressForDisabledBackground") &&
-               modalInputPolicySource.Contains("current.type = EventType.Ignore") &&
                modalInputPolicySource.Contains("RestoreForForeground") &&
-               modalInputPolicySource.Contains("current.type = originalType") &&
                decorationModalPredicateSource.Contains("EsuModalInputPolicy.IsBlockingEventType") &&
                smartContextConsumeSource.Contains("EsuModalInputPolicy.IsBlockingEventType") &&
-               automationContextConsumeSource.Contains("EsuModalInputPolicy.IsBlockingEventType") &&
-               automationGraphConsumeSource.Contains("EsuModalInputPolicy.IsBlockingEventType") &&
-               coordinateEnterSource.Contains("if (!GUI.enabled ||") &&
-               consoleWindowSource.Contains("bool drawEnabled = canInteract ||") &&
-               consoleWindowSource.Contains("!EsuHudPreferences.FadeHudBehindModalPopups") &&
-               consoleWindowSource.Contains("EventType originalType = !canInteract") &&
                consoleWindowSource.Contains("SuppressForDisabledBackground(current)") &&
-               consoleWindowSource.Contains("GUI.enabled = drawEnabled") &&
-               consoleWindowSource.Contains("Vector2 preservedScroll = _scroll") &&
-               consoleWindowSource.Contains("if (!canInteract)\n                CancelPointerInteraction();") &&
-               consoleWindowSource.Contains("_scroll = preservedScroll") &&
-               consoleWindowSource.Contains("Draw(interactive: false)") &&
-               drawDisabledEditorShellSource.Contains("SuppressForDisabledBackground(current)") &&
+               consoleWindowSource.Contains("GUI.EndScrollView();") &&
                drawDisabledEditorShellSource.Contains("RestoreForForeground(") &&
                smartBuildDrawGuiWrapperSource.Contains("SuppressForDisabledBackground(") &&
-               smartBuildDrawGuiWrapperSource.Contains("RestoreForForeground(") &&
-               smartBuildDrawGuiWrapperSource.Contains("EsuConsoleWindow.DrawForegroundWindow(interactive: false)") &&
-               smartBuildDrawGuiWrapperSource.Contains("GUI.depth = Math.Min(previousDepth, -20000)") &&
-               automationDrawGuiSource.Contains("EsuConsoleWindow.DrawForegroundWindow(interactive: false)") &&
-               automationDrawGuiSource.Contains("SuppressForDisabledBackground(") &&
-               automationDrawGuiSource.Contains("RestoreForForeground(") &&
-               automationDrawGuiSource.Contains("GUI.depth = Math.Min(previousDepth, -20000)") &&
-               automationGraphForegroundOpenSource.Contains("_graphPropertyPickerNodeId != 0") &&
-               automationGraphForegroundOpenSource.Contains("_graphSlotMenuKind != AutomationGraphSlotMenuKind.None") &&
-               automationGraphForegroundOpenSource.Contains("_graphContextMenuNodeId != 0") &&
-               automationGraphForegroundOpenSource.Contains("_graphReadinessPopoverNodeId != 0") &&
-               automationDrawGuiSource.Contains("bool graphForegroundWasOpen") &&
-               automationDrawGuiSource.Contains("_graphForegroundInputBlockedForEvent = graphForegroundWasOpen") &&
-               automationDrawGuiSource.Contains("_deferGraphForegroundDraw = graphForegroundWasOpen") &&
-               OccursBefore(
-                   automationDrawGuiSource,
-                   "DrawGuiCore(interactive: false)",
-                   "DrawGraphForegroundOverlay()") &&
-               automationGraphOverlaySource.Contains("GUI.enabled = true") &&
-               automationGraphOverlaySource.Contains("GUI.BeginGroup(_canvasRect)") &&
-               automationGraphMenusSource.Contains("ConsumeGraphForegroundOutsideMouseDown(canvasRect)") &&
-               automationGraphMenusSource.Contains("DrawGraphPropertyPicker") &&
-               automationGraphMenusSource.Contains("DrawGraphReadinessPopover") &&
-               automationGraphMenusSource.Contains("DrawGraphContextMenu") &&
-               automationGraphMenusSource.Contains("DrawGraphSlotDropdown") &&
-               automationGraphOutsideClickSource.Contains("current.type != EventType.MouseDown") &&
-               automationGraphOutsideClickSource.Contains("CloseGraphPropertyPicker") &&
-               automationGraphOutsideClickSource.Contains("CloseGraphSlotMenu") &&
-               automationGraphOutsideClickSource.Contains("CloseGraphContextMenu") &&
-               automationGraphOutsideClickSource.Contains("CloseGraphReadinessPopover") &&
-               automationGraphOutsideClickSource.Contains("current.Use();") &&
-               automationGraphWorkspaceSource.Contains("if (!_graphForegroundInputBlockedForEvent)") &&
-               automationGraphWorkspaceSource.Contains("HandleGraphCanvasZoom(canvasRect)") &&
-               automationGraphWorkspaceSource.Contains("HandleGraphCanvasPan(canvasRect, graph)") &&
-               automationPaletteBlockSource.Contains("bool enabled = GUI.enabled && CanOpenCanvas") &&
-               automationEditableValueSource.Contains("if (GUI.enabled &&") &&
-               automationDividerSource.Contains("if (!GUI.enabled)") &&
-               automationDividerSource.Contains("_draggingPanelDivider = AutomationPanelDivider.None") &&
-               automationDrawGuiSource.Contains("_draggingPanelDivider = AutomationPanelDivider.None"),
-            "World menus, the disabled console, and all four Automation graph popups share modal event arbitration and block background focus, scrolling gestures, palette/node actions, canvas zoom/pan, and divider state.");
+               smartBuildDrawGuiWrapperSource.Contains("RestoreForForeground("),
+            "World menus and the disabled console share modal event arbitration and block background input.");
 
         Assert(decorationDismissPopupSource.Contains("if (ForegroundContextMenuOpen())") &&
                decorationDismissPopupSource.Contains("CloseSurfacePointContextMenu()") &&
                decorationDismissPopupSource.Contains("CloseDecorationContextMenu()") &&
                smartDismissPopupSource.Contains("if (_contextMenuOpen)") &&
-               automationDismissCanvasSource.Contains("if (_canvasOpen && DismissGraphForeground())") &&
-               automationDismissCanvasSource.Contains("if (_contextBlock != null)") &&
-               automationDismissGraphSource.Contains("CloseGraphPropertyPicker") &&
-               automationDismissGraphSource.Contains("CloseGraphSlotMenu") &&
-               automationDismissGraphSource.Contains("CloseGraphContextMenu") &&
-               automationDismissGraphSource.Contains("CloseGraphReadinessPopover") &&
                decorationBehaviourSource.Contains("_session != null && _session.DismissOpenPrompt()") &&
-               smartBuildBehaviourSource.Contains("_session != null && _session.DismissOpenPopup()") &&
-               automationBuilderBehaviourSource.Contains("_session != null && _session.DismissCanvas()"),
-            "Escape dismisses the topmost Decoration, Smart, Automation-world, or Automation-graph popup before the same key can close its editor or graph canvas.");
+               smartBuildBehaviourSource.Contains("_session != null && _session.DismissOpenPopup()"),
+            "Escape dismisses the topmost Decoration or Smart Builder popup before closing its editor.");
 
         Assert(duplicateSelectedDecorationSource.Contains("DecorationSelectionClipboardPayload.TryCreate(") &&
                duplicateSelectedDecorationSource.Contains("payload.CopySnapshots()") &&
@@ -7244,78 +6828,6 @@ f 0 2 3
         return true;
     }
 
-    private static bool AutomationLeftPanelSectionsRemainReachable()
-    {
-        var cases = new[]
-        {
-            new { Width = 1366, Height = 768, Scale = 1.44f },
-            new { Width = 1920, Height = 1080, Scale = 2f },
-        };
-
-        foreach (var testCase in cases)
-        {
-            float topLimit = (8f + 54f + 8f) * testCase.Scale;
-            float statusHeight = Mathf.Clamp(
-                testCase.Height * EsuHudLayout.BottomStripScreenRatio,
-                EsuHudLayout.BottomStripMinHeightBase * testCase.Scale,
-                EsuHudLayout.BottomStripMaxHeightBase * testCase.Scale);
-            float bottomLimit = statusHeight + EsuHudLayout.EditorBottomPanelGapBase * testCase.Scale;
-            float panelHeight = Mathf.Max(1f, testCase.Height - topLimit - bottomLimit);
-            float innerHeight = Mathf.Max(1f, panelHeight - 16f * testCase.Scale);
-            AutomationBuilderSession.ResolveAutomationLeftPanelSections(
-                innerHeight,
-                testCase.Scale,
-                hasSelectedBreadboard: true,
-                out float selectionHeight,
-                out float linksHeight);
-            float dividerGap = 8f * testCase.Scale;
-            float minimumLinkPanelHeight = 72f * testCase.Scale;
-            var linksRect = new Rect(0f, 0f, 320f * testCase.Scale, linksHeight);
-            AutomationBuilderSession.SplitAutomationVerticalStack(
-                linksRect,
-                0.5f,
-                dividerGap,
-                minimumLinkPanelHeight,
-                out Rect inputRect,
-                out Rect dividerRect,
-                out Rect outputRect,
-                out float resolvedRatio);
-            if (selectionHeight < 1f ||
-                inputRect.height + 0.001f < minimumLinkPanelHeight ||
-                outputRect.height + 0.001f < minimumLinkPanelHeight ||
-                resolvedRatio < 0f ||
-                resolvedRatio > 1f ||
-                !RectPartitionIsValid(linksRect, inputRect, dividerRect, outputRect))
-            {
-                return false;
-            }
-        }
-
-        var tiny = new Rect(2f, 3f, -10f, 3f);
-        AutomationBuilderSession.SplitAutomationVerticalStack(
-            tiny,
-            float.PositiveInfinity,
-            20f,
-            72f,
-            out Rect tinyInput,
-            out Rect tinyDivider,
-            out Rect tinyOutput,
-            out float tinyRatio);
-        var normalizedTiny = new Rect(tiny.x, tiny.y, 0f, tiny.height);
-        if (!RectPartitionIsValid(
-                normalizedTiny,
-                tinyInput,
-                tinyDivider,
-                tinyOutput) ||
-            tinyRatio < 0f ||
-            tinyRatio > 1f)
-        {
-            return false;
-        }
-
-        return true;
-    }
-
     private static void VerifyEsuRuntimeConsole()
     {
         EsuRuntimeLog.Clear();
@@ -7394,12 +6906,11 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildSession.cs"));
-        string automationBuilderSessionSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.cs"));
+        string consoleForegroundSource = ExtractMethodSource(consoleSource, "DrawForegroundWindow");
+        string consolePanelSource = ExtractMethodSource(consoleSource, "DrawPanel");
+        string consoleHeaderSource = ExtractMethodSource(consoleSource, "DrawHeader");
+        string consoleFilterSource = ExtractMethodSource(consoleSource, "DrawFilterRow");
+        string consoleEntriesSource = ExtractMethodSource(consoleSource, "DrawEntries");
         string smartBuildDrawGuiSource = ExtractMethodSource(smartBuildSessionSource, "DrawGuiCore").Replace("\r\n", "\n");
         string decorationBehaviourSource = File.ReadAllText(Path.Combine(
             root,
@@ -7460,7 +6971,6 @@ f 0 2 3
                notificationSource.Contains("ExpandedPopupOwnsEvent") &&
                sessionSource.Contains("EsuHudNotifications.ExpandedPopupOwnsEvent(foregroundEvent)") &&
                smartBuildSessionSource.Contains("EsuHudNotifications.ExpandedPopupOwnsEvent(foregroundEvent)") &&
-               automationBuilderSessionSource.Contains("EsuHudNotifications.ExpandedPopupOwnsEvent(contextEvent)") &&
                notificationSource.Contains("Vector2 screenOrigin") &&
                notificationSource.Contains("screenOrigin.x + rect.x") &&
                notificationSource.Contains("screenOrigin.y + rect.y") &&
@@ -7482,7 +6992,18 @@ f 0 2 3
                decorationBehaviourSource.Contains("AdvLogger.LogException") &&
                smartBehaviourSource.Contains("AdvLogger.LogException") &&
                transactionSource.Contains("AdvLogger.LogException"),
-            "ESU runtime console is shared by Deco/Surface/Smart Builder, captures notifications, owns input hover, and mirrors handled exceptions without replacing AdvLogger.");
+             "ESU runtime console is shared by Deco/Surface/Smart Builder, captures notifications, owns input hover, and mirrors handled exceptions without replacing AdvLogger.");
+
+        Assert(consoleForegroundSource.Contains("GUI.Window(") &&
+               !consoleForegroundSource.Contains("Draw(interactive: false)") &&
+               consoleForegroundSource.Contains("RestoreForForeground") &&
+               consolePanelSource.Contains("try") &&
+               consolePanelSource.Contains("finally") &&
+               consolePanelSource.Contains("GUILayout.EndArea()") &&
+               consoleHeaderSource.Contains("GUILayout.EndHorizontal()") &&
+               consoleFilterSource.Contains("GUILayout.EndHorizontal()") &&
+               consoleEntriesSource.Contains("GUI.EndScrollView()"),
+            "ESU console keeps one GUI.Window hierarchy behind graph modals and unwinds every area, row, and scroll scope after ExitGUI or rendering exceptions.");
 
         Assert(OccursBefore(smartBuildDrawGuiSource, "GUI.Window(_rightPanelWindowId", "EsuHudNotifications.DrawExpandedPopup()") &&
                OccursBefore(smartBuildDrawGuiSource, "GUI.Window(_statusWindowId", "EsuHudNotifications.DrawExpandedPopup()") &&
@@ -8797,7 +8318,7 @@ f 0 2 3
                (int)SerializationHudKeyInput.SwitchEsuBuildMode == 4 &&
                (int)SerializationHudKeyInput.UndoDecorationEdit == 5 &&
                (int)SerializationHudKeyInput.RedoDecorationEdit == 6 &&
-               (int)SerializationHudKeyInput.ToggleAutomationBuilderMode == 7,
+               (int)SerializationHudKeyInput.ReservedLegacySlot7 == 7,
             "Appending clipboard key-map IDs preserves every existing ESU key numeric mapping.");
         Assert((int)SerializationHudKeyInput.CopyDecorationSelection == 8 &&
                (int)SerializationHudKeyInput.PasteDecorationSelection == 9 &&
@@ -12662,18 +12183,6 @@ f 0 2 3
             "Source",
             "DecorationEditMode",
             "EsuHudNotifications.cs"));
-        string automationNotificationOverlaySource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "DecorationEditMode",
-            "EsuHudNotificationOverlayRegistration.cs"));
-        string inputScopeSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "DecorationEditMode",
-            "DecorationEditorInputScope.cs"));
         string vanillaInputBridgeSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -12684,58 +12193,6 @@ f 0 2 3
             "EndlessShapesUnlimited",
             "Source",
             "EsuVanillaHudRenderGate.cs"));
-        string modeSwitchHandoffSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "EsuModeSwitchHandoff.cs"));
-        string modProjectSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "EndlessShapesUnlimited.csproj"));
-        string automationRegistrationSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderModeRegistration.cs"));
-        string automationBehaviourSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderModeBehaviour.cs"));
-        string automationInputScopeSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderInputScope.cs"));
-        string automationSessionSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.cs"));
-        string automationGraphEditingSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.GraphEditing.cs"));
-        string automationNativeBridgeSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBuilderSession.NativeBridge.cs"));
-        string automationBreadboardCatalogSource = File.ReadAllText(Path.Combine(
-            root,
-            "EndlessShapesUnlimited",
-            "Source",
-            "AutomationBuilderMode",
-            "AutomationBreadboardCatalog.cs"));
         string readmeDocumentationSource = ReadDocumentationText(root);
         string inGameTestPlanSource = ReadDocumentationText(root, "docs", "IN_GAME_TEST_PLAN.md");
         string smartBuilderHudDocSource = ReadDocumentationText(
@@ -12744,907 +12201,17 @@ f 0 2 3
         string readFreezeDownSource = ExtractMethodSource(vanillaInputBridgeSource, "ReadFreezeDown").Replace("\r\n", "\n");
         Assert(profileSource.Contains("ToggleSmartBuildMode") &&
                profileSource.Contains("Q(Key.Control, Key.Shift, Key.B)") &&
-               profileSource.Contains("ToggleAutomationBuilderMode") &&
-               profileSource.Contains("Q(Key.Control, Key.Shift, Key.A)") &&
                profileSource.Contains("SwitchEsuBuildMode") &&
                profileSource.Contains("Q(Key.Tab)") &&
                pluginSource.Contains("SmartBuildModeRegistration.Register") &&
-               pluginSource.Contains("AutomationBuilderModeRegistration.Register") &&
                registrationSource.Contains("DecorationEditModeRegistration.Active") &&
-               registrationSource.Contains("AutomationBuilderModeRegistration.Active") &&
-               automationRegistrationSource.Contains("DecorationEditModeRegistration.Active") &&
-               automationRegistrationSource.Contains("SmartBuildModeRegistration.Active") &&
-               automationRegistrationSource.Contains("CanOpenFromModeSwitch") &&
                registrationSource.Contains("CanOpenFromModeSwitch") &&
-               registrationSource.Contains("ignoreDecorationEditMode") &&
-               registrationSource.Contains("modeSwitch: true") &&
-               registrationSource.Contains("CanSwitchEsuModes") &&
-               behaviourSource.Contains("TrySwitchToAutomationBuilder") &&
-               behaviourSource.Contains("AutomationBuilderModeRegistration.CanOpenFromModeSwitch") &&
-               behaviourSource.Contains("AutomationBuilderModeRegistration.OpenFromModeSwitch") &&
-               automationBehaviourSource.Contains("TrySwitchToDecorationEdit") &&
-               automationBehaviourSource.Contains("DecorationEditModeRegistration.CanOpenFromModeSwitch") &&
-               automationBehaviourSource.Contains("DecorationEditModeRegistration.OpenFromModeSwitch") &&
-               !behaviourSource.Contains("InfoStore.Add(\"ESU mode: Automation Builder.\")") &&
-               !automationBehaviourSource.Contains("InfoStore.Add(\"ESU mode: Decoration Edit.\")") &&
+               behaviourSource.Contains("TrySwitchToDecorationEdit") &&
                behaviourSource.Contains("ConsumeSmartBuildToggleDown") &&
                behaviourSource.Contains("ConsumeSwitchModeDown") &&
-               automationBehaviourSource.Contains("ConsumeAutomationBuilderToggleDown") &&
-               automationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
-               decorationBehaviourSource.Contains("ConsumeDecorationEditToggleDown") &&
-               decorationBehaviourSource.Contains("ConsumeSwitchModeDown") &&
-               buildModeInputGateSource.Contains("_switchModeRequiresRelease") &&
-               buildModeInputGateSource.Contains("_decorationEditToggleRequiresRelease") &&
                buildModeInputGateSource.Contains("_smartBuildToggleRequiresRelease") &&
-               buildModeInputGateSource.Contains("_automationBuilderToggleRequiresRelease") &&
-               buildModeInputGateSource.Contains("Time.frameCount") &&
-               buildModeInputGateSource.Contains("ReadSwitchModeHeld") &&
-               buildModeInputGateSource.Contains("ReadDecorationEditToggleHeld") &&
-               buildModeInputGateSource.Contains("ReadSmartBuildToggleHeld") &&
-               buildModeInputGateSource.Contains("ReadAutomationBuilderToggleHeld") &&
-               buildModeInputGateSource.Contains("ReadProfileKey(") &&
-               buildModeInputGateSource.Contains("KeyInputEventType.Held") &&
-               inputScopeSource.Contains("EsuEditorScope.ShouldHideVanillaHud") &&
-               inputScopeSource.Contains("AutomationBuilderInputScope.SuppressBuildInput") &&
-               inputScopeSource.Contains("AutomationBuilderInputScope.SuppressCameraInput") &&
-               automationInputScopeSource.Contains("BeginEditor(\"Automation Builder\")") &&
-               modeSwitchHandoffSource.Contains("AutomationBuilderModeRegistration.Active"),
-            "Smart Builder and Automation Builder register at startup, default to Ctrl+Shift+B/Ctrl+Shift+A, and share one-press profiled input gates for Tab handoffs.");
-        Assert(automationSessionSource.Contains("IsMouseOverAutomationUi(MouseGuiPosition())") &&
-               automationSessionSource.Contains("AutomationBuilderInputScope.SetMouseOverUiProbe(IsCurrentMouseOverAutomationUi)") &&
-               automationSessionSource.Contains("EsuPanelUiHitTestRegistry.Register(this, HitTestAutomationUi)") &&
-               automationSessionSource.Contains("EsuPanelUiHitTestRegistry.Unregister(this)") &&
-               automationSessionSource.Contains("private EsuPanelUiHit HitTestAutomationUi(Vector2 mouse)") &&
-               automationSessionSource.Contains("private bool IsCurrentMouseOverAutomationUi()") &&
-               automationSessionSource.Contains("ClaimMouseWheelOverAutomationUi(Event.current, overUi)") &&
-               automationSessionSource.Contains("private static void ClaimMouseWheelOverAutomationUi") &&
-               automationSessionSource.Contains("EsuConsoleWindow.ContainsMouse(mouse)") &&
-               automationSessionSource.Contains("EsuHudNotifications.ContainsMouse(mouse)") &&
-               automationSessionSource.Contains("_viewModeMenuOpen && ViewModeMenuRect(toolbar).Contains(mouse)") &&
-               automationSessionSource.Contains("_contextBlock != null && _contextMenuRect.Contains(mouse)") &&
-               automationSessionSource.Contains("_canvasOpen && canvas.Contains(mouse)") &&
-               automationSessionSource.Contains("toolbar.Contains(mouse)") &&
-               automationSessionSource.Contains("status.Contains(mouse)") &&
-               automationSessionSource.Contains("leftPanel.Contains(mouse)") &&
-               automationSessionSource.Contains("rightPanel.Contains(mouse)") &&
-               automationSessionSource.Contains("\"automation_canvas\"") &&
-               automationSessionSource.Contains("HandleGraphCanvasZoom(canvasRect)") &&
-               automationInputScopeSource.Contains("SetMouseOverUiProbe") &&
-               automationInputScopeSource.Contains("ProbeMouseOverUi()") &&
-               automationInputScopeSource.Contains("GuiDisplayBase.MouseWheelInUse.Now()"),
-            "Automation Builder claims mouse-wheel input over all ESU panels before child scroll views consume the event, while preserving graph-canvas zoom.");
-        Assert(automationSessionSource.Contains("private sealed class AutomationHudSummary") &&
-               automationSessionSource.Contains("BuildAutomationHudSummary()") &&
-               automationSessionSource.Contains("ScopedHudLinks(AutomationLinkKind.InputToBreadboard") &&
-               automationSessionSource.Contains("ScopedHudLinks(AutomationLinkKind.BreadboardToOutput") &&
-               automationSessionSource.Contains("DrawSelectionSummary(summary);") &&
-               automationSessionSource.Contains("\"Selected Breadboard\"") &&
-               automationSessionSource.Contains("DrawLinkListBox(inputRect, \"Input Links\", summary.InputLinks") &&
-               automationSessionSource.Contains("DrawLinkListBox(outputRect, \"Output Links\", summary.OutputLinks") &&
-               automationSessionSource.Contains("HudLinkDirectionLabel(link)") &&
-               automationSessionSource.Contains("HudLinkStatusLabel(link)") &&
-               automationSessionSource.Contains("\"Focus Link\"") &&
-               automationSessionSource.Contains("FocusSelectedLinkInGraph()") &&
-               automationSessionSource.Contains("DrawPanelHeader(\"Automation Tools\"") &&
-               automationSessionSource.Contains("DrawSectionHeader(\"Breadboards\"") &&
-               automationSessionSource.Contains("DrawBreadboardVariantCard(AutomationBreadboardVariant.Ai") &&
-               automationSessionSource.Contains("DrawBreadboardVariantCard(AutomationBreadboardVariant.Basic") &&
-               automationSessionSource.Contains("AI fallback") &&
-               automationSessionSource.Contains("\"Place Breadboard\"") &&
-               automationSessionSource.Contains("\"Link Tools\"") &&
-               automationSessionSource.Contains("\"Input: block -> board\"") &&
-               automationSessionSource.Contains("\"Output: board -> block\"") &&
-               automationSessionSource.Contains("DrawGraphActionsSection(summary);") &&
-               automationSessionSource.Contains("CheckNativeGraphPlan") &&
-               automationSessionSource.Contains("ApplyGraphToNativeBoard") &&
-               automationSessionSource.Contains("RevertEsuOwnedNativeGraph") &&
-               automationSessionSource.Contains("ArrangeNativeGraphForReadability") &&
-               automationSessionSource.Contains("ToolButton(AutomationBuilderTool.PlaceBreadboard, \"gear\", \"Place\"") &&
-               automationSessionSource.Contains("StatusSummary(summary)") &&
-               automationSessionSource.Contains("DrawBottomStateChips") &&
-               automationSessionSource.Contains("DrawStateChip(chip, \"Tool\"") &&
-               automationSessionSource.Contains("\"Automation Builder | {0}") &&
-               !automationSessionSource.Contains("ESU mode: Smart Builder."),
-            "Automation Builder world HUD is a compact cockpit: selected breadboard/link map on the left, breadboard/link/graph actions on the right, and an Automation Builder state bar without stale Smart Builder labels.");
-        Assert(automationSessionSource.Contains("private enum AutomationLinkRemovalResult") &&
-               automationSessionSource.Contains("private AutomationLink ResolveCurrentLinkForAction(AutomationLink link)") &&
-               automationSessionSource.Contains("AutomationLink link = ResolveCurrentLinkForAction(_selectedLink);") &&
-               automationSessionSource.Contains("AutomationLink link = ResolveCurrentLinkForAction(_contextLink);") &&
-               automationSessionSource.Contains("GUIStyle style = IsSelectedLink(link)") &&
-               automationSessionSource.Contains("bool selected = IsSelectedLink(link);") &&
-               automationSessionSource.Contains("private void ClearSelectedLinkIfMatches(AutomationLink link)") &&
-               automationSessionSource.Contains("private AutomationLinkRemovalResult RemoveAutomationLink(AutomationLink link)") &&
-               automationSessionSource.Contains("RemoveLinkBoundGraphNodes(currentLink);") &&
-               automationSessionSource.Contains("RemoveMatchingStagedLinksFromList(currentLink)") &&
-               automationSessionSource.Contains("RemoveMatchingLinksFromList(currentLink, stagedOnly: false)") &&
-               automationSessionSource.Contains("RemoveMatchingStagedLinksFromList(link);") &&
-               automationSessionSource.Contains("private static bool LinkRemovalNeedsNativeRefresh(AutomationLinkRemovalResult result)") &&
-               automationSessionSource.Contains("result == AutomationLinkRemovalResult.NativeRemovalStaged ||") &&
-               automationSessionSource.Contains("result == AutomationLinkRemovalResult.Blocked;") &&
-               !automationSessionSource.Contains("result == AutomationLinkRemovalResult.StagedRemoved") &&
-               automationNativeBridgeSource.Contains("_pendingNativeNodeRemovals.Add(component.UniqueId)") &&
-               automationNativeBridgeSource.Contains("Imported native links are read-only"),
-            "Automation Builder Remove Link resolves stale selected/context links, highlights equivalent rows and wires, removes staged read/set graph nodes without a native refresh resurrection, and preserves ESU-owned/imported native behavior.");
-        Assert(automationSessionSource.Contains("private sealed class AutomationGraphDragState") &&
-               automationSessionSource.Contains("private sealed class AutomationSnapCandidate") &&
-               automationSessionSource.Contains("private static class AutomationGraphLayout") &&
-               automationSessionSource.Contains("ResolveGraphSnapCandidate(") &&
-               automationSessionSource.Contains("ApplySnapCandidate(") &&
-               automationSessionSource.Contains("CollectGraphDragGroup(") &&
-               automationSessionSource.Contains("AutomationGraphDragState.Capture") &&
-               automationSessionSource.Contains("RefreshGraphConnectionsCore") &&
-               automationSessionSource.Contains("AutoPanGraphDuringDrag") &&
-               automationSessionSource.Contains("SnapPlacementHasBlockingOverlap") &&
-               automationSessionSource.Contains("if (snap.IsMagnetic &&") &&
-               automationSessionSource.Contains("if (!snap.IsMagnetic)") &&
-               automationSessionSource.Contains("Vector2 windowMouse = CurrentCanvasWindowMousePosition();") &&
-               automationSessionSource.Contains("DrawGraphSnapStatus") &&
-               automationSessionSource.Contains("FitSelectedGraphToWorkspace") &&
-               automationSessionSource.Contains("CenterSelectedGraphNode") &&
-               !automationSessionSource.Contains("AutomationGraphInteractionIssuesForVerification"),
-            "Automation Builder graph uses shared snap candidates, drag transactions, layout normalization, magnetic-snap overlap guards, unified drag coordinates, edge auto-pan, and fit/center actions without a non-executable verifier hook.");
-        Assert(automationSessionSource.Contains("private readonly struct PaletteDropPreview") &&
-               automationSessionSource.Contains("PaletteNodeScreenSize(") &&
-               automationSessionSource.Contains("PaletteNodeScreenZoomFor(") &&
-               automationSessionSource.Contains("Mathf.Min(Mathf.Max(0.001f, graphZoom), widthLimitedZoom)") &&
-               automationSessionSource.Contains("DrawPaletteNodePreview(") &&
-               automationSessionSource.Contains("PaletteBlockInteractionRect(row)") &&
-               automationSessionSource.Contains("PalettePreviewNode(_draggingPaletteKind)") &&
-               automationSessionSource.Contains("GraphToWorkspaceRect(workspaceRect, ghostGraphRect)") &&
-               automationSessionSource.Contains("PaletteDropPreview? paletteDropPreview = CurrentPaletteDropPreview(canvasRect)") &&
-               OccursBefore(
-                   automationSessionSource,
-                   "DrawPaletteDragGhost(canvasRect, paletteDropPreview)",
-                   "DrawPaletteSnapPreview(canvasRect, paletteDropPreview)") &&
-               automationSessionSource.Contains("allowFree: true") &&
-               automationSessionSource.Contains("PaletteDropCommitPlan commitPlan = PlanPaletteDropCommit(") &&
-               automationSessionSource.Contains("preferredRect: commitPlan.PreferredRect") &&
-               automationSessionSource.Contains("preferredSnap: commitPlan.UseResolvedSnap") &&
-               automationSessionSource.Contains("ExpandSnapBodyHost(snap, movingNodes);") &&
-               automationNativeBridgeSource.Contains("bool valueFootprint = DrawsAsValueBlock(node.Kind, node.Rect);") &&
-               automationNativeBridgeSource.Contains("Rect rect = NativeComponentRect(component, kind);") &&
-               !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeWidthForKind(_draggingPaletteKind)") &&
-               !automationSessionSource.Contains("EsuHudLayout.Scale(GraphNodeHeightForKind(_draggingPaletteKind)"),
-            "Automation Builder palette rows render once, reuse preview nodes, resolve one layered drag preview, commit the resolved candidate once, preserve native compact value footprints, and share graph-zoom sizing instead of HUD-scaled ghost dimensions.");
-        Assert(CurrentAutomationBuilderSourceContract(
-                   modProjectSource,
-                   automationSessionSource,
-                   automationNativeBridgeSource,
-                   automationBreadboardCatalogSource),
-            "Automation Builder syncs links and graph nodes through native breadboard components, auto-names exact filters, draws a Tinkercad-style block palette/workspace/native-plan graph without nested GUI windows, snaps and arranges value blocks into labeled host sockets, preserves control-block mouths while arranging body actions, uses native wires and property-backed constants as reopened block relationships, snaps action blocks into visible control mouths, lowers control blocks to native Switch components with then/else sockets backed by Pass and FailValue, exposes native-linked target and property suggestion controls, persists forever/native-evaluation blocks as vanilla comments, splits input/output link panels, supports view modes/number shortcuts/AI-basic breadboards, prompts on unapplied graph close, and applies idempotent top-to-bottom connections without duplicate vanilla popups.");
-        string duplicateGraphStackSource = ExtractMethodSource(
-            automationGraphEditingSource,
-            "DuplicateSelectedGraphStack");
-        string applyGraphToNativeSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "ApplyGraphToNativeBoard");
-        string discardAutomationDraftSource = ExtractMethodSource(
-            automationSessionSource,
-            "DiscardCurrentAutomationDraft");
-        Assert(ContainsAll(
-                   automationGraphEditingSource,
-                   "GraphEditHistoryLimit = 64",
-                   "AutomationGraphEditSnapshot",
-                   "AutomationGraphClipboard",
-                   "RecordGraphEditHistoryState()",
-                   "UndoGraphEdit()",
-                   "RedoGraphEdit()",
-                   "CopySelectedGraphStack()",
-                   "PasteGraphStack()",
-                   "DuplicateSelectedGraphStack()",
-                   "KeyCode.Z",
-                   "KeyCode.Y",
-                   "KeyCode.C",
-                   "KeyCode.V",
-                   "KeyCode.D",
-                   "ImportedConnections",
-                   "PendingDraftIds",
-                   "PendingRectIds",
-                   "PendingRemovalIds") &&
-               OccursBefore(
-                   duplicateGraphStackSource,
-                   "CopySelectedGraphStack()",
-                   "PasteGraphStack()") &&
-               OccursBefore(
-                   applyGraphToNativeSource,
-                   "ClearAutomationDirty();",
-                   "ResetGraphEditHistory();") &&
-               OccursBefore(
-                   discardAutomationDraftSource,
-                   "ClearAutomationDirty();",
-                   "ResetGraphEditHistory();"),
-            "Automation block editing provides bounded full-state undo/redo plus stack copy/paste/duplicate shortcuts, and rebases history only after Apply or discard establishes a native baseline.");
-        Vector2 firstPasteOffset = AutomationBuilderSession.ResolveGraphPasteCascadeOffset(0, 24f);
-        Vector2 secondPasteOffset = AutomationBuilderSession.ResolveGraphPasteCascadeOffset(1, 24f);
-        Vector2 sanitizedPasteOffset = AutomationBuilderSession.ResolveGraphPasteCascadeOffset(-4, float.NaN);
-        Assert(firstPasteOffset == Vector2.zero &&
-               secondPasteOffset == new Vector2(24f, 24f) &&
-               sanitizedPasteOffset == Vector2.zero,
-            "Automation paste offsets cascade repeated copies and sanitize invalid ordinals or spacing.");
-        Assert(AutomationBuilderSession.ClipboardTargetBindingCompatible(
-                   "board-a",
-                   "board-a",
-                   sourceResolved: true,
-                   targetResolved: true,
-                   sourceOnDestinationConstruct: true,
-                   targetOnDestinationConstruct: true) &&
-               !AutomationBuilderSession.ClipboardTargetBindingCompatible(
-                   "board-a",
-                   "board-b",
-                   sourceResolved: true,
-                   targetResolved: true,
-                   sourceOnDestinationConstruct: false,
-                   targetOnDestinationConstruct: true) &&
-               !AutomationBuilderSession.ClipboardTargetBindingCompatible(
-                   "board-a",
-                   "board-b",
-                   sourceResolved: false,
-                   targetResolved: true,
-                   sourceOnDestinationConstruct: true,
-                   targetOnDestinationConstruct: true) &&
-               !AutomationBuilderSession.ClipboardTargetBindingNeedsBreadboardRebind("board-a", "board-a") &&
-               AutomationBuilderSession.ClipboardTargetBindingNeedsBreadboardRebind("board-a", "board-b"),
-            "Automation clipboard bindings survive only while both endpoints resolve on the destination construct, and cross-board pastes explicitly rebind the breadboard endpoint.");
-
-        string syncNativeGraphSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "SyncGraphFromNativeBreadboardCore");
-        string nativeKindSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "NativeKind");
-        string validateNativeGraphSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "ValidateAndConnectNativeGraph");
-        string shouldManageOwnedInputSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "ShouldManageOwnedInputConnection");
-        Assert(ContainsAll(
-                   automationSessionSource,
-                   "AutomationNodeKind.NativeUnsupported",
-                   "Opaque vanilla component",
-                   "read-only; preserved exactly",
-                   "use vanilla breadboard editor") &&
-               ContainsAll(
-                   syncNativeGraphSource,
-                   "snapshot.Components",
-                   "!IsNativeOwnerMarker(component)",
-                   "NativeComponentToNode(breadboardRef, snapshot, component)") &&
-               !syncNativeGraphSource.Contains("IsSupportedAutomationNativeComponent") &&
-               nativeKindSource.Contains("return AutomationNodeKind.NativeUnsupported;") &&
-               validateNativeGraphSource.Contains("IsSupportedAutomationNativeComponent(component)") &&
-               shouldManageOwnedInputSource.Contains(
-                   "IsEsuOwnedNativeComponent(ownedComponents, source)") &&
-               !shouldManageOwnedInputSource.Contains("IsSupportedAutomationNativeComponent"),
-            "Automation graph sync imports unknown vanilla components as opaque read-only blocks, excludes them from ESU mutation/lowering, and preserves unsupported sources when rebuilding owned inputs.");
-
-        string importedRawConnectionsSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "AppendImportedRawNativeConnections");
-        string connectionEquivalenceSource = ExtractMethodSource(
-            automationSessionSource,
-            "ConnectionsEquivalent");
-        string nativeComponentSignatureSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "NativeComponentSignature");
-        Assert(ContainsAll(
-                   importedRawConnectionsSource,
-                   "for (int inputIndex = 0; inputIndex < target.BInputs.Count; inputIndex++)",
-                   "input?.OurOutput?.IsLatched == true",
-                   "input.OurOutput.Them?.OurComponent",
-                   "IsEsuOwnedNativeNode(sourceNode) && IsEsuOwnedNativeNode(targetNode)",
-                   "DescribeImportedNativeInput(",
-                   "AutomationGraphWireOrigin.NativeImported",
-                   "nativeInputIndex: inputIndex") &&
-               automationSessionSource.Contains(
-                   "AppendImportedRawNativeConnections(") &&
-               ContainsAll(
-                   connectionEquivalenceSource,
-                   "left.NativeInputIndex < 0 && right.NativeInputIndex < 0",
-                   "left.NativeInputIndex == right.NativeInputIndex") &&
-               ContainsAll(
-                   automationSessionSource,
-                   "connection.NativeInputIndex >= 0",
-                   "NativeInputIndex = nativeInputIndex",
-                   "connection.NativeInputIndex)") &&
-               ContainsAll(
-                   automationGraphEditingSource,
-                   "NativeInputIndex = connection.NativeInputIndex",
-                   "Signature => Kind + \":\" + FromNodeId + \">\" + ToNodeId + \":\" + SlotKind + \":\" + Origin + \":\" + NativeInputIndex",
-                   "nativeInputIndex: NativeInputIndex") &&
-               ContainsAll(
-                   nativeComponentSignatureSource,
-                   "hash = hash * 31 + inputIndex++",
-                   "input?.OurOutput?.IsLatched == true ? 1 : 0",
-                   "input.OurOutput.Them?.OurComponent?.UniqueId ?? 0u"),
-            "Automation imports every latched vanilla input as an exact read-only wire keyed by native port index, and preserves that port through copy, rebind, graph signatures, and cache invalidation.");
-
-        string nativeConnectionOriginSource = ExtractMethodSource(
-            automationSessionSource,
-            "NativeConnectionOrigin");
-        string tryConnectNativeInputSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "TryConnectComponentToInput");
-        string nativeGraphReadinessSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "NativeGraphReadinessIssues");
-        Assert(ContainsAll(
-                   nativeConnectionOriginSource,
-                   "IsEsuOwnedNativeNode(source)",
-                   "IsEsuOwnedNativeNode(target)",
-                   "AutomationGraphWireOrigin.EsuNative",
-                   "AutomationGraphWireOrigin.NativeImported") &&
-               shouldManageOwnedInputSource.Contains(
-                   "IsEsuOwnedNativeComponent(ownedComponents, source)") &&
-               !shouldManageOwnedInputSource.Contains("IsSupportedAutomationNativeComponent") &&
-               ContainsAll(
-                   tryConnectNativeInputSource,
-                   "IsNativeConnectedToInput(from, input)",
-                   "if (input.OurOutput?.IsLatched == true)",
-                   "new CreateConnectionCommand(board, output, input).Execute()") &&
-               OccursBefore(
-                   tryConnectNativeInputSource,
-                   "IsNativeConnectedToInput(from, input)",
-                   "if (input.OurOutput?.IsLatched == true)") &&
-               OccursBefore(
-                   tryConnectNativeInputSource,
-                   "if (input.OurOutput?.IsLatched == true)",
-                   "new CreateConnectionCommand(board, output, input).Execute()") &&
-               nativeGraphReadinessSource.Contains("UnsupportedMixedOwnershipConnectionIssues(graph)"),
-            "Automation marks a wire editable only when both endpoints are ESU-owned, clears only ESU-owned source latches, and refuses to replace any remaining imported latch.");
-        Assert(AutomationBuilderSession.CanManageEsuConnectionOwnership(
-                   sourceApplyWritable: true,
-                   targetApplyWritable: true) &&
-               !AutomationBuilderSession.CanManageEsuConnectionOwnership(
-                   sourceApplyWritable: false,
-                   targetApplyWritable: true) &&
-               !AutomationBuilderSession.CanManageEsuConnectionOwnership(
-                   sourceApplyWritable: true,
-                   targetApplyWritable: false) &&
-               !AutomationBuilderSession.CanManageEsuConnectionOwnership(
-                   sourceApplyWritable: false,
-                   targetApplyWritable: false),
-            "Automation can own a connection only when both endpoints are writable ESU nodes, rejecting imported-source to owned-target wires before Apply.");
-
-        string parseOwnerMarkerSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "TryParseNativeOwnerMarker");
-        string parseOwnerMarkerTextSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "TryParseNativeOwnerMarkerText");
-        string addOwnerMarkerSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "AddNativeOwnerMarker");
-        bool parsedZeroOwnerId = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
-            "ESU_AB_OWNER|v1|component=0|kind=Constant",
-            out uint zeroOwnerId,
-            out AutomationBuilderSession.AutomationNodeKind zeroOwnerKind);
-        bool parsedMissingOwnerId = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
-            "ESU_AB_OWNER|v1|component=|kind=Constant",
-            out _,
-            out _);
-        bool parsedNegativeOwnerId = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
-            "ESU_AB_OWNER|v1|component=-1|kind=Constant",
-            out _,
-            out _);
-        bool parsedUnsupportedOwnerKind = AutomationBuilderSession.TryParseNativeOwnerMarkerText(
-            "ESU_AB_OWNER|v1|component=7|kind=NativeUnsupported",
-            out _,
-            out _);
-        Assert(automationNativeBridgeSource.Contains(
-                   "private const string NativeOwnerMarkerPrefix = \"ESU_AB_OWNER|\";") &&
-               ContainsAll(
-                   automationNativeBridgeSource,
-                   "\"v1|component=\"",
-                   "componentId.ToString(CultureInfo.InvariantCulture)",
-                   "\"|kind=\"") &&
-               ContainsAll(
-                   parseOwnerMarkerTextSource,
-                   "parts.Length != 3",
-                   "string.Equals(parts[0], \"v1\", StringComparison.Ordinal)",
-                   "parts[1].StartsWith(\"component=\", StringComparison.Ordinal)",
-                   "parts[2].StartsWith(\"kind=\", StringComparison.Ordinal)",
-                   "NumberStyles.None",
-                   "ignoreCase: false",
-                   "!CanLowerStagedNodeKind(kind)") &&
-               ContainsAll(
-                   parseOwnerMarkerSource,
-                   "comment.ClipText.Us",
-                   "!comment.ScaleWithZoom.Us",
-                   "comment.OutlineColor.Us.a <= 0.001f") &&
-               ContainsAll(
-                   addOwnerMarkerSource,
-                   "marker.ClipText.Us = true",
-                   "marker.ScaleWithZoom.Us = false",
-                   "marker.OutlineColor.Us = new Color(0f, 0f, 0f, 0f)"),
-            "Automation ownership accepts only the exact v1 component/kind marker grammar on comments carrying every generated-marker trait.");
-        Assert(parsedZeroOwnerId &&
-               zeroOwnerId == 0u &&
-               zeroOwnerKind == AutomationBuilderSession.AutomationNodeKind.Constant &&
-               !parsedMissingOwnerId &&
-               !parsedNegativeOwnerId &&
-               !parsedUnsupportedOwnerKind,
-            "Automation ownership accepts vanilla's first component ID of zero while still rejecting an absent component ID.");
-        const string zeroOwnerMarker = "ESU_AB_OWNER|v1|component=0|kind=Constant";
-        const string invalidOwnerMarker = "not-an-owner-marker";
-        Assert(AutomationBuilderSession.RewriteNativeOwnerMarkerComponentId(
-                   zeroOwnerMarker,
-                   42u) == "ESU_AB_OWNER|v1|component=42|kind=Constant" &&
-               AutomationBuilderSession.RewriteNativeOwnerMarkerComponentId(
-                   invalidOwnerMarker,
-                   42u) == invalidOwnerMarker,
-            "Automation rollback rewrites a valid owner marker to vanilla's restored component ID without mutating unrelated comments.");
-        var restoredIdMap = new Dictionary<uint, uint> { [0u] = 42u };
-        Assert(AutomationBuilderSession.ResolveRestoredNativeComponentId(
-                   0u,
-                   restoredIdMap,
-                   snapshotComponentId: 9u) == 42u &&
-               AutomationBuilderSession.ResolveRestoredNativeComponentId(
-                   8u,
-                   restoredIdMap,
-                   snapshotComponentId: 9u) == 9u,
-            "Automation snapshot restoration gives explicit vanilla ID remaps precedence and otherwise preserves the snapshot component ID.");
-
-        string foreverMarkerSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "NativeForeverMarkerText");
-        string foreverDisplaySource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "NativeForeverDisplayText");
-        Assert(automationNativeBridgeSource.Contains(
-                   "private const string NativeForeverMarkerPrefix = \"ESU_AB_FOREVER|v1|\";") &&
-               ContainsAll(
-                   foreverMarkerSource,
-                   "IsForeverComment(value)",
-                   "NativeForeverMarkerPrefix + value") &&
-               foreverDisplaySource.Contains("value.Substring(NativeForeverMarkerPrefix.Length)") &&
-               automationNativeBridgeSource.Contains(
-                   "CreateNativeComment(NativeForeverMarkerText(\"native breadboard evaluates continuously\"))") &&
-               automationNativeBridgeSource.Contains("NativeForeverDisplayText(foreverComment.InputValue.Us)"),
-            "Automation Forever blocks use one exact versioned vanilla Comment marker and round-trip only their display text.");
-
-        string nativeStackIdentitySource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "NativeStackConnectionExists");
-        string refreshNativeConnectionsSource = ExtractMethodSource(
-            automationSessionSource,
-            "RefreshNativeGraphConnections");
-        string removeStackFedValueSource = ExtractMethodSource(
-            automationSessionSource,
-            "RemoveStackFedPrimaryValueConnections");
-        Assert(ContainsAll(
-                   validateNativeGraphSource,
-                   "to is NativeSwitch switchTo",
-                   "switchTo.Switcher") &&
-               ContainsAll(
-                   nativeStackIdentitySource,
-                   "toComponent is NativeSwitch switchComponent",
-                   "switchComponent.Switcher",
-                   "IsNativeConnectedToInputAt(fromComponent, toComponent, 0)") &&
-               ContainsAll(
-                   removeStackFedValueSource,
-                   "UsesStackAsPrimaryInput",
-                   "AutomationGraphConnectionKind.Stack",
-                   "AutomationGraphConnectionKind.Value",
-                   "AutomationValueSlotKind.Pass") &&
-               ContainsAll(
-                   refreshNativeConnectionsSource,
-                   "IsEsuOwnedNativeNode(node) && AcceptsControlBody(node.Kind)",
-                   "GeometryBodyChildrenForHost(graph, host)",
-                   "AutomationGraphConnectionKind.Body",
-                   "AutomationGraphWireOrigin.EsuNative") &&
-               OccursBefore(
-                   refreshNativeConnectionsSource,
-                   "GeometryBodyChildrenForHost(graph, host)",
-                   "graph.RebuildConnections(editableConnections)"),
-            "Automation native round trips keep Switcher and input zero as stable primary ports, remove duplicate stack-fed value wires, and reconstruct ESU-owned control bodies before publishing graph connections.");
-
-        string rollbackNativeApplySource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "RollbackFailedNativeApply");
-        string restoreNativeInputsSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "RestoreNativeInputConnections");
-        Assert(ContainsAll(
-                   validateNativeGraphSource,
-                   "CaptureGraphEditSnapshot(graph, _automationDirty)",
-                   "CaptureNativeInputConnections(breadboard)",
-                   "CaptureOwnedNativeComponentStates(breadboard)",
-                   "RollbackFailedNativeApply(") &&
-               ContainsAll(
-                   rollbackNativeApplySource,
-                   ".Reverse()",
-                   "RemoveNativeOwnerMarkersForComponent",
-                   "RemoveNativeComponentPackage",
-                   "RestoreNativeApplyBlockNames",
-                   "RestoreOwnedNativeComponentStates",
-                   "RestoreNativeInputConnections",
-                   "graphBeforeApply.Restore(current)",
-                   "RestoreSnapshotStagedLinks",
-                   "RestoreSnapshotPendingNativeState",
-                   "_automationDirty = graphBeforeApply?.Dirty == true || !restored") &&
-               !rollbackNativeApplySource.Contains("MarkAutomationDirty()") &&
-               OccursBefore(
-                   rollbackNativeApplySource,
-                   "RemoveNativeComponentPackage",
-                   "RestoreNativeApplyBlockNames") &&
-               OccursBefore(
-                   rollbackNativeApplySource,
-                   "RestoreNativeApplyBlockNames",
-                   "RestoreOwnedNativeComponentStates") &&
-               OccursBefore(
-                   rollbackNativeApplySource,
-                   "RestoreOwnedNativeComponentStates",
-                   "RestoreNativeInputConnections") &&
-               OccursBefore(
-                   rollbackNativeApplySource,
-                   "RestoreNativeInputConnections",
-                   "graphBeforeApply.Restore(current)") &&
-               ContainsAll(
-                   restoreNativeInputsSource,
-                   "ToDictionary(state => state.Input, state => state.Output)",
-                   "RemoveNativeInputConnection(breadboard, input)",
-                   "new CreateConnectionCommand(breadboard, pair.Value, pair.Key).Execute()",
-                   "ReferenceEquals(pair.Key.OurOutput.Them, pair.Value)"),
-            "Automation Apply snapshots graph, native edits, names, and exact input identities, then rolls every layer back in dependency order when lowering or connection verification fails.");
-
-        string createdNativeImportSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "CreatedNativeComponentsImported");
-        int createdNativeImportChecks = validateNativeGraphSource
-            .Split(new[] { "CreatedNativeComponentsImported(" }, StringSplitOptions.None)
-            .Length - 1;
-        Assert(ContainsAll(
-                   createdNativeImportSource,
-                   "IsNativeComponentPresent(breadboard, component)",
-                   "owner.ComponentId == component.UniqueId",
-                   "ReferenceEquals(owner.Target, component)",
-                   "ReferenceEquals(node?.NativeComponent, component)",
-                   "packagePresent && ownerPresent && graphPresent") &&
-               createdNativeImportChecks >= 2 &&
-               validateNativeGraphSource.Contains(
-                   "Apply rolled back because lowered native components could not be re-imported for verification."),
-            "Automation Apply verifies every created component by exact package, owner-target, and graph-node reference after refresh and again before success.");
-
-        string starterFlowSource = ExtractMethodSource(
-            automationSessionSource,
-            "TryAddStagedStarterFlow");
-        string collectDragGroupSource = ExtractMethodSource(
-            automationSessionSource,
-            "CollectGraphDragGroupCore");
-        string pasteGraphStackSource = ExtractMethodSource(
-            automationGraphEditingSource,
-            "PasteGraphStack");
-        string refreshGraphConnectionsCoreSource = ExtractMethodSource(
-            automationSessionSource,
-            "RefreshGraphConnectionsCore");
-        string refreshGraphCallSources = automationSessionSource + automationGraphEditingSource;
-        int refreshGraphOccurrences = refreshGraphCallSources
-            .Split(new[] { "RefreshGraphConnections(" }, StringSplitOptions.None)
-            .Length - 1;
-        int touchedGraphArguments = refreshGraphCallSources
-            .Split(new[] { "touchedNodeIds:" }, StringSplitOptions.None)
-            .Length - 1;
-        Assert(ContainsAll(
-                   starterFlowSource,
-                   "existingReadNode",
-                   "existingSetNode",
-                   "CanStarterFlowOwnNode(existingReadNode)",
-                   "CanStarterFlowOwnNode(existingSetNode)",
-                   "graph.Nodes.Any(node =>",
-                   "EnsureStagedLinkGraphNode(inputLink)",
-                   "EnsureStagedLinkGraphNode(outputLink)") &&
-               OccursBefore(
-                   starterFlowSource,
-                   "CanStarterFlowOwnNode(existingReadNode)",
-                   "EnsureStagedLinkGraphNode(inputLink)") &&
-               OccursBefore(
-                   starterFlowSource,
-                   "graph.Nodes.Any(node =>",
-                   "EnsureStagedLinkGraphNode(inputLink)") &&
-               ContainsAll(
-                   automationGraphEditingSource,
-                   "AutomationGraphConnectionCopy.Capture(graph.Connections",
-                   "Origin = connection.Origin",
-                   "SlotKind,",
-                   "NativeInputIndex = connection.NativeInputIndex",
-                   "nativeInputIndex: NativeInputIndex)") &&
-               ContainsAll(
-                   pasteGraphStackSource,
-                   "_graphClipboard.InstantiateNodes(",
-                   "_selectedBreadboard",
-                   "AutomationGraphLayout.AvoidOverlap(",
-                   "_graphClipboard.AppendConnections(graph, pasted)",
-                   "var pastedNodeIds = new HashSet<int>(pasted.Values.Select(node => node.Id))",
-                   "touchedNodeIds: pastedNodeIds") &&
-               OccursBefore(
-                   pasteGraphStackSource,
-                   "_graphClipboard.InstantiateNodes(",
-                   "AutomationGraphLayout.AvoidOverlap(") &&
-               OccursBefore(
-                   pasteGraphStackSource,
-                   "AutomationGraphLayout.AvoidOverlap(",
-                   "_graphClipboard.AppendConnections(graph, pasted)") &&
-               ContainsAll(
-                   refreshGraphConnectionsCoreSource,
-                   "IReadOnlyCollection<int> touchedNodeIds = null",
-                   "bool touchesEditedNode = touchedNodeIds == null ||",
-                   "bool touchesEditedNode = touchedNodeIds != null &&",
-                   "if (!touchesEditedNode || preserveTouchedNative)",
-                   "AddConnectionIfMissing(connections, connection)") &&
-               refreshGraphOccurrences == touchedGraphArguments + 1 &&
-               ContainsAll(
-                   collectDragGroupSource,
-                   "!IsGraphNodeApplyWritable(node)",
-                   "result.Add(node)") &&
-               OccursBefore(
-                   collectDragGroupSource,
-                   "!IsGraphNodeApplyWritable(node)",
-                   "result.Add(node)"),
-            "Automation starter flow completes every read-only/clean-graph preflight before staging link nodes; every graph mutation refreshes only its touched geometry while preserving untouched edges, and drag traversal stops at imported read-only blocks.");
-
-        string controlBodyRectSource = ExtractMethodSource(
-            automationSessionSource,
-            "ControlBodyRect");
-        string bodySnapSource = ExtractMethodSource(
-            automationSessionSource,
-            "TryFindBodySnapCandidate");
-        string stackSnapSource = ExtractMethodSource(
-            automationSessionSource,
-            "TryFindStackSnapCandidate");
-        string stackReconstructionSource = ExtractMethodSource(
-            automationSessionSource,
-            "AreStackNodesSnapped");
-        Assert(ContainsAll(
-                   automationSessionSource,
-                   "private const float GraphStackOverlap = 2f",
-                   "private const float GraphStackReconstructionTolerance = 14f",
-                   "private const float GraphBodyFirstChildTopInset = 24f",
-                   "private const float GraphBodyChildLeftInset = 14f",
-                   "private const float GraphBodySiblingGap = 8f",
-                   "private const float GraphBodyChainGap = 10f",
-                   "private const float GraphBodyBottomPadding = 24f",
-                   "hostRect.x + 58f",
-                   "hostRect.x + 50f",
-                   "hostRect.y + 172f",
-                   "hostRect.y + y") &&
-               !controlBodyRectSource.Contains("EsuHudLayout.Scale") &&
-               !automationSessionSource.Contains("hostRect.x + EsuHudLayout.Scale(") &&
-               !automationSessionSource.Contains("hostRect.y + EsuHudLayout.Scale(") &&
-               ContainsAll(
-                   bodySnapSource,
-                   "bestBody.y + GraphBodyFirstChildTopInset",
-                   "siblings.Max(child => child.Rect.yMax) + GraphBodySiblingGap",
-                   "bestBody.x + GraphBodyChildLeftInset") &&
-               !bodySnapSource.Contains("EsuHudLayout.Scale") &&
-               ContainsAll(
-                   stackSnapSource,
-                   "best.Rect.yMax - GraphStackOverlap",
-                   "best.Rect.y - node.Rect.height + GraphStackOverlap") &&
-               !stackSnapSource.Contains("EsuHudLayout.Scale") &&
-               ContainsAll(
-                   stackReconstructionSource,
-                   "from.Rect.yMax - GraphStackOverlap",
-                   "GraphStackReconstructionTolerance") &&
-               !stackReconstructionSource.Contains("EsuHudLayout.Scale") &&
-               !automationSessionSource.Contains("best.Rect.yMax - EsuHudLayout.Scale(2f)") &&
-               !automationSessionSource.Contains("from.Rect.yMax - EsuHudLayout.Scale(2f)"),
-            "Automation control mouths, value sockets, body placement, and stack snap/reconstruction use fixed graph-space units independent of HUD scale; only pointer thresholds are screen-to-graph scaled.");
-
-        string syncNativeNodeRectSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "SyncNativeNodeRect");
-        string applyPendingNodeDraftsSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "ApplyPendingNativeNodeDraftsToNative");
-        string normalizeGraphRectsSource = ExtractMethodSource(
-            automationSessionSource,
-            "NormalizeGraphNodeRects");
-        int semanticNativeApplyCalls = applyPendingNodeDraftsSource
-            .Split(new[] { "ApplyNativeNodeToNativeComponent(node)" }, StringSplitOptions.None)
-            .Length - 1;
-        Assert(ContainsAll(
-                   automationSessionSource,
-                   "private readonly Dictionary<uint, AutomationGraphNodeDraft> _pendingNativeNodeDrafts",
-                   "private readonly Dictionary<uint, Rect> _pendingNativeNodeRects") &&
-               ContainsAll(
-                   syncNativeNodeRectSource,
-                   "Rect nativeRect = NativeComponentRect(component, node.Kind)",
-                   "_pendingNativeNodeRects.Remove(component.UniqueId)",
-                   "_pendingNativeNodeRects[component.UniqueId] = node.Rect") &&
-               !syncNativeNodeRectSource.Contains("_pendingNativeNodeDrafts") &&
-               ContainsAll(
-                   applyPendingNodeDraftsSource,
-                   "_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft)",
-                   "draft.ApplyTo(node)",
-                   "ApplyNativeNodeToNativeComponent(node)",
-                   "_pendingNativeNodeRects.TryGetValue(componentId, out Rect rect)",
-                   "ApplyNativeNodeRect((CircuitComponent)node.NativeComponent, rect)") &&
-               semanticNativeApplyCalls == 1 &&
-               OccursBefore(
-                   applyPendingNodeDraftsSource,
-                   "_pendingNativeNodeDrafts.TryGetValue(componentId, out AutomationGraphNodeDraft draft)",
-                   "ApplyNativeNodeToNativeComponent(node)") &&
-               OccursBefore(
-                   applyPendingNodeDraftsSource,
-                   "_pendingNativeNodeRects.TryGetValue(componentId, out Rect rect)",
-                   "ApplyNativeNodeRect((CircuitComponent)node.NativeComponent, rect)") &&
-               ContainsAll(
-                   automationGraphEditingSource,
-                   "_pendingNativeNodeRects.Keys",
-                   "PendingRectIds",
-                   "|x=\" + string.Join(\",\", PendingRectIds.OrderBy(id => id))"),
-            "Automation native layout changes use an independent rectangle journal, while semantic native writes run only for explicit semantic drafts and history snapshots track both channels.");
-
-        Assert(ContainsAll(
-                   normalizeGraphRectsSource,
-                   "if (node == null || !node.IsStaged)",
-                   "node => node?.IsStaged == true",
-                   "touchedNodeIds: movedNodeIds") &&
-               !normalizeGraphRectsSource.Contains("IsGraphNodeApplyWritable") &&
-               !normalizeGraphRectsSource.Contains("SyncNativeNodeRect"),
-            "Passive graph normalization only resizes staged blocks and cannot create native layout drafts for imported or already-applied components.");
-
-        string applyPendingRemovalsSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "ApplyPendingNativeNodeRemovalsToNative");
-        string atomicRemovalSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "RemoveNativeOwnerRecordsAtomically");
-        string restoreNativePackagesSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "RestoreNativeComponentPackages");
-        string revertNativeGraphSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "RevertEsuOwnedNativeGraph");
-        Assert(ContainsAll(
-                   applyPendingRemovalsSource,
-                   "RemoveNativeOwnerRecordsAtomically",
-                   "if (!result.Success)",
-                   "return result;",
-                   "_pendingNativeNodeDrafts.Remove(componentId)",
-                   "_pendingNativeNodeRects.Remove(componentId)",
-                   "_pendingNativeNodeRemovals.Remove(componentId)") &&
-               OccursBefore(
-                   applyPendingRemovalsSource,
-                   "if (!result.Success)",
-                   "_pendingNativeNodeDrafts.Remove(componentId)") &&
-               ContainsAll(
-                   validateNativeGraphSource,
-                   "removal = ApplyPendingNativeNodeRemovalsToNative(breadboard)",
-                   "if (!removal.Success)",
-                   "RollbackFailedNativeApply(",
-                   "removedNodes = removal.RemovedNodes") &&
-               OccursBefore(
-                   validateNativeGraphSource,
-                   "if (!removal.Success)",
-                   "removedNodes = removal.RemovedNodes") &&
-               ContainsAll(
-                   atomicRemovalSource,
-                   "RemoveNativeComponentPackage",
-                   "bool allAbsent = records.All",
-                   "RestoreNativeComponentPackages",
-                   "NativeRemovalBatchResult.Failed") &&
-               OccursBefore(
-                   atomicRemovalSource,
-                   "bool allAbsent = records.All",
-                   "NativeRemovalBatchResult.Completed") &&
-               ContainsAll(
-                   revertNativeGraphSource,
-                   "if (_automationDirty)",
-                   "CaptureNativeInputConnections(breadboard)",
-                   "wiresRemoved != expectedWires",
-                   "RemoveNativeOwnerRecordsAtomically",
-                   "if (!removal.Success)",
-                   "RestoreNativeInputConnections",
-                   "_pendingNativeNodeDrafts.Remove(record.ComponentId)",
-                   "_pendingNativeNodeRects.Remove(record.ComponentId)",
-                   "ClearAutomationDirty()") &&
-               OccursBefore(
-                   revertNativeGraphSource,
-                   "if (!removal.Success)",
-                   "_pendingNativeNodeDrafts.Remove(record.ComponentId)") &&
-               OccursBefore(
-                   revertNativeGraphSource,
-                   "if (!removal.Success)",
-                   "ClearAutomationDirty()"),
-            "Automation pending deletion and Revert retain dirty/pending state until native package absence is verified, restoring packages and exact input connections on an atomic removal failure.");
-        Assert(ContainsAll(
-                   restoreNativePackagesSource,
-                   "componentIdRemap[pair.OriginalTargetId] = pair.Target.UniqueId",
-                   "RewriteNativeOwnerMarkerComponentId(",
-                   "actual.Kind == pair.Kind",
-                   "ReferenceEquals(actual.Target, pair.Target)",
-                   "ReferenceEquals(actual.Marker, pair.Marker)") &&
-               OccursBefore(
-                   restoreNativePackagesSource,
-                   "restore.Where(component => !IsNativeOwnerMarker(component))",
-                   "RewriteNativeOwnerMarkerComponentId(") &&
-               OccursBefore(
-                   restoreNativePackagesSource,
-                   "RewriteNativeOwnerMarkerComponentId(",
-                   "restore.Where(IsNativeOwnerMarker)") &&
-               OccursBefore(
-                   restoreNativePackagesSource,
-                   "restore.Where(IsNativeOwnerMarker)",
-                   "List<NativeOwnerRecord> actualRecords"),
-            "Automation rollback restores targets before markers, rewrites reassigned IDs, then verifies exact target, marker, and kind ownership references.");
-
-        string captureNativeComponentStateSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "Capture");
-        string restoreOwnedNativeStatesSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "RestoreOwnedNativeComponentStates");
-        int revertComponentFieldRestores = revertNativeGraphSource
-            .Split(new[] { "RestoreOwnedNativeComponentStates(" }, StringSplitOptions.None)
-            .Length - 1;
-        Assert(ContainsAll(
-                   captureNativeComponentStateSource,
-                   "float x = component.X.Us",
-                   "float y = component.Y.Us",
-                   "float width = component.Width.Us",
-                   "float height = component.Height.Us",
-                   "Color outlineColor = component.OutlineColor.Us",
-                   "component is GenericBlockGetter getter",
-                   "getter.PotentiallyAffectedBlocks.ToList()",
-                   "component is GenericBlockSetter setter",
-                   "component is Evaluator evaluator",
-                   "component is NativeSwitch switchComponent",
-                   "component is LogicGate logicGate",
-                   "component is FuzzyThreshold fuzzyThreshold",
-                   "component is MaxMin maxMin",
-                   "component is ConstantInput constant",
-                   "component is RandomInput random",
-                   "component is Clamp clamp",
-                   "component is Delay delay",
-                   "component is NativeComment comment",
-                   "restoreSpecific()",
-                   "verifySpecific()") &&
-               ContainsAll(
-                   restoreOwnedNativeStatesSource,
-                   "restored &= state.TryRestore()",
-                   "return restored") &&
-               ContainsAll(
-                   revertNativeGraphSource,
-                   "componentsBeforeRevert =",
-                   "CaptureOwnedNativeComponentStates(breadboard)",
-                   "NativeOwnerRecordsMatch(",
-                   "RestoreNativeComponentPackages(",
-                   "RestoreNativeInputConnections(") &&
-               OccursBefore(
-                   revertNativeGraphSource,
-                   "CaptureOwnedNativeComponentStates(breadboard)",
-                   "RemoveNativeOwnerRecordsAtomically(") &&
-               revertComponentFieldRestores >= 2,
-            "Automation Revert snapshots raw native geometry and every supported component field, then verifies package identity, component fields, and connections on either removal or refresh rollback.");
-
-        string lowerGraphNodesSource = ExtractMethodSource(
-            automationNativeBridgeSource,
-            "LowerStagedGraphNodesToNative");
-        Assert(ContainsAll(
-                   lowerGraphNodesSource,
-                   "var addCommand = new AddComponentCommand(breadboard, item.Component)",
-                   "addCommand.Execute()",
-                   "committed.Add(item)",
-                   "AddNativeOwnerMarker(breadboard, item.Component, item.Node.Kind)",
-                   "foreach (PreparedNativeNode item in prepared.AsEnumerable().Reverse())",
-                   "RemoveNativeOwnerMarkersForComponent",
-                   "RemoveNativeComponentPackage") &&
-               OccursBefore(
-                   lowerGraphNodesSource,
-                   "addCommand.Execute()",
-                   "committed.Add(item)") &&
-               OccursBefore(
-                   lowerGraphNodesSource,
-                   "committed.Add(item)",
-                   "AddNativeOwnerMarker(breadboard, item.Component, item.Node.Kind)") &&
-               ContainsAll(
-                   automationGraphEditingSource,
-                   "(TargetBinding?.Kind.ToString() ?? string.Empty)",
-                   "(TargetBinding?.Source?.StableKey ?? string.Empty)",
-                   "(TargetBinding?.Target?.StableKey ?? string.Empty)",
-                   "(TargetBinding?.Property ?? string.Empty)"),
-            "Automation lowering registers each just-added component in rollback scope before ownership-marker work, and graph history signatures include complete target-binding identity.");
+               buildModeInputGateSource.Contains("ReadSmartBuildToggleHeld"),
+            "Smart Builder registers at startup, defaults to Ctrl+Shift+B, and shares the profiled Tab mode-switch gate.");
         Assert(!File.Exists(selectionResolverPath) &&
                !catalogSource.Contains("FromSelected(") &&
                !catalogSource.Contains("FindArmorFamily(") &&
@@ -14296,7 +12863,7 @@ f 0 2 3
                smartStatusRightLabelSource.Contains("text = \"Blocked\"") &&
                !smartStatusRightLabelSource.Contains("_plan.FailureReason") &&
                sessionSource.Contains("\"Smart Block Builder\"") &&
-               sessionSource.Contains("\"Mode: Smart | Tab to Automation when clean\""),
+               sessionSource.Contains("\"Mode: Smart | Tab to Decoration when clean\""),
             "Smart Builder bottom bar uses the shared Deco/Surface-style fixed panel rhythm, keeps plan warnings in the shared notification/log flow, and does not clip full failure reasons into the status label.");
         string smartGizmoHeaderSource = ExtractMethodSource(sessionSource, "DrawSmartBottomHeader");
         string smartGizmoPickerSource = ExtractMethodSource(sessionSource, "TryPickHandle");
@@ -14378,120 +12945,6 @@ f 0 2 3
             "Smart Block Builder hotkey/open guards do not construct ChatGUI during boot.");
     }
 
-    private static bool CurrentAutomationBuilderSourceContract(
-        string modProjectSource,
-        string automationSessionSource,
-        string automationNativeBridgeSource,
-        string automationBreadboardCatalogSource)
-    {
-        return ContainsAll(
-                   modProjectSource,
-                   "<Reference Include=\"Breadboards\">",
-                   "Breadboards.dll") &&
-               ContainsAll(
-                   automationSessionSource,
-                   "ApplyGraphToNativeBoard()",
-                   "DrawGraphNodeCard",
-                   "AutomationPaletteCategory",
-                   "AutomationBlockShape",
-                   "DrawBlockPalettePanel",
-                   "DrawPaletteCategoryButton",
-                   "HandlePaletteBlockDrop",
-                   "DrawPaletteSnapPreview",
-                   "DrawWorkspaceCanvasFlow",
-                   "DrawGraphConnections",
-                   "DrawGraphNodeCard(graph, node, executionFlow, executionChains)",
-                   "TrySnapNewGraphNode(graph, node.Id)",
-                   "TrySnapGraphNode",
-                   "TrySnapValueNode",
-                   "GraphNodeWidthForKind",
-                   "ValueSlotRect",
-                   "AcceptsValueSlot",
-                   "AutomationValueSlotKind",
-                   "AutomationGraphSlotMenuKind",
-                   "ValueSlotLabel",
-                   "DrawGraphSlotDropdown",
-                   "DrawGraphNodeQuickChoices",
-                   "NativePropertyOptionsForNode",
-                   "DrawEditableValueSlot",
-                   "DrawCompactBlockSlot",
-                   "AutomationNodeKind.Forever",
-                   "AutomationNodeKind.IfCondition",
-                   "AutomationNodeKind.IfLessThan",
-                   "AutomationNodeKind.LogicAnd",
-                   "AutomationNodeKind.LogicOr",
-                   "AutomationNodeKind.LogicXor",
-                   "AutomationNodeKind.MathSubtract",
-                   "AutomationNodeKind.MathMultiply",
-                   "AutomationNodeKind.MathMax",
-                   "AutomationNodeKind.MathMin",
-                   "BlockProgramLines",
-                   "OrderedBlockProgramChains",
-                   "DrawAutomationClosePrompt",
-                   "Automation Builder close blocked until Apply succeeds",
-                   "bool enabled = CanOpenCanvas;") &&
-               !automationSessionSource.Contains("GUI.Window(_nodeWindowIdBase") &&
-               ContainsAll(
-                   automationNativeBridgeSource,
-                   "BuildNativePlan",
-                   "BuildSelectedNativePlan",
-                   "NativeGraphReadinessIssues",
-                   "NativePlanCreateLine",
-                   "NativePlanUpdateLine",
-                   "NativePlanImportedLine",
-                   "NativePlanLinkBindingLine",
-                   "NativeValueForGraphSlot",
-                   "GraphValueNode(graph, node, AutomationValueSlotKind.Pass)",
-                   "TryConnectComponentToInput",
-                   "TryConnectComponentToInputAt",
-                   "CreateNativeSwitch",
-                   "CreateNativeFuzzyThreshold",
-                   "CreateNativeLogicGate",
-                   "CreateNativeMaxMin",
-                   "CreateNativeEvaluator",
-                   "CreateNativeConstant",
-                   "CreateNativeRandom",
-                   "TryApplyNativeLinkTarget",
-                   "TryConfigureGetterProperty",
-                   "TryConfigureSetterProperty",
-                   "EnumerateGetterPropertyLabels",
-                   "EnumerateSetterPropertyLabels",
-                   "TryGetNativeGetterPreview",
-                   "TryGetNativeSetterPreview",
-                   "TryReadGetterLiveValue",
-                   "TryReadSetterLiveValue",
-                   "IsForeverComment",
-                   "CreateNativeComment(NativeForeverMarkerText(\"native breadboard evaluates continuously\"))",
-                   "PotentiallyAffectedBlocks.Add(target)",
-                   "PotentiallyAffectedBlocks.Add(new BlockStub(target))",
-                   "Apply is idempotent",
-                   "IsSupportedAutomationNativeComponent",
-                   "ClearAutomationDirty();",
-                   "NativeAppendRect") &&
-               !automationNativeBridgeSource.Contains("InfoStore.Add(message);") &&
-               ContainsAll(
-                   automationBreadboardCatalogSource,
-                   "internal enum AutomationBreadboardVariant",
-                   "TryResolveBreadboard(",
-                   "IsAiBreadboardDefinition",
-                   "Basic breadboard",
-                   "block.IdSet?.Name");
-    }
-
-    private static bool ContainsAll(string source, params string[] fragments) =>
-        source != null &&
-        fragments != null &&
-        fragments.All(fragment => source.Contains(fragment));
-
-    private static string GetSingleStringLiteral(MethodInfo method)
-    {
-        byte[] body = method?.GetMethodBody()?.GetILAsByteArray();
-        if (body == null || body.Length < 5 || body[0] != 0x72)
-            return null;
-        int token = BitConverter.ToInt32(body, 1);
-        return method.Module.ResolveString(token);
-    }
-
     private static void VerifyPackageIdentityAndAssets()
     {
         string root = FindRepositoryRoot();
@@ -14502,7 +12955,7 @@ f 0 2 3
             "tools",
             "Deploy-EndlessShapesUnlimited.ps1"));
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
-               manifest.Contains("\"version\": \"1.0.8\"") &&
+               manifest.Contains("\"version\": \"1.0.10\"") &&
                manifest.Contains("\"workshop_id\": 3755667314") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&
@@ -14691,6 +13144,27 @@ f 0 2 3
         if (builder.Length > 0)
             builder.AppendLine();
         builder.Append(File.ReadAllText(path));
+    }
+
+    private static string GetSingleStringLiteral(MethodInfo method)
+    {
+        if (method == null)
+            return null;
+
+        byte[] il = method.GetMethodBody()?.GetILAsByteArray();
+        if (il == null)
+            return null;
+
+        for (int index = 0; index <= il.Length - 5; index++)
+        {
+            if (il[index] != 0x72) // ldstr
+                continue;
+
+            int metadataToken = BitConverter.ToInt32(il, index + 1);
+            return method.Module.ResolveString(metadataToken);
+        }
+
+        return null;
     }
 
     private static SuperSaver NewSaver(uint headerCount, uint dataBytes)
@@ -14900,6 +13374,13 @@ f 0 2 3
             throw new InvalidOperationException("Verification failed: " + description);
         Pass(description);
     }
+
+    private static bool ContainsAll(string source, params string[] values) =>
+        !string.IsNullOrEmpty(source) &&
+        values != null &&
+        values.All(value =>
+            !string.IsNullOrEmpty(value) &&
+            source.Contains(value));
 
     private static bool OccursBefore(
         string source,

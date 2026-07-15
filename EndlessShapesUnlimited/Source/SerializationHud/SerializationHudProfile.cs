@@ -19,7 +19,6 @@ namespace DecoLimitLifter.SerializationHud
             public bool FadeHudBehindModalPopups { get; set; }
             public bool ResponsivePaintPalettes { get; set; } = true;
             public bool DecorationEditPromptBeforeHotkeyClose { get; set; } = true;
-            public bool AutomationBuilderWipWarningAcknowledged { get; set; }
             public float DecorationMoveSnap { get; set; } = 0.001f;
             public float DecorationRotateSnapDegrees { get; set; } = 0.001f;
             public float DecorationScaleSnap { get; set; } = 0.001f;
@@ -97,10 +96,10 @@ namespace DecoLimitLifter.SerializationHud
         SwitchEsuBuildMode,
         UndoDecorationEdit,
         RedoDecorationEdit,
-        ToggleAutomationBuilderMode,
-        CopyDecorationSelection,
-        PasteDecorationSelection,
-        MaxId
+        ReservedLegacySlot7 = 7,
+        CopyDecorationSelection = 8,
+        PasteDecorationSelection = 9,
+        MaxId = 10
     }
 
     public sealed class SerializationHudKeyMap : KeyMap<SerializationHudKeyInput>
@@ -148,7 +147,7 @@ namespace DecoLimitLifter.SerializationHud
             SetVolatile(
                 SerializationHudKeyInput.SwitchEsuBuildMode,
                 "Switch ESU build mode",
-                "Cycle EndlessShapes Unlimited modes: Decoration Edit, Surface Builder, Smart Builder, Automation Builder.",
+                "Cycle EndlessShapes Unlimited modes: Decoration Edit, Surface Builder, Smart Builder.",
                 category,
                 Q(Key.Tab));
             SetVolatile(
@@ -163,12 +162,6 @@ namespace DecoLimitLifter.SerializationHud
                 "Redo the last undone EndlessShapes Unlimited decoration editor action.",
                 category,
                 Q(Key.Control, Key.Y));
-            SetVolatile(
-                SerializationHudKeyInput.ToggleAutomationBuilderMode,
-                "Toggle Automation Builder",
-                "Open or close the EndlessShapes Unlimited Automation Builder.",
-                category,
-                Q(Key.Control, Key.Shift, Key.A));
             SetVolatile(
                 SerializationHudKeyInput.CopyDecorationSelection,
                 "Copy decoration selection",

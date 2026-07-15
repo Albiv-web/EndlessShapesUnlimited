@@ -1,10 +1,10 @@
-[b]Mod latest version 1.0.8[/b]
+[b]Mod latest version 1.0.10[/b]
 
 [h1]EndlessShapes Unlimited[/h1]
 
 EndlessShapes Unlimited is a builder-focused mod for From The Depths.
 
-It adds Blender-like editing tools for decorations, surfaces, block previews, and breadboard automation workflows, while also raising the decoration limit for players who want to build far beyond vanilla.
+It adds Blender-like editing tools for decorations, surfaces, and block previews, while also raising the decoration limit for players who want to build far beyond vanilla.
 
 The goal is simple:
 more control, better editing tools, bigger decoration builds, and fewer painful manual steps.
@@ -27,9 +27,6 @@ Extra Tools Preview draws the selected decoration mesh with the same transform, 
 
 [b]Smart Block Builder[/b]
 Preview block shapes before placing them. Move, rotate, scale, change materials, and apply when ready.
-
-[b]Automation Builder[/b]
-Place breadboards, link blocks as inputs or outputs, and build readable top-to-bottom breadboard graphs. This editor is work in progress and may be very buggy, so its first use shows a required warning.
 
 [b]OBJ Tools[/b]
 Import OBJ models and convert mesh groups into FtD decorations.
@@ -66,7 +63,6 @@ If a craft uses ESU sentinel / extended decoration data, vanilla From The Depths
 
 Ctrl+D - Open Decoration Edit Mode
 Ctrl+Shift+B - Open Smart Block Builder
-Ctrl+Shift+A - Open Automation Builder
 Tab - Cycle ESU modes when clean
 Escape - Close / cancel active ESU mode
 Ctrl+Z / Ctrl+Y - Undo / redo ESU edits
@@ -86,7 +82,6 @@ Number keys only affect ESU while an ESU editor is open. Outside ESU, vanilla co
 - Remove standalone DecoLimitLifter and EndlessShapes2 before using this combined mod.
 - Multiplayer friends need the same ESU version if the craft uses ESU extended saves.
 - Back up important craft before heavy decoration editing or huge blueprint work.
-- Verify Automation Builder output in the vanilla breadboard editor before relying on it.
 - Unsafe diagnostic fast-load probes are for testing only. Do not save from unsafe probe runs.
 - **Memory-safe part status checks** is available in ESU options for
   multi-million-block craft. It is off by default and does not change blueprint files.

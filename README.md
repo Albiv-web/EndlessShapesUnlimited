@@ -39,8 +39,8 @@ License.
 - Converts OBJ groups into FTD decorations with bounded geometry and texture
   validation.
 - Exports construct geometry as OBJ/MTL with only referenced textures.
-- Adds Decoration Edit Mode, Surface Builder, Smart Block Builder, and
-  Automation Builder as modal ESU editor surfaces.
+- Adds Decoration Edit Mode, Surface Builder, and Smart Block Builder as modal
+  ESU editor surfaces.
 - Adds shared X/Y/Z symmetry planes for decoration placement, generated
   surfaces, generator paths/circles, and Smart Builder commits.
 - Renders Surface Builder Extra Tools plans with the selected decoration mesh,
@@ -57,7 +57,7 @@ License.
    From the repository root, run:
    `powershell -ExecutionPolicy Bypass -File tools\Deploy-EndlessShapesUnlimited.ps1`
 3. Start FTD and confirm the Alerts panel reports
-   `EndlessShapes Unlimited v1.0.8 Active!`.
+   `EndlessShapes Unlimited v1.0.10 Active!`.
 
 The runtime package must contain only:
 
@@ -80,8 +80,7 @@ where exposed.
 | --- | --- | --- |
 | `Ctrl+D` | Build mode | Open Decoration Edit Mode. |
 | `Ctrl+Shift+B` | Build mode | Open Smart Block Builder. |
-| `Ctrl+Shift+A` | Build mode | Open Automation Builder. |
-| `Tab` | ESU editor, clean state | Cycle Decoration Edit Mode -> Surface Builder -> Smart Block Builder -> Automation Builder -> Decoration Edit Mode. Dirty previews must be applied or canceled first. |
+| `Tab` | ESU editor, clean state | Cycle Decoration Edit Mode -> Surface Builder -> Smart Block Builder -> Decoration Edit Mode. Dirty previews must be applied or canceled first. |
 | `Escape` | ESU editor | Close/cancel the active ESU mode and guard the same keypress from vanilla. |
 | `Ctrl+Z` / `Ctrl+Y` | ESU editor | Undo/redo un-applied editor actions. |
 | `1` | ESU editor | Create/select cycle. Decoration: Select Single/Box. Surface: Draw/Extra Tools. Smart Builder: Block/Down slope and arm Add. |
@@ -384,45 +383,6 @@ Input notes:
 - Clicking, dragging, or scrolling any Smart Builder panel is owned by the HUD
   and cannot place the currently armed preview piece in the world behind it.
 
-## Automation Builder
-
-Open with `Ctrl+Shift+A`, from the Decoration Builder item, or via `Tab` from
-Smart Block Builder while clean.
-
-Automation Builder is a Scratch-style authoring surface for vanilla FtD
-breadboards:
-
-- On its first use for a player profile, Automation Builder shows a blocking
-  work-in-progress warning. It is intentionally explicit that the editor is
-  unfinished and potentially very buggy; acknowledgement is saved for that
-  profile.
-- Place or select a basic/AI breadboard, then link readable world blocks into it
-  and writable targets out of it. Animated world lines and the selected-board
-  shelves show signal direction.
-- Open the selected board with `E` and drag native-backed blocks from Inputs,
-  Logic, Values, Math, Outputs, and Notes into stacks, value sockets, or
-  control bodies. Copy/paste/duplicate, a 64-state graph undo history, keyboard
-  nudging, Fit/Center/Arrange, and exact snap previews support normal block-editor
-  iteration.
-- **Check** is non-mutating. **Apply** validates and lowers the visible program
-  into ordinary FtD Getter, Setter, Switch, Logic, Evaluator, Threshold,
-  Constant, Random, Max/Min, Clamp, Delay, and Comment components. There is no
-  ESU automation runtime or extra craft-save schema.
-- Existing vanilla components remain the source of truth. Recognized components
-  reopen as semantic blocks; unknown components and imported wires remain
-  visible but read-only. **Revert** removes only ESU-owned generated components,
-  markers, and their wires, and requires a clean block draft.
-- `Forever` records visual grouping while vanilla breadboards evaluate
-  continuously. Switch bodies are numeric dataflow: the selected then/else value
-  feeds downstream native components, rather than executing imperative code.
-- Property/slot/readiness popups, context menus, and the dirty-close prompt own
-  foreground input. Responsive panels and independent selected-board scrolling
-  keep all actions reachable at supported high HUD scales.
-
-See [Automation Builder](docs/AUTOMATION_BUILDER.md) for the complete native
-mapping, editing controls, validation rules, round-trip behavior, and current
-compatibility limits.
-
 ## Symmetry
 
 ESU symmetry planes are construct-local X/Y/Z grid planes. They can combine into
@@ -452,6 +412,10 @@ $env:FTD_DIR = '<path-to-From-The-Depths-install>'
 dotnet build EndlessShapesUnlimited\Source\EndlessShapesUnlimited.csproj -c Release --nologo
 ```
 
+A normal Release build writes only under `Source/bin`; it does not overwrite the
+packaged `EndlessShapesUnlimited.dll`. The copy target is deliberately opt-in
+with `-p:CopyReleaseAssemblyToModFolder=true` and is enabled by `build.ps1`.
+
 Run the verification harness:
 
 ```powershell
@@ -468,7 +432,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 `build.ps1` performs:
 
-- Release build.
+- Release build with the packaged-DLL copy explicitly enabled.
 - `dotnet format --verify-no-changes` for the mod and verifier projects.
 - Verification harness run.
 - Packaged DLL hash check against the Release build output.
@@ -484,8 +448,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
   Surface Builder UI/planning/session code.
 - `EndlessShapesUnlimited/Source/SmartBuildMode`: Smart Block Builder runtime
   scene, planning, and commit code.
-- `EndlessShapesUnlimited/Source/AutomationBuilderMode`: Automation Builder
-  breadboard placement, linking, HUD, and graph canvas code.
 - `EndlessShapesUnlimited/Source/Patches`: Harmony patches and serializer
   integration.
 - `tools/EndlessShapesUnlimited.Verification`: non-Unity verifier and regression

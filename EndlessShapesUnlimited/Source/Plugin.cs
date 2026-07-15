@@ -23,7 +23,6 @@ using BrilliantSkies.Ftd.Constructs.UI;
 using BrilliantSkies.Modding;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Displayer;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
 using DecoLimitLifter.SmartBuildMode;
@@ -37,7 +36,7 @@ namespace DecoLimitLifter
         private const string HarmonyId = "alb.endlessshapesunlimited";
 
         public string name => "EndlessShapes Unlimited";
-        public Version version => new Version(1, 0, 8, 0);
+        public Version version => new Version(1, 0, 10, 0);
 
         public void OnLoad()
         {
@@ -66,8 +65,6 @@ namespace DecoLimitLifter
                 DecorationEditModeRegistration.Register();
                 startup.TrackRollback(SmartBuildModeRegistration.Unregister);
                 SmartBuildModeRegistration.Register();
-                startup.TrackRollback(AutomationBuilderModeRegistration.Unregister);
-                AutomationBuilderModeRegistration.Register();
                 startup.TrackRollback(EsuHudNotificationOverlayRegistration.Unregister);
                 EsuHudNotificationOverlayRegistration.Register();
                 startup.Commit();
@@ -119,7 +116,7 @@ namespace DecoLimitLifter
             {
                 AdvLogger.LogInfo(
                     $"[EndlessShapes Unlimited] v{version.ToString(3)} loaded. " +
-                    $"Decoration limit={DecoLimits.MaxDecorations}; OBJ tools, serialization HUD, decoration edit mode, Smart Block Builder, and Automation Builder active.");
+                    $"Decoration limit={DecoLimits.MaxDecorations}; OBJ tools, serialization HUD, decoration edit mode, and Smart Block Builder active.");
             }
             catch
             {

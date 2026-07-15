@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using BrilliantSkies.Ui.Displayer;
 using BrilliantSkies.PlayerProfiles;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SmartBuildMode;
 using HarmonyLib;
@@ -123,8 +122,6 @@ namespace DecoLimitLifter
                 return EsuPanelUiHit.Found("Decoration/Surface", "scope_fallback", mouse);
             if (SmartBuildInputScope.MouseOverUi)
                 return EsuPanelUiHit.Found("Smart Builder", "scope_fallback", mouse);
-            if (AutomationBuilderInputScope.MouseOverUi)
-                return EsuPanelUiHit.Found("Automation Builder", "scope_fallback", mouse);
 
             return liveHit;
         }

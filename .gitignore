@@ -17,7 +17,5 @@ TECHNICAL_LOG.md
 docs/
 !docs/
 docs/*
-!docs/AUTOMATION_BUILDER.md
-!docs/AUTOMATION_EDITOR_RESEARCH_AND_DESIGN.md
 tools/Beamification/
 LICENSES/FtD_Beamification-MIT.txt

@@ -7,6 +7,168 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
+## 1.0.10 - 2026-07-15
+
+### Removed
+
+- Removed Automation Builder, including its runtime registration, graph UI,
+  breadboard adapter/lowering code, dedicated input and preview systems,
+  options/keybinding entry, documentation, and feature-specific verification
+  suites.
+- Removed ESU's no-longer-needed `Breadboards.dll` assembly dependency. Saved
+  craft data and native FtD breadboard components are not modified.
+
+### Changed
+
+- Restored the remaining clean-editor cycle to Decoration Edit Mode, Surface
+  Builder, and Smart Block Builder, with Smart Builder returning to Decoration
+  Edit Mode.
+- Preserved the numeric IDs of existing copy/paste key bindings so profiles
+  created by earlier versions continue to load those bindings correctly.
+- Kept the remaining 628 executable verification checks green with warning-free
+  Release builds and a hash-verified runtime package.
+
+## 1.0.9 - 2026-07-15
+
+### Added
+
+- Added link-first x-ray picking in Automation Builder Select mode. World links
+  can be hovered and selected through solid craft blocks, with deterministic
+  cycling when several projected links overlap.
+- Added a dwell-based linked-target preview shared by world links, world link
+  rows, canvas linked-hardware rows, and Read/Set blocks. The preview uses an
+  isolated orbiting render camera plus an always-visible wireframe around the
+  exact live craft cell; it never moves the player camera or changes craft
+  materials.
+- Added a searchable **Vanilla** palette populated from the selected
+  breadboard's live `AvailableComponentTypes`. Advertised component families can
+  be staged as their exact native type even when ESU has no specialized visual
+  shape. The live adapter matrix covers FtD 4.3.3's 57 base and 6 AI families.
+- Added exact indexed native-port editing. Graph connections now retain both the
+  source output index and destination input index through import, copy/paste,
+  Apply, verification, and reopen.
+- Added reflection-backed typed native setting editors, including bounded
+  integers/floats, booleans, enums, ranges, vectors, colors, and nested PID
+  `SubPack` fields, with stable setting keys independent of localized labels.
+- Added Ctrl/Shift multi-selection, lasso, atomic group move/copy/paste/delete,
+  a clickable minimap, per-board viewport persistence, visible-canvas culling,
+  and virtualized target/property choice rows.
+- Added exact typed logical wires for the loose Automation dataflow canvas.
+  Inputs accept one source, outputs support fan-out, occupied inputs reconnect
+  atomically, and geometry can no longer manufacture program connections.
+- Added **Conditional Value** with A/B/Then/Else numeric sockets, explicit Else,
+  live preview, and `<`, `<=`, `>`, `>=`, `=`, and `!=`. It lowers to one
+  canonical native Evaluator with inputs 0/1/2/3 and result output 0.
+- Added V4 Automation ownership metadata for visible node/group identity,
+  descriptor schema, native member roles, exact logical-to-native port maps,
+  inline values, and signed visual position. Atomic re-keying covers paste and
+  cross-board rebinding; malformed owned metadata falls back losslessly.
+- Added a compact blocking-issue bar whose deterministic **Fix** action focuses
+  the affected block and opens its exact property picker when applicable.
+
+### Changed
+
+- Replaced the canvas category grid with one top-to-bottom list ordered
+  **Inputs**, **Outputs**, Conditions, Math, Logic, Values, Notes, then Vanilla.
+- The graph workspace is now an effectively unbounded signed coordinate plane.
+  Placement, dragging, snapping, panning, Fit, Center, viewport persistence,
+  culling, and the grid all accept large positive and negative positions.
+- Rebuilt the Automation Builder canvas around zoom-independent palette and
+  graph coordinate paths. Its compact category list, search header, virtualized
+  rows, palette previews, scrolling, and hit regions remain at HUD scale while
+  graph zoom affects only the workspace.
+- Replaced nested Scratch hats, C-block mouths, stack/body snapping, and subtree
+  peeling with independent rounded dataflow cards. Headers move cards; sockets,
+  fields, and ports own their controls; visible typed wires are authoritative.
+- Removed Starter Flow and the guided nested-rule prototype. A graph containing
+  only linked endpoints now shows a non-mutating hint. The primary APS workflow
+  is `Shells available -> IF A < 30 THEN 10 ELSE 0 -> Spin Target angle`.
+- Setter now exposes explicit `Value` and optional Boolean `When` inputs mapped
+  to native inputs 0 and 4. Conditional Value always emits Then or Else; use
+  `When` when false must perform no write.
+- Normal mode now shows logical wires, typed sockets, inline values, and compact
+  live/status badges. Advanced reveals exact native wires, indexed ports, IDs,
+  canonical Evaluator expressions, helpers, settings, and Native Plan.
+- Imported non-marker native components can now be edited as connection
+  destinations. Semantic adapters expose their normal fields; Advanced Native
+  cards expose exact indexed ports and advertised settings. Supported imported
+  destination inputs—including existing latched wires—can be edited; genuinely
+  unrecognized future-version families remain lossless and read-only. Deleting
+  an imported component requires confirmation.
+- Imported vanilla sources may feed editable destinations without being adopted,
+  moved, or rewritten by Automation Builder.
+- Breadboard item-definition discovery now uses a registry fingerprint and
+  bounded cache instead of enumerating every loaded definition every frame.
+- Expanded the executable regression harness from 672 to 795 checks with live
+  63-family manifest coverage, lifecycle/recovery routing, evaluator fallback,
+  exact indexed-port identity/copying, cross-board unresolved bindings, PID and
+  integer settings, stable property IDs, v1/v2 markers, output-state rollback,
+  port anomalies, catalog-cache behavior, unresolved link retention, pointer
+  capture recovery, signed coordinates, x-ray link picking, hover arbitration,
+  preview-card bounds, and target-renderer contracts.
+
+### Fixed
+
+- Fixed a staged Output Setter disappearing after the 0.75-second native
+  refresh when a generic `value` link did not identify one unique writable
+  native property. Link identity is retained separately from the editable
+  property, unresolved setters remain selected with a readiness warning, and
+  dirty-draft refresh cannot prune graph nodes or rewrite history.
+- Fixed duplicate localized Spin property labels selecting the wrong native
+  variable. `Target angle` now assigns exact setter key `2:100`, while
+  `Rotation rate` assigns `3:100`; the searchable picker commits only a stable
+  key and no raw property text is editable.
+- Fixed presentation-only control-body membership compiling as if it were an
+  executable branch. Setters inside `if` now receive the recursively lowered
+  predicate on native trigger input 4, and Check blocks legacy body-only layouts
+  until the user converts or detaches them.
+- Fixed canvas input becoming permanently captured after right-clicking during
+  a pan, and fixed crossing an inline pill during a node drag cancelling only
+  half of the gesture. Every capture now finishes or cancels through one
+  idempotent path and movement is committed at most once.
+- Restored plain-left empty-canvas panning and made Shift+left-drag the explicit
+  replacement lasso; Ctrl+Shift toggles lasso hits, while middle-drag and
+  Alt+left-drag remain pan aliases. Pointer movement below six screen pixels is
+  treated as click jitter and cannot move a block or dirty graph history.
+- Fixed graph zoom leaking into palette block size, row layout, scrolling, and
+  hit regions, and extended the workspace grid through every clipped edge for
+  positive or negative graph positions.
+- UI toggle, hotkey, Escape, and build-mode-loss close requests now share the
+  dirty-draft Apply/Discard/Cancel flow. Update or GUI failures pause the live
+  in-memory session behind a recovery dialog instead of silently destroying it;
+  **Close safely** exits directly from that recovery path while preserving the
+  recoverable snapshot.
+- Breadboard selection, link focus/creation, and board switching now preflight
+  the same dirty-draft state machine before mutating selection or links. Cancel
+  is atomic, stale targets leave the current draft untouched, and per-board
+  viewport/history state follows the selected board.
+- Unsupported Evaluator expressions remain opaque Advanced Native components
+  instead of being misrepresented as comments, and pasted target bindings keep
+  their staged world links across graph refreshes. Failed pastes restore graph,
+  links, pending edits, history, recovery data, and allocation counters.
+- Apply now blocks a stale draft when the live board fingerprint changed,
+  rejects a deleted/replaced native board even when an identical board occupies
+  the same construct cell,
+  verifies every planned physical source-output/destination-input pair, restores
+  output topology/colors/settings during rollback, and stores the latest dirty
+  edit snapshot for recovery after editor teardown.
+- Fixed normal-mode loose cards returning to their old position after release.
+  Free signed positions now commit exactly once, while legacy magnetic semantic
+  snapping is available only in Advanced mode.
+- Occupied input pills now reconnect across their complete measured hit region;
+  releases outside the workspace cancel, and a topmost card blocks hidden ports
+  on cards beneath it.
+- Reopen now treats the canonical native Evaluator expression as authoritative.
+  V4 markers may restore only a remembered literal hidden behind a connected
+  socket; unsupported schemas or incompatible exact-port maps fall back to a
+  lossless Vanilla card instead of rewriting externally changed behavior.
+
+### Packaging
+
+- Release builds no longer overwrite the packaged mod DLL by default. The copy
+  target requires `CopyReleaseAssemblyToModFolder=true`, which the release
+  packaging script supplies explicitly.
+
 ## 1.0.8 - 2026-07-11
 
 ### Added
@@ -81,11 +243,11 @@ GitHub history, but short enough that it can be copied into release notes.
 - Added a one-time, profile-persisted Automation Builder warning that clearly
   identifies the editor as unfinished and potentially very buggy before first
   use.
-- Completed Automation Builder as a Scratch-style editor for vanilla
+- Established Automation Builder's initial Scratch-style editor for vanilla
   breadboards. Stack, value-socket, and control-body snapping now share exact
   drag previews; attached block groups support copy, paste, duplicate, delete,
   keyboard nudging, and a 64-state Undo/Redo history.
-- Added a complete Automation Builder guide covering controller compatibility,
+- Added an Automation Builder guide covering controller compatibility,
   every block-to-native mapping, Forever/Switch dataflow semantics, validation,
   native ownership, editing controls, safe discard, and craft-save round trips.
 - Added Automation Builder as a fourth ESU editor mode, focused on FtD

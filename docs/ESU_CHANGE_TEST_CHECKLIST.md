@@ -13,6 +13,10 @@ dotnet run --project .\tools\EndlessShapesUnlimited.Verification\EndlessShapesUn
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
+The direct Release build and verifier build do not overwrite the packaged mod
+DLL. Only `build.ps1` opts into `CopyReleaseAssemblyToModFolder=true` before its
+package hash and archive checks.
+
 ## v1.0.7 Focused Smoke Course
 
 Use this short course for the current v1.0.7 development build before a longer
@@ -132,168 +136,9 @@ release pass.
 - Toggle Decoration Edit Mode.
 - Toggle Surface Builder.
 - Toggle Smart Block Builder.
-- Toggle Automation Editor.
 - Switch between ESU modes with Tab while clean.
 - Confirm mode switching is blocked with a visible warning while Apply/Cancel work is pending.
 - Confirm Close/Cancel restores normal FtD input and camera behavior.
-
-## Automation Editor
-
-The current Automation Builder is the Scratch-style native breadboard workflow
-documented in `docs/AUTOMATION_BUILDER.md`. These checks cover the released
-surface. Historical Code, System Block, nested-workspace, and arbitrary native
-component editor concepts are not part of acceptance.
-
-### Current Scratch-style workflow
-
-- On a fresh profile, open Automation Builder and confirm the blocking
-  work-in-progress warning says the editor is unfinished and potentially very
-  buggy. No world, panel, graph, console, camera, or build input may pass behind
-  it. Acknowledge it, reopen the editor, and confirm it is not shown again for
-  that profile.
-- Open Automation Builder with `Ctrl+Shift+A` and confirm the shared ESU
-  toolbar, left selected-board/link panel, right placement panel, filters, target
-  list, and bottom status strip appear.
-- Switch into and out of Automation Builder with Tab while clean. Make a graph
-  draft and confirm Tab and editor close require Apply or explicit discard.
-- Confirm left/right panels and the block canvas can be moved/resized, clamp
-  inside the screen, preserve the bottom strip, and retain their valid persisted
-  split ratios.
-- Repeat at 1366x768/effective 1.44x and 1920x1080/2x. The selected-board
-  summary must scroll independently, Input Links and Output Links must each
-  retain a complete row, and no toolbar action, footer, popup, or panel may
-  overlap or leave the screen.
-- Place the loaded AI and basic breadboard definitions through the normal FtD
-  block command path. If no distinct basic item is loaded, confirm the Basic
-  card explicitly reports its AI fallback. A blocked placement must not create
-  a controller.
-- Select a target and then a board to create an input/getter link. Select the
-  board and then a target to create an output/setter link. Confirm animated
-  world lines, the selected-board shelves, link direction filters, and `1`/`2`
-  modes agree.
-- Remove a staged link and an ESU-owned applied link. Confirm imported native
-  Getter/Setter links remain read-only and direct the player to FtD's native
-  breadboard editor.
-- Save/reload a craft with applied Generic Getter/Setter proxies. Select the
-  board and confirm world links rehydrate from native target/filter/property
-  data without session metadata.
-- Open the selected board with `E` or **Open blocks**. Confirm the palette
-  categories are Inputs, Logic, Values, Math, Outputs, and Notes, and that
-  every full palette row begins a drag.
-- At 0.55x, default, and 1.6x zoom, drag blocks to free space, a stack edge, a
-  named value socket, and a control body. The ghost, snap outline, and final
-  placement must match; occupied sockets must reject a second value.
-- Drag an attached root and confirm its socketed values, body descendants, and
-  following stack move as one group. Release outside the workspace and simulate
-  a lost mouse-up; no block or latched drag may remain.
-- Pan with left or middle mouse over empty workspace, zoom around the pointer,
-  and exercise Fit, Center, and Arrange. Imported vanilla component positions
-  and sizes must not be rewritten by display normalization or Arrange.
-- Use Starter Flow with exactly one linked input and output. Confirm it stages
-  Read -> Below Threshold -> If True -> Set with threshold `10`, then value
-  `45`, and else value `0`. It must remain an ordinary editable block graph.
-- On Input Getter and Output Setter, choose a linked target and an actual native
-  readable/writable property. Auto/default choices may resolve only from the
-  properties FtD advertises for the target type; unresolved properties must
-  remain visible readiness errors.
-- Create and Check every palette mapping:
-  - Input Getter -> `GenericBlockGetter`;
-  - Output Setter -> `GenericBlockSetter`;
-  - If True and Switch > Threshold -> native `Switch`;
-  - Not/And/Or/Xor/Nand/Nor/Xnor -> matching `LogicGate`;
-  - Above/Below Threshold -> matching `FuzzyThreshold`;
-  - Add/Subtract/Multiply -> supported `Evaluator` expression;
-  - Max/Min -> matching `MaxMin`;
-  - Clamp -> `Clamp`;
-  - Delay -> native `Delay`;
-  - Constant -> `ConstantInput`;
-  - Random -> `RandomInput`; and
-  - Comment and Forever -> native Comments, with Forever carrying the ESU
-    round-trip marker.
-- For every block with a primary stack/value input, connect exactly one source.
-  Check must reject no source and simultaneous stack-plus-socket sources.
-- Check logic B and Max/Min B requirements, finite constant/scalar values,
-  threshold input, evaluator/Clamp/Delay input, Getter/Setter target/property
-  bindings, and Setter value requirements. The readiness popover and Generated
-  Native Plan must identify the offending block and slot.
-- Build Read -> Switch > Threshold -> Setter. Feed the Switcher from the stack,
-  socket its required then/pass value, set a constant else/fail value, and put
-  the Setter in the body. Confirm Check describes the Switch's selected numeric
-  result feeding the Setter, not imperative conditional execution.
-- Repeat with If True and confirm its native threshold is 0.5. Repeat with a
-  constant threshold on Switch > Threshold and confirm it becomes the native
-  Switch threshold setting.
-- Wrap a valid chain in Forever. Confirm Check explains that the vanilla board
-  evaluates continuously, Apply creates only the marked Comment for layout
-  identity, and the child native chain does not depend on an ESU runtime loop or
-  a wire from that Comment.
-- Use right-click Copy stack, Duplicate stack, and Delete. Repeat with
-  `Ctrl+C`, `Ctrl+V`, `Ctrl+D`, Delete/Backspace, arrows, and Shift+arrows.
-  Imported vanilla nodes must refuse mutation.
-- Exercise at least 64 graph edits, then use toolbar Undo/Redo, `Ctrl+Z`,
-  `Ctrl+Y`, and `Ctrl+Shift+Z`. Verify bindings, values, layout, connections,
-  staged links, and pending ESU-owned removals restore consistently; the oldest
-  state may fall off after the 64-snapshot cap.
-- Run **Check** and compare the plan to the visible blocks. Confirm it performs
-  no board mutation and reports creates, ESU-owned updates/removals, target
-  bindings, native wires, warnings, and blocking errors.
-- Run **Apply** on a valid mixed graph. Confirm staged blocks become the mapped
-  vanilla component types, owner-marker Comments identify only generated
-  components, native properties and wires match the plan, and the dirty state
-  clears only after verification succeeds.
-- Force or simulate a native connection/lowering failure on a disposable craft.
-  Confirm Apply reports the failure and rolls back created components, owned
-  edits, block-name changes, and native input connections.
-- Apply the same clean graph again. Confirm the operation is idempotent and does
-  not append duplicate component packages or ownership markers.
-- Close/reopen the canvas and save/reload the craft. Compact value blocks must
-  remain socketed, body children must remain nested in expanded hosts, native
-  positions/settings must round-trip, and world links must rebuild from the
-  persisted proxies.
-- Add recognized native components and one unsupported component through FtD's
-  native breadboard editor. Reopen ESU: recognized imports must have semantic
-  shapes, the unsupported component must appear as opaque **Advanced Native**,
-  and all imported nodes/wires must remain read-only and intact.
-- Connect an imported native source to an ESU-owned destination where compatible.
-  Apply may create the destination input connection but must not take ownership
-  of, edit, move, or delete the imported source.
-- Run **Revert**. Confirm it removes only ESU-owned generated components, their
-  ownership marker Comments, and wires sourced from those components. Unrelated
-  vanilla components and wires must remain byte-for-byte/native-state
-  equivalent.
-- Make a dirty draft and close the editor. **Keep editing** and Escape must
-  preserve it; **Apply and close** must close only after successful validation;
-  **Close anyway** must discard staged blocks, staged links, pending owned edits,
-  and pending owned removals while leaving the applied native board unchanged.
-- Open each property picker, slot dropdown, context menu, and readiness popover
-  over nodes, workspace, palette, inspector, dividers, coordinate fields, and
-  the ESU Console. Only the popup may receive input. Outside click must only
-  dismiss it, and Escape must close the topmost popup before the canvas/editor.
-- Open a graph popup, then request dirty close. Confirm the popup is dismissed,
-  the whole editor and console are noninteractive behind the close prompt, and
-  Escape/clicks affect only that prompt.
-
-### Explicitly not current release features
-
-The following names appeared in earlier research and prototype checklists. They
-do not identify hidden pages and must not be reported as missing controls in the
-current release:
-
-- a **Code** page, recipe catalog, expression compiler, linked-identifier strip,
-  or arbitrary scripting runtime;
-- **System Blocks**, reusable templates, signature/port pages, nested internal
-  graphs, breadcrumbs, or Collapse to System Block;
-- an **Advanced Graph** that immediately edits arbitrary native component
-  families, ACB rules, ACB Controller buttons, Missile Breadboard components, or
-  shared-variable bridges;
-- Prepare validation graph, Capture baseline, Compare baseline, live-evidence
-  gates, or diagnostic fingerprints; and
-- dedicated ACB, ACB Controller, or Missile Breadboard Controller adapters.
-
-The current Advanced Native card means “preserved opaque vanilla component,” not
-an editor for that component. If any former concept is implemented later, add
-implementation-specific tests and native ownership rules before promoting it to
-release acceptance.
 
 ## Decoration Edit
 
@@ -336,11 +181,10 @@ release acceptance.
   from the group gizmo between centers and inside the cyan group bounds. An
   active unfinished Box drag must still cancel safely; right-clicking empty
   space may disable Box mode without changing the completed selection.
-- Open every Decoration/Surface, Smart Builder, and Automation right-click menu
+- Open every Decoration/Surface and Smart Builder right-click menu
   directly over a text or number field. Click each overlapping menu row,
   especially Delete, and confirm only the foreground action runs: the field
-  behind it must not focus, edit, submit, scroll, or move the camera. Repeat for
-  Automation graph-node context actions over editable node values.
+  behind it must not focus, edit, submit, scroll, or move the camera.
 - Duplicate a shuffled multi-selection from the row menu and verify stable
   primary-first manager ordering, exact in-place clones, selection of the new
   group, no clipboard replacement, and one-step undo/redo. Delete a group with

@@ -3457,10 +3457,10 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (ToolbarIconButton(
                     "build",
-                    "Auto",
-                    "A",
+                    "Deco",
+                    "D",
                     DecorationEditorTheme.ToolButton(true),
-                    "Tab: switch to Automation Builder when Smart Builder is clean.",
+                    "Tab: switch to Decoration Edit when Smart Builder is clean.",
                     controlWidth))
                 SwitchToDecorationEditRequested = true;
         }
@@ -5099,7 +5099,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 gizmoSettings.height);
             DrawSmartBottomGizmoSettingsButton(gizmoSettings);
             GUI.Label(title, "Smart Block Builder", DecorationEditorTheme.SubHeader);
-            GUI.Label(mode, "Mode: Smart | Tab to Automation when clean", DecorationEditorTheme.Body);
+            GUI.Label(mode, "Mode: Smart | Tab to Decoration when clean", DecorationEditorTheme.Body);
             DrawStatusRightLabel(state);
         }
 

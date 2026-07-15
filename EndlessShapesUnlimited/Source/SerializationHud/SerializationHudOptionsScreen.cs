@@ -9,7 +9,6 @@ using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Choices;
 using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Numbers;
 using BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Texts;
 using BrilliantSkies.Ui.Tips;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SmartBuildMode;
 using Ui.Consoles.Examples;
@@ -184,7 +183,7 @@ namespace DecoLimitLifter.SerializationHud
             CreateHeader(
                 "ESU editor HUD",
                 new ToolTip(
-                    "Scale and customize the Decoration Edit, Surface Builder, Smart Builder, and Automation Builder overlays."));
+                    "Scale and customize the Decoration Edit, Surface Builder, and Smart Builder overlays."));
             var editorHud = CreateTableSegment(2, 3);
             editorHud.AddInterpretter(
                 SubjectiveToggle<SerializationHudProfile.ProfileData>.Quick(
@@ -267,19 +266,6 @@ namespace DecoLimitLifter.SerializationHud
                     new ToolTip(
                         "Can only open while building on a craft. The keybind defaults to Ctrl+Shift+B."),
                     _ => SmartBuildModeRegistration.ToggleFromUi()));
-
-            CreateHeader(
-                "Automation Builder",
-                new ToolTip(
-                    "Modal breadboard workflow editor for placing breadboards, linking blocks, and composing automation graphs."));
-            var automationBuilder = CreateTableSegment(1, 1);
-            automationBuilder.AddInterpretter(
-                BrilliantSkies.Ui.Consoles.Interpretters.Subjective.Buttons.SubjectiveButton<byte>.Quick(
-                    0,
-                    "Toggle Automation Builder",
-                    new ToolTip(
-                        "Can only open while building on a craft. The keybind defaults to Ctrl+Shift+A."),
-                    _ => AutomationBuilderModeRegistration.ToggleFromUi()));
 
         }
 

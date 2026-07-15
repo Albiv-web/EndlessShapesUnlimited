@@ -72,10 +72,6 @@
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\FtD.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="Breadboards">
-      <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Breadboards.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="Ui">
       <HintPath>$(FTD_DIR)\From_The_Depths_Data\Managed\Ui.dll</HintPath>
       <Private>false</Private>
@@ -162,9 +158,13 @@
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <CopyReleaseAssemblyToModFolder Condition="'$(CopyReleaseAssemblyToModFolder)' == ''">false</CopyReleaseAssemblyToModFolder>
+  </PropertyGroup>
+
   <Target Name="CopyReleaseAssemblyToModFolder"
           AfterTargets="Build"
-          Condition="'$(Configuration)' == 'Release'">
+          Condition="'$(Configuration)' == 'Release' and '$(CopyReleaseAssemblyToModFolder)' == 'true'">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\.." />
   </Target>
 </Project>

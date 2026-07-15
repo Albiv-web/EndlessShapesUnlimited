@@ -4,7 +4,6 @@ using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Ftd.Avatar.Build;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
-using DecoLimitLifter.AutomationBuilderMode;
 using DecoLimitLifter.DecorationEditMode;
 using DecoLimitLifter.SerializationHud;
 using UnityEngine;
@@ -53,7 +52,7 @@ namespace DecoLimitLifter.SmartBuildMode
             return true;
         }
 
-        internal bool TrySwitchToAutomationBuilder()
+        internal bool TrySwitchToDecorationEdit()
         {
             if (!Active)
                 return false;
@@ -66,7 +65,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return true;
             }
 
-            if (!AutomationBuilderModeRegistration.CanOpenFromModeSwitch(out reason))
+            if (!DecorationEditModeRegistration.CanOpenFromModeSwitch(out reason))
             {
                 EsuRuntimeLog.Warning("Smart Builder", reason);
                 InfoStore.Add(reason);
@@ -79,11 +78,15 @@ namespace DecoLimitLifter.SmartBuildMode
                 notifyClose: false,
                 preserveSharedHud: true,
                 keepModeSwitchHandoffGui: true);
-            if (!AutomationBuilderModeRegistration.OpenFromModeSwitch())
+            if (DecorationEditModeRegistration.OpenFromModeSwitch())
+            {
+                InfoStore.Add("ESU mode: Decoration Edit.");
+            }
+            else
             {
                 ClearModeSwitchHandoffGui();
                 Open(modeSwitch: true);
-                InfoStore.Add("Automation Builder failed to open; Smart Block Builder restored.");
+                InfoStore.Add("Decoration Edit Mode failed to open; Smart Block Builder restored.");
             }
             return true;
         }
@@ -128,13 +131,13 @@ namespace DecoLimitLifter.SmartBuildMode
                     _session.SwitchToDecorationEditRequested)
                 {
                     _session.ClearSwitchToDecorationEditRequest();
-                    TrySwitchToAutomationBuilder();
+                    TrySwitchToDecorationEdit();
                     return;
                 }
 
                 if (Active && ReadSwitchModeKeyDown())
                 {
-                    TrySwitchToAutomationBuilder();
+                    TrySwitchToDecorationEdit();
                     return;
                 }
 
