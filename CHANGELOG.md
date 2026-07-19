@@ -7,6 +7,100 @@ The packaged Steam Workshop/player readme remains
 `EndlessShapesUnlimited/README.md`. Keep this changelog technical enough for
 GitHub history, but short enough that it can be copied into release notes.
 
+## 1.2.0 - 2026-07-19
+
+### Added
+
+- Added craft-local numeric transform controls, primary/bounds/custom group
+  pivots, quarter-turn rotation, exact align/distribute commands, selection
+  measurements, standard editing shortcuts, and a session clipboard that can
+  paste at the pointed craft cell.
+- Added editable Linear, Grid, Radial, and Polyline pattern nodes. Patterns keep
+  their source group and typed parameters, support negative/positive copies,
+  direct Apply, viewport step/pivot/angle/path handles, Polyline Keep/Cardinal
+  Tangent orientation, source-only Dissolve, and atomic Bake to primitive nodes.
+- Added compressed rectangle, wall, plane, brush, and fixed-snapshot flood
+  region nodes using bounded run-length spans instead of one scene node per
+  cell. Flood snapshots can be recomputed explicitly from the current craft.
+- Added per-cell preview diagnostics, an always-visible legend, issue
+  navigation without camera movement, node/pattern-instance provenance, and
+  vertical/Y mirroring for down-slope placement footprints and orientation.
+- Added schema-v2 Smart scene presets and recovery with explicit string node,
+  pattern, and region discriminators plus deterministic migration of every
+  released schema-v1 primitive payload.
+
+### Changed
+
+- Centralized Smart Builder safety caps and moved all large pattern, region,
+  preset, symmetry, replacement, and path preflights ahead of enumeration and
+  allocation.
+- Added revision-driven plan coordination, cached node expansion and preview
+  results, an indexed FtD block-catalog snapshot, virtualized scene rows,
+  mutation-only recovery writes, and compact atomic history deltas that retain
+  only added, removed, or changed nodes plus selection state.
+- Replaced placement ordering with stable cell-indexed breadth-first traversal.
+  Apply, rollback, native undo, and redo now share one compensating command
+  journal, including rollback when native undo registration fails.
+- Added developer planning diagnostics for cache/build counts, invalidation
+  cause, duration, logical nodes, cells, and placements.
+- Expanded standalone verification to 792 executable checks covering hostile
+  cap inputs, 10,000-placement ordering, precision atomicity, editable-node
+  equivalence, schema migration, unchanged-frame cache behavior, and injected
+  Apply/undo/redo/registration faults.
+
+### Compatibility
+
+- Smart Builder still commits only native FtD block placement/removal commands
+  and registers one native undo operation. Craft and blueprint serialization
+  are unchanged.
+- All released v1 Smart scene payloads remain readable; ESU writes only v2.
+  Editable patterns, regions, and recovery remain profile-local editor data.
+
+## 1.1.0 - 2026-07-18
+
+### Added
+
+- Added Smart Builder multi-selection with Ctrl/Shift list selection, viewport
+  marquee selection, atomic group move/rotate/scale/duplicate/delete, bulk
+  selection commands, and an exact craft-block eyedropper for supported 1-4 m
+  cardinal structural blocks.
+- Added Smart Builder transactional Replace and Erase commits, solid/hollow
+  cuboids, filled/shell generators, linear/grid/cardinal-radial/path arrays,
+  drag/wall/plane brushes, wall and enclosed flood fills, per-piece material
+  overrides, shape conversion, conditional replacement by material, shape,
+  both, or exact sampled definition, and arc, cone, frustum, and tube generators.
+- Added profile-backed named presets for Smart Builder scenes, Surface drafts,
+  generator drafts, and portable decoration groups. Smart, Surface, and
+  generator drafts also have crash-recovery slots.
+- Added Decoration workspace bulk selection, exact settings eyedropper,
+  align/distribute/match tools, linear and radial arrays, snapping, live
+  transformed-bounds distance/angle/clearance measurements, named layers and
+  folders, tags, visibility, isolation, and layer/object locks.
+- Added Surface face/edge extrusion, inset, subdivision, vertex welding, hole
+  fill, smoothing, face winding reversal, smooth Bezier generator paths, and
+  durable source metadata for reopening ESU-placed surfaces after reload.
+- Added a read-only Craft Audit for invalid transforms, bad tethers and
+  references, oversized meshes, bounds problems, transformed-mesh overlaps,
+  duplicate decorations, unused layers, capacity pressure, and serialization
+  risk. Reports can be copied or saved; safe repairs require a dry-run preview
+  and explicit apply.
+
+### Changed
+
+- Expanded standalone verification to cover portable preset validation,
+  transactional persistence and backup recovery, precision layout, layers and
+  locks, advanced Surface modeling, Smart Builder group/region workflows, and
+  deterministic audit reports and repair plans.
+
+### Compatibility
+
+- Committed blocks and decorations remain native FtD objects. Presets, workspace
+  layers, recovery data, and editable Surface source metadata are profile-local
+  JSON sidecars and do not alter craft serialization or ESU wire-format limits.
+- Safe audit apply currently executes only finite Euler-angle normalization,
+  which preserves the represented rotation. Repairs that could change builder
+  intent remain report/preview guidance instead of being applied automatically.
+
 ## 1.0.10 - 2026-07-15
 
 ### Removed

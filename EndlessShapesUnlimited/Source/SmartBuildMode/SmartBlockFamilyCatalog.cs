@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using BrilliantSkies.Core.Types;
 using DecoLimitLifter.DecorationEditMode;
 using BrilliantSkies.Modding;
@@ -114,6 +115,16 @@ namespace DecoLimitLifter.SmartBuildMode
 
     internal static class SmartBlockFamilyCatalog
     {
+        private static readonly object CatalogSnapshotLock = new object();
+        private static readonly Dictionary<SmartBuildMaterial, SmartBuildSource> MaterialSourceCache =
+            new Dictionary<SmartBuildMaterial, SmartBuildSource>();
+        private static ItemDefinition[] s_loadedDefinitionSnapshot = Array.Empty<ItemDefinition>();
+        private static object s_loadedContainerReference;
+        private static object s_loadedComponentsReference;
+        private static object s_loadedCorrespondingReference;
+        private static int s_loadedComponentsFingerprint;
+        private static int s_loadedCorrespondingFingerprint;
+
         private static readonly SmartBuildMaterial[] BasicMaterialOrder =
         {
             SmartBuildMaterial.Wood,
@@ -226,11 +237,36 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal static IReadOnlyList<SmartBuildMaterial> BasicMaterials => BasicMaterialOrder;
 
+        internal static void BeginModeActivationCatalogSnapshot()
+        {
+            lock (CatalogSnapshotLock)
+            {
+                s_loadedContainerReference = null;
+                s_loadedComponentsReference = null;
+                s_loadedCorrespondingReference = null;
+                s_loadedComponentsFingerprint = 0;
+                s_loadedCorrespondingFingerprint = 0;
+                s_loadedDefinitionSnapshot = Array.Empty<ItemDefinition>();
+                MaterialSourceCache.Clear();
+            }
+            _ = LoadedItemDefinitions();
+        }
+
         internal static bool TryCreateMaterialSource(
             SmartBuildMaterial material,
             out SmartBuildSource source,
             out string reason)
         {
+            _ = LoadedItemDefinitions();
+            lock (CatalogSnapshotLock)
+            {
+                if (MaterialSourceCache.TryGetValue(material, out source))
+                {
+                    reason = null;
+                    return true;
+                }
+            }
+
             source = null;
             string displayName = MaterialDisplayName(material);
             SmartBlockFamily family = FromMaterial(material);
@@ -268,8 +304,65 @@ namespace DecoLimitLifter.SmartBuildMode
                 family,
                 DownSlopeFromMaterial(material, seed.Definition),
                 DiscoverStructuralFamilies(material, seed.Definition));
+            lock (CatalogSnapshotLock)
+                MaterialSourceCache[material] = source;
             reason = null;
             return true;
+        }
+
+        internal static bool TryIdentifyBlock(
+            ItemDefinition definition,
+            out SmartBuildMaterial material,
+            out SmartBuildSource source,
+            out SmartBlockCandidate candidate,
+            out string reason)
+        {
+            material = SmartBuildMaterial.Wood;
+            source = null;
+            candidate = null;
+            if (definition == null)
+            {
+                reason = "The pointed craft block has no item definition.";
+                return false;
+            }
+
+            Guid definitionGuid = ComponentGuid(definition);
+            foreach (SmartBuildMaterial possibleMaterial in BasicMaterialOrder)
+            {
+                if (!TryCreateMaterialSource(
+                        possibleMaterial,
+                        out SmartBuildSource possibleSource,
+                        out _))
+                {
+                    continue;
+                }
+
+                IEnumerable<SmartBlockFamily> families =
+                    (possibleSource.ShapeFamilies?.Values ?? Enumerable.Empty<SmartBlockFamily>())
+                    .Concat(new[] { possibleSource.Family, possibleSource.DownSlopeFamily })
+                    .Where(family => family?.IsSupported == true)
+                    .Distinct();
+                foreach (SmartBlockFamily family in families)
+                {
+                    SmartBlockCandidate match = family.Candidates.FirstOrDefault(
+                        possible =>
+                            possible?.Definition != null &&
+                            (ReferenceEquals(possible.Definition, definition) ||
+                             definitionGuid != Guid.Empty &&
+                             ComponentGuid(possible.Definition) == definitionGuid));
+                    if (match == null)
+                        continue;
+
+                    material = possibleMaterial;
+                    source = possibleSource;
+                    candidate = match;
+                    reason = null;
+                    return true;
+                }
+            }
+
+            reason = "The pointed block is not a supported Smart Builder structural shape.";
+            return false;
         }
 
         internal static SmartBlockFamily FromMaterial(SmartBuildMaterial material)
@@ -518,26 +611,74 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static IEnumerable<ItemDefinition> LoadedItemDefinitions()
         {
-            var results = new List<ItemDefinition>();
-            var seen = new HashSet<Guid>();
             try
             {
                 ModificationComponentContainerItem container = Configured.i
                     .Get<ModificationComponentContainerItem>();
-                AddItemDefinitions(container?.Components, results, seen);
                 FieldInfo field = typeof(ModificationComponentContainerItem)
                     .GetField(
                         "m_AllCorrespondingItems",
                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (field?.GetValue(container) is IEnumerable<ItemDefinition> items)
-                    AddItemDefinitions(items, results, seen);
+                object componentsReference = container?.Components;
+                object correspondingReference = field?.GetValue(container);
+                IEnumerable<ItemDefinition> components =
+                    componentsReference as IEnumerable<ItemDefinition>;
+                IEnumerable<ItemDefinition> corresponding =
+                    correspondingReference as IEnumerable<ItemDefinition>;
+                int componentsFingerprint = DefinitionReferenceCountFingerprint(components);
+                int correspondingFingerprint = DefinitionReferenceCountFingerprint(corresponding);
+
+                lock (CatalogSnapshotLock)
+                {
+                    if (ReferenceEquals(s_loadedContainerReference, container) &&
+                        ReferenceEquals(s_loadedComponentsReference, componentsReference) &&
+                        ReferenceEquals(s_loadedCorrespondingReference, correspondingReference) &&
+                        s_loadedComponentsFingerprint == componentsFingerprint &&
+                        s_loadedCorrespondingFingerprint == correspondingFingerprint)
+                    {
+                        return s_loadedDefinitionSnapshot;
+                    }
+
+                    var results = new List<ItemDefinition>();
+                    var seen = new HashSet<Guid>();
+                    AddItemDefinitions(components, results, seen);
+                    AddItemDefinitions(corresponding, results, seen);
+                    s_loadedContainerReference = container;
+                    s_loadedComponentsReference = componentsReference;
+                    s_loadedCorrespondingReference = correspondingReference;
+                    s_loadedComponentsFingerprint = componentsFingerprint;
+                    s_loadedCorrespondingFingerprint = correspondingFingerprint;
+                    s_loadedDefinitionSnapshot = results.ToArray();
+                    MaterialSourceCache.Clear();
+                    return s_loadedDefinitionSnapshot;
+                }
             }
             catch
             {
                 // GUID fallbacks below keep Smart Builder usable when reflection changes.
+                lock (CatalogSnapshotLock)
+                    return s_loadedDefinitionSnapshot;
             }
+        }
 
-            return results.ToArray();
+        private static int DefinitionReferenceCountFingerprint(
+            IEnumerable<ItemDefinition> definitions)
+        {
+            if (definitions == null)
+                return 0;
+            unchecked
+            {
+                int count = 0;
+                int hash = 17;
+                foreach (ItemDefinition definition in definitions)
+                {
+                    count++;
+                    hash = hash * 31 + (definition == null
+                        ? 0
+                        : RuntimeHelpers.GetHashCode(definition));
+                }
+                return hash * 31 + count;
+            }
         }
 
         private static void AddItemDefinitions(

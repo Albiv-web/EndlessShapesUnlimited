@@ -1,13 +1,14 @@
-# EndlessShapes Unlimited 1.0.7 in-game acceptance plan
+# EndlessShapes Unlimited 1.2.0 in-game acceptance plan
 
 Test target: From The Depths 4.3.3
 
-Installed mod folder: `%USERPROFILE%\Documents\From The Depths\Mods\EndlessShapesUnlimited`
+Installed mod folder for this release candidate:
+`F:\FTD saves\From The Depths\Mods\EndlessShapesUnlimited`
 
 Expected assembly: `EndlessShapesUnlimited.dll`
 
 Expected assembly SHA-256:
-`DA8FEBD37208F37CB0FC35092438AF26FE12A4D0F4BE2805201BA95B78CAEFE6`
+`B4E38F552B2E3B600E70EA6058F04ACEB7F6D09B33A24C5C6630741B66B3B54B`
 
 Do not merge the draft PR or publish a release until every required section
 passes. Record the FTD build, test date, result, and evidence for each section.
@@ -16,7 +17,7 @@ passes. Record the FTD build, test date, result, and evidence for each section.
 
 - Back up any construct used for legacy or high-decoration testing.
 - Confirm standalone `DecoLimitLifter` and `EndlessShapes2` are absent or disabled.
-- Confirm `EndlessShapes Unlimited 1.0.7` is enabled. The separately installed
+- Confirm `EndlessShapes Unlimited 1.2.0` is enabled. The separately installed
   `AdvancedMimicUi` mod is not a dependency; the required input helper is bundled.
 - Close FTD before replacing mod files.
 - Preserve the full FTD log for every failed test.
@@ -24,9 +25,9 @@ passes. Record the FTD build, test date, result, and evidence for each section.
 ## 1. Startup and registration
 
 1. Start FTD and reach the main menu.
-2. Confirm the log contains the successful `EndlessShapes Unlimited v1.0.7`
+2. Confirm the log contains the successful `EndlessShapes Unlimited v1.2.0`
    message exactly once.
-3. Confirm the Alerts panel contains `EndlessShapes Unlimited v1.0.7 Active!`.
+3. Confirm the Alerts panel contains `EndlessShapes Unlimited v1.2.0 Active!`.
 4. Confirm there is no patch-installation, missing-target, duplicate-GUID,
    duplicate-class, or `AutoSyncroniser.fullArray` error.
 5. Open the Decorations inventory and confirm **Decoration Builder** appears.
@@ -542,9 +543,133 @@ live symmetry follow, add-decoration flow, Apply/Cancel, focus restore, and save
 behave without stuck cursor, lost keyboard, unintended block placement,
 performance stutter, or serializer HUD regressions.
 
-## 9. Beamification bundled tool
+## 9. Advanced workspace toolset
 
-1. In the packaged mod folder, confirm `Tools/Beamification` exists and contains
+Run this section on a disposable craft containing normal blocks, multi-cell
+blocks, decorations with several meshes/materials/colors, a rotated subobject,
+and at least one placed ESU Surface.
+
+1. Smart group editing: select pieces by Ctrl/Shift rows and viewport marquee;
+   move, rotate, scale, duplicate, and delete the group. Test All, None, Invert,
+   Same shape, and Same material. Every completed operation must undo/redo once.
+2. Presets/recovery: save, load, rename where available, and delete Smart scene,
+   Surface, generator, and decoration-group presets. Reopen on another construct
+   at a new reference point. Restore interrupted work from recovery, then corrupt
+   a disposable primary library copy and confirm backup fallback without data
+   loss or partial replacement.
+3. Region tools: create solid and hollow cuboids plus filled/shell generators.
+   Use a selected 1m cuboid to fill a wall and a bounded enclosed planar region;
+   an open flood region must reject without leaving partial preview pieces.
+   Commit Skip, Block, Replace, and Erase over occupied single- and multi-cell
+   blocks. Replace/Erase must remove complete block items transactionally and a
+   single FtD undo must restore the exact prior craft. Sample a source block,
+   preview conditional replacement by Material, Shape, Both, and Exact item,
+   and confirm the removal/replacement overlays show each complete footprint.
+   Change the craft after preview and confirm stale or colliding plans fail
+   closed without a partial removal.
+4. Arrays/generators: make positive/negative linear, grid, cardinal-radial,
+   polyline-vertex, and stepped-cell path arrays. Exercise drag, wall-perimeter,
+   and active-plane brushes, then Arc sweep limits, hollow/filled Tube, Cone,
+   and Frustum top-radius limits. Reject operations beyond configured scene/cell
+   limits before creating a partial result.
+5. Materials/conversion and block eyedropper: assign mixed per-piece materials,
+   convert compatible selections between shapes, then arm the viewport
+   eyedropper. Sample supported blocks on the main craft and rotated subobject;
+   verify the exact 1-4 m occupied dimensions, definition/shape/length,
+   material, and cardinal local rotation. Unsupported or non-cardinal items
+   must refuse visibly and leave the eyedropper armed.
+6. Decoration bulk/layout: select by mesh, color, material, anchor, and text;
+   grow/invert/clear, sample/apply exact settings, align min/center/max,
+   distribute centers/edge gaps, match rotation/scale, and create linear/radial
+   arrays. Verify surface, anchor, and axis snapping plus ruler distance, angle,
+   and clearance against rotated, scaled, offset-origin mesh geometry. Use a
+   Filter result spanning the main craft and a subconstruct; bulk selection may
+   span both, but local-frame layout/snap/ruler operations must reject the mixed
+   selection clearly instead of applying cross-frame coordinates.
+7. Surface modeling/roundtrip: extrude face and boundary edge, inset, subdivide,
+   weld, fill a boundary hole, smooth, reverse a face, and preview/place a smooth
+   Bezier generator path. Save/reload the craft, reopen the placed ESU source,
+   edit it, and place again; a vanilla decoration must not offer source reopen.
+8. Layers: create/assign/tag layers, organize them into named folders, hide/show
+   and isolate them, then lock a layer and one object. Locked targets must reject transform, paint, settings
+   paste, duplicate, and delete. Close/reopen and restart FtD to verify profile
+   persistence; showing a layer or leaving ESU must restore renderer state.
+9. Craft Audit: scan clean and damaged fixtures for tethers/orphans,
+   non-finite/out-of-range transforms, missing/unreadable references, mesh
+   bounds/size, exact duplicates, and transformed-mesh overlaps whose centers
+   differ, plus unused layers, manager capacity, and serialization limits. Copy
+   and save the complete deterministic report. Preview safe repairs,
+   mutate the craft to prove stale plans reject, rescan, explicitly apply finite
+   orientation normalization atomically, and undo it. Review/destructive advice
+   must never auto-apply.
+10. Save/reload the craft and restart FtD. Confirm committed native content,
+    presets/recovery, layer metadata, and Surface source metadata persist in
+    their intended scope with no extra mod DLL or craft serialization change.
+
+Pass: all ten tool domains are reachable, transactional edits are atomic and
+undoable, profile sidecars recover safely, and unsupported or stale operations
+fail before mutating craft data.
+
+## 10. Smart Builder precision, diagnostics, and editable nodes
+
+1. Select one primitive, enter valid and invalid absolute X/Y/Z origins and
+   dimensions, and confirm invalid text changes nothing while each accepted edit
+   is one preview undo entry.
+2. Select a group and test primary, selection-bounds-center, and custom pivots;
+   relative movement; quarter turns on X/Y/Z; min/center/max alignment; and
+   equal-gap distribution with unequal piece widths. Snap the group flush to
+   both sides of a picked craft face and verify the displayed selection bounds,
+   spans, and measured gaps. Undo/redo every action.
+3. With no text field active, verify `Ctrl+A`, `Ctrl+C`, `Ctrl+V`, `Ctrl+D`, and
+   `Delete`. Paste once at a pointed craft cell and once with no valid target.
+   Confirm Escape cancels the current gesture, then deselects, before closing.
+4. Create Linear and Grid patterns from one source and a multi-piece source.
+   Edit negative/positive copy counts and both step vectors; confirm instance
+   zero never moves and Apply matches the current preview.
+5. Create Radial patterns around X/Y/Z. Test Keep orientation at an arbitrary
+   angle, orientation-follow at exact 90-degree steps, and a small-radius case
+   where rounded instances collapse and produce warnings rather than duplicates.
+6. Create both vertex and stepped Polyline patterns, edit their control points
+   and spacing, and compare **Keep** with **Cardinal Tangent** orientation.
+   Exercise step-vector, radial pivot/angle, and path-point viewport handles;
+   verify typed-panel parity, confirm Enter, then begin another handle gesture
+   and confirm Escape restores its starting parameters.
+7. For each pattern, use Edit Source, Dissolve, and Bake. Confirm Dissolve
+   restores only the original source group; Bake produces independent nodes;
+   an over-512 Bake is refused without changing the pattern; direct Apply still
+   works when the placement plan is below 10,000.
+8. Create rectangle, wall, plane, brush, and flood regions. Confirm the Scene
+   list retains one logical node, flood does not change after craft edits, and
+   **Recompute from craft** is the only operation that refreshes it.
+9. Exercise Skip, Block, Replace, and Erase with overlaps, disconnected output,
+   unsupported shape/material output, and removals. Confirm the pinned legend,
+   per-cell colors, and **Next Issue** select/pulse the correct node/cell without
+   moving the camera.
+10. Mirror down slopes over X, Y, Z, and combined planes with Full and Step
+     support. Confirm anchors, covered cells, and visible orientation match Apply.
+     Exercise a discovered definition with no valid mirrored orientation and
+     confirm only that node is rejected with the specific diagnostic.
+11. Save/reload a v2 scene containing every node kind, then load a released v1
+    scene. Confirm selection, editor settings, materials, geometry, and pattern
+    parameters survive. Switch craft/profile while recovery is pending and
+    confirm slots remain bound to the correct craft identity/profile.
+12. Build 999, 1,000, 10,000, and 10,001-placement cases. Confirm the warning
+    begins at 1,000, 10,000 remains accepted when otherwise valid, and 10,001 is
+    rejected before enumeration. Scroll a 512-node Scene list, edit selection
+    repeatedly, and leave unchanged frames running. With developer diagnostics
+    enabled, confirm selection/presentation reuse the plan and that only
+    geometry/material/symmetry/occupancy/craft mutations replan.
+
+Pass: precision edits are atomic, editable nodes round-trip, diagnostics identify
+the responsible cells, large valid plans remain responsive, and every rejected
+or failed operation leaves both preview and craft unchanged.
+
+## 11. External Beamification development tool (not in runtime package)
+
+This optional repository-local test is not a runtime-package requirement.
+`build.ps1` and the clean deploy intentionally exclude development tools.
+
+1. In a development checkout containing `Tools/Beamification`, confirm it contains
    `README.md`, `LICENSE`, `requirements.txt`, `__main__.py`, and `src`.
 2. Create a Python virtual environment outside the mod folder and install:
    `python -m pip install -r Tools/Beamification/requirements.txt`.
@@ -558,12 +683,13 @@ performance stutter, or serializer HUD regressions.
 6. Save the converted craft under a new name, reload it, and confirm the ESU
    serializer HUD/load-save status remains normal.
 
-Pass: Beamification remains an external tool, does not affect FTD startup, and
+Pass: Beamification remains an external development tool, does not enter the
+runtime mod folder or affect FTD startup, and
 produces loadable converted blueprints from disposable test inputs.
 
-## 10. Multiplayer
+## 12. Multiplayer
 
-1. Install the exact same 1.0.8 DLL on host and every client; compare SHA-256.
+1. Install the exact same 1.2.0 DLL on host and every client; compare SHA-256.
 2. Join with a decoration-heavy construct and verify initial synchronization.
 3. Generate, cancel, move a tether, save, and reload while connected.
 4. Disconnect and reconnect each client and compare decoration state.
@@ -583,7 +709,9 @@ Pass: all peers remain synchronized and stable with the same mod version.
 | OBJ export | Yes | Not run | |
 | Heavy save/load | Yes | Not run | |
 | Decoration Edit Mode native shell | Yes | Not run | |
-| Beamification bundled tool | Yes | Not run | |
+| Advanced workspace toolset | Yes | Not run | |
+| Smart Builder precision, diagnostics, and editable nodes | Yes | Not run | |
+| External Beamification development tool | No | Not run | Optional; excluded from runtime package. |
 | Multiplayer | Yes | Not run | |
 
 For a failure, retain the input OBJ/texture, affected construct, complete log,

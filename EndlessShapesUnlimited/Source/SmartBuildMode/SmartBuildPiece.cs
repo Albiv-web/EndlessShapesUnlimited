@@ -27,7 +27,11 @@ namespace DecoLimitLifter.SmartBuildMode
         OffsetSlope,
         GeneratedCircle,
         GeneratedPolygon,
-        GeneratedSphere
+        GeneratedSphere,
+        GeneratedArc,
+        GeneratedCone,
+        GeneratedFrustum,
+        GeneratedTube
     }
 
     internal enum SmartBuildSlopeSupportMode
@@ -106,6 +110,9 @@ namespace DecoLimitLifter.SmartBuildMode
         private SmartBuildGeneratorFillMode _generatorFillMode;
         private SmartBuildGeneratorSmoothingMode _generatorSmoothingMode;
         private bool _generatorRoundLock;
+        private int _generatorArcDegrees;
+        private int _generatorTopScalePercent;
+        private bool _cuboidHollow;
 
         private SmartBuildPiece(
             int id,
@@ -129,7 +136,8 @@ namespace DecoLimitLifter.SmartBuildMode
             int generatorSides = 0,
             SmartBuildGeneratorFillMode generatorFillMode = SmartBuildGeneratorFillMode.OutlineShell,
             SmartBuildGeneratorSmoothingMode generatorSmoothingMode = SmartBuildGeneratorSmoothingMode.None,
-            bool generatorRoundLock = true)
+            bool generatorRoundLock = true,
+            bool cuboidHollow = false)
         {
             Id = id;
             Construct = construct;
@@ -157,6 +165,13 @@ namespace DecoLimitLifter.SmartBuildMode
             _generatorFillMode = generatorFillMode;
             _generatorSmoothingMode = generatorSmoothingMode;
             _generatorRoundLock = generatorRoundLock;
+            _generatorArcDegrees = shapeKind == SmartBuildShapeKind.GeneratedArc ? 180 : 360;
+            _generatorTopScalePercent = shapeKind == SmartBuildShapeKind.GeneratedCone
+                ? 0
+                : shapeKind == SmartBuildShapeKind.GeneratedFrustum
+                    ? 50
+                    : 100;
+            _cuboidHollow = cuboidHollow;
             SetForward(forwardAxis, forwardSign);
         }
 
@@ -198,6 +213,16 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool GeneratorRoundLock => _generatorRoundLock;
 
+        internal int GeneratorArcDegrees => _generatorArcDegrees;
+
+        internal int GeneratorTopScalePercent => _generatorTopScalePercent;
+
+        internal bool CuboidHollow => _cuboidHollow;
+
+        internal SmartBuildMaterial? MaterialOverride { get; private set; }
+
+        internal Vector3i PresetCuboidSize => _cuboidSize;
+
         internal SmartBuildAxis ForwardAxis { get; private set; }
 
         internal int ForwardSign { get; private set; }
@@ -231,6 +256,77 @@ namespace DecoLimitLifter.SmartBuildMode
         internal Vector3 CenterLocal => Bounds.Center;
 
         internal Vector3 RotationPivotLocal => ToVector3(NearestCellToCenter(Bounds.Center));
+
+        internal Vector3i RotationPivotCell => NearestCellToCenter(Bounds.Center);
+
+        /// <summary>
+        /// Allocation-free structural fingerprint used only for in-session geometry
+        /// caches. It covers every field that can change occupied cells, material
+        /// resolution, orientation, or generated-shape output.
+        /// </summary>
+        internal long StructuralHash
+        {
+            get
+            {
+                unchecked
+                {
+                    long hash = 1469598103934665603L;
+                    HashValue(ref hash, Origin.x);
+                    HashValue(ref hash, Origin.y);
+                    HashValue(ref hash, Origin.z);
+                    HashValue(ref hash, (int)ShapeKind);
+                    HashText(ref hash, ShapeDescriptorKey);
+                    HashValue(ref hash, (int)DrawPlane);
+                    HashValue(ref hash, _cuboidSize.x);
+                    HashValue(ref hash, _cuboidSize.y);
+                    HashValue(ref hash, _cuboidSize.z);
+                    HashValue(ref hash, SlopeLength);
+                    HashValue(ref hash, SlopeSteps);
+                    HashValue(ref hash, SlopeWidth);
+                    HashValue(ref hash, SelectedLength);
+                    HashValue(ref hash, _fixedForwardTiles);
+                    HashValue(ref hash, _fixedForwardCells);
+                    HashValue(ref hash, _fixedRightTiles);
+                    HashValue(ref hash, _fixedDropTiles);
+                    HashValue(ref hash, (int)SupportMode);
+                    HashValue(ref hash, _generatorSides);
+                    HashValue(ref hash, (int)_generatorFillMode);
+                    HashValue(ref hash, (int)_generatorSmoothingMode);
+                    HashValue(ref hash, _generatorRoundLock ? 1 : 0);
+                    HashValue(ref hash, _generatorArcDegrees);
+                    HashValue(ref hash, _generatorTopScalePercent);
+                    HashValue(ref hash, _cuboidHollow ? 1 : 0);
+                    HashValue(ref hash, (int)(MaterialOverride ?? (SmartBuildMaterial)(-1)));
+                    HashValue(ref hash, (int)ForwardAxis);
+                    HashValue(ref hash, ForwardSign);
+                    HashValue(ref hash, (int)RightAxis);
+                    HashValue(ref hash, RightSign);
+                    HashValue(ref hash, (int)DropAxis);
+                    HashValue(ref hash, DropSign);
+                    return hash;
+                }
+            }
+        }
+
+        private static void HashValue(ref long hash, int value)
+        {
+            unchecked
+            {
+                hash = (hash ^ value) * 1099511628211L;
+            }
+        }
+
+        private static void HashText(ref long hash, string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                HashValue(ref hash, 0);
+                return;
+            }
+
+            for (int index = 0; index < value.Length; index++)
+                HashValue(ref hash, value[index]);
+        }
 
         internal bool IsFixedGeometry =>
             Descriptor()?.IsFixedGeometry == true;
@@ -405,6 +501,50 @@ namespace DecoLimitLifter.SmartBuildMode
                 drawPlane);
         }
 
+        internal static SmartBuildPiece RestoreFromPreset(
+            AllConstruct construct,
+            Vector3i origin,
+            SmartBuildPiecePresetPayload payload)
+        {
+            if (construct == null)
+                throw new ArgumentNullException(nameof(construct));
+            if (payload == null)
+                throw new ArgumentNullException(nameof(payload));
+
+            SmartBuildPiece piece = new SmartBuildPiece(
+                ++s_nextId,
+                construct,
+                payload.ShapeKind,
+                origin,
+                payload.CuboidSize.ToCell(),
+                payload.DrawPlane,
+                payload.SlopeLength,
+                payload.SlopeSteps,
+                payload.SlopeWidth,
+                payload.ForwardAxis,
+                payload.ForwardSign,
+                payload.ShapeDescriptorKey,
+                payload.SelectedLength,
+                payload.FixedForwardTiles,
+                payload.FixedRightTiles,
+                payload.FixedDropTiles,
+                payload.FixedForwardCells,
+                payload.SupportMode,
+                payload.GeneratorSides,
+                payload.GeneratorFillMode,
+                payload.GeneratorSmoothingMode,
+                payload.GeneratorRoundLock,
+                payload.CuboidHollow);
+            piece.SetBasis(
+                SmartBuildAxisHelper.ToVector3i(payload.ForwardAxis, payload.ForwardSign),
+                SmartBuildAxisHelper.ToVector3i(payload.DropAxis, payload.DropSign),
+                SmartBuildAxisHelper.ToVector3i(payload.RightAxis, payload.RightSign));
+            piece.SetGeneratorArcDegrees(payload.GeneratorArcDegrees);
+            piece.SetGeneratorTopScalePercent(payload.GeneratorTopScalePercent);
+            piece.MaterialOverride = payload.Material;
+            return piece;
+        }
+
         private static SmartBuildPiece CreateGeneratedShapeCore(
             int id,
             AllConstruct construct,
@@ -419,13 +559,30 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!IsGeneratedShapeKind(kind))
                 kind = SmartBuildShapeKind.GeneratedCircle;
 
-            int diameter = Math.Max(3, Math.Max(1, width));
+            bool advancedVolume = kind == SmartBuildShapeKind.GeneratedCone ||
+                                  kind == SmartBuildShapeKind.GeneratedFrustum ||
+                                  kind == SmartBuildShapeKind.GeneratedTube;
+            int diameter = Math.Max(advancedVolume ? 7 : 3, Math.Max(1, width));
             if (diameter % 2 == 0)
                 diameter++;
 
-            Vector3i size = kind == SmartBuildShapeKind.GeneratedSphere
-                ? new Vector3i(diameter, diameter, diameter)
-                : new Vector3i(diameter, diameter, 1);
+            Vector3i size;
+            switch (kind)
+            {
+                case SmartBuildShapeKind.GeneratedSphere:
+                    size = new Vector3i(diameter, diameter, diameter);
+                    break;
+                case SmartBuildShapeKind.GeneratedCone:
+                case SmartBuildShapeKind.GeneratedFrustum:
+                    size = new Vector3i(diameter, diameter, 7);
+                    break;
+                case SmartBuildShapeKind.GeneratedTube:
+                    size = new Vector3i(diameter, diameter, 5);
+                    break;
+                default:
+                    size = new Vector3i(diameter, diameter, 1);
+                    break;
+            }
             return new SmartBuildPiece(
                 id,
                 construct,
@@ -441,8 +598,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 shapeDescriptorKey: descriptor?.Key,
                 selectedLength: 1,
                 generatorSides: descriptor?.GeneratorSidesPreset ?? DefaultGeneratorSides(kind),
-                generatorRoundLock: kind == SmartBuildShapeKind.GeneratedCircle ||
-                                    kind == SmartBuildShapeKind.GeneratedSphere);
+                generatorRoundLock: SupportsRoundGeneratorLock(kind));
         }
 
         internal SmartBuildPiece Clone()
@@ -469,8 +625,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 _generatorSides,
                 _generatorFillMode,
                 _generatorSmoothingMode,
-                _generatorRoundLock);
+                _generatorRoundLock,
+                _cuboidHollow);
             clone.SetBasis(_forwardStep, _dropStep, _rightStep);
+            clone.MaterialOverride = MaterialOverride;
+            clone._generatorArcDegrees = _generatorArcDegrees;
+            clone._generatorTopScalePercent = _generatorTopScalePercent;
             return clone;
         }
 
@@ -498,8 +658,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 _generatorSides,
                 _generatorFillMode,
                 _generatorSmoothingMode,
-                _generatorRoundLock);
+                _generatorRoundLock,
+                _cuboidHollow);
             duplicate.SetBasis(_forwardStep, _dropStep, _rightStep);
+            duplicate.MaterialOverride = MaterialOverride;
+            duplicate._generatorArcDegrees = _generatorArcDegrees;
+            duplicate._generatorTopScalePercent = _generatorTopScalePercent;
             return duplicate;
         }
 
@@ -526,7 +690,190 @@ namespace DecoLimitLifter.SmartBuildMode
             _generatorFillMode = source._generatorFillMode;
             _generatorSmoothingMode = source._generatorSmoothingMode;
             _generatorRoundLock = source._generatorRoundLock;
+            _generatorArcDegrees = source._generatorArcDegrees;
+            _generatorTopScalePercent = source._generatorTopScalePercent;
+            _cuboidHollow = source._cuboidHollow;
+            MaterialOverride = source.MaterialOverride;
             SetBasis(source._forwardStep, source._dropStep, source._rightStep);
+        }
+
+        internal void SetMaterialOverride(SmartBuildMaterial? material)
+        {
+            MaterialOverride = material;
+        }
+
+        internal void SetCuboidHollow(bool hollow)
+        {
+            if (ShapeKind == SmartBuildShapeKind.Cuboid)
+                _cuboidHollow = hollow;
+        }
+
+        internal bool TryConvertTo(
+            SmartBuildShapeDescriptor descriptor,
+            int selectedLength,
+            out string reason)
+        {
+            if (descriptor == null)
+            {
+                reason = "Select a valid Smart Builder target shape.";
+                return false;
+            }
+
+            selectedLength = Mathf.Clamp(selectedLength, 1, 4);
+            SmartBuildBounds originalBounds = Bounds;
+            Vector3 targetCenter = originalBounds.Center;
+            Vector3i forward = _forwardStep;
+            Vector3i drop = _dropStep;
+            Vector3i right = _rightStep;
+            SmartBuildMaterial? material = MaterialOverride;
+            SmartBuildPiece converted;
+
+            if (descriptor.IsCuboid)
+            {
+                converted = new SmartBuildPiece(
+                    Id,
+                    Construct,
+                    SmartBuildShapeKind.Cuboid,
+                    originalBounds.Min,
+                    originalBounds.Size,
+                    DrawPlane,
+                    slopeLength: 1,
+                    slopeSteps: 1,
+                    slopeWidth: 1,
+                    forwardAxis: ForwardAxis,
+                    forwardSign: ForwardSign,
+                    shapeDescriptorKey: SmartBuildShapeDescriptors.CuboidKey,
+                    cuboidHollow: ShapeKind == SmartBuildShapeKind.Cuboid && _cuboidHollow);
+                // A cuboid's occupied cells are axis aligned, but its cardinal basis still
+                // matters when it is rotated, converted again, or resolved to oriented beam
+                // candidates. Preserve all three axes rather than reconstructing the default
+                // world-down basis from only ForwardAxis.
+                converted.SetBasis(forward, drop, right);
+            }
+            else if (descriptor.ProceduralDownSlope)
+            {
+                int steps = Math.Max(
+                    1,
+                    (originalBounds.Extent(ForwardAxis) + selectedLength - 1) / selectedLength);
+                converted = new SmartBuildPiece(
+                    Id,
+                    Construct,
+                    SmartBuildShapeKind.DownSlope,
+                    Origin,
+                    new Vector3i(1, 1, 1),
+                    DrawPlane,
+                    selectedLength,
+                    steps,
+                    Math.Max(1, originalBounds.Extent(RightAxis)),
+                    ForwardAxis,
+                    ForwardSign,
+                    descriptor.Key,
+                    selectedLength,
+                    supportMode: SupportMode);
+                converted.SetBasis(forward, drop, right);
+                converted.RecenterDownSlopeAround(targetCenter);
+            }
+            else if (descriptor.IsGenerator)
+            {
+                int sides = descriptor.GeneratorSidesPreset > 0
+                    ? descriptor.GeneratorSidesPreset
+                    : ShapeKind == SmartBuildShapeKind.GeneratedPolygon
+                        ? _generatorSides
+                        : DefaultGeneratorSides(descriptor.Kind);
+                bool roundLock = SupportsRoundGeneratorLock(descriptor.Kind);
+                converted = new SmartBuildPiece(
+                    Id,
+                    Construct,
+                    descriptor.Kind,
+                    Origin,
+                    new Vector3i(
+                        Math.Max(1, originalBounds.Extent(ForwardAxis)),
+                        Math.Max(1, originalBounds.Extent(RightAxis)),
+                        Math.Max(1, originalBounds.Extent(DropAxis))),
+                    DrawPlane,
+                    slopeLength: 1,
+                    slopeSteps: 1,
+                    slopeWidth: 1,
+                    ForwardAxis,
+                    ForwardSign,
+                    descriptor.Key,
+                    selectedLength: 1,
+                    generatorSides: sides,
+                    generatorFillMode: IsGeneratedShape
+                        ? _generatorFillMode
+                        : SmartBuildGeneratorFillMode.OutlineShell,
+                    generatorSmoothingMode: IsGeneratedShape
+                        ? _generatorSmoothingMode
+                        : SmartBuildGeneratorSmoothingMode.None,
+                    generatorRoundLock: IsGeneratedShape ? _generatorRoundLock : roundLock);
+                converted.SetBasis(forward, drop, right);
+                converted.ApplyGeneratedBounds(
+                    originalBounds,
+                    DecorationEditAxis.None,
+                    0);
+                converted.RecenterGeneratedAround(targetCenter);
+                if (descriptor.Kind == SmartBuildShapeKind.GeneratedArc &&
+                    ShapeKind == SmartBuildShapeKind.GeneratedArc)
+                {
+                    converted._generatorArcDegrees = _generatorArcDegrees;
+                }
+                if (descriptor.Kind == SmartBuildShapeKind.GeneratedFrustum &&
+                    ShapeKind == SmartBuildShapeKind.GeneratedFrustum)
+                {
+                    converted._generatorTopScalePercent = _generatorTopScalePercent;
+                }
+            }
+            else
+            {
+                int run = Math.Max(1, originalBounds.Extent(ForwardAxis));
+                converted = new SmartBuildPiece(
+                    Id,
+                    Construct,
+                    descriptor.Kind,
+                    Origin,
+                    new Vector3i(1, 1, 1),
+                    DrawPlane,
+                    slopeLength: 1,
+                    slopeSteps: 1,
+                    slopeWidth: 1,
+                    ForwardAxis,
+                    ForwardSign,
+                    descriptor.Key,
+                    selectedLength,
+                    fixedForwardTiles: Math.Max(1, (run + selectedLength - 1) / selectedLength),
+                    fixedRightTiles: Math.Max(1, originalBounds.Extent(RightAxis)),
+                    fixedDropTiles: Math.Max(1, originalBounds.Extent(DropAxis)),
+                    fixedForwardCells: run);
+                converted.SetBasis(forward, drop, right);
+                converted.RecenterFixedGeometryAround(targetCenter);
+            }
+
+            converted.MaterialOverride = material;
+            if (!descriptor.IsGenerator && !IsGeneratedShape)
+            {
+                SmartBuildBounds convertedBounds = converted.Bounds;
+                if (!SameSize(convertedBounds, originalBounds))
+                {
+                    reason = descriptor.Label +
+                             " cannot retain the selected piece's exact extents with the current shape length.";
+                    return false;
+                }
+
+                converted.MoveBy(originalBounds.Min - convertedBounds.Min);
+                if (!SameBounds(converted.Bounds, originalBounds) ||
+                    !converted._forwardStep.Equals(forward) ||
+                    !converted._dropStep.Equals(drop) ||
+                    !converted._rightStep.Equals(right))
+                {
+                    reason = descriptor.Label +
+                             " could not preserve the selected piece's exact position, extents, and cardinal rotation.";
+                    return false;
+                }
+            }
+
+            CopyFrom(converted);
+            reason = null;
+            return true;
         }
 
         internal void SetSupportMode(SmartBuildSlopeSupportMode mode)
@@ -559,9 +906,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             _generatorRoundLock = enabled;
-            if (enabled &&
-                (ShapeKind == SmartBuildShapeKind.GeneratedCircle ||
-                 ShapeKind == SmartBuildShapeKind.GeneratedSphere))
+            if (enabled && SupportsRoundGeneratorLock(ShapeKind))
             {
                 ApplyRoundGeneratorSize();
             }
@@ -573,6 +918,18 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
 
             _generatorSides = ClampGeneratorSides(sides);
+        }
+
+        internal void SetGeneratorArcDegrees(int degrees)
+        {
+            if (ShapeKind == SmartBuildShapeKind.GeneratedArc)
+                _generatorArcDegrees = Mathf.Clamp(degrees, 15, 360);
+        }
+
+        internal void SetGeneratorTopScalePercent(int percent)
+        {
+            if (ShapeKind == SmartBuildShapeKind.GeneratedFrustum)
+                _generatorTopScalePercent = Mathf.Clamp(percent, 5, 95);
         }
 
         internal string ShapeLabel()
@@ -630,7 +987,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (IsGeneratedShape)
             {
-                return string.Format(
+                string dimensions = string.Format(
                     CultureInfo.InvariantCulture,
                     "{0} | {1} x {2} x {3}{4}{5}",
                     _generatorFillMode == SmartBuildGeneratorFillMode.Filled ? "Filled" : "Shell",
@@ -643,6 +1000,11 @@ namespace DecoLimitLifter.SmartBuildMode
                     _generatorSmoothingMode == SmartBuildGeneratorSmoothingMode.PerimeterDownSlope
                         ? " | smooth"
                         : string.Empty);
+                if (ShapeKind == SmartBuildShapeKind.GeneratedArc)
+                    dimensions += " | " + _generatorArcDegrees.ToString(CultureInfo.InvariantCulture) + " deg";
+                if (ShapeKind == SmartBuildShapeKind.GeneratedFrustum)
+                    dimensions += " | top " + _generatorTopScalePercent.ToString(CultureInfo.InvariantCulture) + "%";
+                return dimensions;
             }
 
             if (IsFixedGeometry)
@@ -726,6 +1088,83 @@ namespace DecoLimitLifter.SmartBuildMode
         internal void MoveBy(Vector3i delta)
         {
             Origin += delta;
+        }
+
+        /// <summary>
+        /// Bounds used by spatial group scaling. Generated shapes expose their control
+        /// prism; every other piece exposes its exact occupied-cell bounds.
+        /// </summary>
+        internal SmartBuildBounds GroupScaleBounds =>
+            IsGeneratedShape ? GeneratorControlBounds() : Bounds;
+
+        /// <summary>
+        /// Scales both the piece extents and its offset from a shared pivot. This is the
+        /// representation-level counterpart to a normal group-scale gizmo: every selected
+        /// piece is transformed from the same immutable starting snapshot, so repeated drag
+        /// frames cannot accumulate rounding drift.
+        /// </summary>
+        internal bool TryScaleAboutPivot(
+            Vector3 pivot,
+            Vector3 factors,
+            out string reason)
+        {
+            if (!FinitePositive(factors.x) ||
+                !FinitePositive(factors.y) ||
+                !FinitePositive(factors.z) ||
+                !Finite(pivot.x) ||
+                !Finite(pivot.y) ||
+                !Finite(pivot.z))
+            {
+                reason = "Group scale requires finite positive factors and a finite pivot.";
+                return false;
+            }
+
+            SmartBuildPiece before = Clone();
+            SmartBuildBounds original = GroupScaleBounds;
+            if (!TryScaleBoundsAroundPivot(original, pivot, factors, out SmartBuildBounds target))
+            {
+                reason = "Group scale would exceed the supported Smart Builder coordinate range.";
+                return false;
+            }
+
+            if (ShapeKind == SmartBuildShapeKind.Cuboid)
+            {
+                Origin = target.Min;
+                _cuboidSize = target.Size;
+            }
+            else if (IsFixedGeometry)
+            {
+                ApplyFixedGeometryBounds(target, DecorationEditAxis.None, 0);
+            }
+            else if (IsGeneratedShape)
+            {
+                ApplyGeneratedBounds(target, DecorationEditAxis.None, 0);
+            }
+            else
+            {
+                ApplyDownSlopeBounds(target, DecorationEditAxis.None, 0);
+            }
+
+            SmartBuildBounds applied = GroupScaleBounds;
+            if (!SameSize(applied, target))
+            {
+                CopyFrom(before);
+                reason = ShapeLabel() +
+                         " cannot represent the requested exact group-scaled extents.";
+                return false;
+            }
+
+            MoveBy(target.Min - applied.Min);
+            if (!SameBounds(GroupScaleBounds, target))
+            {
+                CopyFrom(before);
+                reason = ShapeLabel() +
+                         " could not be aligned to the exact group-scaled bounds.";
+                return false;
+            }
+
+            reason = null;
+            return true;
         }
 
         internal void ResizeFromHandle(
@@ -823,6 +1262,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
             {
+                SetBasis(
+                    RotateUnit(_forwardStep, axis, turns),
+                    RotateUnit(_dropStep, axis, turns),
+                    RotateUnit(_rightStep, axis, turns));
                 RotateCuboidAroundPivot(axis, turns, NearestCellToCenter(Bounds.Center));
                 return;
             }
@@ -838,6 +1281,29 @@ namespace DecoLimitLifter.SmartBuildMode
                 RecenterGeneratedAround(pivot);
             else
                 RecenterFixedGeometryAround(pivot);
+        }
+
+        internal void RotateAroundAxis(
+            DecorationEditAxis axis,
+            int quarterTurns,
+            Vector3i groupPivot)
+        {
+            int turns = NormalizeQuarterTurns(quarterTurns);
+            if (axis == DecorationEditAxis.None ||
+                axis == DecorationEditAxis.Free ||
+                turns == 0)
+            {
+                return;
+            }
+
+            Vector3i originalPivot = RotationPivotCell;
+            Vector3i targetPivot = RotateCellAroundPivot(
+                originalPivot,
+                groupPivot,
+                axis,
+                turns);
+            RotateAroundAxis(axis, turns);
+            MoveBy(targetPivot - RotationPivotCell);
         }
 
         internal void FlipForward()
@@ -856,6 +1322,56 @@ namespace DecoLimitLifter.SmartBuildMode
                 RecenterFixedGeometryAround(pivot);
         }
 
+        internal bool TryOrientForwardTo(Vector3i desiredForward)
+        {
+            if (Math.Abs(desiredForward.x) +
+                Math.Abs(desiredForward.y) +
+                Math.Abs(desiredForward.z) != 1)
+            {
+                return false;
+            }
+            if (_forwardStep.Equals(desiredForward))
+                return true;
+
+            DecorationEditAxis[] axes =
+            {
+                DecorationEditAxis.X,
+                DecorationEditAxis.Y,
+                DecorationEditAxis.Z
+            };
+            foreach (DecorationEditAxis axis in axes)
+            {
+                for (int turns = 1; turns <= 3; turns++)
+                {
+                    if (!RotateUnit(_forwardStep, axis, turns).Equals(desiredForward))
+                        continue;
+                    RotateAroundAxis(axis, turns);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        internal bool TrySetOrientationFromRotation(Quaternion rotation)
+        {
+            Vector3 forward = rotation * Vector3.forward;
+            Vector3 down = rotation * Vector3.down;
+            Vector3 right = rotation * Vector3.right;
+            if (!TryCardinalUnit(forward, out Vector3i forwardStep) ||
+                !TryCardinalUnit(down, out Vector3i dropStep) ||
+                !TryCardinalUnit(right, out Vector3i rightStep) ||
+                Dot(forwardStep, dropStep) != 0 ||
+                Dot(forwardStep, rightStep) != 0 ||
+                Dot(dropStep, rightStep) != 0)
+            {
+                return false;
+            }
+
+            SetBasis(forwardStep, dropStep, rightStep);
+            return true;
+        }
+
         internal int ExtentAlong(SmartBuildAxis axis) => Bounds.Extent(axis);
 
         internal int FaceHorizontalWidth(SmartBuildAxis normalAxis)
@@ -868,10 +1384,242 @@ namespace DecoLimitLifter.SmartBuildMode
             return Math.Max(bounds.Extent(SmartBuildAxis.X), bounds.Extent(SmartBuildAxis.Z));
         }
 
+        /// <summary>
+        /// Reserves this piece's conservative preview-cell upper bound without
+        /// enumerating geometry. This is the mandatory gate used before preview,
+        /// symmetry, preset, or pattern expansion can materialize cells.
+        /// </summary>
+        internal bool TryReservePreviewEnumeration(
+            ref long reservedCells,
+            long maximumCells,
+            out string reason)
+        {
+            reason = null;
+            if (maximumCells < 0L || reservedCells < 0L || reservedCells > maximumCells)
+            {
+                reason = "The Smart Builder preview-cell budget is invalid.";
+                return false;
+            }
+
+            long remaining = maximumCells - reservedCells;
+            if (!TryEstimatePreviewCellUpperBound(remaining, out long estimate))
+            {
+                reason =
+                    "Smart Builder node " + Id.ToString(CultureInfo.InvariantCulture) +
+                    " exceeds the " + maximumCells.ToString("N0", CultureInfo.InvariantCulture) +
+                    "-cell bounded planning limit before geometry enumeration.";
+                return false;
+            }
+
+            if (!TryValidatePreviewCoordinateRange())
+            {
+                reason =
+                    "Smart Builder node " + Id.ToString(CultureInfo.InvariantCulture) +
+                    " would extend beyond the craft-local +/-" +
+                    SmartBuildLimits.MaximumCoordinateMagnitude.ToString("N0", CultureInfo.InvariantCulture) +
+                    " coordinate limit.";
+                return false;
+            }
+
+            reservedCells += estimate;
+            return true;
+        }
+
+        private bool TryEstimatePreviewCellUpperBound(long limit, out long estimate)
+        {
+            estimate = 0L;
+            if (limit < 0L)
+                return false;
+
+            if (ShapeKind == SmartBuildShapeKind.Cuboid || IsGeneratedShape)
+            {
+                return SmartBuildLimits.TryProductWithinLimit(
+                    Math.Max(1, _cuboidSize.x),
+                    Math.Max(1, _cuboidSize.y),
+                    Math.Max(1, _cuboidSize.z),
+                    limit,
+                    out estimate);
+            }
+
+            if (IsFixedGeometry)
+            {
+                return SmartBuildLimits.TryProductWithinLimit(
+                    Math.Max(1, _fixedForwardCells),
+                    Math.Max(1, _fixedRightTiles),
+                    Math.Max(1, _fixedDropTiles),
+                    limit,
+                    out estimate);
+            }
+
+            long steps = Math.Max(1, SlopeSteps);
+            long length = Math.Max(1, SlopeLength);
+            long width = Math.Max(1, SlopeWidth);
+            if (SupportMode == SmartBuildSlopeSupportMode.Full)
+            {
+                // Slope cells plus the triangular columns down to the lowest step:
+                // length * width * steps * (steps + 1) / 2.
+                long triangularFirst = steps;
+                long triangularSecond = steps + 1L;
+                if ((triangularFirst & 1L) == 0L)
+                    triangularFirst /= 2L;
+                else
+                    triangularSecond /= 2L;
+                return TryMultiplyFactorsWithinLimit(
+                    limit,
+                    out estimate,
+                    length,
+                    width,
+                    triangularFirst,
+                    triangularSecond);
+            }
+
+            // Step support contributes at most one additional cell per slope cell.
+            return TryMultiplyFactorsWithinLimit(
+                limit,
+                out estimate,
+                length,
+                width,
+                steps,
+                2L);
+        }
+
+        private static bool TryMultiplyFactorsWithinLimit(
+            long limit,
+            out long product,
+            params long[] factors)
+        {
+            product = 1L;
+            foreach (long factor in factors ?? Array.Empty<long>())
+            {
+                if (!SmartBuildLimits.TryMultiplyWithinLimit(
+                        product,
+                        factor,
+                        limit,
+                        out product))
+                {
+                    return false;
+                }
+            }
+
+            return product <= limit;
+        }
+
+        private bool TryValidatePreviewCoordinateRange()
+        {
+            if (!SmartBuildLimits.IsPortableCoordinate(Origin.x) ||
+                !SmartBuildLimits.IsPortableCoordinate(Origin.y) ||
+                !SmartBuildLimits.IsPortableCoordinate(Origin.z))
+            {
+                return false;
+            }
+
+            if (ShapeKind == SmartBuildShapeKind.Cuboid)
+            {
+                return CoordinateSpanIsPortable(
+                    Origin,
+                    new Vector3i(1, 0, 0),
+                    Math.Max(0L, (long)_cuboidSize.x - 1L),
+                    new Vector3i(0, 1, 0),
+                    Math.Max(0L, (long)_cuboidSize.y - 1L),
+                    new Vector3i(0, 0, 1),
+                    Math.Max(0L, (long)_cuboidSize.z - 1L));
+            }
+
+            long forwardExtent;
+            long rightExtent;
+            long dropExtent;
+            if (IsGeneratedShape)
+            {
+                forwardExtent = Math.Max(0L, (long)_cuboidSize.x - 1L);
+                rightExtent = Math.Max(0L, (long)_cuboidSize.y - 1L);
+                dropExtent = Math.Max(0L, (long)_cuboidSize.z - 1L);
+            }
+            else if (IsFixedGeometry)
+            {
+                forwardExtent = Math.Max(0L, (long)_fixedForwardCells - 1L);
+                rightExtent = Math.Max(0L, (long)_fixedRightTiles - 1L);
+                dropExtent = Math.Max(0L, (long)_fixedDropTiles - 1L);
+            }
+            else
+            {
+                forwardExtent = Math.Max(
+                    0L,
+                    (long)Math.Max(1, SlopeSteps) * Math.Max(1, SlopeLength) - 1L);
+                rightExtent = Math.Max(0L, (long)Math.Max(1, SlopeWidth) - 1L);
+                dropExtent = Math.Max(1L, SlopeSteps);
+            }
+
+            return CoordinateSpanIsPortable(
+                Origin,
+                _forwardStep,
+                forwardExtent,
+                _rightStep,
+                rightExtent,
+                _dropStep,
+                dropExtent);
+        }
+
+        private static bool CoordinateSpanIsPortable(
+            Vector3i origin,
+            Vector3i firstStep,
+            long firstExtent,
+            Vector3i secondStep,
+            long secondExtent,
+            Vector3i thirdStep,
+            long thirdExtent) =>
+            CoordinateAxisIsPortable(
+                origin.x,
+                firstStep.x,
+                firstExtent,
+                secondStep.x,
+                secondExtent,
+                thirdStep.x,
+                thirdExtent) &&
+            CoordinateAxisIsPortable(
+                origin.y,
+                firstStep.y,
+                firstExtent,
+                secondStep.y,
+                secondExtent,
+                thirdStep.y,
+                thirdExtent) &&
+            CoordinateAxisIsPortable(
+                origin.z,
+                firstStep.z,
+                firstExtent,
+                secondStep.z,
+                secondExtent,
+                thirdStep.z,
+                thirdExtent);
+
+        private static bool CoordinateAxisIsPortable(
+            int origin,
+            int firstDirection,
+            long firstExtent,
+            int secondDirection,
+            long secondExtent,
+            int thirdDirection,
+            long thirdExtent)
+        {
+            long first = firstDirection * firstExtent;
+            long second = secondDirection * secondExtent;
+            long third = thirdDirection * thirdExtent;
+            long minimum = origin +
+                           Math.Min(0L, first) +
+                           Math.Min(0L, second) +
+                           Math.Min(0L, third);
+            long maximum = origin +
+                           Math.Max(0L, first) +
+                           Math.Max(0L, second) +
+                           Math.Max(0L, third);
+            return minimum >= -SmartBuildLimits.MaximumCoordinateMagnitude &&
+                   maximum <= SmartBuildLimits.MaximumCoordinateMagnitude;
+        }
+
         internal IEnumerable<Vector3i> EnumeratePreviewCells()
         {
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
-                return Bounds.EnumerateCells();
+                return EnumerateCuboidCells();
 
             if (IsFixedGeometry)
                 return EnumerateFixedGeometryCells(null);
@@ -885,7 +1633,7 @@ namespace DecoLimitLifter.SmartBuildMode
         internal IEnumerable<Vector3i> EnumeratePreviewCells(SmartBuildSource source)
         {
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
-                return Bounds.EnumerateCells();
+                return EnumerateCuboidCells();
 
             if (IsFixedGeometry)
                 return EnumerateFixedGeometryCells(source);
@@ -899,7 +1647,7 @@ namespace DecoLimitLifter.SmartBuildMode
         internal IEnumerable<Vector3i> EnumeratePlacementCells()
         {
             if (ShapeKind == SmartBuildShapeKind.Cuboid)
-                return Bounds.EnumerateCells();
+                return EnumerateCuboidCells();
 
             if (IsFixedGeometry)
                 return EnumerateFixedGeometryCells(null);
@@ -908,6 +1656,23 @@ namespace DecoLimitLifter.SmartBuildMode
                 return EnumerateGeneratedCells();
 
             return EnumerateDownSlopeCells(includeSupport: false);
+        }
+
+        private IEnumerable<Vector3i> EnumerateCuboidCells()
+        {
+            SmartBuildBounds bounds = Bounds;
+            if (!_cuboidHollow ||
+                bounds.Size.x <= 2 ||
+                bounds.Size.y <= 2 ||
+                bounds.Size.z <= 2)
+            {
+                return bounds.EnumerateCells();
+            }
+
+            return bounds.EnumerateCells().Where(
+                cell => cell.x == bounds.Min.x || cell.x == bounds.Max.x ||
+                        cell.y == bounds.Min.y || cell.y == bounds.Max.y ||
+                        cell.z == bounds.Min.z || cell.z == bounds.Max.z);
         }
 
         internal IEnumerable<Vector3i> EnumerateSupportCells()
@@ -1093,13 +1858,6 @@ namespace DecoLimitLifter.SmartBuildMode
                 return Array.Empty<SmartBuildPlacement>();
             }
 
-            if (DecoLimitLifter.EsuSymmetry.ActivePlanes.Keys.Any(axis => axis == DecorationEditAxis.Y))
-            {
-                warningList.Add("Generator perimeter smoothing skipped while Y symmetry is active.");
-                warnings = warningList;
-                return Array.Empty<SmartBuildPlacement>();
-            }
-
             Vector3i[] perimeter = EnumerateGeneratedPerimeterCells().ToArray();
             if (perimeter.Length == 0)
             {
@@ -1149,6 +1907,11 @@ namespace DecoLimitLifter.SmartBuildMode
                     return EnumerateGeneratedSphereCells();
                 case SmartBuildShapeKind.GeneratedPolygon:
                     return EnumerateGeneratedPolygonCells();
+                case SmartBuildShapeKind.GeneratedArc:
+                    return EnumerateGeneratedArcCells();
+                case SmartBuildShapeKind.GeneratedCone:
+                case SmartBuildShapeKind.GeneratedFrustum:
+                    return EnumerateGeneratedTaperedCells();
                 default:
                     return EnumerateGeneratedCircleCells();
             }
@@ -1182,6 +1945,87 @@ namespace DecoLimitLifter.SmartBuildMode
                 }
             }
         }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedArcCells()
+        {
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+            {
+                for (int right = 0; right < _cuboidSize.y; right++)
+                {
+                    for (int forward = 0; forward < _cuboidSize.x; forward++)
+                    {
+                        if (!CircleInside(forward, right) ||
+                            !ArcAngleIncludes(forward, right))
+                        {
+                            continue;
+                        }
+                        if (_generatorFillMode == SmartBuildGeneratorFillMode.OutlineShell &&
+                            !CircleBoundary(forward, right))
+                        {
+                            continue;
+                        }
+
+                        yield return GeneratedCell(forward, right, drop);
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<Vector3i> EnumerateGeneratedTaperedCells()
+        {
+            int lastDrop = Math.Max(0, _cuboidSize.z - 1);
+            for (int drop = 0; drop < _cuboidSize.z; drop++)
+            {
+                float t = lastDrop == 0 ? 0f : drop / (float)lastDrop;
+                float topScale = ShapeKind == SmartBuildShapeKind.GeneratedCone
+                    ? 0f
+                    : Mathf.Clamp(_generatorTopScalePercent, 5, 95) / 100f;
+                float scale = 1f + (topScale - 1f) * t;
+                for (int right = 0; right < _cuboidSize.y; right++)
+                {
+                    for (int forward = 0; forward < _cuboidSize.x; forward++)
+                    {
+                        if (!ScaledCircleInside(forward, right, scale))
+                            continue;
+
+                        bool endCap = drop == 0 || drop == lastDrop;
+                        if (_generatorFillMode == SmartBuildGeneratorFillMode.OutlineShell &&
+                            !endCap &&
+                            !ScaledCircleBoundary(forward, right, scale))
+                        {
+                            continue;
+                        }
+
+                        yield return GeneratedCell(forward, right, drop);
+                    }
+                }
+            }
+        }
+
+        private bool ArcAngleIncludes(int forward, int right)
+        {
+            if (_generatorArcDegrees >= 360)
+                return true;
+
+            float centerForward = (_cuboidSize.x - 1) * 0.5f;
+            float centerRight = (_cuboidSize.y - 1) * 0.5f;
+            double angle = Math.Atan2(right - centerRight, forward - centerForward) *
+                           (180.0 / Math.PI);
+            return Math.Abs(angle) <= _generatorArcDegrees * 0.5 + 1.0;
+        }
+
+        private bool ScaledCircleInside(int forward, int right, float scale)
+        {
+            NormalizedEllipsePoint(forward, right, out float x, out float y);
+            float safeScale = Math.Max(0.02f, scale);
+            return x * x + y * y <= safeScale * safeScale + 0.0001f;
+        }
+
+        private bool ScaledCircleBoundary(int forward, int right, float scale) =>
+            !ScaledCircleInside(forward + 1, right, scale) ||
+            !ScaledCircleInside(forward - 1, right, scale) ||
+            !ScaledCircleInside(forward, right + 1, scale) ||
+            !ScaledCircleInside(forward, right - 1, scale);
 
         private IEnumerable<Vector3i> EnumerateGeneratedPolygonCells()
         {
@@ -1574,18 +2418,18 @@ namespace DecoLimitLifter.SmartBuildMode
             int rightExtent = Math.Max(1, bounds.Extent(RightAxis));
             int dropExtent = Math.Max(1, bounds.Extent(DropAxis));
 
-            if (_generatorRoundLock && ShapeKind == SmartBuildShapeKind.GeneratedCircle)
-            {
-                int diameter = Math.Max(forwardExtent, rightExtent);
-                forwardExtent = diameter;
-                rightExtent = diameter;
-            }
-            else if (_generatorRoundLock && ShapeKind == SmartBuildShapeKind.GeneratedSphere)
+            if (_generatorRoundLock && ShapeKind == SmartBuildShapeKind.GeneratedSphere)
             {
                 int diameter = Math.Max(forwardExtent, Math.Max(rightExtent, dropExtent));
                 forwardExtent = diameter;
                 rightExtent = diameter;
                 dropExtent = diameter;
+            }
+            else if (_generatorRoundLock && SupportsRoundGeneratorLock(ShapeKind))
+            {
+                int diameter = Math.Max(forwardExtent, rightExtent);
+                forwardExtent = diameter;
+                rightExtent = diameter;
             }
 
             int startForward = StartGeneratedComponent(
@@ -1787,6 +2631,88 @@ namespace DecoLimitLifter.SmartBuildMode
 
             return new SmartBuildBounds(min, max);
         }
+
+        private static bool TryScaleBoundsAroundPivot(
+            SmartBuildBounds bounds,
+            Vector3 pivot,
+            Vector3 factors,
+            out SmartBuildBounds scaled)
+        {
+            scaled = default;
+            if (!TryScaleAxisBounds(
+                    bounds.Min.x,
+                    bounds.Max.x,
+                    pivot.x,
+                    factors.x,
+                    out int minX,
+                    out int maxX) ||
+                !TryScaleAxisBounds(
+                    bounds.Min.y,
+                    bounds.Max.y,
+                    pivot.y,
+                    factors.y,
+                    out int minY,
+                    out int maxY) ||
+                !TryScaleAxisBounds(
+                    bounds.Min.z,
+                    bounds.Max.z,
+                    pivot.z,
+                    factors.z,
+                    out int minZ,
+                    out int maxZ))
+            {
+                return false;
+            }
+
+            scaled = new SmartBuildBounds(
+                new Vector3i(minX, minY, minZ),
+                new Vector3i(maxX, maxY, maxZ));
+            return true;
+        }
+
+        private static bool TryScaleAxisBounds(
+            int min,
+            int max,
+            float pivot,
+            float factor,
+            out int scaledMin,
+            out int scaledMax)
+        {
+            scaledMin = 0;
+            scaledMax = 0;
+            double extent = (long)max - min + 1L;
+            double scaledExtent = extent * factor;
+            if (scaledExtent < 0.5d ||
+                scaledExtent > SmartBuildLimits.MaximumCoordinateMagnitude)
+                return false;
+
+            long nextExtent = Math.Max(
+                1L,
+                (long)Math.Round(scaledExtent, MidpointRounding.AwayFromZero));
+            double center = (min + (double)max) * 0.5d;
+            double nextCenter = pivot + (center - pivot) * factor;
+            double nextMin = nextCenter - (nextExtent - 1L) * 0.5d;
+            long roundedMin = (long)Math.Round(nextMin, MidpointRounding.AwayFromZero);
+            long roundedMax = roundedMin + nextExtent - 1L;
+            if (roundedMin < int.MinValue || roundedMax > int.MaxValue)
+                return false;
+
+            scaledMin = (int)roundedMin;
+            scaledMax = (int)roundedMax;
+            return true;
+        }
+
+        private static bool SameSize(SmartBuildBounds first, SmartBuildBounds second) =>
+            first.Size.Equals(second.Size);
+
+        private static bool SameBounds(SmartBuildBounds first, SmartBuildBounds second) =>
+            first.Min.Equals(second.Min) && first.Max.Equals(second.Max);
+
+        private static bool FinitePositive(float value) =>
+            Finite(value) && value > 0f;
+
+        private static bool Finite(float value) =>
+            !float.IsNaN(value) && !float.IsInfinity(value);
 
         private IEnumerable<Vector3i> EnumerateDownSlopeCells(bool includeSupport)
         {
@@ -2003,6 +2929,21 @@ namespace DecoLimitLifter.SmartBuildMode
         private static SmartBuildAxis NormalizeForwardAxis(SmartBuildAxis axis) =>
             axis == SmartBuildAxis.X ? SmartBuildAxis.X : SmartBuildAxis.Z;
 
+        private static bool TryCardinalUnit(Vector3 direction, out Vector3i unit)
+        {
+            unit = default;
+            if (direction.sqrMagnitude < 0.5f)
+                return false;
+
+            SmartBuildAxis axis = SmartBuildAxisHelper.FromLargestComponent(direction, out int sign);
+            float dominant = Mathf.Abs(SmartBuildAxisHelper.Get(direction, axis));
+            if (dominant < 0.9f)
+                return false;
+
+            unit = SmartBuildAxisHelper.ToVector3i(axis, sign >= 0 ? 1 : -1);
+            return true;
+        }
+
         private static string DescriptorKeyForKind(SmartBuildShapeKind kind)
         {
             switch (kind)
@@ -2017,6 +2958,14 @@ namespace DecoLimitLifter.SmartBuildMode
                     return "generated-polygon";
                 case SmartBuildShapeKind.GeneratedSphere:
                     return "generated-sphere";
+                case SmartBuildShapeKind.GeneratedArc:
+                    return "generated-arc";
+                case SmartBuildShapeKind.GeneratedCone:
+                    return "generated-cone";
+                case SmartBuildShapeKind.GeneratedFrustum:
+                    return "generated-frustum";
+                case SmartBuildShapeKind.GeneratedTube:
+                    return "generated-tube";
                 default:
                     return kind.ToString();
             }
@@ -2025,7 +2974,19 @@ namespace DecoLimitLifter.SmartBuildMode
         private static bool IsGeneratedShapeKind(SmartBuildShapeKind kind) =>
             kind == SmartBuildShapeKind.GeneratedCircle ||
             kind == SmartBuildShapeKind.GeneratedPolygon ||
-            kind == SmartBuildShapeKind.GeneratedSphere;
+            kind == SmartBuildShapeKind.GeneratedSphere ||
+            kind == SmartBuildShapeKind.GeneratedArc ||
+            kind == SmartBuildShapeKind.GeneratedCone ||
+            kind == SmartBuildShapeKind.GeneratedFrustum ||
+            kind == SmartBuildShapeKind.GeneratedTube;
+
+        internal static bool SupportsRoundGeneratorLock(SmartBuildShapeKind kind) =>
+            kind == SmartBuildShapeKind.GeneratedCircle ||
+            kind == SmartBuildShapeKind.GeneratedSphere ||
+            kind == SmartBuildShapeKind.GeneratedArc ||
+            kind == SmartBuildShapeKind.GeneratedCone ||
+            kind == SmartBuildShapeKind.GeneratedFrustum ||
+            kind == SmartBuildShapeKind.GeneratedTube;
 
         private static int DefaultGeneratorSides(SmartBuildShapeKind kind) =>
             kind == SmartBuildShapeKind.GeneratedPolygon ? 8 : 0;
@@ -2048,15 +3009,15 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void ApplyRoundGeneratorSize()
         {
-            if (ShapeKind == SmartBuildShapeKind.GeneratedCircle)
-            {
-                int diameter = Math.Max(_cuboidSize.x, _cuboidSize.y);
-                _cuboidSize = new Vector3i(diameter, diameter, Math.Max(1, _cuboidSize.z));
-            }
-            else if (ShapeKind == SmartBuildShapeKind.GeneratedSphere)
+            if (ShapeKind == SmartBuildShapeKind.GeneratedSphere)
             {
                 int diameter = Math.Max(_cuboidSize.x, Math.Max(_cuboidSize.y, _cuboidSize.z));
                 _cuboidSize = new Vector3i(diameter, diameter, diameter);
+            }
+            else if (SupportsRoundGeneratorLock(ShapeKind))
+            {
+                int diameter = Math.Max(_cuboidSize.x, _cuboidSize.y);
+                _cuboidSize = new Vector3i(diameter, diameter, Math.Max(1, _cuboidSize.z));
             }
         }
 

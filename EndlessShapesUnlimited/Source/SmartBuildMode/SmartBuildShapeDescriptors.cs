@@ -82,7 +82,11 @@ namespace DecoLimitLifter.SmartBuildMode
         internal bool IsGenerator =>
             Kind == SmartBuildShapeKind.GeneratedCircle ||
             Kind == SmartBuildShapeKind.GeneratedPolygon ||
-            Kind == SmartBuildShapeKind.GeneratedSphere;
+            Kind == SmartBuildShapeKind.GeneratedSphere ||
+            Kind == SmartBuildShapeKind.GeneratedArc ||
+            Kind == SmartBuildShapeKind.GeneratedCone ||
+            Kind == SmartBuildShapeKind.GeneratedFrustum ||
+            Kind == SmartBuildShapeKind.GeneratedTube;
 
         internal bool IsFixedGeometry => !IsCuboid && !ProceduralDownSlope && !IsGenerator;
 
@@ -129,6 +133,10 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             CuboidDescriptor,
             Descriptor("generated-circle", SmartBuildShapeKind.GeneratedCircle, SmartBuildShapeCategory.Generated, "Circle", "Generate a block circle or filled disk/cylinder.", false),
+            Descriptor("generated-arc", SmartBuildShapeKind.GeneratedArc, SmartBuildShapeCategory.Generated, "Arc", "Generate a partial circular arc or filled sector.", false),
+            Descriptor("generated-tube", SmartBuildShapeKind.GeneratedTube, SmartBuildShapeCategory.Generated, "Tube", "Generate a hollow block tube; switch to Filled for a solid cylinder.", false),
+            Descriptor("generated-cone", SmartBuildShapeKind.GeneratedCone, SmartBuildShapeCategory.Generated, "Cone", "Generate a hollow or solid tapered block cone.", false),
+            Descriptor("generated-frustum", SmartBuildShapeKind.GeneratedFrustum, SmartBuildShapeCategory.Generated, "Frustum", "Generate a hollow or solid truncated block cone with an adjustable top radius.", false),
             Descriptor("generated-polygon", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Polygon", "Generate a regular n-sided block polygon.", false, generatorSidesPreset: 8),
             Descriptor("generated-triangle", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Triangle", "Generate a 3-sided block polygon preset.", false, generatorSidesPreset: 3),
             Descriptor("generated-square", SmartBuildShapeKind.GeneratedPolygon, SmartBuildShapeCategory.Generated, "Square", "Generate a 4-sided block polygon preset.", false, generatorSidesPreset: 4),

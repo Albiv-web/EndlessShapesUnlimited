@@ -5,16 +5,100 @@ using System.Linq;
 using BrilliantSkies.Core.Logger;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Ftd.Avatar.Build;
+using BrilliantSkies.Modding.Types;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
 using DecoLimitLifter.DecorationEditMode;
+using DecoLimitLifter.Presets;
 using DecoLimitLifter.SerializationHud;
 using EndlessShapes2;
 using UnityEngine;
 
 namespace DecoLimitLifter.SmartBuildMode
 {
-    internal sealed class SmartBuildSession
+    /// <summary>
+    /// Immutable identity captured from the last craft block accepted by the Smart
+    /// Builder eyedropper.  Target material/shape controls may subsequently change;
+    /// conditional replacement can still use this source descriptor without reading
+    /// mutable editor state.
+    /// </summary>
+    internal sealed class SmartBuildCraftBlockSampleDescriptor
+    {
+        internal SmartBuildCraftBlockSampleDescriptor(
+            Guid definitionGuid,
+            SmartBuildMaterial material,
+            string shapeDescriptorKey,
+            int length,
+            Vector3i occupiedSize,
+            Vector3i occupiedOriginOffset,
+            Quaternion localRotation,
+            SmartBuildAxis forwardAxis,
+            int forwardSign,
+            SmartBuildAxis rightAxis,
+            int rightSign,
+            SmartBuildAxis dropAxis,
+            int dropSign)
+        {
+            DefinitionGuid = definitionGuid;
+            Material = material;
+            ShapeDescriptorKey = string.IsNullOrWhiteSpace(shapeDescriptorKey)
+                ? SmartBuildShapeDescriptors.CuboidKey
+                : shapeDescriptorKey;
+            Length = Mathf.Clamp(length, 1, 4);
+            OccupiedSize = SmartBuildDraft.ClampSize(occupiedSize);
+            OccupiedOriginOffset = occupiedOriginOffset;
+            LocalRotation = localRotation;
+            ForwardAxis = forwardAxis;
+            ForwardSign = forwardSign >= 0 ? 1 : -1;
+            RightAxis = rightAxis;
+            RightSign = rightSign >= 0 ? 1 : -1;
+            DropAxis = dropAxis;
+            DropSign = dropSign >= 0 ? 1 : -1;
+        }
+
+        internal Guid DefinitionGuid { get; }
+
+        internal SmartBuildMaterial Material { get; }
+
+        internal string ShapeDescriptorKey { get; }
+
+        internal int Length { get; }
+
+        internal Vector3i OccupiedSize { get; }
+
+        /// <summary>
+        /// Minimum occupied-cell offset from the native block origin. This retains
+        /// the signed half of a cardinal footprint (for example a 4m beam running
+        /// from the clicked origin toward -X instead of silently moving it to +X).
+        /// </summary>
+        internal Vector3i OccupiedOriginOffset { get; }
+
+        internal Quaternion LocalRotation { get; }
+
+        internal SmartBuildAxis ForwardAxis { get; }
+
+        internal int ForwardSign { get; }
+
+        internal SmartBuildAxis RightAxis { get; }
+
+        internal int RightSign { get; }
+
+        internal SmartBuildAxis DropAxis { get; }
+
+        internal int DropSign { get; }
+
+        internal bool IsCuboid =>
+            string.Equals(
+                ShapeDescriptorKey,
+                SmartBuildShapeDescriptors.CuboidKey,
+                StringComparison.OrdinalIgnoreCase);
+
+        internal string RotationLabel =>
+            ForwardAxis + (ForwardSign >= 0 ? "+" : "-") +
+            " / up " + DropAxis + (DropSign < 0 ? "+" : "-");
+    }
+
+    internal sealed partial class SmartBuildSession
     {
         private const float ToolbarHeight = 54f;
         private const float LeftPanelWidth = 392f;
@@ -26,6 +110,8 @@ namespace DecoLimitLifter.SmartBuildMode
         private const float RotateSnapDegrees = 90f;
         private const int ViewModeMenuButtonCount = 9;
         private const int SceneHistoryLimit = 64;
+        private const string SceneRecoverySlot = "smart-builder-scene";
+        private const float SceneRecoveryDebounceSeconds = 0.75f;
         private const float ShapePaletteRowHeight = 28f;
         private const float ShapePreviewGridMinCardWidth = 112f;
         private const float ShapePreviewGridMinCardHeight = 86f;
@@ -65,8 +151,13 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private readonly cBuild _build;
         private readonly DecorationPointerProbe _pointerProbe;
-        private readonly Dictionary<string, SmartGeneratedHullPreview> _generatedHullPreviewCache =
-            new Dictionary<string, SmartGeneratedHullPreview>(StringComparer.Ordinal);
+        private readonly Dictionary<SmartBuildCellSetFingerprint, SmartGeneratedHullPreview>
+            _generatedHullPreviewCache =
+                new Dictionary<SmartBuildCellSetFingerprint, SmartGeneratedHullPreview>();
+        private readonly Dictionary<SmartBuildMaterial, SmartBuildSource> _pieceMaterialSources =
+            new Dictionary<SmartBuildMaterial, SmartBuildSource>();
+        private readonly Dictionary<SmartBuildMaterial, string> _pieceMaterialSourceIssues =
+            new Dictionary<SmartBuildMaterial, string>();
         private readonly int _toolbarWindowId = "EndlessShapesUnlimited.SmartBuild.Toolbar".GetHashCode();
         private readonly int _panelWindowId = "EndlessShapesUnlimited.SmartBuild.Panel".GetHashCode();
         private readonly int _rightPanelWindowId = "EndlessShapesUnlimited.SmartBuild.Shapes".GetHashCode();
@@ -85,6 +176,24 @@ namespace DecoLimitLifter.SmartBuildMode
         private SmartBuildPiece _draft;
         private SmartBuildPiece _dragPieceStart;
         private SmartBuildPlan _plan;
+        private readonly SmartBuildPlanCoordinator _planCoordinator =
+            new SmartBuildPlanCoordinator();
+        private bool _hasCraftOccupancyFingerprint;
+        private long _craftOccupancyFingerprint;
+        private object _craftOccupancyFingerprintConstruct;
+        private float _nextCraftOccupancyFingerprintAt = -1f;
+        private bool _hasObservedFocusedConstruct;
+        private AllConstruct _observedFocusedConstruct;
+        private static readonly Vector3i[] CraftOccupancyFingerprintOffsets =
+        {
+            new Vector3i(0, 0, 0),
+            new Vector3i(-1, 0, 0),
+            new Vector3i(1, 0, 0),
+            new Vector3i(0, -1, 0),
+            new Vector3i(0, 1, 0),
+            new Vector3i(0, 0, -1),
+            new Vector3i(0, 0, 1)
+        };
         private IReadOnlyList<Vector3i> _previewCells = Array.Empty<Vector3i>();
         private IReadOnlyList<IReadOnlyList<Vector3i>> _previewCellSets =
             Array.Empty<IReadOnlyList<Vector3i>>();
@@ -159,9 +268,11 @@ namespace DecoLimitLifter.SmartBuildMode
         private string _gizmoScaleSizeText = "1";
         private string _gizmoThicknessText = "1";
         private string _gizmoHitAreaText = "18";
-        private readonly Stack<SmartBuildSceneSnapshot> _sceneUndo = new Stack<SmartBuildSceneSnapshot>();
-        private readonly Stack<SmartBuildSceneSnapshot> _sceneRedo = new Stack<SmartBuildSceneSnapshot>();
+        private readonly Stack<SmartBuildSceneDelta> _sceneUndo = new Stack<SmartBuildSceneDelta>();
+        private readonly Stack<SmartBuildSceneDelta> _sceneRedo = new Stack<SmartBuildSceneDelta>();
+        private SmartBuildSceneSnapshot _pendingSceneHistory;
         private SmartBuildSceneSnapshot _dragSceneStart;
+        private string _lastGroupScaleIssue;
         private DecorationEditAxis _rotateDragAxis = DecorationEditAxis.None;
         private Vector2 _rotateDragMouseStart;
         private Vector2 _rotateDragCenterScreen;
@@ -171,9 +282,44 @@ namespace DecoLimitLifter.SmartBuildMode
         private float _rotateDragSensitivityScale = 1f;
         private SmartBuildPiece _rotatePieceStart;
         private SmartBuildSceneSnapshot _rotateSceneStart;
+        private Vector3i _rotateSelectionPivot;
         private bool _contextMenuOpen;
         private Rect _contextMenuRect;
         private int _contextMenuPieceId;
+        private int _sceneSelectionAnchorId = -1;
+        private int _arrayCopyCount = 3;
+        private int _arraySpacing = 1;
+        private bool _brushEnabled;
+        private bool _brushPainting;
+        private string _brushLastCellKey;
+        private int _brushAddedCount;
+        private SmartBuildSceneSnapshot _brushSceneStart;
+        private bool _blockEyedropperArmed;
+        private bool _hasSampledBlockRotation;
+        private Quaternion _sampledBlockRotation = Quaternion.identity;
+        private string _sampledBlockRotationLabel;
+        private Vector3i? _sampledCuboidSize;
+        private SmartBuildCraftBlockSampleDescriptor _lastCraftBlockSample;
+        private IReadOnlyList<EsuPresetEntry> _smartScenePresets = Array.Empty<EsuPresetEntry>();
+        private int _selectedSmartScenePresetIndex = -1;
+        private string _smartScenePresetName = "Smart scene";
+        private string _smartScenePresetStatus;
+        private bool _smartScenePresetsLoaded;
+        private bool _smartSceneRecoveryAvailable;
+        private bool _smartScenePresetTargetArmed;
+        private AllConstruct _smartScenePresetTargetConstruct;
+        private Vector3i? _smartScenePresetTargetAnchor;
+        private string _lastSavedSceneRecoverySignature;
+        private string _pendingSceneRecoverySignature;
+        private float _sceneRecoverySaveAt = -1f;
+        private bool _sceneRecoveryDirty = true;
+        private bool _boxSelecting;
+        private Vector2 _boxSelectionStart;
+        private Vector2 _boxSelectionCurrent;
+        private bool _boxSelectionAdditive;
+        private bool _boxSelectionToggle;
+        private int[] _boxSelectionBaseIds = Array.Empty<int>();
+        private int _boxSelectionBasePrimaryId = -1;
         private DecorationEditAxis[] _hoverEdgeAxes = Array.Empty<DecorationEditAxis>();
         private int[] _hoverEdgeSigns = Array.Empty<int>();
         private DecorationEditAxis[] _hoverCornerAxes = Array.Empty<DecorationEditAxis>();
@@ -197,6 +343,12 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool CloseRequested => _closeRequested;
 
+        /// <summary>
+        /// The last successfully sampled source block. Failed samples never replace it.
+        /// </summary>
+        internal SmartBuildCraftBlockSampleDescriptor LastCraftBlockSample =>
+            _lastCraftBlockSample;
+
         internal bool SwitchToDecorationEditRequested { get; private set; }
 
         internal void ClearSwitchToDecorationEditRequest() =>
@@ -204,6 +356,26 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal bool DismissOpenPopup()
         {
+            if (_smartScenePresetTargetArmed)
+            {
+                _smartScenePresetTargetArmed = false;
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+                InfoStore.Add("Smart Builder preset target pick cancelled.");
+                return true;
+            }
+
+            if (_blockEyedropperArmed)
+            {
+                _blockEyedropperArmed = false;
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+                InfoStore.Add("Smart Builder block eyedropper cancelled.");
+                return true;
+            }
+
             if (_contextMenuOpen)
             {
                 _contextMenuOpen = false;
@@ -269,6 +441,8 @@ namespace DecoLimitLifter.SmartBuildMode
         internal void Begin()
         {
             Active = true;
+            ClearEditablePatternViewportGestureState();
+            SmartBlockFamilyCatalog.BeginModeActivationCatalogSnapshot();
             _hudPointerGestureOwned = false;
             SmartBuildInputScope.Begin();
             SmartBuildInputScope.SetMouseOverUiProbe(IsCurrentMouseOverSmartUi);
@@ -277,12 +451,19 @@ namespace DecoLimitLifter.SmartBuildMode
             _itemPreviewRenderer = new SmartBlockItemPreviewRenderer();
             ApplyFocusView();
             RefreshSelection();
+            RefreshSmartScenePresetList();
+            RefreshSmartSceneRecoveryAvailability();
             SyncSnapTextFromSettings();
             SyncGizmoSettingsText();
         }
 
         internal void End(bool preserveSharedHud = false)
         {
+            if (_brushPainting)
+                EndBrushStroke(cancel: true);
+            if (_patternViewportGesture != null)
+                CancelEditablePatternViewportGesture(notify: false);
+            SaveSmartSceneRecoveryImmediately();
             RestoreFocusView();
             EsuPanelUiHitTestRegistry.Unregister(this);
             SmartBuildInputScope.End();
@@ -291,8 +472,11 @@ namespace DecoLimitLifter.SmartBuildMode
             Active = false;
             _scene = null;
             _draft = null;
+            _sceneSelectionAnchorId = -1;
             _dragPieceStart = null;
             _plan = null;
+            _planCoordinator.Reset();
+            ResetCraftOccupancyTracking();
             _previewCells = Array.Empty<Vector3i>();
             _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
             _previewVolumes = Array.Empty<SmartBuildVolume>();
@@ -303,16 +487,22 @@ namespace DecoLimitLifter.SmartBuildMode
             _dragSigns = Array.Empty<int>();
             _dragSceneStart = null;
             ClearRotateDragState();
+            ClearBoxSelectionState();
             _planDirty = false;
             _dragStartedFromFace = false;
             _hoverFaceAxis = DecorationEditAxis.None;
             _contextMenuOpen = false;
+            _blockEyedropperArmed = false;
+            _smartScenePresetTargetArmed = false;
+            _smartScenePresetTargetConstruct = null;
+            _smartScenePresetTargetAnchor = null;
             _viewModeMenuOpen = false;
             _gizmoSettingsOpen = false;
             _draggingShapeStackDivider = SmartShapeStackDividerKind.None;
             _itemPreviewRenderer?.Dispose();
             _itemPreviewRenderer = null;
             _generatedHullPreviewCache.Clear();
+            ResetPrecisionSessionState();
             SwitchToDecorationEditRequested = false;
         }
 
@@ -342,6 +532,7 @@ namespace DecoLimitLifter.SmartBuildMode
             EsuHudNotifications.SetActiveSource("Smart Builder");
             RefreshMouseOverUiFromCurrentPointer();
             RefreshSelection();
+            TickCraftOccupancyRevision();
             if (_gizmoSettingsOpen)
             {
                 SmartBuildInputScope.SetMouseOverUi(true);
@@ -367,6 +558,7 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             HandleKeyboard();
             HandleMouse();
+            TickSmartSceneRecovery();
             _viewModes.Tick(_viewMode);
             DrawWorldPreview();
         }
@@ -523,6 +715,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 ClaimMouseWheelOverSmartUi(Event.current, overUi);
             }
 
+            DrawViewportBoxSelectionMarquee();
             GUI.Window(_toolbarWindowId, _toolbarRect, DrawToolbar, GUIContent.none, GUIStyle.none);
             if (_showLeftPanel)
                 _leftPanelRect = GUI.Window(_panelWindowId, _leftPanelRect, DrawLeftPanel, GUIContent.none, GUIStyle.none);
@@ -591,6 +784,8 @@ namespace DecoLimitLifter.SmartBuildMode
             _contextMenuOpen ||
             _dragging ||
             _rotating ||
+            _patternViewportDragging ||
+            _boxSelecting ||
             _resizingLeftPanel ||
             _resizingRightPanel ||
             _draggingShapeStackDivider != SmartShapeStackDividerKind.None;
@@ -793,6 +988,9 @@ namespace DecoLimitLifter.SmartBuildMode
                         DrawDraftHandles();
                 }
 
+                DrawEditablePatternViewportHandles();
+                DrawDestructivePlanFootprintOverlay();
+                DrawSmartBuildDiagnosticOverlay();
                 DrawSymmetryOverlay();
             }
             catch (Exception exception)
@@ -807,21 +1005,34 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void HandleKeyboard()
         {
-            if (GUIUtility.keyboardControl == 0 &&
-                !DecoLimitLifter.EsuInputState.IsTextInputActive())
-            {
-                if (TryHandleEsuNumberShortcut())
-                    return;
+            if (GUIUtility.keyboardControl != 0 ||
+                DecoLimitLifter.EsuInputState.IsTextInputActive())
+                return;
 
-                if (TryHandleFacingSymmetryShortcut())
-                    return;
+            if ((Input.GetKeyDown(KeyCode.Return) ||
+                 Input.GetKeyDown(KeyCode.KeypadEnter)) &&
+                TryCommitEditablePatternViewportGesture())
+            {
+                return;
             }
+
+            // A viewport pattern edit is an explicit Enter/Escape transaction.
+            // Do not let another shortcut mutate the scene underneath it.
+            if (_patternViewportGesture != null)
+                return;
+
+            if (TryHandlePrecisionKeyboardShortcuts())
+                return;
+
+            if (TryHandleEsuNumberShortcut())
+                return;
+
+            if (TryHandleFacingSymmetryShortcut())
+                return;
 
             if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) &&
                 _draft != null)
-            {
                 ApplyPreview();
-            }
         }
 
         private bool TryHandleEsuNumberShortcut()
@@ -855,15 +1066,55 @@ namespace DecoLimitLifter.SmartBuildMode
                 return true;
             }
 
+            string activeSymmetryBefore = ActiveSymmetryPlanStamp();
             bool changed = DecoLimitLifter.EsuSymmetry.TryToggleFacingPlane(
                 construct,
                 cell,
                 localFacing,
                 out string message);
             if (changed)
-                RebuildPlan();
+                HandleSymmetryRevision(activeSymmetryBefore);
             InfoStore.Add(message);
             return true;
+        }
+
+        private void HandleSymmetryRevision(string activeSymmetryBefore)
+        {
+            if (!string.Equals(
+                    activeSymmetryBefore,
+                    ActiveSymmetryPlanStamp(),
+                    StringComparison.Ordinal))
+            {
+                RebuildPlan(SmartBuildPlanRevisionKind.Symmetry);
+                return;
+            }
+
+            // Arming or cancelling a pending plane changes controls/overlays only.
+            RegisterPresentationRevision();
+        }
+
+        private static string ActiveSymmetryPlanStamp()
+        {
+            IReadOnlyDictionary<DecorationEditAxis, int> planes =
+                DecoLimitLifter.EsuSymmetry.ActivePlanes;
+            if (planes == null || planes.Count == 0)
+                return "off";
+
+            AllConstruct symmetryConstruct = DecoLimitLifter.EsuSymmetry.Construct;
+            int constructIdentity = symmetryConstruct == null
+                ? 0
+                : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(
+                    symmetryConstruct);
+            return constructIdentity +
+                   "|" +
+                   string.Join(
+                       ",",
+                       planes
+                           .OrderBy(pair => pair.Key)
+                           .Select(pair =>
+                               ((int)pair.Key).ToString(CultureInfo.InvariantCulture) +
+                               ":" +
+                               pair.Value.ToString(CultureInfo.InvariantCulture)));
         }
 
         private bool CycleShapeShortcut()
@@ -931,12 +1182,19 @@ namespace DecoLimitLifter.SmartBuildMode
         private void SelectShapeDescriptor(SmartBuildShapeDescriptor descriptor, bool armAddMode = true)
         {
             descriptor ??= SmartBuildShapeDescriptors.Cuboid;
+            string previousKey = _selectedShapeDescriptorKey;
+            int previousLength = _selectedSlopeLength;
             _selectedShapeDescriptorKey = descriptor.Key;
             _selectedShape = descriptor.Kind;
             if (descriptor.UsesLengthSelector)
                 _selectedSlopeLength = Mathf.Clamp(_selectedSlopeLength, 1, 4);
             else if (descriptor.TransitionTo > 0)
                 _selectedSlopeLength = Mathf.Clamp(descriptor.TransitionTo, 1, 4);
+            if (!string.Equals(previousKey, _selectedShapeDescriptorKey, StringComparison.OrdinalIgnoreCase) ||
+                previousLength != _selectedSlopeLength)
+            {
+                InvalidateConditionalReplacementPreview();
+            }
             if (armAddMode)
                 ArmAddMode();
         }
@@ -958,6 +1216,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _previewMode == SmartBuildPreviewMode.Wireframe ? SmartBuildPreviewMode.Material :
                 _previewMode == SmartBuildPreviewMode.Material ? SmartBuildPreviewMode.MaterialOnly :
                 SmartBuildPreviewMode.Wireframe;
+            RegisterPresentationRevision();
             _viewModeMenuOpen = false;
             InfoStore.Add("Smart Builder preview: " + PreviewModeLabel(_previewMode) + ".");
             return true;
@@ -978,6 +1237,63 @@ namespace DecoLimitLifter.SmartBuildMode
             if (Input.GetMouseButtonDown(2) || Input.GetMouseButton(2) || Input.GetMouseButtonUp(2))
                 return;
 
+            if (TryHandlePrecisionPointerInput())
+                return;
+
+            if (_smartScenePresetTargetArmed)
+            {
+                if (Input.GetMouseButtonDown(1))
+                {
+                    _smartScenePresetTargetArmed = false;
+                    InfoStore.Add("Smart Builder preset target pick cancelled.");
+                }
+                else if (Input.GetMouseButtonDown(0))
+                {
+                    TryCaptureSmartScenePresetTargetFromPointer();
+                }
+
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                return;
+            }
+
+            if (_blockEyedropperArmed)
+            {
+                if (Input.GetMouseButtonDown(1))
+                {
+                    _blockEyedropperArmed = false;
+                    InfoStore.Add("Smart Builder block eyedropper cancelled.");
+                }
+                else if (Input.GetMouseButtonDown(0))
+                {
+                    TrySamplePointedCraftBlock();
+                }
+
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                return;
+            }
+
+            if (_boxSelecting)
+            {
+                if (Input.GetMouseButtonDown(1))
+                {
+                    ClearBoxSelectionState();
+                }
+                else if (Input.GetMouseButtonUp(0) || !Input.GetMouseButton(0))
+                {
+                    EndViewportBoxSelection();
+                }
+                else
+                {
+                    _boxSelectionCurrent = MouseGuiPosition();
+                }
+
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                return;
+            }
+
             if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
             {
                 if (Input.GetMouseButtonDown(1))
@@ -997,6 +1313,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
                 return;
             }
+
+            if (HandleEditablePatternViewportMouse())
+                return;
 
             if (_rotating)
             {
@@ -1022,20 +1341,44 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
+            if (_brushPainting)
+            {
+                if (Input.GetMouseButtonDown(1))
+                    EndBrushStroke(cancel: true);
+                else if (Input.GetMouseButtonUp(0) || !Input.GetMouseButton(0))
+                    EndBrushStroke(cancel: false);
+                else
+                    ContinueBrushStroke();
+
+                SmartBuildInputScope.ClaimBuildInputForFrames();
+                SmartBuildInputScope.ClaimCameraInputForFrames();
+                return;
+            }
+
             if (Input.GetMouseButtonDown(1))
             {
                 if (_dragging)
                     EndDrag(resetDraft: true);
                 else if (_tool == SmartBuildTool.Draw)
                     CancelAddMode();
-                else if (!DeselectSmartBuilderPiece() && TryOpenPreviewContextMenu())
+                else if (TryOpenPreviewContextMenu())
                     _contextMenuOpen = true;
+                else
+                    DeselectSmartBuilderPiece();
                 SmartBuildInputScope.ClaimBuildInputForFrames();
                 return;
             }
 
             if (Input.GetMouseButtonDown(0))
             {
+                if (_tool == SmartBuildTool.Draw && _brushEnabled)
+                {
+                    BeginBrushStroke();
+                    SmartBuildInputScope.ClaimBuildInputForFrames();
+                    SmartBuildInputScope.ClaimCameraInputForFrames();
+                    return;
+                }
+
                 if (_draft != null && TryBeginHandleDrag())
                 {
                     SmartBuildInputScope.ClaimBuildInputForFrames();
@@ -1056,6 +1399,14 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (_tool != SmartBuildTool.Draw && TrySelectPreviewPieceAtPointer())
                 {
                     SmartBuildInputScope.ClaimBuildInputForFrames();
+                    return;
+                }
+
+                if (_tool != SmartBuildTool.Draw && HasActivePreviewScene)
+                {
+                    BeginViewportBoxSelection();
+                    SmartBuildInputScope.ClaimBuildInputForFrames();
+                    SmartBuildInputScope.ClaimCameraInputForFrames();
                     return;
                 }
 
@@ -1118,6 +1469,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 EndDrag(resetDraft: true);
             if (_rotating)
                 EndRotateDrag(resetDraft: true);
+            if (_brushPainting)
+                EndBrushStroke(cancel: true);
+            if (_patternViewportDragging)
+                CancelEditablePatternViewportGesture(notify: false);
             return true;
         }
 
@@ -1218,6 +1573,85 @@ namespace DecoLimitLifter.SmartBuildMode
             InfoStore.Add("Point at the focused construct grid to create a Smart Builder preview.");
         }
 
+        private void BeginBrushStroke()
+        {
+            if (_source == null)
+            {
+                InfoStore.Add(_sourceReason ?? "Selected Smart Builder material is unavailable.");
+                return;
+            }
+
+            _brushSceneStart = CaptureSceneSnapshot();
+            _brushLastCellKey = null;
+            _brushAddedCount = 0;
+            _brushPainting = true;
+            ContinueBrushStroke();
+        }
+
+        private void ContinueBrushStroke()
+        {
+            if (!_brushPainting ||
+                (_scene?.Count ?? 0) >= SmartBuildPieceScene.MaximumScenePieces ||
+                !TryPlacementCandidate(out SmartBuildPlacementCandidate candidate) ||
+                !candidate.Valid)
+            {
+                return;
+            }
+
+            string key = candidate.Cell.x.ToString(CultureInfo.InvariantCulture) + "," +
+                         candidate.Cell.y.ToString(CultureInfo.InvariantCulture) + "," +
+                         candidate.Cell.z.ToString(CultureInfo.InvariantCulture);
+            if (string.Equals(key, _brushLastCellKey, StringComparison.Ordinal))
+                return;
+
+            if (CreatePreviewAtSeed(
+                    candidate.Construct,
+                    candidate.Cell,
+                    candidate.ForwardAxis,
+                    candidate.ForwardSign,
+                    candidate.Width,
+                    candidate.RightStart,
+                    candidate.CuboidSize,
+                    recordHistory: false,
+                    activateScale: false,
+                    notify: false))
+            {
+                _brushLastCellKey = key;
+                _brushAddedCount++;
+            }
+        }
+
+        private void EndBrushStroke(bool cancel)
+        {
+            if (!_brushPainting)
+                return;
+
+            SmartBuildSceneSnapshot before = _brushSceneStart;
+            int added = _brushAddedCount;
+            _brushPainting = false;
+            _brushSceneStart = null;
+            _brushLastCellKey = null;
+            _brushAddedCount = 0;
+            if (cancel)
+            {
+                RestoreSceneSnapshot(before);
+                InfoStore.Add("Smart Builder brush stroke cancelled.");
+                return;
+            }
+
+            if (added > 0)
+            {
+                PushSceneSnapshot(before);
+                _tool = SmartBuildTool.Draw;
+                RebuildPlan();
+                RefreshApplyCancelAttention();
+                InfoStore.Add(
+                    "Smart Builder brushed " + added.ToString(CultureInfo.InvariantCulture) +
+                    (added == 1 ? " preview piece." : " preview pieces.") +
+                    " Undo removes the complete stroke.");
+            }
+        }
+
         private bool TryPlacementCandidate(out SmartBuildPlacementCandidate candidate)
         {
             candidate = default;
@@ -1279,6 +1713,18 @@ namespace DecoLimitLifter.SmartBuildMode
                 cell = SmartBuildAxisHelper.Set(cell, rightAxis, rightStart.Value);
             }
 
+            Vector3i resolvedCuboidSize = SmartBuildDraft.ClampSize(cuboidSize);
+            bool useExactSampledCuboid =
+                selectedDescriptor.IsCuboid &&
+                _sampledCuboidSize.HasValue &&
+                resolvedCuboidSize.Equals(new Vector3i(1, 1, 1));
+            if (useExactSampledCuboid)
+            {
+                resolvedCuboidSize = _sampledCuboidSize.Value;
+                if (_hasSampledBlockRotation && LastCraftBlockSample?.IsCuboid == true)
+                    cell += LastCraftBlockSample.OccupiedOriginOffset;
+            }
+
             bool valid = CanPlaceDraftOrigin(construct, cell, out string reason);
             return new SmartBuildPlacementCandidate(
                 construct,
@@ -1287,7 +1733,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 forwardSign,
                 Math.Max(1, width),
                 rightStart,
-                SmartBuildDraft.ClampSize(cuboidSize),
+                resolvedCuboidSize,
                 valid,
                 reason);
         }
@@ -1311,9 +1757,11 @@ namespace DecoLimitLifter.SmartBuildMode
 
             _scene.ClearSelection();
             _draft = null;
+            _sceneSelectionAnchorId = -1;
             _tool = SmartBuildTool.Move;
             _contextMenuOpen = false;
             ClearRotateDragState();
+            RebuildPlan(SmartBuildPlanRevisionKind.Selection);
             InfoStore.Add("Smart Builder selection cleared.");
             return true;
         }
@@ -1326,6 +1774,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
+            string activeSymmetryBefore = ActiveSymmetryPlanStamp();
             if (!DecoLimitLifter.EsuSymmetry.TryPlacePending(
                     construct,
                     cell,
@@ -1335,7 +1784,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
-            RebuildPlan();
+            HandleSymmetryRevision(activeSymmetryBefore);
             InfoStore.Add("Symmetry plane placed.");
         }
 
@@ -1351,28 +1800,41 @@ namespace DecoLimitLifter.SmartBuildMode
                 candidate.CuboidSize);
         }
 
-        private void CreatePreviewAtSeed(
+        private bool CreatePreviewAtSeed(
             AllConstruct construct,
             Vector3i cell,
             SmartBuildAxis forwardAxis = SmartBuildAxis.Z,
             int forwardSign = 1,
             int width = 1,
             int? rightStart = null,
-            Vector3i? cuboidSize = null)
+            Vector3i? cuboidSize = null,
+            bool recordHistory = true,
+            bool activateScale = true,
+            bool notify = true)
         {
             if (!CanPlaceDraftOrigin(construct, cell, out string reason))
             {
-                InfoStore.Add(reason);
-                return;
+                if (notify)
+                    InfoStore.Add(reason);
+                return false;
             }
 
             if (_scene != null && !ReferenceEquals(_scene.Construct, construct))
             {
                 InfoStore.Add("Apply or cancel the current Smart Builder scene before starting on another construct.");
-                return;
+                return false;
             }
 
-            RecordSceneHistory();
+            if (_scene != null && !_scene.CanAddPieces(1, out reason))
+            {
+                if (notify)
+                    InfoStore.Add(reason);
+                return false;
+            }
+
+            SmartBuildSceneSnapshot historyBefore = recordHistory
+                ? CaptureSceneSnapshot()
+                : null;
             if (_scene == null)
                 _scene = new SmartBuildPieceScene(construct);
 
@@ -1421,12 +1883,41 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             else
             {
-                _draft = SmartBuildPiece.CreateCuboid(construct, cell, cuboidSize ?? new Vector3i(1, 1, 1), _drawPlane);
+                Vector3i seedSize = cuboidSize ??
+                                    _sampledCuboidSize ??
+                                    new Vector3i(1, 1, 1);
+                _draft = SmartBuildPiece.CreateCuboid(
+                    construct,
+                    cell,
+                    SmartBuildDraft.ClampSize(seedSize),
+                    _drawPlane);
             }
-            _scene.Add(_draft);
-            _tool = SmartBuildTool.Scale;
+            _draft.SetMaterialOverride(_selectedMaterial);
+            ApplySampledBlockRotation(_draft);
+            if (!_scene.Add(_draft))
+            {
+                _draft = _scene.SelectedPiece;
+                if (notify)
+                {
+                    InfoStore.Add(
+                        "The preview was not added because the Smart Builder scene reached its " +
+                        SmartBuildPieceScene.MaximumScenePieces.ToString(CultureInfo.InvariantCulture) +
+                        "-piece limit.");
+                }
+                return false;
+            }
+            if (recordHistory)
+                PushSceneSnapshot(historyBefore);
+            _sceneSelectionAnchorId = _draft.Id;
+            _tool = activateScale ? SmartBuildTool.Scale : SmartBuildTool.Draw;
             RebuildPlan();
-            InfoStore.Add(_draft.ShapeLabel() + " added. Scale mode active.");
+            if (notify)
+            {
+                InfoStore.Add(
+                    _draft.ShapeLabel() +
+                    (activateScale ? " added. Scale mode active." : " brushed into the preview."));
+            }
+            return true;
         }
 
         private bool CanPlaceDraftOrigin(
@@ -1440,7 +1931,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 return false;
             }
 
-            if (IsCellOccupied(construct, cell))
+            if (IsCellOccupied(construct, cell) &&
+                _occupancyMode != SmartBuildOccupancyMode.ReplaceOccupied &&
+                _occupancyMode != SmartBuildOccupancyMode.EraseOccupied)
             {
                 reason = "Smart Builder origin is occupied. Pick an empty cell.";
                 return false;
@@ -1536,7 +2029,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int bestSign = 1;
             foreach (SmartBuildPiece piece in _scene.Pieces)
             {
-                SmartBuildVolume volume = piece.ToVolume(_source);
+                SmartBuildVolume volume = piece.ToVolume(SourceForPiece(piece));
                 if (volume == null)
                     continue;
 
@@ -1554,7 +2047,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (bestPiece == null || bestAxis == DecorationEditAxis.None)
                 return false;
 
-            SmartBuildVolume bestVolume = bestPiece.ToVolume(_source);
+            SmartBuildVolume bestVolume = bestPiece.ToVolume(SourceForPiece(bestPiece));
             axis = SmartBuildDraft.ToSmartAxis(bestAxis);
             sign = bestSign >= 0 ? 1 : -1;
             cell = AdjacentCellFromPreviewFace(bestVolume, bestHit, axis, sign);
@@ -1622,15 +2115,211 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!TryPickPreviewPiece(out SmartBuildPiece piece))
                 return false;
 
-            if (_scene.Select(piece.Id))
+            bool additive = IsShiftHeld();
+            bool toggle = IsControlHeld();
+            if (toggle)
+                _scene.ToggleSelection(piece.Id);
+            else if (additive)
+                _scene.AddToSelection(piece.Id);
+            else
+                _scene.Select(piece.Id);
+
+            _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = piece.Id;
+            RebuildPlan(SmartBuildPlanRevisionKind.Selection);
+            InfoStore.Add(SelectionStatusMessage());
+            return true;
+        }
+
+        private string SelectionStatusMessage()
+        {
+            int count = _scene?.SelectionCount ?? 0;
+            if (count <= 0)
+                return "Smart Builder selection cleared.";
+            if (count == 1)
             {
-                _draft = _scene.SelectedPiece;
-                RebuildPlan();
-                InfoStore.Add("Selected Smart Builder piece #" + piece.Id.ToString(CultureInfo.InvariantCulture) + ".");
-                return true;
+                return "Selected Smart Builder piece #" +
+                       (_scene?.SelectedPiece?.Id ?? -1).ToString(CultureInfo.InvariantCulture) +
+                       ".";
             }
 
-            return false;
+            return "Selected " + count.ToString(CultureInfo.InvariantCulture) +
+                   " Smart Builder pieces; primary #" +
+                   (_scene?.SelectedPiece?.Id ?? -1).ToString(CultureInfo.InvariantCulture) +
+                   ".";
+        }
+
+        private bool SelectSceneRow(SmartBuildPiece piece, bool shift, bool control)
+        {
+            if (_scene == null || piece == null)
+                return false;
+
+            bool changed;
+            if (shift && _sceneSelectionAnchorId >= 0)
+            {
+                changed = _scene.SelectRange(
+                    _sceneSelectionAnchorId,
+                    piece.Id,
+                    additive: control);
+            }
+            else if (control)
+            {
+                changed = _scene.ToggleSelection(piece.Id);
+                _sceneSelectionAnchorId = piece.Id;
+            }
+            else
+            {
+                changed = _scene.Select(piece.Id);
+                _sceneSelectionAnchorId = piece.Id;
+            }
+
+            if (!changed)
+                return false;
+
+            _draft = _scene.SelectedPiece;
+            if (_draft == null)
+                _sceneSelectionAnchorId = -1;
+            RebuildPlan(SmartBuildPlanRevisionKind.Selection);
+            InfoStore.Add(SelectionStatusMessage());
+            return true;
+        }
+
+        private void BeginViewportBoxSelection()
+        {
+            _boxSelecting = true;
+            _boxSelectionStart = MouseGuiPosition();
+            _boxSelectionCurrent = _boxSelectionStart;
+            _boxSelectionAdditive = IsShiftHeld();
+            _boxSelectionToggle = IsControlHeld();
+            _boxSelectionBaseIds = _scene?.SelectedPieceIds.ToArray() ?? Array.Empty<int>();
+            _boxSelectionBasePrimaryId = _scene?.SelectedPiece?.Id ?? -1;
+        }
+
+        private void EndViewportBoxSelection()
+        {
+            _boxSelectionCurrent = MouseGuiPosition();
+            if (_scene == null ||
+                (_boxSelectionCurrent - _boxSelectionStart).sqrMagnitude < 36f)
+            {
+                ClearBoxSelectionState();
+                return;
+            }
+
+            Rect marquee = RectFromPoints(_boxSelectionStart, _boxSelectionCurrent);
+            SmartBuildPiece[] hits = _scene.Pieces
+                .Where(piece => TryProjectPieceGuiBounds(piece, out Rect bounds) && marquee.Overlaps(bounds))
+                .ToArray();
+            var selectedIds = new HashSet<int>(
+                _boxSelectionAdditive || _boxSelectionToggle
+                    ? _boxSelectionBaseIds
+                    : Array.Empty<int>());
+            if (_boxSelectionToggle)
+            {
+                foreach (SmartBuildPiece hit in hits)
+                {
+                    if (!selectedIds.Remove(hit.Id))
+                        selectedIds.Add(hit.Id);
+                }
+            }
+            else
+            {
+                foreach (SmartBuildPiece hit in hits)
+                    selectedIds.Add(hit.Id);
+            }
+
+            int primaryId = hits
+                .AsEnumerable()
+                .Reverse()
+                .Select(piece => piece.Id)
+                .FirstOrDefault(id => selectedIds.Contains(id));
+            if (primaryId == 0 || !selectedIds.Contains(primaryId))
+            {
+                primaryId = selectedIds.Contains(_boxSelectionBasePrimaryId)
+                    ? _boxSelectionBasePrimaryId
+                    : _scene.Pieces
+                        .Where(piece => selectedIds.Contains(piece.Id))
+                        .Select(piece => piece.Id)
+                        .LastOrDefault();
+            }
+
+            _scene.SetSelection(selectedIds, primaryId);
+            _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = _draft?.Id ?? -1;
+            ClearBoxSelectionState();
+            RebuildPlan(SmartBuildPlanRevisionKind.Selection);
+            InfoStore.Add(SelectionStatusMessage());
+        }
+
+        private bool TryProjectPieceGuiBounds(SmartBuildPiece piece, out Rect bounds)
+        {
+            bounds = Rect.zero;
+            if (piece?.Construct == null)
+                return false;
+
+            Camera camera = Camera.main ?? Camera.current;
+            SmartBuildVolume volume = piece.ToVolume(SourceForPiece(piece));
+            if (camera == null || volume == null)
+                return false;
+
+            bool any = false;
+            Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+            Vector2 max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+            foreach (Vector3 world in volume.GetWorldCorners())
+            {
+                Vector3 screen = camera.WorldToScreenPoint(world);
+                if (screen.z <= 0f)
+                    continue;
+
+                Vector2 gui = new Vector2(screen.x, Screen.height - screen.y);
+                min.x = Mathf.Min(min.x, gui.x);
+                min.y = Mathf.Min(min.y, gui.y);
+                max.x = Mathf.Max(max.x, gui.x);
+                max.y = Mathf.Max(max.y, gui.y);
+                any = true;
+            }
+
+            if (!any)
+                return false;
+
+            const float minimumPickSize = 8f;
+            float width = Mathf.Max(minimumPickSize, max.x - min.x);
+            float height = Mathf.Max(minimumPickSize, max.y - min.y);
+            bounds = new Rect(
+                (min.x + max.x - width) * 0.5f,
+                (min.y + max.y - height) * 0.5f,
+                width,
+                height);
+            return true;
+        }
+
+        private static Rect RectFromPoints(Vector2 first, Vector2 second) =>
+            new Rect(
+                Mathf.Min(first.x, second.x),
+                Mathf.Min(first.y, second.y),
+                Mathf.Abs(second.x - first.x),
+                Mathf.Abs(second.y - first.y));
+
+        private void ClearBoxSelectionState()
+        {
+            _boxSelecting = false;
+            _boxSelectionStart = Vector2.zero;
+            _boxSelectionCurrent = Vector2.zero;
+            _boxSelectionAdditive = false;
+            _boxSelectionToggle = false;
+            _boxSelectionBaseIds = Array.Empty<int>();
+            _boxSelectionBasePrimaryId = -1;
+        }
+
+        private void DrawViewportBoxSelectionMarquee()
+        {
+            if (!_boxSelecting)
+                return;
+
+            Rect marquee = RectFromPoints(_boxSelectionStart, _boxSelectionCurrent);
+            Color previous = GUI.color;
+            GUI.color = new Color(0.3f, 0.92f, 1f, 0.58f);
+            GUI.Box(marquee, GUIContent.none, DecorationEditorTheme.RowSelected);
+            GUI.color = previous;
         }
 
         private bool TryOpenPreviewContextMenu()
@@ -1638,9 +2327,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!TryPickPreviewPiece(out SmartBuildPiece piece))
                 return false;
 
-            if (_scene.Select(piece.Id))
+            bool selected = _scene.IsSelected(piece.Id)
+                ? _scene.AddToSelection(piece.Id)
+                : _scene.Select(piece.Id);
+            if (selected)
             {
                 _draft = _scene.SelectedPiece;
+                _sceneSelectionAnchorId = piece.Id;
                 _contextMenuPieceId = piece.Id;
                 Vector2 mouse = MouseGuiPosition();
                 float width = EsuHudLayout.Scale(142f);
@@ -1648,7 +2341,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 _contextMenuRect = new Rect(mouse.x, mouse.y, width, height);
                 _contextMenuRect.x = Mathf.Clamp(_contextMenuRect.x, EsuHudLayout.Scale(8f), Screen.width - width - EsuHudLayout.Scale(8f));
                 _contextMenuRect.y = Mathf.Clamp(_contextMenuRect.y, EsuHudLayout.Scale(8f), Screen.height - height - EsuHudLayout.Scale(8f));
-                RebuildPlan();
+                RebuildPlan(SmartBuildPlanRevisionKind.Selection);
                 return true;
             }
 
@@ -1683,7 +2376,7 @@ namespace DecoLimitLifter.SmartBuildMode
             int bestSign = 1;
             foreach (SmartBuildPiece piece in _scene.Pieces)
             {
-                SmartBuildVolume volume = piece.ToVolume(_source);
+                SmartBuildVolume volume = piece.ToVolume(SourceForPiece(piece));
                 if (volume == null)
                     continue;
 
@@ -1925,49 +2618,112 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft == null || _dragAxis == DecorationEditAxis.None || _dragAxes.Length == 0)
                 return;
 
-            _draft.CopyFrom(_dragPieceStart);
+            RestoreSelectedPiecesFromSnapshot(_dragSceneStart);
+            IReadOnlyList<SmartBuildPiece> selected = _scene?.SelectedPieces;
+            if (selected == null || selected.Count == 0)
+                return;
+
             if (_dragTool == SmartBuildTool.Move)
             {
                 int cells = ProjectDragDeltaToCells(_dragAxis, SmartMoveStepCells);
-                _draft.MoveBy(
-                    SmartBuildAxisHelper.ToVector3i(
-                        SmartBuildDraft.ToSmartAxis(_dragAxis),
-                        cells));
+                Vector3i delta = SmartBuildAxisHelper.ToVector3i(
+                    SmartBuildDraft.ToSmartAxis(_dragAxis),
+                    cells);
+                foreach (SmartBuildPiece piece in selected)
+                    piece.MoveBy(delta);
             }
             else if (_dragTool == SmartBuildTool.Scale)
             {
-                if (ShouldUseCardinalSlopeStretch())
-                {
-                    ResizeDownSlopeCardinalFromDraggedHandles();
-                }
-                else if (_draft.IsGeneratedShape && _draft.GeneratorRoundLock && _dragAxes.Length > 1)
-                {
-                    int cells = ProjectDragDeltaToCells(_dragAxis, SmartScaleStepCells);
-                    _draft.ResizeFromHandle(_dragAxis, _dragSign, cells);
-                }
+                if (selected.Count > 1)
+                    TryScaleSelectionFromDraggedHandles();
                 else
-                {
-                    for (int index = 0; index < _dragAxes.Length; index++)
-                    {
-                        DecorationEditAxis axis = _dragAxes[index];
-                        if (axis == DecorationEditAxis.None)
-                            continue;
-
-                        int sign = index < _dragSigns.Length ? _dragSigns[index] : 1;
-                        int cells = ProjectDragDeltaToCells(axis, SmartScaleStepCells);
-                        _draft.ResizeFromHandle(axis, sign, cells);
-                    }
-                }
+                    ResizePieceFromDraggedHandles(selected[0]);
             }
 
             _planDirty = true;
             RefreshPreviewVolumesOnly();
         }
 
-        private bool ShouldUseCardinalSlopeStretch() =>
-            _draft?.ShapeKind == SmartBuildShapeKind.DownSlope && IsCardinalSlopeStretchHeld();
+        private bool TryScaleSelectionFromDraggedHandles()
+        {
+            if (_draft == null || _scene == null || _scene.SelectionCount <= 1)
+                return false;
 
-        private void ResizeDownSlopeCardinalFromDraggedHandles()
+            SmartBuildBounds originalPrimary = _draft.GroupScaleBounds;
+            Vector3 pivot = originalPrimary.Center;
+
+            // Derive scale factors with the primary piece's familiar handle behavior,
+            // then restore the immutable drag snapshot and spatially transform the whole
+            // group. This scales offsets and extents from one shared pivot without
+            // accumulating rounding drift between mouse-move frames.
+            ResizePieceFromDraggedHandles(_draft);
+            SmartBuildBounds resizedPrimary = _draft.GroupScaleBounds;
+            Vector3i originalSize = originalPrimary.Size;
+            Vector3i resizedSize = resizedPrimary.Size;
+            Vector3 factors = new Vector3(
+                resizedSize.x / (float)Math.Max(1, originalSize.x),
+                resizedSize.y / (float)Math.Max(1, originalSize.y),
+                resizedSize.z / (float)Math.Max(1, originalSize.z));
+
+            RestoreSelectedPiecesFromSnapshot(_dragSceneStart);
+            foreach (SmartBuildPiece piece in _scene.SelectedPieces)
+            {
+                if (piece.TryScaleAboutPivot(pivot, factors, out string reason))
+                    continue;
+
+                RestoreSelectedPiecesFromSnapshot(_dragSceneStart);
+                if (!string.Equals(_lastGroupScaleIssue, reason, StringComparison.Ordinal))
+                {
+                    _lastGroupScaleIssue = reason;
+                    InfoStore.Add("Group scale rejected: " + reason);
+                }
+                return false;
+            }
+
+            _lastGroupScaleIssue = null;
+            return true;
+        }
+
+        private void ResizePieceFromDraggedHandles(SmartBuildPiece piece)
+        {
+            if (piece == null)
+                return;
+
+            if (ShouldUseCardinalSlopeStretch(piece))
+            {
+                ResizeDownSlopeCardinalFromDraggedHandles(piece);
+                return;
+            }
+
+            bool roundLockResize = ReferenceEquals(piece, _draft)
+                ? PrimaryGeneratedRoundLockUsesMultiAxisDrag()
+                : piece.IsGeneratedShape && piece.GeneratorRoundLock && _dragAxes.Length > 1;
+            if (roundLockResize)
+            {
+                int cells = ProjectDragDeltaToCells(_dragAxis, SmartScaleStepCells);
+                piece.ResizeFromHandle(_dragAxis, _dragSign, cells);
+                return;
+            }
+
+            for (int index = 0; index < _dragAxes.Length; index++)
+            {
+                DecorationEditAxis axis = _dragAxes[index];
+                if (axis == DecorationEditAxis.None)
+                    continue;
+
+                int sign = index < _dragSigns.Length ? _dragSigns[index] : 1;
+                int cells = ProjectDragDeltaToCells(axis, SmartScaleStepCells);
+                piece.ResizeFromHandle(axis, sign, cells);
+            }
+        }
+
+        private bool PrimaryGeneratedRoundLockUsesMultiAxisDrag() =>
+            _draft.IsGeneratedShape && _draft.GeneratorRoundLock && _dragAxes.Length > 1;
+
+        private static bool ShouldUseCardinalSlopeStretch(SmartBuildPiece piece) =>
+            piece?.ShapeKind == SmartBuildShapeKind.DownSlope && IsCardinalSlopeStretchHeld();
+
+        private void ResizeDownSlopeCardinalFromDraggedHandles(SmartBuildPiece piece)
         {
             bool convertedDropAxis = false;
             for (int index = 0; index < _dragAxes.Length; index++)
@@ -1975,14 +2731,14 @@ namespace DecoLimitLifter.SmartBuildMode
                 DecorationEditAxis axis = _dragAxes[index];
                 if (axis == DecorationEditAxis.None ||
                     axis == DecorationEditAxis.Free ||
-                    SmartBuildDraft.ToSmartAxis(axis) != _draft.DropAxis)
+                    SmartBuildDraft.ToSmartAxis(axis) != piece.DropAxis)
                 {
                     continue;
                 }
 
                 int sign = index < _dragSigns.Length ? _dragSigns[index] : 1;
                 int cells = ProjectDragDeltaToCells(axis, SmartScaleStepCells);
-                _draft.ResizeDownSlopeCardinalFromHandle(axis, sign, cells);
+                piece.ResizeDownSlopeCardinalFromHandle(axis, sign, cells);
                 convertedDropAxis = true;
             }
 
@@ -1996,24 +2752,22 @@ namespace DecoLimitLifter.SmartBuildMode
                 }
 
                 SmartBuildAxis smartAxis = SmartBuildDraft.ToSmartAxis(axis);
-                if (smartAxis == _draft.DropAxis ||
-                    convertedDropAxis && smartAxis == _draft.ForwardAxis)
+                if (smartAxis == piece.DropAxis ||
+                    convertedDropAxis && smartAxis == piece.ForwardAxis)
                 {
                     continue;
                 }
 
                 int sign = index < _dragSigns.Length ? _dragSigns[index] : 1;
                 int cells = ProjectDragDeltaToCells(axis, SmartScaleStepCells);
-                _draft.ResizeDownSlopeCardinalFromHandle(axis, sign, cells);
+                piece.ResizeDownSlopeCardinalFromHandle(axis, sign, cells);
             }
         }
 
         private void EndDrag(bool resetDraft)
         {
-            if (resetDraft && _draft != null)
-            {
-                _draft.CopyFrom(_dragPieceStart);
-            }
+            if (resetDraft)
+                RestoreSelectedPiecesFromSnapshot(_dragSceneStart);
 
             if (_draft != null)
             {
@@ -2027,6 +2781,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _dragSigns = Array.Empty<int>();
             _dragPieceStart = null;
             _dragSceneStart = null;
+            _lastGroupScaleIssue = null;
             _dragStartedFromFace = false;
         }
 
@@ -2161,7 +2916,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return true;
             }
 
-            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(SourceForPiece(_draft)).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             float bestDistance = float.PositiveInfinity;
@@ -2190,7 +2945,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryPickDownSlopeCorner(camera, out axes, out signs);
 
-            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(SourceForPiece(_draft)).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             Vector2 mouse = MouseGuiPosition();
@@ -2240,7 +2995,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryPickDownSlopeEdge(camera, out axes, out signs);
 
-            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(SourceForPiece(_draft)).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             int[,] edges =
@@ -2390,22 +3145,52 @@ namespace DecoLimitLifter.SmartBuildMode
             }
         }
 
-        private void RebuildPlan()
+        private void RebuildPlan(
+            SmartBuildPlanRevisionKind revisions = SmartBuildPlanRevisionKind.Geometry)
         {
+            FinalizePendingSceneHistory();
+            if ((revisions & SmartBuildPlanRevisionKind.Geometry) != 0)
+                _scene?.MarkGeometryChanged();
+            if (_planDirty &&
+                (revisions & SmartBuildPlanRevisionKind.PlanningInputs) == 0)
+            {
+                // A drag-time preview is deliberately not commit-current. Never let a
+                // coincident selection/presentation update promote its older plan.
+                revisions |= SmartBuildPlanRevisionKind.Geometry;
+            }
+            _planCoordinator.ObserveCraftIdentity(FocusedConstruct());
+            _planCoordinator.RegisterRevision(revisions);
+
+            // Selection changes invalidate a conditional scan scope even though the
+            // normal geometry plan itself remains reusable.
+            if (_conditionalReplacementPlan != null || _conditionalReplacementInputs != null)
+                ClearConditionalReplacementPreview(rebuildNormalPlan: false);
+
+            if (_planCoordinator.TryReuseNormalPlan(out SmartBuildCoordinatedPlan cached))
+            {
+                AdoptCoordinatedPlan(cached);
+                NotifyPlanIssueIfNeeded();
+                return;
+            }
+
+            _planDirty = true;
+            long planningStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+
             if (_scene == null || _scene.Count == 0)
             {
                 _plan = null;
                 _previewCells = Array.Empty<Vector3i>();
                 _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
                 _previewVolumes = Array.Empty<SmartBuildVolume>();
-                _planDirty = false;
+                RecordCoordinatedPlan(planningStarted);
                 ClearPlanIssueNotification();
                 return;
             }
 
-            if (_source == null)
+            if (!ReferenceEquals(FocusedConstruct(), _scene.Construct))
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
+                SmartBuildPreviewSnapshot preview =
+                    _scene.BuildPreviewWithSources(SourceForPiece);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
@@ -2417,15 +3202,35 @@ namespace DecoLimitLifter.SmartBuildMode
                     Array.Empty<string>(),
                     canCommit: false,
                     failureReason:
-                    _sourceReason ?? "Selected Smart Builder material is unavailable.");
-                _planDirty = false;
+                    "The Smart Builder scene is bound to a different focused construct. Return focus to that construct or cancel the preview.");
+                RecordCoordinatedPlan(planningStarted);
+                NotifyPlanIssueIfNeeded();
+                return;
+            }
+
+            string materialIssue = FirstPieceMaterialIssue();
+            if (!string.IsNullOrWhiteSpace(materialIssue))
+            {
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreviewWithSources(SourceForPiece);
+                _previewCells = preview.Cells;
+                _previewCellSets = preview.CellSets;
+                _previewVolumes = preview.Volumes;
+                _plan = new SmartBuildPlan(
+                    _scene.Construct,
+                    VolumeFromCells(_scene.Construct, _previewCells),
+                    Array.Empty<SmartBuildPlacement>(),
+                    Array.Empty<Vector3i>(),
+                    Array.Empty<string>(),
+                    canCommit: false,
+                    failureReason: materialIssue);
+                RecordCoordinatedPlan(planningStarted);
                 NotifyPlanIssueIfNeeded();
                 return;
             }
 
             if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_scene.Construct, out string reason))
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreviewWithSources(SourceForPiece);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
@@ -2437,23 +3242,61 @@ namespace DecoLimitLifter.SmartBuildMode
                     Array.Empty<string>(),
                     canCommit: false,
                     failureReason: reason);
-                _planDirty = false;
+                RecordCoordinatedPlan(planningStarted);
                 NotifyPlanIssueIfNeeded();
                 return;
             }
 
-            _plan = _scene.BuildPlan(
-                _source,
+            _plan = _scene.BuildPlanWithSources(
+                SourceForPiece,
                 IsOccupied,
                 new SmartBuildPlannerOptions
                 {
-                    SkipOccupiedCells = _occupancyMode == SmartBuildOccupancyMode.SkipOccupied
+                    SkipOccupiedCells = _occupancyMode == SmartBuildOccupancyMode.SkipOccupied,
+                    AllowOccupiedCells =
+                        _occupancyMode == SmartBuildOccupancyMode.ReplaceOccupied ||
+                        _occupancyMode == SmartBuildOccupancyMode.EraseOccupied
                 },
                 out SmartBuildPreviewSnapshot scenePreview);
             _previewCells = scenePreview.Cells;
             _previewCellSets = scenePreview.CellSets;
             _previewVolumes = scenePreview.Volumes;
-            if (_plan.CanCommit && !EveryPreviewSetTouchesExistingConstruct())
+            if (_plan.CanCommit &&
+                (_occupancyMode == SmartBuildOccupancyMode.ReplaceOccupied ||
+                 _occupancyMode == SmartBuildOccupancyMode.EraseOccupied))
+            {
+                Vector3i[] removals = _previewCells
+                    .Where(IsOccupied)
+                    .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
+                    .Select(group => group.First())
+                    .ToArray();
+                if (_occupancyMode == SmartBuildOccupancyMode.EraseOccupied)
+                {
+                    _plan = removals.Length == 0
+                        ? new SmartBuildPlan(
+                            _scene.Construct,
+                            VolumeFromCells(_scene.Construct, _previewCells),
+                            Array.Empty<SmartBuildPlacement>(),
+                            Array.Empty<Vector3i>(),
+                            Array.Empty<string>(),
+                            canCommit: false,
+                            failureReason: "Erase preview does not intersect any existing blocks.")
+                        : new SmartBuildPlan(
+                            _scene.Construct,
+                            VolumeFromCells(_scene.Construct, _previewCells),
+                            Array.Empty<SmartBuildPlacement>(),
+                            Array.Empty<Vector3i>(),
+                            new[] { "Erase removes complete block items touched by the preview." },
+                            canCommit: true,
+                            failureReason: null)
+                            .WithCommitOperation(SmartBuildCommitOperation.Erase, removals);
+                }
+                else
+                {
+                    _plan.WithCommitOperation(SmartBuildCommitOperation.Replace, removals);
+                }
+            }
+            else if (_plan.CanCommit && !EveryPreviewSetTouchesExistingConstruct())
             {
                 _plan = new SmartBuildPlan(
                     _scene.Construct,
@@ -2465,8 +3308,235 @@ namespace DecoLimitLifter.SmartBuildMode
                     failureReason: "Every symmetry preview must touch an existing block before Apply.");
             }
 
-            _planDirty = false;
+            RecordCoordinatedPlan(planningStarted);
             NotifyPlanIssueIfNeeded();
+        }
+
+        private void AdoptCoordinatedPlan(SmartBuildCoordinatedPlan coordinated)
+        {
+            _plan = coordinated?.Plan;
+            _previewCells = coordinated?.Cells ?? Array.Empty<Vector3i>();
+            _previewCellSets = coordinated?.CellSets ??
+                Array.Empty<IReadOnlyList<Vector3i>>();
+            _previewVolumes = coordinated?.Volumes ?? Array.Empty<SmartBuildVolume>();
+            _planDirty = false;
+        }
+
+        private void RegisterPresentationRevision()
+        {
+            _scene?.MarkPresentationChanged();
+            _planCoordinator.RegisterRevision(SmartBuildPlanRevisionKind.Presentation);
+        }
+
+        private void RecordCoordinatedPlan(long planningStarted)
+        {
+            long elapsedTicks = Math.Max(
+                0L,
+                System.Diagnostics.Stopwatch.GetTimestamp() - planningStarted);
+            TimeSpan duration = TimeSpan.FromSeconds(
+                elapsedTicks / (double)System.Diagnostics.Stopwatch.Frequency);
+            if (_plan != null)
+            {
+                _plan.WithConstructToken(
+                    SmartBuildConstructToken.Capture(
+                        _scene?.Construct,
+                        _planCoordinator.Diagnostics.OccupancyRevision));
+            }
+            var coordinated = new SmartBuildCoordinatedPlan(
+                _plan,
+                _previewCells,
+                _previewCellSets,
+                _previewVolumes);
+            _planCoordinator.RecordNormalPlan(
+                coordinated,
+                duration,
+                _scene?.Count ?? 0,
+                _previewCells?.Count ?? 0,
+                _plan?.Placements?.Count ?? 0);
+            _planDirty = false;
+            CaptureCraftOccupancyFingerprintBaseline();
+        }
+
+        private void TickCraftOccupancyRevision()
+        {
+            AllConstruct focused = FocusedConstruct();
+            if (!_hasObservedFocusedConstruct ||
+                !ReferenceEquals(_observedFocusedConstruct, focused))
+            {
+                _hasObservedFocusedConstruct = true;
+                _observedFocusedConstruct = focused;
+                _hasCraftOccupancyFingerprint = false;
+                if (_scene != null && _scene.Count > 0)
+                {
+                    RebuildPlan(SmartBuildPlanRevisionKind.Craft);
+                    return;
+                }
+            }
+
+            if (_planDirty || _dragging || _rotating ||
+                _scene?.Construct == null || _previewCells.Count == 0 ||
+                Time.unscaledTime < _nextCraftOccupancyFingerprintAt)
+            {
+                return;
+            }
+
+            _nextCraftOccupancyFingerprintAt = Time.unscaledTime + 0.75f;
+            if (!TryComputeCraftOccupancyFingerprint(out long fingerprint))
+                return;
+            if (!_hasCraftOccupancyFingerprint ||
+                !ReferenceEquals(_craftOccupancyFingerprintConstruct, _scene.Construct))
+            {
+                _hasCraftOccupancyFingerprint = true;
+                _craftOccupancyFingerprintConstruct = _scene.Construct;
+                _craftOccupancyFingerprint = fingerprint;
+                return;
+            }
+            if (_craftOccupancyFingerprint == fingerprint)
+                return;
+
+            _craftOccupancyFingerprint = fingerprint;
+            RebuildPlan(
+                SmartBuildPlanRevisionKind.Craft |
+                SmartBuildPlanRevisionKind.Occupancy);
+        }
+
+        private void CaptureCraftOccupancyFingerprintBaseline()
+        {
+            _nextCraftOccupancyFingerprintAt = Time.unscaledTime + 0.75f;
+            if (!TryComputeCraftOccupancyFingerprint(out long fingerprint))
+            {
+                _hasCraftOccupancyFingerprint = false;
+                _craftOccupancyFingerprintConstruct = null;
+                return;
+            }
+            _hasCraftOccupancyFingerprint = true;
+            _craftOccupancyFingerprintConstruct = _scene?.Construct;
+            _craftOccupancyFingerprint = fingerprint;
+        }
+
+        private bool TryComputeCraftOccupancyFingerprint(out long fingerprint)
+        {
+            fingerprint = 0L;
+            if (_scene?.Construct == null || _previewCells == null ||
+                _previewCells.Count == 0)
+            {
+                return false;
+            }
+
+            unchecked
+            {
+                long hash = 1469598103934665603L;
+                int probes = 0;
+                for (int cellIndex = 0;
+                     cellIndex < _previewCells.Count &&
+                     probes < SmartBuildLimits.MaximumOccupancyFingerprintCells;
+                     cellIndex++)
+                {
+                    Vector3i baseCell = _previewCells[cellIndex];
+                    for (int offsetIndex = 0;
+                         offsetIndex < CraftOccupancyFingerprintOffsets.Length &&
+                         probes < SmartBuildLimits.MaximumOccupancyFingerprintCells;
+                         offsetIndex++)
+                    {
+                        Vector3i cell = baseCell +
+                                        CraftOccupancyFingerprintOffsets[offsetIndex];
+                        Block block = null;
+                        bool lookupFailed = false;
+                        try
+                        {
+                            block = _scene.Construct.AllBasics?.GetBlockViaLocalPosition(cell);
+                        }
+                        catch
+                        {
+                            // Treat an unreadable cell as occupied/unknown. A later
+                            // readable state changes the fingerprint and replans.
+                            lookupFailed = true;
+                        }
+
+                        bool occupied = lookupFailed || (block != null && !block.IsDeleted);
+                        ItemDefinition definition = null;
+                        Vector3i itemOrigin = cell;
+                        Quaternion rotation = Quaternion.identity;
+                        int footprintCellCount = 0;
+                        if (occupied && block != null)
+                        {
+                            try
+                            {
+                                definition = block.item;
+                                itemOrigin = block.LocalPosition;
+                                rotation = block.LocalRotation;
+                                footprintCellCount = Math.Max(
+                                    0,
+                                    definition?.SizeInfo?.ArrayPositionsUsed ?? 0);
+                            }
+                            catch
+                            {
+                                definition = null;
+                                itemOrigin = cell;
+                                rotation = Quaternion.identity;
+                                footprintCellCount = -1;
+                            }
+                        }
+
+                        hash = MixCraftCellFingerprint(
+                            hash,
+                            cell,
+                            occupied,
+                            definition == null
+                                ? 0
+                                : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(definition),
+                            itemOrigin,
+                            rotation,
+                            footprintCellCount);
+                        probes++;
+                    }
+                }
+                hash = (hash ^ probes) * 1099511628211L;
+                hash = (hash ^ _previewCells.Count) * 1099511628211L;
+                fingerprint = hash;
+                return true;
+            }
+        }
+
+        internal static long MixCraftCellFingerprint(
+            long hash,
+            Vector3i cell,
+            bool occupied,
+            int definitionIdentity,
+            Vector3i itemOrigin,
+            Quaternion rotation,
+            int footprintCellCount)
+        {
+            unchecked
+            {
+                hash = (hash ^ cell.x) * 1099511628211L;
+                hash = (hash ^ cell.y) * 1099511628211L;
+                hash = (hash ^ cell.z) * 1099511628211L;
+                hash = (hash ^ (occupied ? 1L : 0L)) * 1099511628211L;
+                if (!occupied)
+                    return hash;
+
+                hash = (hash ^ definitionIdentity) * 1099511628211L;
+                hash = (hash ^ itemOrigin.x) * 1099511628211L;
+                hash = (hash ^ itemOrigin.y) * 1099511628211L;
+                hash = (hash ^ itemOrigin.z) * 1099511628211L;
+                hash = (hash ^ rotation.x.GetHashCode()) * 1099511628211L;
+                hash = (hash ^ rotation.y.GetHashCode()) * 1099511628211L;
+                hash = (hash ^ rotation.z.GetHashCode()) * 1099511628211L;
+                hash = (hash ^ rotation.w.GetHashCode()) * 1099511628211L;
+                hash = (hash ^ footprintCellCount) * 1099511628211L;
+                return hash;
+            }
+        }
+
+        private void ResetCraftOccupancyTracking()
+        {
+            _hasCraftOccupancyFingerprint = false;
+            _craftOccupancyFingerprint = 0L;
+            _craftOccupancyFingerprintConstruct = null;
+            _nextCraftOccupancyFingerprintAt = -1f;
+            _hasObservedFocusedConstruct = false;
+            _observedFocusedConstruct = null;
         }
 
         private void NotifyPlanIssueIfNeeded()
@@ -2535,44 +3605,60 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             if (_scene != null)
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
+                SmartBuildPreviewSnapshot preview = _scene.BuildPreviewWithSources(SourceForPiece);
                 _previewCells = preview.Cells;
                 _previewCellSets = preview.CellSets;
                 _previewVolumes = preview.Volumes;
                 return;
             }
 
-            Vector3i[] baseCells = volume.EnumerateCells().ToArray();
-            var allCells = new Dictionary<string, Vector3i>();
+            if (!SmartBuildLimits.TryMaterializeBounded(
+                    volume.EnumerateCells(),
+                    SmartBuildLimits.MaximumPlannerInputCells,
+                    out Vector3i[] baseCells,
+                    out _))
+            {
+                _previewCells = Array.Empty<Vector3i>();
+                _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+                _previewVolumes = Array.Empty<SmartBuildVolume>();
+                return;
+            }
+            var allCells = new HashSet<Vector3i>();
             var sets = new List<IReadOnlyList<Vector3i>>();
             var volumes = new List<SmartBuildVolume>();
-            var seenSets = new HashSet<string>();
+            var seenSets = new HashSet<SmartBuildCellSetFingerprint>();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
                 Vector3i[] cells = baseCells
                     .Select(variant.Mirror)
-                    .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
-                    .Select(group => group.First())
+                    .Distinct()
                     .OrderBy(cell => cell.x)
                     .ThenBy(cell => cell.y)
                     .ThenBy(cell => cell.z)
                     .ToArray();
-                string signature = string.Join(
-                    "|",
-                    cells.Select(DecoLimitLifter.EsuSymmetry.CellKey).ToArray());
-                if (!seenSets.Add(signature))
+                if (!seenSets.Add(SmartBuildCellSetFingerprint.From(cells)))
                     continue;
 
                 sets.Add(cells);
                 foreach (Vector3i cell in cells)
-                    allCells[DecoLimitLifter.EsuSymmetry.CellKey(cell)] = cell;
+                {
+                    if (allCells.Count >= SmartBuildLimits.MaximumPlannerInputCells &&
+                        !allCells.Contains(cell))
+                    {
+                        _previewCells = Array.Empty<Vector3i>();
+                        _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
+                        _previewVolumes = Array.Empty<SmartBuildVolume>();
+                        return;
+                    }
+                    allCells.Add(cell);
+                }
                 SmartBuildVolume mirrored = MirrorVolume(volume, variant);
                 if (mirrored != null)
                     volumes.Add(mirrored);
             }
 
-            _previewCells = allCells.Values
+            _previewCells = allCells
                 .OrderBy(cell => cell.x)
                 .ThenBy(cell => cell.y)
                 .ThenBy(cell => cell.z)
@@ -2594,13 +3680,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!DecoLimitLifter.EsuSymmetry.CanUseWith(_scene.Construct, out _))
             {
                 _previewVolumes = _scene.Pieces
-                    .Select(piece => piece.ToVolume(_source))
+                    .Select(piece => piece.ToVolume(SourceForPiece(piece)))
                     .Where(volume => volume != null)
                     .ToArray();
                 return;
             }
 
-            SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
+            SmartBuildPreviewSnapshot preview = _scene.BuildPreviewWithSources(SourceForPiece);
             _previewCells = preview.Cells;
             _previewCellSets = preview.CellSets;
             _previewVolumes = preview.Volumes;
@@ -2612,7 +3698,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 return Array.Empty<SmartBuildVolume>();
 
             var volumes = new List<SmartBuildVolume>();
-            var seen = new HashSet<string>();
+            var seen = new HashSet<SmartBuildVolumeKey>();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
@@ -2620,7 +3706,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (mirrored == null)
                     continue;
 
-                if (seen.Add(VolumeSignature(mirrored)))
+                if (seen.Add(new SmartBuildVolumeKey(mirrored.MinCell, mirrored.MaxCell)))
                     volumes.Add(mirrored);
             }
 
@@ -2662,13 +3748,6 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             return SmartBuildVolume.FromBounds(volume.Construct, mirroredMin, mirroredMax);
-        }
-
-        private static string VolumeSignature(SmartBuildVolume volume)
-        {
-            Vector3i min = volume.MinCell;
-            Vector3i max = volume.MaxCell;
-            return FormatCell(min) + "|" + FormatCell(max);
         }
 
         private bool IsOccupied(Vector3i cell)
@@ -2774,8 +3853,25 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
+            bool conditionalPlanWasDirty = _planDirty && ConditionalReplacementPreviewActive;
             if (_planDirty)
                 RebuildPlan();
+
+            if (conditionalPlanWasDirty)
+            {
+                InfoStore.Add(
+                    "Smart Builder conditional replacement was not applied because its preview became dirty. Preview it again first.");
+                return;
+            }
+
+            if (ConditionalReplacementPreviewActive &&
+                !ConditionalReplacementPreviewMatchesCurrentInputs())
+            {
+                InvalidateConditionalReplacementPreview();
+                InfoStore.Add(
+                    "Smart Builder conditional replacement was not applied because its source, target, or selected scan region changed. Preview it again first.");
+                return;
+            }
 
             if (_plan == null)
             {
@@ -2795,81 +3891,107 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void RecordSceneHistory()
         {
-            SmartBuildSceneSnapshot snapshot = CaptureSceneSnapshot();
-            if (snapshot == null)
-                return;
-
-            _sceneUndo.Push(snapshot);
-            while (_sceneUndo.Count > SceneHistoryLimit)
-            {
-                SmartBuildSceneSnapshot[] retained = _sceneUndo
-                    .Take(SceneHistoryLimit)
-                    .Reverse()
-                    .ToArray();
-                _sceneUndo.Clear();
-                foreach (SmartBuildSceneSnapshot entry in retained)
-                    _sceneUndo.Push(entry);
-            }
-
-            _sceneRedo.Clear();
+            FinalizePendingSceneHistory();
+            _pendingSceneHistory = CaptureSceneSnapshot();
         }
 
         private SmartBuildSceneSnapshot CaptureSceneSnapshot() =>
             new SmartBuildSceneSnapshot(
-                _scene?.Construct ?? _draft?.Construct,
-                _scene?.Pieces,
-                _draft?.Id ?? _scene?.SelectedPiece?.Id ?? -1,
+                _scene?.CaptureState() ??
+                    new SmartBuildSceneState(
+                        _draft?.Construct,
+                        _draft == null
+                            ? Array.Empty<SmartBuildSceneNodeState>()
+                            : new[] { new SmartBuildSceneNodeState(_draft) },
+                        _draft == null ? Array.Empty<int>() : new[] { _draft.Id },
+                        _draft?.Id ?? -1),
                 _tool,
                 _selectedShape,
                 _selectedShapeDescriptorKey,
                 _selectedSlopeLength,
+                _selectedMaterial,
+                _drawPlane,
+                _occupancyMode,
                 _editHandleMode,
                 _defaultSlopeSupportMode,
                 _previewMode);
+
+        private void RestoreSelectedPiecesFromSnapshot(SmartBuildSceneSnapshot snapshot)
+        {
+            if (snapshot == null || _scene == null)
+                return;
+
+            var startsById = snapshot.Pieces.ToDictionary(piece => piece.Id);
+            foreach (int id in snapshot.SelectedPieceIds)
+            {
+                SmartBuildPiece live = _scene.Pieces.FirstOrDefault(piece => piece.Id == id);
+                if (live != null && startsById.TryGetValue(id, out SmartBuildPiece start))
+                    live.CopyFrom(start);
+            }
+
+            _scene.SetSelection(snapshot.SelectedPieceIds, snapshot.SelectedPieceId);
+            _draft = _scene.SelectedPiece;
+        }
 
         private void PushSceneSnapshot(SmartBuildSceneSnapshot snapshot)
         {
             if (snapshot == null)
                 return;
+            FinalizePendingSceneHistory();
+            PushSceneDelta(SmartBuildSceneDelta.Create(snapshot, CaptureSceneSnapshot()));
+        }
 
-            _sceneUndo.Push(snapshot);
+        private void FinalizePendingSceneHistory()
+        {
+            if (_pendingSceneHistory == null)
+                return;
+            SmartBuildSceneSnapshot before = _pendingSceneHistory;
+            _pendingSceneHistory = null;
+            PushSceneDelta(SmartBuildSceneDelta.Create(before, CaptureSceneSnapshot()));
+        }
+
+        private void PushSceneDelta(SmartBuildSceneDelta delta)
+        {
+            if (delta == null)
+                return;
+            _sceneUndo.Push(delta);
             while (_sceneUndo.Count > SceneHistoryLimit)
             {
-                SmartBuildSceneSnapshot[] retained = _sceneUndo
+                SmartBuildSceneDelta[] retained = _sceneUndo
                     .Take(SceneHistoryLimit)
                     .Reverse()
                     .ToArray();
                 _sceneUndo.Clear();
-                foreach (SmartBuildSceneSnapshot entry in retained)
+                foreach (SmartBuildSceneDelta entry in retained)
                     _sceneUndo.Push(entry);
             }
-
             _sceneRedo.Clear();
+            MarkSmartSceneRecoveryDirty();
         }
 
         private void UndoSceneEdit()
         {
+            FinalizePendingSceneHistory();
             if (_sceneUndo.Count == 0)
                 return;
 
-            SmartBuildSceneSnapshot redo = CaptureSceneSnapshot();
-            SmartBuildSceneSnapshot undo = _sceneUndo.Pop();
-            if (redo != null)
-                _sceneRedo.Push(redo);
-            RestoreSceneSnapshot(undo);
+            SmartBuildSceneDelta delta = _sceneUndo.Pop();
+            SmartBuildSceneSnapshot current = CaptureSceneSnapshot();
+            _sceneRedo.Push(delta);
+            RestoreSceneSnapshot(delta.Resolve(current, forward: false));
             InfoStore.Add("Smart Builder preview undo.");
         }
 
         private void RedoSceneEdit()
         {
+            FinalizePendingSceneHistory();
             if (_sceneRedo.Count == 0)
                 return;
 
-            SmartBuildSceneSnapshot undo = CaptureSceneSnapshot();
-            SmartBuildSceneSnapshot redo = _sceneRedo.Pop();
-            if (undo != null)
-                _sceneUndo.Push(undo);
-            RestoreSceneSnapshot(redo);
+            SmartBuildSceneDelta delta = _sceneRedo.Pop();
+            SmartBuildSceneSnapshot current = CaptureSceneSnapshot();
+            _sceneUndo.Push(delta);
+            RestoreSceneSnapshot(delta.Resolve(current, forward: true));
             InfoStore.Add("Smart Builder preview redo.");
         }
 
@@ -2882,19 +4004,24 @@ namespace DecoLimitLifter.SmartBuildMode
             _selectedShape = snapshot.SelectedShape;
             _selectedShapeDescriptorKey = snapshot.SelectedShapeDescriptorKey;
             _selectedSlopeLength = snapshot.SelectedSlopeLength;
+            _selectedMaterial = snapshot.SelectedMaterial;
+            s_selectedMaterial = snapshot.SelectedMaterial;
+            _drawPlane = snapshot.DrawPlane;
+            _occupancyMode = snapshot.OccupancyMode;
             _editHandleMode = snapshot.EditHandleMode;
             _defaultSlopeSupportMode = snapshot.DefaultSlopeSupportMode;
             _previewMode = snapshot.PreviewMode;
-            if (snapshot.Pieces.Count == 0 || snapshot.Construct == null)
+            if (snapshot.SceneState.Nodes.Count == 0 || snapshot.Construct == null)
             {
                 _scene = null;
                 _draft = null;
+                _sceneSelectionAnchorId = -1;
             }
             else
             {
-                _scene = new SmartBuildPieceScene(snapshot.Construct);
-                _scene.ReplaceWith(snapshot.Pieces.Select(piece => piece.Clone()), snapshot.SelectedPieceId);
+                _scene = SmartBuildPieceScene.RestoreState(snapshot.SceneState);
                 _draft = _scene.SelectedPiece;
+                _sceneSelectionAnchorId = _draft?.Id ?? -1;
             }
 
             _dragging = false;
@@ -2903,18 +4030,35 @@ namespace DecoLimitLifter.SmartBuildMode
             _dragSigns = Array.Empty<int>();
             _dragPieceStart = null;
             _dragSceneStart = null;
+            ClearEditablePatternViewportGestureState();
             ClearRotateDragState();
+            ClearBoxSelectionState();
             _contextMenuOpen = false;
+            _source = null;
+            _sourceReason = null;
+            ClearSmartPreviewRendererCache();
+            RefreshSelection();
             RebuildPlan();
         }
 
         private void CancelPreview()
         {
+            CancelPrecisionSnapFaceMode(notify: false);
+            ClearEditablePatternViewportGestureState();
+            ClearConditionalReplacementPreview(rebuildNormalPlan: false);
             ClearApplyCancelAttention();
+            _brushPainting = false;
+            _brushSceneStart = null;
+            _brushLastCellKey = null;
+            _brushAddedCount = 0;
+            ClearSmartSceneRecovery();
             _scene = null;
             _draft = null;
+            _sceneSelectionAnchorId = -1;
             _dragPieceStart = null;
             _plan = null;
+            _planCoordinator.Reset();
+            ResetCraftOccupancyTracking();
             _previewCells = Array.Empty<Vector3i>();
             _previewCellSets = Array.Empty<IReadOnlyList<Vector3i>>();
             _previewVolumes = Array.Empty<SmartBuildVolume>();
@@ -2926,9 +4070,11 @@ namespace DecoLimitLifter.SmartBuildMode
             _hoverFaceAxis = DecorationEditAxis.None;
             _dragSceneStart = null;
             ClearRotateDragState();
+            ClearBoxSelectionState();
             _contextMenuOpen = false;
             _sceneUndo.Clear();
             _sceneRedo.Clear();
+            _pendingSceneHistory = null;
         }
 
         private void RefreshSelection()
@@ -2949,17 +4095,21 @@ namespace DecoLimitLifter.SmartBuildMode
                 _source = source;
                 _sourceMaterial = _selectedMaterial;
                 _sourceReason = null;
+                _pieceMaterialSources[_selectedMaterial] = source;
+                _pieceMaterialSourceIssues.Remove(_selectedMaterial);
                 if (materialChanged)
                     ClearSmartPreviewRendererCache();
                 EnsureSelectedShapeAvailable();
                 if (HasActivePreviewScene)
-                    RebuildPlan();
+                    RebuildPlan(SmartBuildPlanRevisionKind.Material);
                 return;
             }
 
             _source = null;
             _sourceMaterial = _selectedMaterial;
             _sourceReason = reason;
+            _pieceMaterialSources.Remove(_selectedMaterial);
+            _pieceMaterialSourceIssues[_selectedMaterial] = reason;
             if (materialChanged)
                 ClearSmartPreviewRendererCache();
             if (_scene == null || _scene.Count == 0)
@@ -2973,21 +4123,56 @@ namespace DecoLimitLifter.SmartBuildMode
             }
             else
             {
-                SmartBuildPreviewSnapshot preview = _scene.BuildPreview(_source);
-                _previewCells = preview.Cells;
-                _previewCellSets = preview.CellSets;
-                _previewVolumes = preview.Volumes;
-                _plan = new SmartBuildPlan(
-                    _scene.Construct,
-                    VolumeFromCells(_scene.Construct, _previewCells),
-                    Array.Empty<SmartBuildPlacement>(),
-                    Array.Empty<Vector3i>(),
-                    Array.Empty<string>(),
-                    canCommit: false,
-                    failureReason: reason);
-                _planDirty = false;
-                NotifyPlanIssueIfNeeded();
+                RebuildPlan(SmartBuildPlanRevisionKind.Material);
             }
+        }
+
+        private SmartBuildMaterial MaterialForPiece(SmartBuildPiece piece) =>
+            piece?.MaterialOverride ?? _selectedMaterial;
+
+        private SmartBuildSource SourceForPiece(SmartBuildPiece piece)
+        {
+            SmartBuildMaterial material = MaterialForPiece(piece);
+            if (_source != null &&
+                _sourceReason == null &&
+                _sourceMaterial == material)
+            {
+                return _source;
+            }
+
+            if (_pieceMaterialSources.TryGetValue(material, out SmartBuildSource cached))
+                return cached;
+
+            if (SmartBlockFamilyCatalog.TryCreateMaterialSource(
+                    material,
+                    out SmartBuildSource source,
+                    out string reason))
+            {
+                _pieceMaterialSources[material] = source;
+                _pieceMaterialSourceIssues.Remove(material);
+                return source;
+            }
+
+            _pieceMaterialSourceIssues[material] = reason;
+            return null;
+        }
+
+        private string FirstPieceMaterialIssue()
+        {
+            foreach (SmartBuildPiece piece in _scene?.Pieces ?? Array.Empty<SmartBuildPiece>())
+            {
+                if (SourceForPiece(piece) != null)
+                    continue;
+
+                SmartBuildMaterial material = MaterialForPiece(piece);
+                string label = SmartBlockFamilyCatalog.MaterialDisplayName(material);
+                return _pieceMaterialSourceIssues.TryGetValue(material, out string reason) &&
+                       !string.IsNullOrWhiteSpace(reason)
+                    ? label + ": " + reason
+                    : label + " blocks are unavailable.";
+            }
+
+            return null;
         }
 
         private void DrawToolbar(int id)
@@ -3198,7 +4383,13 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void SelectViewMode(DecorationEditorViewMode mode)
         {
+            if (_viewMode == mode)
+            {
+                _viewModeMenuOpen = false;
+                return;
+            }
             _viewMode = mode;
+            RegisterPresentationRevision();
             _viewModeMenuOpen = false;
             ApplySmartViewMode();
             InfoStore.Add("Smart Builder view: " + ViewModeDisplayName(_viewMode));
@@ -3268,42 +4459,48 @@ namespace DecoLimitLifter.SmartBuildMode
                 return;
             }
 
-            if (_scene == null || !_scene.Select(_contextMenuPieceId))
+            if (_scene == null || !_scene.IsSelected(_contextMenuPieceId))
             {
                 _contextMenuOpen = false;
                 return;
             }
 
+            _scene.AddToSelection(_contextMenuPieceId);
             _draft = _scene.SelectedPiece;
+            int selectionCount = Math.Max(1, _scene.SelectionCount);
+            bool group = selectionCount > 1;
             GUI.Box(_contextMenuRect, GUIContent.none, DecorationEditorTheme.Panel);
             GUILayout.BeginArea(EsuHudLayout.PanelInnerRect(_contextMenuRect, 5f));
-            GUILayout.Label("Preview piece", DecorationEditorTheme.SubHeader);
-            if (SmartGUILayoutButton(new GUIContent("Select", "Select this preview piece for editing."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            GUILayout.Label(
+                group
+                    ? selectionCount.ToString(CultureInfo.InvariantCulture) + " preview pieces"
+                    : "Preview piece",
+                DecorationEditorTheme.SubHeader);
+            if (SmartGUILayoutButton(new GUIContent("Move", group ? "Move the selected preview group." : "Move this preview piece."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 _contextMenuOpen = false;
                 _tool = SmartBuildTool.Move;
             }
 
-            if (SmartGUILayoutButton(new GUIContent("Duplicate", "Duplicate this preview piece one cell to the right."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent("Duplicate", group ? "Duplicate the selected preview group one cell to the right." : "Duplicate this preview piece one cell to the right."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 DuplicateSelectedPiece();
                 _contextMenuOpen = false;
             }
 
-            if (SmartGUILayoutButton(new GUIContent("Delete", "Delete this preview piece."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent("Delete", group ? "Delete the selected preview group." : "Delete this preview piece."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 DeleteSelectedPiece();
                 _contextMenuOpen = false;
             }
 
-            if (SmartGUILayoutButton(new GUIContent(SmartYawLabel(), "Rotate this preview piece around construct Y."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            if (SmartGUILayoutButton(new GUIContent(SmartYawLabel(), group ? "Rotate the selected preview group around its primary piece." : "Rotate this preview piece around construct Y."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
             {
                 YawSelectedPiece();
                 _contextMenuOpen = false;
             }
 
-            bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
-                           _draft?.IsFixedGeometry == true;
+            bool canFlip = CanFlipSelection();
             bool previous = GUI.enabled;
             GUI.enabled = previous && canFlip;
             if (SmartGUILayoutButton(new GUIContent("Flip", "Reverse this shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton, GUILayout.Height(EsuHudLayout.Scale(24f))))
@@ -3360,7 +4557,9 @@ namespace DecoLimitLifter.SmartBuildMode
                     "rotate",
                     "Yaw",
                     DecorationEditorTheme.Button,
-                    "Rotate the selected Smart Builder piece around vertical.",
+                    (_scene?.SelectionCount ?? 0) > 1
+                        ? "Rotate the selected Smart Builder group around its primary piece."
+                        : "Rotate the selected Smart Builder piece around vertical.",
                     _draft != null))
             {
                 YawSelectedPiece();
@@ -3373,9 +4572,10 @@ namespace DecoLimitLifter.SmartBuildMode
                     "mirror",
                     "Flip",
                     DecorationEditorTheme.Button,
-                    "Reverse the selected shape's forward direction.",
-                    (_draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
-                     _draft?.IsFixedGeometry == true)))
+                    (_scene?.SelectionCount ?? 0) > 1
+                        ? "Reverse every compatible shape in the selected group."
+                        : "Reverse the selected shape's forward direction.",
+                    CanFlipSelection()))
             {
                 FlipSelectedPiece();
             }
@@ -3383,11 +4583,21 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void YawSelectedPiece()
         {
-            if (_draft == null)
+            if (_draft == null || _scene == null)
                 return;
 
             RecordSceneHistory();
-            RotateYaw(_draft);
+            if (_scene.SelectionCount <= 1)
+            {
+                RotateYaw(_draft);
+            }
+            else
+            {
+                RotateSelectionAroundAxis(
+                    DecorationEditAxis.Y,
+                    EsuTransformSnapSettings.SmartRotateQuarterTurns,
+                    _draft.RotationPivotCell);
+            }
             RebuildPlan();
         }
 
@@ -3398,15 +4608,35 @@ namespace DecoLimitLifter.SmartBuildMode
                 EsuTransformSnapSettings.SmartRotateQuarterTurns);
         }
 
+        private void RotateSelectionAroundAxis(
+            DecorationEditAxis axis,
+            int quarterTurns,
+            Vector3i pivot)
+        {
+            foreach (SmartBuildPiece piece in _scene?.SelectedPieces ?? Array.Empty<SmartBuildPiece>())
+                piece.RotateAroundAxis(axis, quarterTurns, pivot);
+        }
+
         private void FlipSelectedPiece()
         {
-            if (_draft?.ShapeKind != SmartBuildShapeKind.DownSlope &&
-                _draft?.IsFixedGeometry != true)
+            if (!CanFlipSelection())
                 return;
 
             RecordSceneHistory();
-            _draft.FlipForward();
+            foreach (SmartBuildPiece piece in _scene.SelectedPieces)
+                piece.FlipForward();
             RebuildPlan();
+        }
+
+        private bool CanFlipSelection()
+        {
+            IReadOnlyList<SmartBuildPiece> selected = _scene?.SelectedPieces;
+            return selected != null &&
+                   selected.Count > 0 &&
+                   selected.All(
+                       piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope ||
+                                piece.IsFixedGeometry ||
+                                piece.IsGeneratedShape);
         }
 
         private void DuplicateSelectedPiece()
@@ -3414,15 +4644,27 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_scene == null || _draft == null)
                 return;
 
-            RecordSceneHistory();
-            SmartBuildPiece duplicate = _scene.DuplicateSelected(new Vector3i(1, 0, 0));
-            if (duplicate == null)
+            SmartBuildSceneSnapshot before = CaptureSceneSnapshot();
+            if (!_scene.TryDuplicateSelection(
+                    new Vector3i(1, 0, 0),
+                    out IReadOnlyList<SmartBuildPiece> duplicates,
+                    out string reason))
+            {
+                if (!string.IsNullOrWhiteSpace(reason))
+                    InfoStore.Add(reason);
                 return;
+            }
 
-            _draft = duplicate;
+            PushSceneSnapshot(before);
+            _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = _draft?.Id ?? -1;
             _tool = SmartBuildTool.Move;
             RebuildPlan();
-            InfoStore.Add("Duplicated Smart Builder piece #" + duplicate.Id.ToString(CultureInfo.InvariantCulture) + ".");
+            InfoStore.Add(
+                duplicates.Count == 1
+                    ? "Duplicated Smart Builder piece #" + duplicates[0].Id.ToString(CultureInfo.InvariantCulture) + "."
+                    : "Duplicated " + duplicates.Count.ToString(CultureInfo.InvariantCulture) +
+                      " Smart Builder pieces as one group.");
         }
 
         private void DeleteSelectedPiece()
@@ -3430,12 +4672,15 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_scene == null || _draft == null)
                 return;
 
-            int id = _draft.Id;
+            int primaryId = _draft.Id;
+            int requested = Math.Max(1, _scene.SelectionCount);
             RecordSceneHistory();
-            if (!_scene.DeleteSelected())
+            int deleted = _scene.DeleteSelection();
+            if (deleted <= 0)
                 return;
 
             _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = _draft?.Id ?? -1;
             if (_draft == null)
             {
                 _scene = null;
@@ -3450,7 +4695,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 RebuildPlan();
             }
 
-            InfoStore.Add("Deleted Smart Builder piece #" + id.ToString(CultureInfo.InvariantCulture) + ".");
+            InfoStore.Add(
+                requested == 1
+                    ? "Deleted Smart Builder piece #" + primaryId.ToString(CultureInfo.InvariantCulture) + "."
+                    : "Deleted " + deleted.ToString(CultureInfo.InvariantCulture) +
+                      " Smart Builder pieces as one group.");
         }
 
         private void ModeSwitchButton(float controlWidth)
@@ -3575,10 +4824,21 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (!string.IsNullOrWhiteSpace(_sourceReason))
                     LabelRow("Blocks", _sourceReason);
             }
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        _brushEnabled ? "Brush: on" : "Brush: off",
+                        "When enabled, hold left mouse in Draw mode to paint a continuous sequence of preview pieces as one undoable edit."),
+                    DecorationEditorTheme.ToolButton(_brushEnabled),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _brushEnabled = !_brushEnabled;
+                if (_brushEnabled)
+                    ArmAddMode();
+            }
             LabelRow("Tool", ToolDisplayName());
             LabelRow("Handles", _editHandleMode.ToString());
             LabelRow("Plane", _drawPlane.ToString());
-            LabelRow("Occupancy", _occupancyMode == SmartBuildOccupancyMode.SkipOccupied ? "Skip occupied" : "Block on overlap");
+            LabelRow("Operation", OccupancyDisplayName(_occupancyMode));
             LabelRow("Symmetry", DecoLimitLifter.EsuSymmetry.FormatSummary());
             GUILayout.Space(EsuHudLayout.Scale(3f));
             GUILayout.Label(
@@ -3808,19 +5068,748 @@ namespace DecoLimitLifter.SmartBuildMode
                     alwaysShowHorizontal: false,
                     alwaysShowVertical: true,
                     GUILayout.Height(Mathf.Max(0f, rect.height - EsuHudLayout.Scale(32f))));
+                DrawSmartScenePresetControls();
+                DecorationEditorTheme.Separator();
                 if (_scene == null || _scene.Count == 0)
                 {
                     GUILayout.Label("No pieces yet", DecorationEditorTheme.MiniWrap);
                 }
                 else
                 {
-                    foreach (SmartBuildPiece piece in _scene.Pieces)
-                        DrawPieceRow(piece);
+                    DrawBulkSceneSelectionControls();
+                    DecorationEditorTheme.Separator();
+                    DrawVirtualizedSceneRows(Mathf.Max(0f, rect.height - EsuHudLayout.Scale(32f)));
                 }
 
                 GUILayout.EndScrollView();
             }
             GUILayout.EndArea();
+        }
+
+        private void DrawVirtualizedSceneRows(float viewportHeight)
+        {
+            IReadOnlyList<SmartBuildPiece> pieces = _scene?.Pieces ??
+                Array.Empty<SmartBuildPiece>();
+            if (pieces.Count == 0)
+                return;
+
+            float rowHeight = EsuHudLayout.Scale(28f);
+            const int overscanRows = 16;
+            // The scroll also contains the preset and bulk-selection controls. A
+            // generous overscan absorbs that prefix while still bounding IMGUI work.
+            int first = Mathf.Clamp(
+                Mathf.FloorToInt(_sceneListScroll.y / Mathf.Max(1f, rowHeight)) - overscanRows,
+                0,
+                pieces.Count - 1);
+            int visible = Mathf.CeilToInt(viewportHeight / Mathf.Max(1f, rowHeight)) +
+                          overscanRows * 2;
+            int end = Math.Min(pieces.Count, first + Math.Max(1, visible));
+            if (first > 0)
+                GUILayout.Space(rowHeight * first);
+            for (int index = first; index < end; index++)
+                DrawPieceRow(pieces[index]);
+            if (end < pieces.Count)
+                GUILayout.Space(rowHeight * (pieces.Count - end));
+        }
+
+        private void DrawBulkSceneSelectionControls()
+        {
+            GUILayout.Label("Bulk selection", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginHorizontal();
+            if (SmartGUILayoutButton(
+                    new GUIContent("All", "Select every Smart Builder preview piece."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                BulkSelectAllPieces();
+            }
+            if (SmartGUILayoutButton(
+                    new GUIContent("None", "Clear the Smart Builder preview selection without deleting pieces."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                BulkClearPieceSelection();
+            }
+            if (SmartGUILayoutButton(
+                    new GUIContent("Invert", "Invert the Smart Builder preview selection."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                BulkInvertPieceSelection();
+            }
+            GUILayout.EndHorizontal();
+
+            bool hasPrimary = _scene?.SelectedPiece != null;
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && hasPrimary;
+            GUILayout.BeginHorizontal();
+            if (SmartGUILayoutButton(
+                    new GUIContent("Same shape", "Select every preview piece with the primary piece's exact structural shape, dimensions, and fill variant."),
+                    hasPrimary ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                BulkSelectPiecesByPrimaryShape();
+            }
+            if (SmartGUILayoutButton(
+                    new GUIContent("Same material", "Select every preview piece with the primary piece's material."),
+                    hasPrimary ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                BulkSelectPiecesByPrimaryMaterial();
+            }
+            GUILayout.EndHorizontal();
+            GUI.enabled = previous;
+        }
+
+        private void BulkSelectAllPieces()
+        {
+            if (_scene == null || _scene.Count == 0)
+                return;
+
+            int primaryId = _scene.SelectedPiece?.Id ?? _scene.Pieces[_scene.Count - 1].Id;
+            SetBulkSceneSelection(_scene.Pieces.Select(piece => piece.Id), primaryId);
+        }
+
+        private void BulkClearPieceSelection()
+        {
+            if (_scene == null)
+                return;
+
+            _scene.ClearSelection();
+            _draft = null;
+            _sceneSelectionAnchorId = -1;
+            RebuildPlan(SmartBuildPlanRevisionKind.Selection);
+            InfoStore.Add("Smart Builder preview selection cleared.");
+        }
+
+        private void BulkInvertPieceSelection()
+        {
+            if (_scene == null || _scene.Count == 0)
+                return;
+
+            int[] inverted = _scene.Pieces
+                .Where(piece => !_scene.IsSelected(piece.Id))
+                .Select(piece => piece.Id)
+                .ToArray();
+            int primaryId = inverted.Length > 0 ? inverted[inverted.Length - 1] : -1;
+            SetBulkSceneSelection(inverted, primaryId);
+        }
+
+        private void BulkSelectPiecesByPrimaryShape()
+        {
+            SmartBuildPiece primary = _scene?.SelectedPiece;
+            if (primary == null)
+                return;
+
+            SetBulkSceneSelection(
+                _scene.Pieces
+                    .Where(piece => SameExactSmartPieceShape(piece, primary))
+                    .Select(piece => piece.Id),
+                primary.Id);
+        }
+
+        /// <summary>
+        /// Shape matching deliberately excludes position, orientation, draw plane, and
+        /// material while including every setting that changes occupied geometry.
+        /// </summary>
+        internal static bool SameExactSmartPieceShape(
+            SmartBuildPiece first,
+            SmartBuildPiece second) =>
+            first != null &&
+            second != null &&
+            string.Equals(
+                ExactSmartPieceShapeSignature(first),
+                ExactSmartPieceShapeSignature(second),
+                StringComparison.Ordinal);
+
+        internal static string ExactSmartPieceShapeSignature(SmartBuildPiece piece)
+        {
+            if (piece == null)
+                return string.Empty;
+
+            Vector3i size = piece.PresetCuboidSize;
+            return string.Join(
+                "|",
+                new[]
+                {
+                    (piece.ShapeDescriptorKey ?? string.Empty).Trim().ToLowerInvariant(),
+                    ((int)piece.ShapeKind).ToString(CultureInfo.InvariantCulture),
+                    size.x.ToString(CultureInfo.InvariantCulture),
+                    size.y.ToString(CultureInfo.InvariantCulture),
+                    size.z.ToString(CultureInfo.InvariantCulture),
+                    piece.CuboidHollow ? "hollow" : "solid",
+                    piece.SlopeLength.ToString(CultureInfo.InvariantCulture),
+                    piece.SlopeSteps.ToString(CultureInfo.InvariantCulture),
+                    piece.SlopeWidth.ToString(CultureInfo.InvariantCulture),
+                    ((int)piece.SupportMode).ToString(CultureInfo.InvariantCulture),
+                    piece.SelectedLength.ToString(CultureInfo.InvariantCulture),
+                    piece.FixedForwardCells.ToString(CultureInfo.InvariantCulture),
+                    piece.FixedForwardTiles.ToString(CultureInfo.InvariantCulture),
+                    piece.FixedRightTiles.ToString(CultureInfo.InvariantCulture),
+                    piece.FixedDropTiles.ToString(CultureInfo.InvariantCulture),
+                    piece.GeneratorSides.ToString(CultureInfo.InvariantCulture),
+                    ((int)piece.GeneratorFillMode).ToString(CultureInfo.InvariantCulture),
+                    ((int)piece.GeneratorSmoothingMode).ToString(CultureInfo.InvariantCulture),
+                    piece.GeneratorRoundLock ? "round" : "free",
+                    piece.GeneratorArcDegrees.ToString(CultureInfo.InvariantCulture),
+                    piece.GeneratorTopScalePercent.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        private void BulkSelectPiecesByPrimaryMaterial()
+        {
+            SmartBuildPiece primary = _scene?.SelectedPiece;
+            if (primary == null)
+                return;
+
+            SetBulkSceneSelection(
+                _scene.Pieces
+                    .Where(piece => SameSmartPieceMaterial(
+                        piece,
+                        primary,
+                        MaterialForPiece))
+                    .Select(piece => piece.Id),
+                primary.Id);
+        }
+
+        internal static bool SameSmartPieceMaterial(
+            SmartBuildPiece first,
+            SmartBuildPiece second,
+            Func<SmartBuildPiece, SmartBuildMaterial> materialForPiece) =>
+            first != null &&
+            second != null &&
+            materialForPiece != null &&
+            materialForPiece(first) == materialForPiece(second);
+
+        private void SetBulkSceneSelection(IEnumerable<int> ids, int primaryId)
+        {
+            if (_scene == null)
+                return;
+
+            _scene.SetSelection(ids, primaryId);
+            _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = _draft?.Id ?? -1;
+            RebuildPlan(SmartBuildPlanRevisionKind.Selection);
+            InfoStore.Add(SelectionStatusMessage());
+        }
+
+        private void DrawSmartScenePresetControls()
+        {
+            if (!_smartScenePresetsLoaded)
+                RefreshSmartScenePresetList();
+
+            GUILayout.Label("Scene presets", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginHorizontal();
+            _smartScenePresetName = GUILayout.TextField(
+                _smartScenePresetName ?? string.Empty,
+                GUILayout.MinWidth(EsuHudLayout.Scale(88f)),
+                GUILayout.Height(EsuHudLayout.Scale(24f)));
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && HasActivePreviewScene;
+            if (SmartGUILayoutButton(
+                    new GUIContent("Save", "Save or update this named Smart Builder scene."),
+                    HasActivePreviewScene ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(52f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SaveNamedSmartScenePreset();
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+
+            DrawSmartScenePresetTargetControls();
+
+            EsuPresetEntry selected = SelectedSmartScenePreset();
+            GUILayout.BeginHorizontal();
+            GUI.enabled = previous && _smartScenePresets.Count > 1;
+            if (SmartGUILayoutButton(
+                    new GUIContent("<", "Previous saved Smart Builder scene."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                CycleSmartScenePreset(-1);
+                selected = SelectedSmartScenePreset();
+            }
+            GUI.enabled = previous;
+            GUILayout.Label(
+                selected?.Name ?? "No saved scenes",
+                DecorationEditorTheme.MiniWrap,
+                GUILayout.MinWidth(EsuHudLayout.Scale(80f)),
+                GUILayout.Height(EsuHudLayout.Scale(22f)));
+            GUI.enabled = previous && _smartScenePresets.Count > 1;
+            if (SmartGUILayoutButton(
+                    new GUIContent(">", "Next saved Smart Builder scene."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                CycleSmartScenePreset(1);
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUI.enabled = previous && selected != null;
+            if (SmartGUILayoutButton(
+                    new GUIContent("Load", "Replace the preview with this saved scene at the chosen target, or at its saved coordinates when no target is set. This can be undone."),
+                    selected != null ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                LoadNamedSmartScenePreset();
+            }
+            if (SmartGUILayoutButton(
+                    new GUIContent("Delete", "Delete this named Smart Builder scene preset."),
+                    selected != null ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                DeleteNamedSmartScenePreset();
+            }
+            GUI.enabled = previous && _smartSceneRecoveryAvailable;
+            if (SmartGUILayoutButton(
+                    new GUIContent("Restore", "Restore the latest autosaved Smart Builder recovery scene."),
+                    _smartSceneRecoveryAvailable ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                RestoreSmartSceneRecovery();
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrWhiteSpace(_smartScenePresetStatus))
+                GUILayout.Label(_smartScenePresetStatus, DecorationEditorTheme.MiniWrap);
+        }
+
+        private void DrawSmartScenePresetTargetControls()
+        {
+            string targetLabel = _smartScenePresetTargetAnchor.HasValue
+                ? "Target " + FormatCell(_smartScenePresetTargetAnchor.Value)
+                : "Target: saved position";
+            GUILayout.Label(targetLabel, DecorationEditorTheme.MiniWrap);
+            GUILayout.BeginHorizontal();
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && _draft?.Construct != null;
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        "Use primary",
+                        "Relocate the loaded named scene so its preset anchor lands on the selected primary preview piece."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                _smartScenePresetTargetConstruct = _draft.Construct;
+                _smartScenePresetTargetAnchor = _draft.Origin;
+                _smartScenePresetTargetArmed = false;
+                InfoStore.Add("Smart Builder preset target set to the primary preview piece.");
+            }
+            GUI.enabled = previous;
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        _smartScenePresetTargetArmed ? "Picking..." : "Pick block",
+                        "Arm a world pick, then click a craft block to use it as the named-scene placement anchor."),
+                    DecorationEditorTheme.ToolButton(_smartScenePresetTargetArmed),
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                _smartScenePresetTargetArmed = !_smartScenePresetTargetArmed;
+                if (_smartScenePresetTargetArmed)
+                {
+                    _blockEyedropperArmed = false;
+                    InfoStore.Add("Click a craft block to set the Smart Builder preset target; right-click or Escape cancels.");
+                }
+            }
+            GUI.enabled = previous && _smartScenePresetTargetAnchor.HasValue;
+            if (SmartGUILayoutButton(
+                    new GUIContent("Saved", "Load named scenes at their saved local coordinates."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(52f)),
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                _smartScenePresetTargetConstruct = null;
+                _smartScenePresetTargetAnchor = null;
+                _smartScenePresetTargetArmed = false;
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+        }
+
+        private bool TryCaptureSmartScenePresetTargetFromPointer()
+        {
+            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit) || hit?.Construct == null)
+            {
+                InfoStore.Add("Point at a craft block for the Smart Builder preset target.");
+                return false;
+            }
+
+            _smartScenePresetTargetConstruct = hit.Construct;
+            _smartScenePresetTargetAnchor = hit.Anchor;
+            _smartScenePresetTargetArmed = false;
+            InfoStore.Add("Smart Builder preset target set to " + FormatCell(hit.Anchor) + ".");
+            return true;
+        }
+
+        private EsuPresetEntry SelectedSmartScenePreset()
+        {
+            if (_smartScenePresets == null || _smartScenePresets.Count == 0)
+                return null;
+
+            _selectedSmartScenePresetIndex = Mathf.Clamp(
+                _selectedSmartScenePresetIndex,
+                0,
+                _smartScenePresets.Count - 1);
+            return _smartScenePresets[_selectedSmartScenePresetIndex];
+        }
+
+        private void CycleSmartScenePreset(int direction)
+        {
+            if (_smartScenePresets == null || _smartScenePresets.Count == 0)
+                return;
+
+            _selectedSmartScenePresetIndex =
+                (_selectedSmartScenePresetIndex + direction) % _smartScenePresets.Count;
+            if (_selectedSmartScenePresetIndex < 0)
+                _selectedSmartScenePresetIndex += _smartScenePresets.Count;
+            EsuPresetEntry selected = SelectedSmartScenePreset();
+            if (selected != null)
+                _smartScenePresetName = selected.Name;
+        }
+
+        private void RefreshSmartScenePresetList(string preferredId = null)
+        {
+            _smartScenePresetsLoaded = true;
+            if (!EsuPresetLibrary.Default.TryList(
+                    out IReadOnlyList<EsuPresetEntry> entries,
+                    out string message))
+            {
+                _smartScenePresets = Array.Empty<EsuPresetEntry>();
+                _selectedSmartScenePresetIndex = -1;
+                _smartScenePresetStatus = message;
+                return;
+            }
+
+            _smartScenePresets = entries
+                .Where(entry => entry != null && entry.Kind == EsuPresetKind.SmartScene)
+                .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (_smartScenePresets.Count == 0)
+            {
+                _selectedSmartScenePresetIndex = -1;
+                return;
+            }
+
+            int preferred = string.IsNullOrWhiteSpace(preferredId)
+                ? -1
+                : _smartScenePresets
+                    .Select((entry, index) => new { entry, index })
+                    .Where(pair => string.Equals(pair.entry.Id, preferredId, StringComparison.OrdinalIgnoreCase))
+                    .Select(pair => pair.index)
+                    .DefaultIfEmpty(-1)
+                    .First();
+            _selectedSmartScenePresetIndex = preferred >= 0
+                ? preferred
+                : Mathf.Clamp(_selectedSmartScenePresetIndex, 0, _smartScenePresets.Count - 1);
+        }
+
+        private void SaveNamedSmartScenePreset()
+        {
+            if (!TryCaptureSmartScenePayload(out SmartBuildScenePresetPayload payload, out string reason))
+            {
+                _smartScenePresetStatus = reason;
+                InfoStore.Add(reason);
+                return;
+            }
+
+            if (!EsuPresetLibrary.Default.TrySave(
+                    _smartScenePresetName,
+                    EsuPresetKind.SmartScene,
+                    payload,
+                    overwrite: true,
+                    out EsuPresetEntry saved,
+                    out string message,
+                    description: "Portable Smart Builder preview scene.",
+                    tags: new[] { "smart-builder", "scene" }))
+            {
+                _smartScenePresetStatus = message;
+                InfoStore.Add(message);
+                return;
+            }
+
+            _smartScenePresetName = saved.Name;
+            _smartScenePresetStatus = message;
+            RefreshSmartScenePresetList(saved.Id);
+            InfoStore.Add(message);
+        }
+
+        private void LoadNamedSmartScenePreset()
+        {
+            EsuPresetEntry selected = SelectedSmartScenePreset();
+            if (selected == null)
+                return;
+
+            if (!EsuPresetLibrary.Default.TryRead(
+                    selected.Id,
+                    out SmartBuildScenePresetPayload payload,
+                    out _,
+                    out string message))
+            {
+                _smartScenePresetStatus = message;
+                InfoStore.Add(message);
+                return;
+            }
+
+            LoadSmartScenePayload(
+                payload,
+                "Loaded Smart Builder scene '" + selected.Name + "'.",
+                relocateToChosenTarget: true);
+        }
+
+        private void DeleteNamedSmartScenePreset()
+        {
+            EsuPresetEntry selected = SelectedSmartScenePreset();
+            if (selected == null)
+                return;
+
+            if (!EsuPresetLibrary.Default.TryDelete(selected.Id, out string message))
+            {
+                _smartScenePresetStatus = message;
+                InfoStore.Add(message);
+                return;
+            }
+
+            _smartScenePresetStatus = message;
+            RefreshSmartScenePresetList();
+            InfoStore.Add(message);
+        }
+
+        private void RestoreSmartSceneRecovery()
+        {
+            if (!TryReadSmartSceneRecovery(
+                    out SmartBuildScenePresetPayload payload,
+                    out string message))
+            {
+                _smartScenePresetStatus = message;
+                _smartSceneRecoveryAvailable = false;
+                InfoStore.Add(message);
+                return;
+            }
+
+            LoadSmartScenePayload(
+                payload,
+                "Restored the autosaved Smart Builder scene.",
+                relocateToChosenTarget: false);
+        }
+
+        private void LoadSmartScenePayload(
+            SmartBuildScenePresetPayload payload,
+            string successMessage,
+            bool relocateToChosenTarget)
+        {
+            bool relocate = relocateToChosenTarget &&
+                            _smartScenePresetTargetConstruct != null &&
+                            _smartScenePresetTargetAnchor.HasValue;
+            AllConstruct construct = relocate
+                ? _smartScenePresetTargetConstruct
+                : FocusedConstruct();
+            Vector3i? anchorOverride = relocate
+                ? _smartScenePresetTargetAnchor
+                : null;
+            string reason = null;
+            if (payload == null ||
+                !payload.TryRestoreScene(
+                    construct,
+                    anchorOverride,
+                    out SmartBuildPieceScene restoredScene,
+                    out IReadOnlyList<int> selectedIds,
+                    out int primaryId,
+                    out reason))
+            {
+                _smartScenePresetStatus = reason ?? "Smart Builder scene payload is empty.";
+                InfoStore.Add(_smartScenePresetStatus);
+                return;
+            }
+
+            RecordSceneHistory();
+            _selectedMaterial = payload.ActiveMaterial;
+            s_selectedMaterial = payload.ActiveMaterial;
+            _tool = payload.Tool;
+            _selectedShape = payload.SelectedShape;
+            _selectedShapeDescriptorKey = payload.SelectedShapeDescriptorKey;
+            _selectedSlopeLength = payload.SelectedSlopeLength;
+            _drawPlane = payload.DrawPlane;
+            _editHandleMode = payload.EditHandleMode;
+            _defaultSlopeSupportMode = payload.DefaultSlopeSupportMode;
+            _previewMode = payload.PreviewMode;
+            _occupancyMode = payload.OccupancyMode;
+            _scene = restoredScene;
+            _scene.SetSelection(selectedIds, primaryId);
+            _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = _draft?.Id ?? -1;
+            if (_draft == null && _tool != SmartBuildTool.Draw)
+                _tool = SmartBuildTool.Move;
+            _source = null;
+            _sourceReason = null;
+            ClearSmartPreviewRendererCache();
+            RefreshSelection();
+            RebuildPlan();
+            _lastSavedSceneRecoverySignature = null;
+            _pendingSceneRecoverySignature = null;
+            _sceneRecoveryDirty = true;
+            _smartScenePresetStatus = successMessage;
+            RefreshApplyCancelAttention();
+            InfoStore.Add(successMessage);
+        }
+
+        private bool TryCaptureSmartScenePayload(
+            out SmartBuildScenePresetPayload payload,
+            out string reason)
+        {
+            payload = null;
+            if (!HasActivePreviewScene)
+            {
+                reason = "Create a Smart Builder preview before saving a scene.";
+                return false;
+            }
+
+            payload = SmartBuildScenePresetPayload.Capture(
+                _scene,
+                _selectedMaterial,
+                _tool,
+                _selectedShape,
+                _selectedShapeDescriptorKey,
+                _selectedSlopeLength,
+                _drawPlane,
+                _editHandleMode,
+                _defaultSlopeSupportMode,
+                _previewMode,
+                _occupancyMode);
+            if (!payload.TryValidate(out reason))
+            {
+                payload = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private void RefreshSmartSceneRecoveryAvailability()
+        {
+            _smartSceneRecoveryAvailable =
+                TryReadSmartSceneRecovery(
+                    out SmartBuildScenePresetPayload payload,
+                    out _) &&
+                payload?.TryValidate(out _) == true;
+        }
+
+        private void TickSmartSceneRecovery()
+        {
+            if (!_sceneRecoveryDirty ||
+                !HasActivePreviewScene || _dragging || _rotating ||
+                _patternViewportGesture != null || _planDirty)
+                return;
+            if (_sceneRecoverySaveAt < 0f)
+            {
+                _sceneRecoverySaveAt = Time.unscaledTime + SceneRecoveryDebounceSeconds;
+                return;
+            }
+            if (Time.unscaledTime < _sceneRecoverySaveAt)
+                return;
+
+            if (!TryCaptureSmartScenePayload(out SmartBuildScenePresetPayload payload, out _))
+                return;
+            string signature = payload.ContentSignature();
+            if (string.Equals(signature, _lastSavedSceneRecoverySignature, StringComparison.Ordinal))
+            {
+                _sceneRecoveryDirty = false;
+                _pendingSceneRecoverySignature = null;
+                _sceneRecoverySaveAt = -1f;
+                return;
+            }
+
+            _pendingSceneRecoverySignature = signature;
+            SaveSmartSceneRecovery(payload, signature);
+        }
+
+        private void SaveSmartSceneRecoveryImmediately()
+        {
+            if (!_sceneRecoveryDirty || !HasActivePreviewScene ||
+                !TryCaptureSmartScenePayload(out SmartBuildScenePresetPayload payload, out _))
+            {
+                return;
+            }
+
+            string signature = payload.ContentSignature();
+            if (!string.Equals(signature, _lastSavedSceneRecoverySignature, StringComparison.Ordinal))
+                SaveSmartSceneRecovery(payload, signature);
+        }
+
+        private void SaveSmartSceneRecovery(
+            SmartBuildScenePresetPayload payload,
+            string signature)
+        {
+            if (!EsuPresetLibrary.Default.TrySaveRecovery(
+                    CurrentSceneRecoverySlot(),
+                    EsuPresetKind.SmartScene,
+                    payload,
+                    out string message))
+            {
+                _smartScenePresetStatus = message;
+                _sceneRecoverySaveAt = Time.unscaledTime + 5f;
+                return;
+            }
+
+            _lastSavedSceneRecoverySignature = signature;
+            _pendingSceneRecoverySignature = null;
+            _sceneRecoverySaveAt = -1f;
+            _smartSceneRecoveryAvailable = true;
+            _sceneRecoveryDirty = false;
+        }
+
+        private void ClearSmartSceneRecovery()
+        {
+            EsuPresetLibrary.Default.TryClearRecovery(CurrentSceneRecoverySlot(), out _);
+            EsuPresetLibrary.Default.TryClearRecovery(SceneRecoverySlot, out _);
+            _lastSavedSceneRecoverySignature = null;
+            _pendingSceneRecoverySignature = null;
+            _sceneRecoverySaveAt = -1f;
+            _smartSceneRecoveryAvailable = false;
+            _sceneRecoveryDirty = false;
+        }
+
+        private void MarkSmartSceneRecoveryDirty()
+        {
+            _sceneRecoveryDirty = true;
+            _pendingSceneRecoverySignature = null;
+            _sceneRecoverySaveAt = Time.unscaledTime + SceneRecoveryDebounceSeconds;
+        }
+
+        private string CurrentSceneRecoverySlot()
+        {
+            AllConstruct construct = _scene?.Construct ?? _draft?.Construct ?? FocusedConstruct();
+            string scope = DecorationWorkspaceObjectIdentity.ConstructScope(construct);
+            string hash = EsuPresetLibrary.HashPayload(scope ?? "construct:null");
+            string suffix = string.IsNullOrWhiteSpace(hash)
+                ? "unknown"
+                : hash.Substring(0, Math.Min(24, hash.Length)).ToLowerInvariant();
+            return "smart-builder-" + suffix;
+        }
+
+        private bool TryReadSmartSceneRecovery(
+            out SmartBuildScenePresetPayload payload,
+            out string message)
+        {
+            if (EsuPresetLibrary.Default.TryReadRecovery(
+                    CurrentSceneRecoverySlot(),
+                    out payload,
+                    out _,
+                    out message))
+            {
+                return true;
+            }
+
+            // One-time compatibility fallback for the pre-1.2 global recovery slot.
+            return EsuPresetLibrary.Default.TryReadRecovery(
+                SceneRecoverySlot,
+                out payload,
+                out _,
+                out message);
         }
 
         internal static void SplitSmartVerticalStack(
@@ -4786,26 +6775,33 @@ namespace DecoLimitLifter.SmartBuildMode
                     GUILayout.Width(EsuHudLayout.Scale(36f)),
                     GUILayout.Height(EsuHudLayout.Scale(28f))))
             {
-                _selectedSlopeLength = length;
+                if (_selectedSlopeLength != length)
+                {
+                    _selectedSlopeLength = length;
+                    InvalidateConditionalReplacementPreview();
+                }
                 ArmAddMode();
             }
         }
 
         private void DrawPieceRow(SmartBuildPiece piece)
         {
-            bool selected = _draft != null && _draft.Id == piece.Id;
-            string text = piece.CompactSceneLabel();
-            string tooltip = piece.ShapeLabel() + " | " + piece.FormatDimensions() + " | origin " + FormatCell(piece.Origin);
+            bool selected = _scene?.IsSelected(piece.Id) == true;
+            bool primary = _draft != null && _draft.Id == piece.Id;
+            string text = (primary ? "P | " : selected ? "+ | " : string.Empty) +
+                          piece.CompactSceneLabel();
+            string tooltip = (primary ? "Primary selection | " : selected ? "Selected | " : string.Empty) +
+                             piece.ShapeLabel() + " | " + piece.FormatDimensions() + " | origin " + FormatCell(piece.Origin) +
+                             " | Ctrl-click toggles; Shift-click selects a range.";
+            Event current = Event.current;
+            bool control = current?.control == true || current?.command == true;
+            bool shift = current?.shift == true;
             if (SmartGUILayoutButton(
                     new GUIContent(text, tooltip),
                     DecorationEditorTheme.ToolButton(selected),
                     GUILayout.Height(EsuHudLayout.Scale(28f))))
             {
-                if (_scene.Select(piece.Id))
-                {
-                    _draft = _scene.SelectedPiece;
-                    RebuildPlan();
-                }
+                SelectSceneRow(piece, shift, control);
             }
         }
 
@@ -4818,10 +6814,16 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             GUILayout.Label(
-                "#" + _draft.Id.ToString(CultureInfo.InvariantCulture) + " | " +
+                ((_scene?.SelectionCount ?? 0) > 1
+                    ? (_scene.SelectionCount.ToString(CultureInfo.InvariantCulture) + " selected | primary #")
+                    : "#") +
+                _draft.Id.ToString(CultureInfo.InvariantCulture) + " | " +
                 _draft.ShapeCode() + " | " + _draft.FormatDimensions(),
                 DecorationEditorTheme.MiniWrap);
             LabelRow("Shape", _draft.ShapeLabel());
+            LabelRow(
+                "Material",
+                SmartBlockFamilyCatalog.MaterialDisplayName(MaterialForPiece(_draft)));
             LabelRow("Origin", FormatCell(_draft.Origin));
             LabelRow("Size", _draft.FormatDimensions());
             LabelRow(
@@ -4840,25 +6842,299 @@ namespace DecoLimitLifter.SmartBuildMode
 
             if (SmartGUIButton(select, new GUIContent("Select", "Keep this piece selected for editing."), DecorationEditorTheme.Button))
                 _tool = SmartBuildTool.Move;
-            if (SmartGUIButton(duplicate, new GUIContent("Duplicate", "Duplicate the selected piece one cell to the right."), DecorationEditorTheme.Button))
+            bool groupSelection = (_scene?.SelectionCount ?? 0) > 1;
+            if (SmartGUIButton(duplicate, new GUIContent("Duplicate", groupSelection ? "Duplicate the selected group one cell to the right." : "Duplicate the selected piece one cell to the right."), DecorationEditorTheme.Button))
                 DuplicateSelectedPiece();
-            if (SmartGUIButton(delete, new GUIContent("Delete", "Remove the selected preview piece."), DecorationEditorTheme.Button))
+            if (SmartGUIButton(delete, new GUIContent("Delete", groupSelection ? "Remove the selected preview group." : "Remove the selected preview piece."), DecorationEditorTheme.Button))
                 DeleteSelectedPiece();
-            if (SmartGUIButton(yaw, new GUIContent("Yaw", "Rotate the selected piece around construct Y."), DecorationEditorTheme.Button))
+            if (SmartGUIButton(yaw, new GUIContent("Yaw", groupSelection ? "Rotate the selected group around its primary piece." : "Rotate the selected piece around construct Y."), DecorationEditorTheme.Button))
                 YawSelectedPiece();
 
-            bool canFlip = _draft?.ShapeKind == SmartBuildShapeKind.DownSlope ||
-                           _draft?.IsFixedGeometry == true ||
-                           _draft?.IsGeneratedShape == true;
+            bool canFlip = CanFlipSelection();
             bool previous = GUI.enabled;
             GUI.enabled = previous && canFlip;
             if (SmartGUIButton(flip, new GUIContent("Flip", "Reverse the selected shape's forward direction."), canFlip ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton))
                 FlipSelectedPiece();
             GUI.enabled = previous;
 
+            DrawPrecisionTransformLayoutControls();
+            DrawShapeConversionControls();
+            DrawCuboidFillControls();
+            DrawSelectionArrayControls();
+            DrawAdvancedArrayBrushControls();
+            DrawConditionalReplacementControls();
+
             if (_draft?.IsGeneratedShape == true)
                 DrawGeneratedPieceSettings();
             DrawPlanSummary();
+        }
+
+        private void DrawShapeConversionControls()
+        {
+            SmartBuildShapeDescriptor target = SelectedShapeDescriptor;
+            if (target == null || _scene?.SelectionCount <= 0)
+                return;
+
+            GUILayout.Space(EsuHudLayout.Scale(4f));
+            bool canConvert = CanConvertSelectionTo(target, out string reason);
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && canConvert;
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        "Convert to " + target.Label,
+                        canConvert
+                            ? "Convert every selected piece to the active Library shape while preserving its center, orientation, material, and approximate extents."
+                            : reason),
+                    canConvert ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                ConvertSelectionTo(target);
+            }
+            GUI.enabled = previous;
+        }
+
+        private bool CanConvertSelectionTo(
+            SmartBuildShapeDescriptor descriptor,
+            out string reason)
+        {
+            IReadOnlyList<SmartBuildPiece> selected = _scene?.SelectedPieces;
+            if (descriptor == null || selected == null || selected.Count == 0)
+            {
+                reason = "Select one or more Smart Builder pieces.";
+                return false;
+            }
+
+            bool anyChange = selected.Any(
+                piece => !string.Equals(
+                    piece.ShapeDescriptorKey,
+                    descriptor.Key,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!anyChange)
+            {
+                reason = "The selected pieces already use this shape.";
+                return false;
+            }
+
+            foreach (SmartBuildPiece piece in selected)
+            {
+                SmartBuildSource source = SourceForPiece(piece);
+                if (source == null)
+                {
+                    reason = "One selected piece material is unavailable.";
+                    return false;
+                }
+
+                SmartBlockFamily family = source.FamilyForShape(descriptor);
+                if (family?.IsSupported != true)
+                {
+                    reason = family?.UnsupportedReason ??
+                             descriptor.Label + " is unavailable for " + source.DisplayName + ".";
+                    return false;
+                }
+                if (descriptor.ProceduralDownSlope &&
+                    !source.HasDownSlopeLength(new[] { _selectedSlopeLength }))
+                {
+                    reason = _selectedSlopeLength.ToString(CultureInfo.InvariantCulture) +
+                             "m slopes are unavailable for " + source.DisplayName + ".";
+                    return false;
+                }
+            }
+
+            reason = null;
+            return true;
+        }
+
+        private void ConvertSelectionTo(SmartBuildShapeDescriptor descriptor)
+        {
+            if (!CanConvertSelectionTo(descriptor, out string reason))
+            {
+                if (!string.IsNullOrWhiteSpace(reason))
+                    InfoStore.Add(reason);
+                return;
+            }
+
+            SmartBuildSceneSnapshot before = CaptureSceneSnapshot();
+            if (!_scene.TryConvertSelectionTo(
+                    descriptor,
+                    _selectedSlopeLength,
+                    out int converted,
+                    out reason))
+            {
+                InfoStore.Add(
+                    string.IsNullOrWhiteSpace(reason)
+                        ? "The selected Smart Builder group cannot be converted without losing geometry."
+                        : reason);
+                return;
+            }
+
+            PushSceneSnapshot(before);
+            _draft = _scene.SelectedPiece;
+            RebuildPlan();
+            RefreshApplyCancelAttention();
+            InfoStore.Add(
+                "Converted " + converted.ToString(CultureInfo.InvariantCulture) +
+                (converted == 1 ? " Smart Builder piece" : " Smart Builder pieces") +
+                " to " + descriptor.Label + ".");
+        }
+
+        private void DrawCuboidFillControls()
+        {
+            IReadOnlyList<SmartBuildPiece> selected = _scene?.SelectedPieces;
+            if (selected == null || selected.Count == 0 ||
+                selected.Any(piece => piece.ShapeKind != SmartBuildShapeKind.Cuboid))
+            {
+                return;
+            }
+
+            GUILayout.Space(EsuHudLayout.Scale(4f));
+            GUILayout.Label("Cuboid fill", DecorationEditorTheme.SubHeader);
+            bool allHollow = selected.All(piece => piece.CuboidHollow);
+            GUILayout.BeginHorizontal();
+            if (SmartGUILayoutButton(
+                    new GUIContent("Solid", "Fill every cell in the selected cuboid volumes."),
+                    DecorationEditorTheme.ToolButton(!allHollow),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SetSelectedCuboidsHollow(false);
+            }
+            if (SmartGUILayoutButton(
+                    new GUIContent("Hollow", "Keep only the one-cell outer shell of each selected cuboid."),
+                    DecorationEditorTheme.ToolButton(allHollow),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SetSelectedCuboidsHollow(true);
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private void SetSelectedCuboidsHollow(bool hollow)
+        {
+            SmartBuildPiece[] cuboids = (_scene?.SelectedPieces ?? Array.Empty<SmartBuildPiece>())
+                .Where(piece => piece.ShapeKind == SmartBuildShapeKind.Cuboid)
+                .ToArray();
+            if (cuboids.Length == 0 || cuboids.All(piece => piece.CuboidHollow == hollow))
+                return;
+
+            RecordSceneHistory();
+            foreach (SmartBuildPiece piece in cuboids)
+                piece.SetCuboidHollow(hollow);
+            RebuildPlan();
+            RefreshApplyCancelAttention();
+            InfoStore.Add("Smart Builder cuboid fill: " + (hollow ? "Hollow shell" : "Solid") + ".");
+        }
+
+        private void DrawSelectionArrayControls()
+        {
+            if (_scene?.SelectionCount <= 0)
+                return;
+
+            GUILayout.Space(EsuHudLayout.Scale(4f));
+            GUILayout.Label("Array / brush", DecorationEditorTheme.SubHeader);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Copies", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(46f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("-", "Use fewer array copies."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                _arrayCopyCount = Mathf.Clamp(_arrayCopyCount - 1, 1, 64);
+            }
+            GUILayout.Label(
+                _arrayCopyCount.ToString(CultureInfo.InvariantCulture),
+                DecorationEditorTheme.Mini,
+                GUILayout.Width(EsuHudLayout.Scale(28f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("+", "Use more array copies."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                _arrayCopyCount = Mathf.Clamp(_arrayCopyCount + 1, 1, 64);
+            }
+            GUILayout.Label("Gap", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(28f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("-", "Reduce spacing between brushed copies."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                _arraySpacing = Mathf.Clamp(_arraySpacing - 1, 1, 64);
+            }
+            GUILayout.Label(
+                _arraySpacing.ToString(CultureInfo.InvariantCulture),
+                DecorationEditorTheme.Mini,
+                GUILayout.Width(EsuHudLayout.Scale(28f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("+", "Increase spacing between brushed copies."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(28f)),
+                    GUILayout.Height(EsuHudLayout.Scale(22f))))
+            {
+                _arraySpacing = Mathf.Clamp(_arraySpacing + 1, 1, 64);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawSelectionArrayButton(SmartBuildAxis.X, -1, "-X");
+            DrawSelectionArrayButton(SmartBuildAxis.X, 1, "+X");
+            DrawSelectionArrayButton(SmartBuildAxis.Y, -1, "-Y");
+            DrawSelectionArrayButton(SmartBuildAxis.Y, 1, "+Y");
+            DrawSelectionArrayButton(SmartBuildAxis.Z, -1, "-Z");
+            DrawSelectionArrayButton(SmartBuildAxis.Z, 1, "+Z");
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawSelectionArrayButton(
+            SmartBuildAxis axis,
+            int sign,
+            string label)
+        {
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        label,
+                        "Brush " + _arrayCopyCount.ToString(CultureInfo.InvariantCulture) +
+                        " copy layer(s) every " + _arraySpacing.ToString(CultureInfo.InvariantCulture) +
+                        " cell(s) along " + label + "."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                CreateSelectionArray(axis, sign);
+            }
+        }
+
+        private void CreateSelectionArray(SmartBuildAxis axis, int sign)
+        {
+            if (_scene?.SelectionCount <= 0)
+                return;
+
+            Vector3i step = SmartBuildAxisHelper.ToVector3i(
+                axis,
+                (sign >= 0 ? 1 : -1) * Math.Max(1, _arraySpacing));
+            SmartBuildSceneSnapshot before = CaptureSceneSnapshot();
+            if (!_scene.TryDuplicateSelectionArray(
+                    step,
+                    _arrayCopyCount,
+                    out IReadOnlyList<SmartBuildPiece> duplicates,
+                    out string reason))
+            {
+                InfoStore.Add(
+                    string.IsNullOrWhiteSpace(reason)
+                        ? "The complete Smart Builder array could not be created."
+                        : reason);
+                return;
+            }
+
+            PushSceneSnapshot(before);
+            _draft = _scene.SelectedPiece;
+            _sceneSelectionAnchorId = _draft?.Id ?? -1;
+            _tool = SmartBuildTool.Move;
+            RebuildPlan();
+            RefreshApplyCancelAttention();
+            InfoStore.Add(
+                "Brushed " + duplicates.Count.ToString(CultureInfo.InvariantCulture) +
+                " Smart Builder array copies along " +
+                (sign >= 0 ? "+" : "-") + axis + ".");
         }
 
         private void DrawGeneratedPieceSettings()
@@ -4888,8 +7164,13 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.GeneratedPolygon)
                 DrawPolygonSideControls();
 
-            if (_draft.ShapeKind == SmartBuildShapeKind.GeneratedCircle ||
-                _draft.ShapeKind == SmartBuildShapeKind.GeneratedSphere)
+            if (_draft.ShapeKind == SmartBuildShapeKind.GeneratedArc)
+                DrawArcSweepControls();
+
+            if (_draft.ShapeKind == SmartBuildShapeKind.GeneratedFrustum)
+                DrawFrustumTopControls();
+
+            if (SmartBuildPiece.SupportsRoundGeneratorLock(_draft.ShapeKind))
             {
                 if (SmartGUILayoutButton(
                         new GUIContent(
@@ -4913,6 +7194,104 @@ namespace DecoLimitLifter.SmartBuildMode
             {
                 ToggleGeneratedSmoothing();
             }
+        }
+
+        private void DrawArcSweepControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Sweep", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(42f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("-15", "Reduce arc sweep by 15 degrees."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SetGeneratedArcDegrees(_draft.GeneratorArcDegrees - 15);
+            }
+            GUILayout.Label(
+                _draft.GeneratorArcDegrees.ToString(CultureInfo.InvariantCulture) + "°",
+                DecorationEditorTheme.Mini,
+                GUILayout.Width(EsuHudLayout.Scale(38f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("+15", "Increase arc sweep by 15 degrees."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SetGeneratedArcDegrees(_draft.GeneratorArcDegrees + 15);
+            }
+            foreach (int preset in new[] { 90, 180, 270, 360 })
+            {
+                if (SmartGUILayoutButton(
+                        new GUIContent(preset.ToString(CultureInfo.InvariantCulture), preset + " degree arc."),
+                        DecorationEditorTheme.ToolButton(_draft.GeneratorArcDegrees == preset),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SetGeneratedArcDegrees(preset);
+                }
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawFrustumTopControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Top %", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(42f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("-5", "Narrow the frustum top radius."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SetGeneratedTopScale(_draft.GeneratorTopScalePercent - 5);
+            }
+            GUILayout.Label(
+                _draft.GeneratorTopScalePercent.ToString(CultureInfo.InvariantCulture),
+                DecorationEditorTheme.Mini,
+                GUILayout.Width(EsuHudLayout.Scale(32f)));
+            if (SmartGUILayoutButton(
+                    new GUIContent("+5", "Widen the frustum top radius."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SetGeneratedTopScale(_draft.GeneratorTopScalePercent + 5);
+            }
+            foreach (int preset in new[] { 25, 50, 75 })
+            {
+                if (SmartGUILayoutButton(
+                        new GUIContent(preset.ToString(CultureInfo.InvariantCulture), preset + "% top radius."),
+                        DecorationEditorTheme.ToolButton(_draft.GeneratorTopScalePercent == preset),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SetGeneratedTopScale(preset);
+                }
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private void SetGeneratedArcDegrees(int degrees)
+        {
+            if (_draft?.ShapeKind != SmartBuildShapeKind.GeneratedArc)
+                return;
+
+            int clamped = Mathf.Clamp(degrees, 15, 360);
+            if (_draft.GeneratorArcDegrees == clamped)
+                return;
+            RecordSceneHistory();
+            _draft.SetGeneratorArcDegrees(clamped);
+            RebuildPlan();
+            RefreshApplyCancelAttention();
+        }
+
+        private void SetGeneratedTopScale(int percent)
+        {
+            if (_draft?.ShapeKind != SmartBuildShapeKind.GeneratedFrustum)
+                return;
+
+            int clamped = Mathf.Clamp(percent, 5, 95);
+            if (_draft.GeneratorTopScalePercent == clamped)
+                return;
+            RecordSceneHistory();
+            _draft.SetGeneratorTopScalePercent(clamped);
+            RebuildPlan();
+            RefreshApplyCancelAttention();
         }
 
         private void DrawPolygonSideControls()
@@ -5131,7 +7510,7 @@ namespace DecoLimitLifter.SmartBuildMode
         }
 
         private bool HasActiveSmartGizmoDrag() =>
-            _dragging || _rotating;
+            _dragging || _rotating || _patternViewportDragging;
 
         private Rect GizmoSettingsMenuRect()
         {
@@ -5493,7 +7872,11 @@ namespace DecoLimitLifter.SmartBuildMode
                     new GUIContent(label, tooltip),
                     DecorationEditorTheme.ToolButton(_previewMode == mode)))
             {
-                _previewMode = mode;
+                if (_previewMode != mode)
+                {
+                    _previewMode = mode;
+                    RegisterPresentationRevision();
+                }
                 InfoStore.Add("Smart Builder preview: " + PreviewModeLabel(mode) + ".");
             }
 
@@ -5668,24 +8051,39 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private void OccupancyButton(float controlWidth)
         {
-            string label = _occupancyMode == SmartBuildOccupancyMode.SkipOccupied
-                ? "Skip"
-                : "Block";
-            string compactLabel = _occupancyMode == SmartBuildOccupancyMode.SkipOccupied
-                ? "S"
-                : "B";
+            string label;
+            string compactLabel;
+            switch (_occupancyMode)
+            {
+                case SmartBuildOccupancyMode.BlockOnOverlap:
+                    label = "Block";
+                    compactLabel = "B";
+                    break;
+                case SmartBuildOccupancyMode.ReplaceOccupied:
+                    label = "Replace";
+                    compactLabel = "R";
+                    break;
+                case SmartBuildOccupancyMode.EraseOccupied:
+                    label = "Erase";
+                    compactLabel = "E";
+                    break;
+                default:
+                    label = "Skip";
+                    compactLabel = "S";
+                    break;
+            }
             if (ToolbarIconButton(
                     "filter",
                     label,
                     compactLabel,
                     DecorationEditorTheme.Button,
-                    "Toggle occupied-cell handling.",
+                    "Toggle occupied-cell handling. Cycle Place/Skip, Block on overlap, transactional Replace, and transactional Erase.",
                     controlWidth))
             {
-                _occupancyMode = _occupancyMode == SmartBuildOccupancyMode.SkipOccupied
-                    ? SmartBuildOccupancyMode.BlockOnOverlap
-                    : SmartBuildOccupancyMode.SkipOccupied;
-                RebuildPlan();
+                _occupancyMode = (SmartBuildOccupancyMode)
+                    (((int)_occupancyMode + 1) %
+                     Enum.GetValues(typeof(SmartBuildOccupancyMode)).Length);
+                RebuildPlan(SmartBuildPlanRevisionKind.Occupancy);
                 _viewModeMenuOpen = false;
             }
         }
@@ -5730,6 +8128,280 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        _blockEyedropperArmed ? "Pick: click craft" : "Pick craft block",
+                        "Arm the Smart Builder eyedropper, then click an existing craft block to copy its material, structural shape, size, and cardinal local rotation."),
+                    DecorationEditorTheme.ToolButton(_blockEyedropperArmed),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _blockEyedropperArmed = !_blockEyedropperArmed;
+                if (_blockEyedropperArmed)
+                {
+                    _tool = SmartBuildTool.Draw;
+                    InfoStore.Add("Smart Builder eyedropper armed. Click a real craft block; right-click or Escape cancels.");
+                }
+            }
+
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && _hasSampledBlockRotation;
+            if (SmartGUILayoutButton(
+                    new GUIContent(
+                        "Clear rotation",
+                        "Stop applying the sampled craft-block rotation to newly drawn Smart Builder pieces."),
+                    _hasSampledBlockRotation ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(96f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _hasSampledBlockRotation = false;
+                _sampledBlockRotation = Quaternion.identity;
+                _sampledBlockRotationLabel = null;
+                InfoStore.Add("Smart Builder sampled rotation cleared.");
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+            if (_hasSampledBlockRotation)
+            {
+                GUILayout.Label(
+                    "Sampled rotation: " + (_sampledBlockRotationLabel ?? "cardinal"),
+                    DecorationEditorTheme.MiniWrap);
+            }
+        }
+
+        private bool TrySamplePointedCraftBlock()
+        {
+            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit) ||
+                hit?.Construct == null)
+            {
+                InfoStore.Add("Point at an existing craft block for the Smart Builder eyedropper.");
+                return false;
+            }
+
+            Block block;
+            try
+            {
+                block = hit.Construct.AllBasics?.GetBlockViaLocalPosition(hit.Anchor);
+            }
+            catch
+            {
+                block = null;
+            }
+
+            ItemDefinition definition = null;
+            try
+            {
+                definition = block?.item;
+            }
+            catch
+            {
+                // Unusual modded blocks are rejected conservatively below.
+            }
+
+            string reason = null;
+            if (block == null || block.IsDeleted ||
+                !SmartBlockFamilyCatalog.TryIdentifyBlock(
+                    definition,
+                    out SmartBuildMaterial material,
+                    out SmartBuildSource source,
+                    out SmartBlockCandidate candidate,
+                    out reason))
+            {
+                InfoStore.Add(reason ?? "The pointed craft block cannot be mapped to a Smart Builder shape.");
+                return false;
+            }
+
+            SmartBuildShapeDescriptor descriptor = candidate.Descriptor ?? SmartBuildShapeDescriptors.Cuboid;
+            bool rotationReadable = false;
+            Quaternion localRotation = Quaternion.identity;
+            try
+            {
+                localRotation = block.LocalRotation;
+                rotationReadable = true;
+            }
+            catch
+            {
+                // Sampling must remain armed and atomic when FtD cannot expose rotation.
+            }
+
+            Guid definitionGuid = Guid.Empty;
+            try
+            {
+                definitionGuid = definition.ComponentId.Guid;
+            }
+            catch
+            {
+                // Reference identity still allowed the catalog match. The descriptor
+                // retains Guid.Empty to make the unavailable exact ID explicit.
+            }
+
+            if (!TryCreateCraftBlockSampleDescriptor(
+                    definitionGuid,
+                    material,
+                    candidate,
+                    descriptor,
+                    rotationReadable,
+                    localRotation,
+                    _drawPlane,
+                    out SmartBuildCraftBlockSampleDescriptor sample,
+                    out string sampleReason))
+            {
+                InfoStore.Add("Smart Builder eyedropper rejected the pointed block: " + sampleReason);
+                return false;
+            }
+
+            // Every fallible read/validation is complete. Apply the sample as one state
+            // transition so rejected blocks cannot partially change the active tool.
+            _selectedMaterial = sample.Material;
+            s_selectedMaterial = sample.Material;
+            _sourceMaterial = sample.Material;
+            _source = source;
+            _sourceReason = null;
+            _pieceMaterialSources[sample.Material] = source;
+            _selectedShape = descriptor.Kind;
+            _selectedShapeDescriptorKey = sample.ShapeDescriptorKey;
+            _selectedSlopeLength = sample.Length;
+            _sampledBlockRotation = sample.LocalRotation;
+            _hasSampledBlockRotation = true;
+            _sampledBlockRotationLabel = sample.RotationLabel;
+            _sampledCuboidSize = sample.IsCuboid
+                ? sample.OccupiedSize
+                : (Vector3i?)null;
+            _lastCraftBlockSample = sample;
+            InvalidateConditionalReplacementPreview();
+            ClearSmartPreviewRendererCache();
+            _blockEyedropperArmed = false;
+            ArmAddMode();
+            InfoStore.Add(
+                "Smart Builder picked " + SmartBlockFamilyCatalog.ItemName(definition) +
+                ": " + SmartBlockFamilyCatalog.MaterialDisplayName(material) +
+                " " + descriptor.Label +
+                (descriptor.UsesLengthSelector || candidate.Length > 1
+                    ? " " + candidate.Length.ToString(CultureInfo.InvariantCulture) + "m"
+                    : string.Empty) +
+                ", exact occupied size " + FormatCell(sample.OccupiedSize) +
+                ", and cardinal local rotation.");
+            return true;
+        }
+
+        internal static bool TryCreateCraftBlockSampleDescriptor(
+            Guid definitionGuid,
+            SmartBuildMaterial material,
+            SmartBlockCandidate candidate,
+            SmartBuildShapeDescriptor descriptor,
+            bool rotationReadable,
+            Quaternion localRotation,
+            SmartBuildDrawPlane drawPlane,
+            out SmartBuildCraftBlockSampleDescriptor sample,
+            out string reason)
+        {
+            sample = null;
+            descriptor ??= SmartBuildShapeDescriptors.Cuboid;
+            if (candidate == null)
+            {
+                reason = "the item has no supported structural candidate.";
+                return false;
+            }
+            if (candidate.Length < 1 || candidate.Length > 4)
+            {
+                reason = "the sampled block length is outside the supported 1-4m range.";
+                return false;
+            }
+            if (!rotationReadable)
+            {
+                reason = "its local rotation metadata could not be read; the picker remains armed.";
+                return false;
+            }
+            float rotationMagnitudeSquared =
+                localRotation.x * localRotation.x +
+                localRotation.y * localRotation.y +
+                localRotation.z * localRotation.z +
+                localRotation.w * localRotation.w;
+            if (float.IsNaN(rotationMagnitudeSquared) ||
+                float.IsInfinity(rotationMagnitudeSquared) ||
+                rotationMagnitudeSquared < 0.9f ||
+                rotationMagnitudeSquared > 1.1f)
+            {
+                reason = "its local rotation is unreadable or non-normalized; the picker remains armed.";
+                return false;
+            }
+
+            SmartBuildPiece orientationProbe = SmartBuildPiece.CreateFixedShapePreview(
+                null,
+                default,
+                descriptor,
+                candidate.Length,
+                SmartBuildAxis.Z,
+                1,
+                1,
+                drawPlane);
+            if (!orientationProbe.TrySetOrientationFromRotation(localRotation))
+            {
+                reason = "its local rotation is not a finite cardinal orientation; the picker remains armed.";
+                return false;
+            }
+
+            Vector3i[] occupied;
+            try
+            {
+                occupied = candidate.CoveredCellsFrom(default, localRotation)
+                    .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
+                    .Select(group => group.First())
+                    .ToArray();
+            }
+            catch
+            {
+                occupied = Array.Empty<Vector3i>();
+            }
+            if (occupied.Length == 0 || occupied.Length > 64)
+            {
+                reason = "its occupied-cell metadata is empty or exceeds the safe sample bound.";
+                return false;
+            }
+
+            int minX = occupied.Min(cell => cell.x);
+            int minY = occupied.Min(cell => cell.y);
+            int minZ = occupied.Min(cell => cell.z);
+            int maxX = occupied.Max(cell => cell.x);
+            int maxY = occupied.Max(cell => cell.y);
+            int maxZ = occupied.Max(cell => cell.z);
+            var occupiedSize = new Vector3i(
+                maxX - minX + 1,
+                maxY - minY + 1,
+                maxZ - minZ + 1);
+            if (occupiedSize.x < 1 || occupiedSize.y < 1 || occupiedSize.z < 1 ||
+                occupiedSize.x > 4 || occupiedSize.y > 4 || occupiedSize.z > 4)
+            {
+                reason = "its occupied bounds are outside the supported 1-4m sample range.";
+                return false;
+            }
+
+            sample = new SmartBuildCraftBlockSampleDescriptor(
+                definitionGuid,
+                material,
+                descriptor.Key,
+                candidate.Length,
+                occupiedSize,
+                new Vector3i(minX, minY, minZ),
+                localRotation,
+                orientationProbe.ForwardAxis,
+                orientationProbe.ForwardSign,
+                orientationProbe.RightAxis,
+                orientationProbe.RightSign,
+                orientationProbe.DropAxis,
+                orientationProbe.DropSign);
+            reason = null;
+            return true;
+        }
+
+        private void ApplySampledBlockRotation(SmartBuildPiece piece)
+        {
+            if (!_hasSampledBlockRotation || piece == null ||
+                !piece.TrySetOrientationFromRotation(_sampledBlockRotation))
+            {
+                return;
+            }
         }
 
         private void CycleSelectedMaterial(int direction)
@@ -5759,12 +8431,45 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_selectedMaterial == material)
                 return;
 
+            IReadOnlyList<SmartBuildPiece> selectedPieces = _scene?.SelectedPieces;
+            if (selectedPieces != null && selectedPieces.Count > 0)
+            {
+                RecordSceneHistory();
+                foreach (SmartBuildPiece piece in selectedPieces)
+                    piece.SetMaterialOverride(material);
+            }
+
             _selectedMaterial = material;
             s_selectedMaterial = material;
             _source = null;
             _sourceReason = null;
             ClearSmartPreviewRendererCache();
             RefreshSelection();
+            if (selectedPieces != null && selectedPieces.Count > 0)
+            {
+                InfoStore.Add(
+                    selectedPieces.Count == 1
+                        ? "Selected Smart Builder piece changed to " +
+                          SmartBlockFamilyCatalog.MaterialDisplayName(material) + "."
+                        : selectedPieces.Count.ToString(CultureInfo.InvariantCulture) +
+                          " selected Smart Builder pieces changed to " +
+                          SmartBlockFamilyCatalog.MaterialDisplayName(material) + ".");
+            }
+        }
+
+        private static string OccupancyDisplayName(SmartBuildOccupancyMode mode)
+        {
+            switch (mode)
+            {
+                case SmartBuildOccupancyMode.BlockOnOverlap:
+                    return "Place | block on overlap";
+                case SmartBuildOccupancyMode.ReplaceOccupied:
+                    return "Replace occupied";
+                case SmartBuildOccupancyMode.EraseOccupied:
+                    return "Erase touched blocks";
+                default:
+                    return "Place | skip occupied";
+            }
         }
 
         private void ClearSmartPreviewRendererCache()
@@ -5795,8 +8500,9 @@ namespace DecoLimitLifter.SmartBuildMode
                     tooltip,
                     controlWidth))
             {
+                string activeSymmetryBefore = ActiveSymmetryPlanStamp();
                 DecoLimitLifter.EsuSymmetry.ToggleAxis(axis);
-                RebuildPlan();
+                HandleSymmetryRevision(activeSymmetryBefore);
                 _viewModeMenuOpen = false;
                 InfoStore.Add(
                     active && !DecoLimitLifter.EsuSymmetry.IsPending(axis)
@@ -6009,7 +8715,24 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             if (_plan.CanCommit)
-                LabelRow("Plan", $"{_plan.EstimatedBlockCount:N0} placements / {_plan.CoveredCellCount:N0} cells");
+            {
+                if (_plan.CommitOperation == SmartBuildCommitOperation.Erase)
+                {
+                    LabelRow(
+                        "Plan",
+                        $"erase {_plan.RemovalItems.Count:N0} complete item(s) / {_plan.RemovalFootprintCells.Count:N0} cells");
+                }
+                else if (_plan.CommitOperation == SmartBuildCommitOperation.Replace)
+                {
+                    LabelRow(
+                        "Plan",
+                        $"{_plan.EstimatedBlockCount:N0} placements / replace {_plan.RemovalItems.Count:N0} complete item(s) ({_plan.RemovalFootprintCells.Count:N0} cells)");
+                }
+                else
+                {
+                    LabelRow("Plan", $"{_plan.EstimatedBlockCount:N0} placements / {_plan.CoveredCellCount:N0} cells");
+                }
+            }
             else
                 LabelRow("Blocked", _plan.FailureReason ?? "Cannot commit");
 
@@ -6025,7 +8748,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 return 0;
             if (_previewCells.Count > 0)
                 return _previewCells.Count;
-            return _scene.Pieces.Sum(piece => piece.EnumeratePreviewCells(_source).Count());
+            IReadOnlyList<SmartBuildPiece> previewPieces = _scene.Pieces;
+            if (_scene.TryExpandSceneNodes(out IReadOnlyList<SmartBuildPiece> expanded, out _, out _))
+                previewPieces = expanded;
+            return previewPieces.Sum(
+                piece => piece.EnumeratePreviewCells(SourceForPiece(piece)).Count());
         }
 
         private static void LabelRow(string label, string value)
@@ -6053,11 +8780,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 DrawPlanPlacementPreview(_plan, invalid, drawWire: false);
             }
 
-            var drawn = new HashSet<string>();
+            var drawn = new HashSet<SmartBuildPreviewDrawKey>();
+            IReadOnlyList<SmartBuildPiece> previewPieces = PreviewPiecesForRendering();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
-                foreach (SmartBuildPiece piece in _scene.Pieces)
+                foreach (SmartBuildPiece piece in previewPieces)
                     DrawPiecePreview(piece, variant, invalid, drawn, drawMaterialFill: !drewExactMaterialMeshes);
             }
         }
@@ -6066,48 +8794,45 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPiece piece,
             DecoLimitLifter.EsuSymmetry.SymmetryVariant variant,
             bool invalid,
-            HashSet<string> drawn,
+            HashSet<SmartBuildPreviewDrawKey> drawn,
             bool drawMaterialFill = true)
         {
             if (piece?.Construct == null)
                 return;
 
-            Vector3i[] occupiedCells = piece.EnumeratePreviewCells(_source)
-                .Select(variant.Mirror)
-                .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
-                .Select(group => group.First())
-                .ToArray();
+            Vector3i[] occupiedCells = CachedPreviewCells(
+                piece,
+                variant,
+                out SmartBuildCellSetFingerprint cellFingerprint);
             if (occupiedCells.Length == 0)
                 return;
 
-            string signature = string.Join(
-                "|",
-                occupiedCells
-                    .Select(DecoLimitLifter.EsuSymmetry.CellKey)
-                    .OrderBy(key => key)
-                    .ToArray());
-            if (!drawn.Add(piece.Id.ToString(CultureInfo.InvariantCulture) + "|" + signature))
+            if (!drawn.Add(new SmartBuildPreviewDrawKey(piece.Id, cellFingerprint)))
                 return;
 
-            bool selectedOriginal = _draft != null &&
-                                    _draft.Id == piece.Id &&
+            bool selectedOriginal = _scene?.IsSelected(piece.Id) == true &&
                                     !variant.Axes.Any();
+            bool primaryOriginal = selectedOriginal &&
+                                   _draft != null &&
+                                   _draft.Id == piece.Id;
             Color color = invalid
                 ? new Color(1f, 0.2f, 0.15f, 1f)
-                : selectedOriginal
+                : primaryOriginal
                     ? new Color(1f, 1f, 0.2f, 1f)
+                    : selectedOriginal
+                        ? new Color(1f, 0.66f, 0.12f, 1f)
                     : new Color(0.1f, 0.95f, 1f, 1f);
-            float width = selectedOriginal ? 3.4f : 2.6f;
+            float width = primaryOriginal ? 3.6f : selectedOriginal ? 3.1f : 2.6f;
 
             if (piece.IsGeneratedShape)
             {
                 DrawGeneratedPieceHull(
                     piece.Construct,
                     occupiedCells,
-                    signature,
+                    cellFingerprint,
                     color,
                     width,
-                    SolidMaterialPreviewColor(selectedOriginal),
+                    SolidMaterialPreviewColor(MaterialForPiece(piece), selectedOriginal),
                     drawMaterialFill);
                 return;
             }
@@ -6130,7 +8855,9 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (volume != null)
                 {
                     if (ShouldDrawMaterialPreview() && drawMaterialFill)
-                        DrawVolumeFaces(volume.GetWorldCorners(), SolidMaterialPreviewColor(selectedOriginal));
+                        DrawVolumeFaces(
+                            volume.GetWorldCorners(),
+                            SolidMaterialPreviewColor(MaterialForPiece(piece), selectedOriginal));
                     if (ShouldDrawPreviewWire())
                         DrawWireEdges(volume.GetWorldCorners(), color, width);
                 }
@@ -6160,8 +8887,9 @@ namespace DecoLimitLifter.SmartBuildMode
             float width,
             bool drawMaterialFill)
         {
+            SmartBuildSource pieceSource = SourceForPiece(piece);
             IReadOnlyList<SmartBuildPlacement> placements = piece.BuildFixedPlacements(
-                _source,
+                pieceSource,
                 out _);
             if (placements.Count == 0)
                 return false;
@@ -6172,7 +8900,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 SmartBuildPlacement mirrored = SmartBuildPieceScene.MirrorPlacement(
                     placements[index],
                     variant,
-                    _source);
+                    pieceSource);
                 if (mirrored == null)
                     return false;
 
@@ -6374,7 +9102,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 DrawGeneratedPieceHull(
                     plan.Construct,
                     _previewCells,
-                    null,
+                    default,
                     fallback,
                     1.4f,
                     fallbackMaterial,
@@ -6614,11 +9342,12 @@ namespace DecoLimitLifter.SmartBuildMode
             if (piece?.IsFixedGeometry != true || _itemPreviewRenderer == null)
                 yield break;
 
-            IReadOnlyList<SmartBuildPlacement> placements = piece.BuildFixedPlacements(_source, out _);
+            SmartBuildSource pieceSource = SourceForPiece(piece);
+            IReadOnlyList<SmartBuildPlacement> placements = piece.BuildFixedPlacements(pieceSource, out _);
             if (placements == null || placements.Count == 0)
                 yield break;
 
-            SmartBuildVolume volume = piece.ToVolume(_source);
+            SmartBuildVolume volume = piece.ToVolume(pieceSource);
             if (volume == null)
                 yield break;
 
@@ -7141,7 +9870,7 @@ namespace DecoLimitLifter.SmartBuildMode
         private void DrawGeneratedPieceHull(
             AllConstruct construct,
             IEnumerable<Vector3i> rawCells,
-            string cacheKey,
+            SmartBuildCellSetFingerprint cacheKey,
             Color wireColor,
             float wireWidth,
             Color materialColor,
@@ -7159,7 +9888,7 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private SmartGeneratedHullPreview GetGeneratedHullPreview(
             IEnumerable<Vector3i> rawCells,
-            string cacheKey)
+            SmartBuildCellSetFingerprint cacheKey)
         {
             Vector3i[] cells = (rawCells ?? Array.Empty<Vector3i>())
                 .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
@@ -7168,7 +9897,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (cells.Length == 0)
                 return SmartGeneratedHullPreview.Empty;
 
-            cacheKey = string.IsNullOrWhiteSpace(cacheKey)
+            cacheKey = cacheKey.IsEmpty
                 ? GeneratedHullCacheKey(cells)
                 : cacheKey;
             if (_generatedHullPreviewCache.TryGetValue(cacheKey, out SmartGeneratedHullPreview cached))
@@ -7181,13 +9910,9 @@ namespace DecoLimitLifter.SmartBuildMode
             return built;
         }
 
-        private static string GeneratedHullCacheKey(IEnumerable<Vector3i> cells) =>
-            string.Join(
-                "|",
-                (cells ?? Array.Empty<Vector3i>())
-                .Select(DecoLimitLifter.EsuSymmetry.CellKey)
-                .OrderBy(key => key)
-                .ToArray());
+        private static SmartBuildCellSetFingerprint GeneratedHullCacheKey(
+            IEnumerable<Vector3i> cells) =>
+            SmartBuildCellSetFingerprint.From(cells);
 
         private static SmartGeneratedHullPreview BuildGeneratedHullPreview(Vector3i[] cells)
         {
@@ -7431,7 +10156,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             DrawGeneratedHullPreview(
                 construct,
-                GetGeneratedHullPreview(rawCells, null),
+                GetGeneratedHullPreview(rawCells, default),
                 wireColor,
                 wireWidth,
                 materialColor,
@@ -7941,6 +10666,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _rotateDragMouseStart = MouseGuiPosition();
             _rotatePieceStart = _draft.Clone();
             _rotateSceneStart = CaptureSceneSnapshot();
+            _rotateSelectionPivot = _draft.RotationPivotCell;
             if (!TryProjectSmartGizmo(_draft.Construct, _draft.RotationPivotLocal, out _rotateDragCenterScreen))
                 _rotateDragCenterScreen = _rotateDragMouseStart;
             _rotateDragStartVector = _rotateDragMouseStart - _rotateDragCenterScreen;
@@ -7977,8 +10703,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 _rotateDragSensitivityScale;
             _rotateDragLastVector = current;
             int quarterTurns = Mathf.RoundToInt(_rotateDragAccumulatedDegrees / RotateSnapDegrees);
-            _draft.CopyFrom(_rotatePieceStart);
-            _draft.RotateAroundAxis(_rotateDragAxis, quarterTurns);
+            RestoreSelectedPiecesFromSnapshot(_rotateSceneStart);
+            RotateSelectionAroundAxis(
+                _rotateDragAxis,
+                quarterTurns,
+                _rotateSelectionPivot);
             _planDirty = true;
             RefreshPreviewVolumesOnly();
         }
@@ -7988,8 +10717,8 @@ namespace DecoLimitLifter.SmartBuildMode
             if (!_rotating)
                 return;
 
-            if (resetDraft && _draft != null && _rotatePieceStart != null)
-                _draft.CopyFrom(_rotatePieceStart);
+            if (resetDraft)
+                RestoreSelectedPiecesFromSnapshot(_rotateSceneStart);
 
             if (_draft != null)
             {
@@ -8013,6 +10742,7 @@ namespace DecoLimitLifter.SmartBuildMode
             _rotateDragSensitivityScale = 1f;
             _rotatePieceStart = null;
             _rotateSceneStart = null;
+            _rotateSelectionPivot = new Vector3i(0, 0, 0);
         }
 
         private float RotateGizmoRadius() =>
@@ -8234,7 +10964,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryGetDownSlopeEdgeWorldCorners(axes, signs, out start, out end);
 
-            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(SourceForPiece(_draft)).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             var matches = new List<Vector3>(2);
@@ -8269,7 +10999,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryGetDownSlopeCornerWorld(axes, signs, out world);
 
-            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(SourceForPiece(_draft)).GetLocalCorners();
             Vector3 min = corners[0];
             Vector3 max = corners[6];
             foreach (Vector3 corner in corners)
@@ -8342,13 +11072,14 @@ namespace DecoLimitLifter.SmartBuildMode
                     candidate.ForwardSign,
                     candidate.Width,
                     _drawPlane);
+                ApplySampledBlockRotation(ghost);
                 Color materialColor = candidate.Valid
                     ? SolidMaterialPreviewColor(selected: false)
                     : new Color(1f, 0.2f, 0.15f, 0.34f);
                 DrawGeneratedPieceHull(
                     candidate.Construct,
                     ghost.EnumeratePreviewCells(_source).ToArray(),
-                    null,
+                    default,
                     color,
                     2.4f,
                     materialColor,
@@ -8372,6 +11103,7 @@ namespace DecoLimitLifter.SmartBuildMode
                     candidate.ForwardSign,
                     candidate.Width,
                     _drawPlane);
+                ApplySampledBlockRotation(ghost);
                 IReadOnlyList<SmartBuildPlacement> placements = ghost.BuildFixedPlacements(
                     _source,
                     out _);
@@ -8391,7 +11123,7 @@ namespace DecoLimitLifter.SmartBuildMode
                         ghost,
                         new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()),
                         !candidate.Valid,
-                        new HashSet<string>(),
+                        new HashSet<SmartBuildPreviewDrawKey>(),
                         !drewExactMaterialMeshes);
                 }
                 else
@@ -8421,6 +11153,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 candidate.Width,
                 _drawPlane,
                 _defaultSlopeSupportMode);
+            ApplySampledBlockRotation(slopeGhost);
             IReadOnlyList<SmartBuildPlacement> slopePlacements = slopeGhost.BuildFixedPlacements(
                 _source,
                 out _);
@@ -8440,12 +11173,16 @@ namespace DecoLimitLifter.SmartBuildMode
                     slopeGhost,
                     new DecoLimitLifter.EsuSymmetry.SymmetryVariant(Array.Empty<DecorationEditAxis>()),
                     !candidate.Valid,
-                    new HashSet<string>(),
+                    new HashSet<SmartBuildPreviewDrawKey>(),
                     !drewExactMaterialMeshes);
                 return;
             }
 
-            Vector3i forward = SmartBuildAxisHelper.ToVector3i(candidate.ForwardAxis, candidate.ForwardSign);
+            Vector3i forward = SmartBuildAxisHelper.ToVector3i(
+                slopeGhost.ForwardAxis,
+                slopeGhost.ForwardSign);
+            rightAxis = slopeGhost.RightAxis;
+            rightSign = slopeGhost.RightSign;
             Vector3i right = SmartBuildAxisHelper.ToVector3i(rightAxis, rightSign);
             var lines = new List<IReadOnlyList<Vector3i>>();
             for (int lane = 0; lane < candidate.Width; lane++)
@@ -8459,8 +11196,8 @@ namespace DecoLimitLifter.SmartBuildMode
 
             DrawSlopeStepHull(
                 candidate.Construct,
-                candidate.ForwardAxis,
-                candidate.ForwardSign,
+                slopeGhost.ForwardAxis,
+                slopeGhost.ForwardSign,
                 rightAxis,
                 rightSign,
                 SmartBuildAxis.Y,
@@ -8538,10 +11275,15 @@ namespace DecoLimitLifter.SmartBuildMode
             DecorationEditorOverlay.Quad(corners[3], corners[7], corners[4], corners[0], color);
         }
 
-        private Color SolidMaterialPreviewColor(bool selected)
+        private Color SolidMaterialPreviewColor(bool selected) =>
+            SolidMaterialPreviewColor(_selectedMaterial, selected);
+
+        private static Color SolidMaterialPreviewColor(
+            SmartBuildMaterial material,
+            bool selected)
         {
             Color color;
-            switch (_selectedMaterial)
+            switch (material)
             {
                 case SmartBuildMaterial.Stone:
                     color = new Color(0.58f, 0.62f, 0.62f, 1f);
@@ -8585,7 +11327,7 @@ namespace DecoLimitLifter.SmartBuildMode
             if (_draft.ShapeKind == SmartBuildShapeKind.DownSlope)
                 return TryGetDownSlopeFaceWorldCorners(axis, sign, out face);
 
-            Vector3[] corners = _draft.ToVolume(_source).GetLocalCorners();
+            Vector3[] corners = _draft.ToVolume(SourceForPiece(_draft)).GetLocalCorners();
             int[] indices;
             switch (axis)
             {
@@ -8771,6 +11513,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
         private static bool IsShiftHeld() =>
             Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
+        private static bool IsControlHeld() =>
+            Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
 
         private static bool IsCardinalSlopeStretchHeld() =>
             IsShiftHeld();
@@ -9319,39 +12064,43 @@ namespace DecoLimitLifter.SmartBuildMode
         private sealed class SmartBuildSceneSnapshot
         {
             internal SmartBuildSceneSnapshot(
-                AllConstruct construct,
-                IEnumerable<SmartBuildPiece> pieces,
-                int selectedPieceId,
+                SmartBuildSceneState sceneState,
                 SmartBuildTool tool,
                 SmartBuildShapeKind selectedShape,
                 string selectedShapeDescriptorKey,
                 int selectedSlopeLength,
+                SmartBuildMaterial selectedMaterial,
+                SmartBuildDrawPlane drawPlane,
+                SmartBuildOccupancyMode occupancyMode,
                 SmartBuildEditHandleMode editHandleMode,
                 SmartBuildSlopeSupportMode defaultSlopeSupportMode,
                 SmartBuildPreviewMode previewMode)
             {
-                Construct = construct;
-                Pieces = (pieces ?? Array.Empty<SmartBuildPiece>())
-                    .Where(piece => piece != null)
-                    .Select(piece => piece.Clone())
-                    .ToArray();
-                SelectedPieceId = selectedPieceId;
+                SceneState = sceneState ?? new SmartBuildSceneState(null, null, null, -1);
                 Tool = tool;
                 SelectedShape = selectedShape;
                 SelectedShapeDescriptorKey = string.IsNullOrWhiteSpace(selectedShapeDescriptorKey)
                     ? SmartBuildShapeDescriptors.CuboidKey
                     : selectedShapeDescriptorKey;
                 SelectedSlopeLength = selectedSlopeLength;
+                SelectedMaterial = selectedMaterial;
+                DrawPlane = drawPlane;
+                OccupancyMode = occupancyMode;
                 EditHandleMode = editHandleMode;
                 DefaultSlopeSupportMode = defaultSlopeSupportMode;
                 PreviewMode = previewMode;
             }
 
-            internal AllConstruct Construct { get; }
+            internal SmartBuildSceneState SceneState { get; }
 
-            internal IReadOnlyList<SmartBuildPiece> Pieces { get; }
+            internal AllConstruct Construct => SceneState.Construct;
 
-            internal int SelectedPieceId { get; }
+            internal IReadOnlyList<SmartBuildPiece> Pieces =>
+                SceneState.Nodes.Select(node => node.HostPiece).ToArray();
+
+            internal int SelectedPieceId => SceneState.PrimaryNodeId;
+
+            internal IReadOnlyList<int> SelectedPieceIds => SceneState.SelectedNodeIds;
 
             internal SmartBuildTool Tool { get; }
 
@@ -9361,11 +12110,119 @@ namespace DecoLimitLifter.SmartBuildMode
 
             internal int SelectedSlopeLength { get; }
 
+            internal SmartBuildMaterial SelectedMaterial { get; }
+
+            internal SmartBuildDrawPlane DrawPlane { get; }
+
+            internal SmartBuildOccupancyMode OccupancyMode { get; }
+
             internal SmartBuildEditHandleMode EditHandleMode { get; }
 
             internal SmartBuildSlopeSupportMode DefaultSlopeSupportMode { get; }
 
             internal SmartBuildPreviewMode PreviewMode { get; }
+        }
+
+        private sealed class SmartBuildSceneDelta
+        {
+            private SmartBuildSceneDelta(
+                SmartBuildSceneStateDelta sceneDelta,
+                SmartBuildSceneSettings before,
+                SmartBuildSceneSettings after)
+            {
+                SceneDelta = sceneDelta;
+                Before = before;
+                After = after;
+            }
+
+            private SmartBuildSceneStateDelta SceneDelta { get; }
+
+            private SmartBuildSceneSettings Before { get; }
+
+            private SmartBuildSceneSettings After { get; }
+
+            internal static SmartBuildSceneDelta Create(
+                SmartBuildSceneSnapshot before,
+                SmartBuildSceneSnapshot after)
+            {
+                if (before == null || after == null)
+                    return null;
+                SmartBuildSceneStateDelta sceneDelta =
+                    SmartBuildSceneStateDelta.Create(before.SceneState, after.SceneState);
+                var beforeSettings = new SmartBuildSceneSettings(before);
+                var afterSettings = new SmartBuildSceneSettings(after);
+                if (!sceneDelta.HasSceneChanges && beforeSettings.ContentEquals(afterSettings))
+                    return null;
+                return new SmartBuildSceneDelta(sceneDelta, beforeSettings, afterSettings);
+            }
+
+            internal SmartBuildSceneSnapshot Resolve(
+                SmartBuildSceneSnapshot current,
+                bool forward)
+            {
+                SmartBuildSceneState currentState = current?.SceneState ??
+                    new SmartBuildSceneState(null, null, null, -1);
+                SmartBuildSceneState state = currentState.Apply(SceneDelta, forward);
+                return (forward ? After : Before).CreateSnapshot(state);
+            }
+        }
+
+        private sealed class SmartBuildSceneSettings
+        {
+            internal SmartBuildSceneSettings(SmartBuildSceneSnapshot snapshot)
+            {
+                Tool = snapshot.Tool;
+                SelectedShape = snapshot.SelectedShape;
+                SelectedShapeDescriptorKey = snapshot.SelectedShapeDescriptorKey;
+                SelectedSlopeLength = snapshot.SelectedSlopeLength;
+                SelectedMaterial = snapshot.SelectedMaterial;
+                DrawPlane = snapshot.DrawPlane;
+                OccupancyMode = snapshot.OccupancyMode;
+                EditHandleMode = snapshot.EditHandleMode;
+                DefaultSlopeSupportMode = snapshot.DefaultSlopeSupportMode;
+                PreviewMode = snapshot.PreviewMode;
+            }
+
+            internal SmartBuildTool Tool { get; }
+            internal SmartBuildShapeKind SelectedShape { get; }
+            internal string SelectedShapeDescriptorKey { get; }
+            internal int SelectedSlopeLength { get; }
+            internal SmartBuildMaterial SelectedMaterial { get; }
+            internal SmartBuildDrawPlane DrawPlane { get; }
+            internal SmartBuildOccupancyMode OccupancyMode { get; }
+            internal SmartBuildEditHandleMode EditHandleMode { get; }
+            internal SmartBuildSlopeSupportMode DefaultSlopeSupportMode { get; }
+            internal SmartBuildPreviewMode PreviewMode { get; }
+
+            internal bool ContentEquals(SmartBuildSceneSettings other) =>
+                other != null &&
+                Tool == other.Tool &&
+                SelectedShape == other.SelectedShape &&
+                string.Equals(
+                    SelectedShapeDescriptorKey,
+                    other.SelectedShapeDescriptorKey,
+                    StringComparison.Ordinal) &&
+                SelectedSlopeLength == other.SelectedSlopeLength &&
+                SelectedMaterial == other.SelectedMaterial &&
+                DrawPlane == other.DrawPlane &&
+                OccupancyMode == other.OccupancyMode &&
+                EditHandleMode == other.EditHandleMode &&
+                DefaultSlopeSupportMode == other.DefaultSlopeSupportMode &&
+                PreviewMode == other.PreviewMode;
+
+            internal SmartBuildSceneSnapshot CreateSnapshot(SmartBuildSceneState state) =>
+                new SmartBuildSceneSnapshot(
+                    state,
+                    Tool,
+                    SelectedShape,
+                    SelectedShapeDescriptorKey,
+                    SelectedSlopeLength,
+                    SelectedMaterial,
+                    DrawPlane,
+                    OccupancyMode,
+                    EditHandleMode,
+                    DefaultSlopeSupportMode,
+                    PreviewMode);
         }
 
         private readonly struct SmartBuildShapePaletteEntry

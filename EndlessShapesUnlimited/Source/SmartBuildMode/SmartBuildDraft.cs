@@ -33,7 +33,9 @@ namespace DecoLimitLifter.SmartBuildMode
     internal enum SmartBuildOccupancyMode
     {
         SkipOccupied,
-        BlockOnOverlap
+        BlockOnOverlap,
+        ReplaceOccupied,
+        EraseOccupied
     }
 
     internal enum SmartBuildPreviewMode

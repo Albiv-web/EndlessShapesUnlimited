@@ -118,7 +118,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
     internal sealed class DecorationSnapshotBatchCommand : IDecorationEditCommand
     {
-        private readonly AllConstruct _construct;
+        private readonly AllConstruct[] _constructs;
         private readonly Decoration[] _decorations;
         private readonly DecorationEditSnapshot[] _before;
         private readonly DecorationEditSnapshot[] _after;
@@ -131,9 +131,28 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditSnapshot[] before,
             DecorationEditSnapshot[] after,
             int primaryIndex)
+            : this(
+                label,
+                RepeatConstruct(construct, decorations?.Length ?? 0),
+                decorations,
+                before,
+                after,
+                primaryIndex)
+        {
+        }
+
+        internal DecorationSnapshotBatchCommand(
+            string label,
+            AllConstruct[] constructs,
+            Decoration[] decorations,
+            DecorationEditSnapshot[] before,
+            DecorationEditSnapshot[] after,
+            int primaryIndex)
         {
             Label = string.IsNullOrEmpty(label) ? "Edit mirrored decorations" : label;
-            _construct = construct;
+            _constructs = constructs == null
+                ? Array.Empty<AllConstruct>()
+                : (AllConstruct[])constructs.Clone();
             _decorations = decorations ?? Array.Empty<Decoration>();
             _before = before ?? Array.Empty<DecorationEditSnapshot>();
             _after = after ?? Array.Empty<DecorationEditSnapshot>();
@@ -145,7 +164,7 @@ namespace DecoLimitLifter.DecorationEditMode
         public bool Undo(DecorationEditSession session) =>
             session != null &&
             session.TryRestoreHistorySnapshots(
-                _construct,
+                _constructs,
                 _decorations,
                 _before,
                 _primaryIndex,
@@ -154,11 +173,22 @@ namespace DecoLimitLifter.DecorationEditMode
         public bool Redo(DecorationEditSession session) =>
             session != null &&
             session.TryRestoreHistorySnapshots(
-                _construct,
+                _constructs,
                 _decorations,
                 _after,
                 _primaryIndex,
                 Label + " redo");
+
+        private static AllConstruct[] RepeatConstruct(AllConstruct construct, int count)
+        {
+            if (count <= 0)
+                return Array.Empty<AllConstruct>();
+
+            var constructs = new AllConstruct[count];
+            for (int index = 0; index < constructs.Length; index++)
+                constructs[index] = construct;
+            return constructs;
+        }
     }
 
     internal sealed class SurfaceDraftHistoryCommand : IDecorationEditCommand

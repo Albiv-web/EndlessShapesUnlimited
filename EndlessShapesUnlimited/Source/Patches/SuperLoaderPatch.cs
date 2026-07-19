@@ -6,7 +6,10 @@ using HarmonyLib;
 
 namespace DecoLimitLifter.Patches
 {
-    [HarmonyPatch(typeof(SuperLoader))]
+    // TargetMethods supplies the declaring type and exact overloads. Keeping this
+    // attribute targetless also works with Harmony 2.1.x, which rejects a class
+    // target combined with HarmonyTargetMethods.
+    [HarmonyPatch]
     internal static class SuperLoader_Deserialise_All_Patch
     {
         [HarmonyTargetMethods]

@@ -7,7 +7,7 @@ This is the coarse living checklist for ESU changes. Use it as the default smoke
 Run these from the repository root:
 
 ```powershell
-$env:FTD_DIR='C:\Program Files (x86)\Steam\steamapps\common\From The Depths'
+$env:FTD_DIR='<From The Depths install>'
 dotnet build .\EndlessShapesUnlimited\Source\EndlessShapesUnlimited.csproj -c Release
 dotnet run --project .\tools\EndlessShapesUnlimited.Verification\EndlessShapesUnlimited.Verification.csproj -c Release -p:NoWarn=MSB3277
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
@@ -17,9 +17,9 @@ The direct Release build and verifier build do not overwrite the packaged mod
 DLL. Only `build.ps1` opts into `CopyReleaseAssemblyToModFolder=true` before its
 package hash and archive checks.
 
-## v1.0.7 Focused Smoke Course
+## v1.2.0 Focused Smoke Course
 
-Use this short course for the current v1.0.7 development build before a longer
+Use this short course for the current v1.2.0 development build before a longer
 release pass.
 
 1. Start FtD with only ESU and normal test mods enabled.
@@ -110,6 +110,75 @@ release pass.
     shared ESU notification/log UI instead of clipped status text.
 27. Apply/cancel generated pieces, then undo/redo through FtD.
 28. Save, reload, and confirm committed blocks/decorations persist.
+29. In Decoration Workspace tools, save/load/delete a portable decoration-group
+    preset, bulk-select by mesh/color/material/anchor/filter, invert/grow the
+    selection, and sample/apply exact settings with the eyedropper.
+30. Align bounds and centers, distribute centers and edge gaps, match
+    rotation/scale, make linear/radial arrays, and exercise surface, anchor, and
+    axis snapping. Confirm the ruler reports distance, angle, and clearance.
+31. Create two named layers, assign decorations, set tags, hide and isolate one
+    layer, then test layer and object locks against transform, paint, paste,
+    duplicate, and delete. Close/reopen ESU and reload the profile to confirm
+    state persistence and visibility restoration.
+32. Save and restore Surface, generator, Smart scene, and decoration-group
+    presets. Interrupt preview work, restart/reopen, and restore each recovery
+    slot; a corrupt primary library must recover from its backup or fail without
+    replacing valid data.
+33. On Surface geometry, exercise face/edge extrusion, inset, subdivision,
+    vertex welding, boundary-hole fill, smoothing, and face reversal. Enable a
+    smooth Bezier generator path and confirm preview and placement follow it.
+34. Place an ESU Surface, save/reload, right-click a member decoration, and
+    reopen its editable source. Edit and place again; unknown/vanilla
+    decorations must not claim source metadata.
+35. In Smart Builder, Ctrl/Shift-select rows, marquee multiple pieces, then
+    move/rotate/scale/duplicate/delete the group. Bulk-select All, None, Same
+    shape, Same material, and Invert; confirm every change is one scene undo.
+36. Give selected pieces different materials, convert compatible shapes, switch
+    cuboids and generators between solid/filled and hollow/shell, and verify the
+    exact per-piece material is used by preview and commit.
+37. Create axis arrays and a drag brush, then generate Arc, Tube, Cone, and
+    Frustum pieces at boundary settings. Confirm scene/output limits reject
+    oversized operations before partial changes.
+38. Arm Smart Builder's craft-block eyedropper and sample supported blocks on a
+    main construct and rotated subobject. Confirm material, mapped shape/length,
+    and cardinal local rotation match; unknown blocks must refuse visibly.
+39. Test Smart occupancy modes against multi-cell blocks: Skip, Block, Replace,
+    and Erase. Replace/Erase must remove complete touched block items, commit
+    atomically, and restore all removals/placements with one FtD undo.
+40. Enter valid and invalid numeric origins/dimensions. Test relative group
+    movement, primary/bounds/custom pivots, X/Y/Z quarter turns, min/center/max
+    alignment, equal-gap distribution, craft-face snap, and bounds/span/gaps.
+    Every accepted command is one preview undo; invalid input changes nothing.
+41. With no text field active, test `Ctrl+A`, `Ctrl+C`, `Ctrl+V`, `Ctrl+D`,
+    `Delete`, and Escape. Paste at a pointed craft cell and with the one-cell-right
+    fallback offset.
+42. Create editable Linear, Grid, Radial, and Polyline patterns from single and
+    grouped sources. Test negative/positive copies, Keep/Cardinal Tangent path
+    orientation, symmetry, occupancy, overlap, and radial rounding warnings.
+43. Edit pattern step, pivot/angle, and path-point viewport handles. Enter must
+    publish one history entry; Escape must restore the gesture's exact starting
+    parameters. Confirm the typed panel stays in sync.
+44. Use Edit Source, Dissolve, and Bake. Dissolve restores only the original
+    sources; Bake/direct Apply are placement-equivalent; an over-512 Bake is
+    refused atomically while a valid direct Apply remains available.
+45. Create compressed rectangle, wall, plane, brush, and flood region nodes.
+    Flood remains a fixed snapshot until **Recompute from craft** is chosen.
+46. Trigger each per-cell diagnostic, then use the pinned legend and **Next
+    Issue**. The responsible node/cell must select and pulse without camera
+    movement. Mirror down slopes across Y; unsupported mirror definitions must
+    reject only their responsible nodes with a specific diagnostic.
+47. Confirm the 1,000-placement warning, 10,000-placement hard limit, 512-node
+    limit, 4,096-cell region/flood limit, 256-point path limit, and coordinate
+    limit all reject oversized input before partial enumeration or allocation.
+48. With developer diagnostics enabled, change selection only and leave frames
+    unchanged; neither may rebuild geometry or rewrite recovery. Then mutate
+    geometry/material/symmetry/occupancy and confirm the relevant plan revision
+    changes and Apply still matches the displayed plan.
+49. Run Craft Audit on clean and deliberately damaged fixtures. Check invalid
+    transforms/tethers/references, mesh bounds/size, duplicates, unused layers,
+    capacity, and serialization findings; copy/save the report, preview safe
+    repairs, change the craft to trigger stale-snapshot rejection, then apply
+    orientation normalization atomically and undo it.
 
 ## Startup And Options
 
@@ -336,7 +405,7 @@ release pass.
 - Open Smart Builder from build mode and from ESU mode switching.
 - Confirm Scene and Selected appear only in the left panel, Scene is above
   Selected, both bodies scroll independently, and their actions still target
-  the active preview piece.
+  the active scene node or current multi-selection.
 - Drag both left-panel dividers, close and reopen Smart Builder, and confirm the
   split ratios persist. Confirm the right Shapes/Generators browser uses the
   full available height without duplicate Scene or Selected shelves.
@@ -352,7 +421,9 @@ release pass.
 - Snap a new shape to an existing preview piece.
 - Move, scale, yaw, flip, duplicate, delete, undo, and redo.
 - Test Skip occupied and Block occupied behavior.
-- Apply, undo through FtD, save, reload, and confirm committed blocks match preview.
+- Apply, undo through FtD, save, reload, and confirm committed blocks match the
+  currently displayed plan. Faulted Apply/undo/redo/undo-registration paths must
+  report the failure and leave no unreported partial craft transaction.
 
 ## Smart Builder Shape Checklist
 
@@ -366,7 +437,9 @@ Run this for every newly enabled shape family or variant:
 - Scaling repeats whole items on voxel strides; it must not distort fixed geometry.
 - X/Y/Z symmetry mirrors position and rotation.
 - Odd-axis symmetry swaps handed left/right variants when required.
-- Missing mirror replacement invalidates the whole atomic plan.
+- A missing mirrored orientation rejects only the responsible node with a
+  specific diagnostic; valid nodes remain inspectable, and Apply stays blocked
+  until the issue is resolved or excluded.
 - `Skip` omits only conflicting placements.
 - `Block` prevents Apply on any occupied footprint.
 - Apply uses vanilla `PlaceBlockCommand`.

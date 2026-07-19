@@ -34,6 +34,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Mod Release build failed.' }
 dotnet format $project --verify-no-changes --no-restore --verbosity minimal
 if ($LASTEXITCODE -ne 0) { throw 'Mod formatting verification failed.' }
 
+dotnet restore $verification --nologo -p:NoWarn=MSB3277
+if ($LASTEXITCODE -ne 0) { throw 'Verifier restore failed.' }
+
 dotnet format $verification --verify-no-changes --no-restore --verbosity minimal
 if ($LASTEXITCODE -ne 0) { throw 'Verifier formatting verification failed.' }
 

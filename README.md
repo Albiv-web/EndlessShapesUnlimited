@@ -41,6 +41,19 @@ License.
 - Exports construct geometry as OBJ/MTL with only referenced textures.
 - Adds Decoration Edit Mode, Surface Builder, and Smart Block Builder as modal
   ESU editor surfaces.
+- Adds profile-backed presets and recovery for Smart scenes, Surface and
+  generator drafts, plus portable decoration groups.
+- Adds bulk decoration layout, arrays, exact settings sampling, named layers and
+  folders, tags, visibility/isolation, edit locks, and live measurement tools.
+- Adds advanced Surface modeling, smooth Bezier generator paths, and editable
+  source reopening for ESU-placed surfaces.
+- Adds transactional Smart Builder replace/erase, craft-local precision and
+  layout tools, editable linear/grid/radial/polyline patterns, compressed
+  brush/wall/plane/flood regions, mixed materials, exact craft-block sampling,
+  per-cell diagnostics, conditional replacement, shape conversion, and
+  advanced block generators.
+- Adds deterministic craft auditing, report export, dry-run repair previews,
+  stale-snapshot protection, and conservative two-step safe-repair apply.
 - Adds shared X/Y/Z symmetry planes for decoration placement, generated
   surfaces, generator paths/circles, and Smart Builder commits.
 - Renders Surface Builder Extra Tools plans with the selected decoration mesh,
@@ -57,7 +70,7 @@ License.
    From the repository root, run:
    `powershell -ExecutionPolicy Bypass -File tools\Deploy-EndlessShapesUnlimited.ps1`
 3. Start FTD and confirm the Alerts panel reports
-   `EndlessShapes Unlimited v1.0.10 Active!`.
+   `EndlessShapes Unlimited v1.2.0 Active!`.
 
 The runtime package must contain only:
 
@@ -278,6 +291,20 @@ Important Decoration Edit behavior:
 - Material and paint color palettes use the actual selected color/material
   swatches where available. Paint-button grids responsively fill their panel by
   default and can be returned to the basic fixed grid from ESU options.
+- Workspace tools can save a selected decoration group as a portable preset,
+  bulk-select by mesh/color/material/anchor/filter, invert or grow a selection,
+  and sample/apply exact decoration settings with the eyedropper.
+- Precision tools align bounds or centers, distribute centers or edge gaps,
+  match rotation/scale, create linear or radial arrays, snap to selected
+  surfaces/anchors/axes, and report live distance, angle, and clearance.
+- Profile-backed named layers can be organized into named folders, then hidden,
+  isolated, tagged, or locked.
+  Individual decorations can also be locked; locked targets reject transform,
+  paint, paste, duplicate, and delete operations.
+- Craft Audit scans the focused construct without mutating it. Deterministic
+  reports can be copied or saved, and safe repairs require a dry-run preview,
+  a fresh-snapshot check, and explicit confirmation before one atomic undoable
+  apply.
 - Anchor follow retethers while preserving visual world position.
 - Decoration-mesh placement with Block Palette **Build** off uses a pointer ray
   against real craft blocks, not the vanilla build cursor.
@@ -349,20 +376,53 @@ Surface notes:
 - Hovering generator mesh rows shows the shared mesh preview card.
 - Colored triangle previews and committed triangle decorations resolve the same
   active craft-palette entry, so the chosen preview color is the placed color.
+- Surface presets and recovery slots preserve portable draft geometry and
+  generator settings. ESU-placed Surface decorations retain profile-local
+  source metadata so their originating draft can be reopened after a reload.
+- Modeling actions include face and boundary-edge extrusion, face inset,
+  subdivision, vertex welding, boundary-hole fill, smoothing, and face winding
+  reversal. Generator paths can optionally interpolate a smooth Bezier route.
 
 ## Smart Block Builder
 
 Open with `Ctrl+Shift+B` or via `Tab` from Surface Builder while clean.
 
 Smart Builder uses runtime preview scenes and vanilla block placement commands.
-It currently supports basic structural materials and Block/Down slope shape
-families. Future shapes can extend the `1` shortcut cycle without changing the
-shortcut model.
+It supports basic structural materials, Block/Down slope families, generated
+circles, polygons, spheres, arcs, tubes, cones, and frustums.
 
 Core workflow:
 
 - Add/Build creates a `SmartBuildDraft`.
-- Move, Rotate, and Scale edit the selected preview piece.
+- Ctrl/Shift row selection and viewport marquee select multiple preview pieces;
+  Move, Rotate, Scale, Duplicate, Delete, material changes, and shape conversion
+  operate on the group as one undoable scene edit.
+- Linear, grid, radial, and polyline tools create one editable pattern node that
+  retains its source group and typed parameters. Apply expands it directly;
+  Dissolve restores only the source; Bake creates independent primitive nodes
+  when the 512-node cap permits it. Radial paths support craft-local pivots and
+  exact quarter-turn orientation following.
+- Rectangle, wall, plane, brush, and flood tools create compressed run-length
+  region nodes rather than one scene row per cell. Flood regions remain fixed
+  snapshots until **Recompute from craft** is requested. Every expansion is
+  bounded before enumeration or allocation.
+- The Transform/Layout inspector supports absolute and relative craft-local
+  coordinates, primary/bounds/custom group pivots, exact quarter turns,
+  min/center/max alignment, equal occupied-bound gap distribution, and
+  selection measurements. Invalid numeric input leaves the scene unchanged.
+- The occupancy control cycles Skip, Block, transactional Replace, and
+  transactional Erase. Replace/Erase remove complete touched block items and
+  participate in the same FtD undo transaction as new placements.
+- Bulk commands select all, none, matching shape, matching material, or invert
+  the scene selection. The armed eyedropper samples a pointed craft block only
+  when its material, shape, length, and cardinal local rotation map exactly to a
+  supported Smart Builder definition.
+- Named Smart scene presets are portable across constructs. Autosave recovery
+  slots can restore interrupted preview work without committing blocks. Schema
+  v2 preserves editable patterns/regions and migrates released v1 scenes.
+- Per-cell colors distinguish valid, skipped, overlap, craft collision,
+  disconnected, removal, replacement, and unsupported output. **Next Issue**
+  selects the responsible node and pulses the cell without moving the camera.
 - The left panel keeps the Scene list above the scrollable Selected-piece
   actions; drag the splitters to allocate its free space between them. A
   collapsed shelf consumes only its header, and temporary screen constraints do
@@ -377,6 +437,11 @@ Core workflow:
 
 Input notes:
 
+- `Ctrl+A`, `Ctrl+C`, `Ctrl+V`, `Ctrl+D`, and `Delete` provide standard scene
+  selection, clipboard, duplicate, and delete behavior while no text field is
+  active. Paste targets the pointed craft cell or falls back to +X.
+- Escape first cancels an active gesture or text focus, then deselects, before
+  closing the mode.
 - Middle mouse may show the FTD cursor without closing Smart Builder, and camera
   movement remains live unless a Smart Builder handle is being dragged.
 - Right click cancels context/menu selection instead of clearing the whole scene.

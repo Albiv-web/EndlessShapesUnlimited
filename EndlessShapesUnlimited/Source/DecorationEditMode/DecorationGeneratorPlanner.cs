@@ -324,7 +324,10 @@ namespace DecoLimitLifter.DecorationEditMode
             bool hasSharedAnchor,
             Vector3i sharedAnchor,
             bool sharedAnchorSelected,
-            int selectedPoint)
+            int selectedPoint,
+            bool smoothBezierPath = false,
+            int bezierSubdivisions = DecorationGeneratorDraft.DefaultBezierSubdivisions,
+            float bezierTension = DecorationGeneratorDraft.DefaultBezierTension)
         {
             Tool = tool;
             Construct = construct;
@@ -338,6 +341,9 @@ namespace DecoLimitLifter.DecorationEditMode
             SharedAnchor = sharedAnchor;
             SharedAnchorSelected = sharedAnchorSelected;
             SelectedPoint = selectedPoint;
+            SmoothBezierPath = smoothBezierPath;
+            BezierSubdivisions = bezierSubdivisions;
+            BezierTension = bezierTension;
         }
 
         internal SurfaceExtraTool Tool { get; }
@@ -364,6 +370,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal int SelectedPoint { get; }
 
+        internal bool SmoothBezierPath { get; }
+
+        internal int BezierSubdivisions { get; }
+
+        internal float BezierTension { get; }
+
         internal bool SameAs(DecorationGeneratorDraftSnapshot other)
         {
             if (other == null ||
@@ -371,6 +383,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 !ReferenceEquals(Construct, other.Construct) ||
                 HasCircleCenter != other.HasCircleCenter ||
                 SelectedPoint != other.SelectedPoint ||
+                SmoothBezierPath != other.SmoothBezierPath ||
+                BezierSubdivisions != other.BezierSubdivisions ||
+                Math.Abs(BezierTension - other.BezierTension) > 0.0001f ||
                 !SameVector(CircleCenter, other.CircleCenter) ||
                 !SameVector(CircleNormal, other.CircleNormal) ||
                 !SameVector(CircleTangentA, other.CircleTangentA) ||
@@ -403,8 +418,10 @@ namespace DecoLimitLifter.DecorationEditMode
             left.z == right.z;
     }
 
-    internal sealed class DecorationGeneratorDraft
+    internal sealed partial class DecorationGeneratorDraft
     {
+        internal const int DefaultBezierSubdivisions = 8;
+        internal const float DefaultBezierTension = 1f;
         private const float TypedCoordinateResolutionMetres = 0.001f;
         private const float TypedGeometryEpsilon = 0.000001f;
         private const float TypedEdgeLengthSquaredEpsilon =
@@ -417,6 +434,12 @@ namespace DecoLimitLifter.DecorationEditMode
         internal AllConstruct Construct { get; private set; }
 
         internal IReadOnlyList<Vector3> PathPoints => _pathPoints;
+
+        internal bool SmoothBezierPath { get; private set; }
+
+        internal int BezierSubdivisions { get; private set; } = DefaultBezierSubdivisions;
+
+        internal float BezierTension { get; private set; } = DefaultBezierTension;
 
         internal bool HasCircleCenter { get; private set; }
 
@@ -471,6 +494,8 @@ namespace DecoLimitLifter.DecorationEditMode
             if (Tool == tool)
                 return;
             Tool = tool;
+            if (!UsesPath(Tool))
+                SmoothBezierPath = false;
             ClearSelection();
         }
 
@@ -478,6 +503,9 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             Construct = null;
             _pathPoints.Clear();
+            SmoothBezierPath = false;
+            BezierSubdivisions = DefaultBezierSubdivisions;
+            BezierTension = DefaultBezierTension;
             HasCircleCenter = false;
             CircleCenter = Vector3.zero;
             CircleNormal = Vector3.up;
@@ -803,6 +831,8 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             _pathPoints.RemoveAt(SelectedPoint);
+            if (_pathPoints.Count < SurfaceBezierPath.MinimumKnots)
+                SmoothBezierPath = false;
             SelectedPoint = -1;
             message = "Path point deleted.";
             return true;
@@ -835,6 +865,9 @@ namespace DecoLimitLifter.DecorationEditMode
             mirrored.Construct = Construct;
             for (int index = 0; index < _pathPoints.Count; index++)
                 mirrored._pathPoints.Add(variant.Mirror(_pathPoints[index]));
+            mirrored.SmoothBezierPath = SmoothBezierPath;
+            mirrored.BezierSubdivisions = BezierSubdivisions;
+            mirrored.BezierTension = BezierTension;
 
             if (HasCircleCenter)
             {
@@ -871,7 +904,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 HasSharedAnchor,
                 SharedAnchor,
                 SharedAnchorSelected,
-                SelectedPoint);
+                SelectedPoint,
+                SmoothBezierPath,
+                BezierSubdivisions,
+                BezierTension);
 
         internal void Restore(DecorationGeneratorDraftSnapshot snapshot)
         {
@@ -882,6 +918,15 @@ namespace DecoLimitLifter.DecorationEditMode
             Tool = snapshot.Tool == SurfaceExtraTool.None ? SurfaceExtraTool.Path : snapshot.Tool;
             Construct = snapshot.Construct;
             _pathPoints.AddRange(snapshot.PathPoints ?? Array.Empty<Vector3>());
+            SmoothBezierPath = snapshot.SmoothBezierPath;
+            BezierSubdivisions = SurfaceBezierPath.IsValidSubdivisions(snapshot.BezierSubdivisions)
+                ? snapshot.BezierSubdivisions
+                : DefaultBezierSubdivisions;
+            BezierTension = SurfaceBezierPath.IsValidTension(snapshot.BezierTension)
+                ? snapshot.BezierTension
+                : DefaultBezierTension;
+            if (!UsesPath(Tool) || _pathPoints.Count < SurfaceBezierPath.MinimumKnots)
+                SmoothBezierPath = false;
             HasCircleCenter = snapshot.HasCircleCenter;
             CircleCenter = snapshot.CircleCenter;
             if (UsesCenterTool && HasCircleCenter)
@@ -1519,16 +1564,21 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationGeneratorDraft draft,
             out string message)
         {
-            message = null;
-            if (draft.PathPoints.Count < 2)
+            if (!draft.TryGetEffectivePathPoints(
+                    out IReadOnlyList<Vector3> pathPoints,
+                    out message))
+            {
+                return null;
+            }
+            if (pathPoints.Count < 2)
             {
                 message = "Place at least two path points before previewing.";
                 return null;
             }
 
-            var segments = new List<DecorationGeneratorSegment>(draft.PathPoints.Count - 1);
-            for (int index = 0; index < draft.PathPoints.Count - 1; index++)
-                segments.Add(new DecorationGeneratorSegment(draft.PathPoints[index], draft.PathPoints[index + 1]));
+            var segments = new List<DecorationGeneratorSegment>(pathPoints.Count - 1);
+            for (int index = 0; index < pathPoints.Count - 1; index++)
+                segments.Add(new DecorationGeneratorSegment(pathPoints[index], pathPoints[index + 1]));
             return segments;
         }
 
@@ -1618,21 +1668,26 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationGeneratorSettings settings,
             out string message)
         {
-            message = null;
-            if (draft.PathPoints.Count < 2)
+            if (!draft.TryGetEffectivePathPoints(
+                    out IReadOnlyList<Vector3> pathPoints,
+                    out message))
+            {
+                return null;
+            }
+            if (pathPoints.Count < 2)
             {
                 message = "Place at least two tube path points before previewing.";
                 return null;
             }
 
-            if (!TryValidateTubePath(draft.PathPoints, out message))
+            if (!TryValidateTubePath(pathPoints, out message))
                 return null;
 
             int sides = Mathf.Clamp(settings.TubeSegments, 3, 64);
             float radius = settings.TubeDiameter * 0.5f;
             long requestedSegments =
-                (long)draft.PathPoints.Count * sides +
-                (long)(draft.PathPoints.Count - 1) * sides;
+                (long)pathPoints.Count * sides +
+                (long)(pathPoints.Count - 1) * sides;
             if (requestedSegments > MaximumGeneratedSegments)
             {
                 message = SegmentSafetyLimitMessage("Tube", requestedSegments);
@@ -1642,9 +1697,9 @@ namespace DecoLimitLifter.DecorationEditMode
             var segments = new List<DecorationGeneratorSegment>((int)requestedSegments);
             Vector3[] previousRing = null;
             Vector3 previousRadial = Vector3.zero;
-            for (int pointIndex = 0; pointIndex < draft.PathPoints.Count; pointIndex++)
+            for (int pointIndex = 0; pointIndex < pathPoints.Count; pointIndex++)
             {
-                if (!TryGetTubePathTangent(draft.PathPoints, pointIndex, out Vector3 tangent))
+                if (!TryGetTubePathTangent(pathPoints, pointIndex, out Vector3 tangent))
                 {
                     message = "Tube path point " +
                               (pointIndex + 1).ToString(CultureInfo.InvariantCulture) +
@@ -1676,7 +1731,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 for (int side = 0; side < sides; side++)
                 {
                     float angle = side * Mathf.PI * 2f / sides;
-                    ring[side] = draft.PathPoints[pointIndex] +
+                    ring[side] = pathPoints[pointIndex] +
                                  (radialA * Mathf.Cos(angle) + radialB * Mathf.Sin(angle)) *
                                  radius;
                 }

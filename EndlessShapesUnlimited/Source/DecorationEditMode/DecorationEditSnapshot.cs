@@ -37,6 +37,26 @@ namespace DecoLimitLifter.DecorationEditMode
             MaterialReplacement = source.MaterialReplacement;
         }
 
+        private DecorationEditSnapshot(
+            Vector3i tetherPoint,
+            Vector3 positioning,
+            Vector3 scaling,
+            Vector3 orientation,
+            Guid meshGuid,
+            int color,
+            bool hideOriginalMesh,
+            Guid materialReplacement)
+        {
+            TetherPoint = tetherPoint;
+            Positioning = positioning;
+            Scaling = scaling;
+            Orientation = orientation;
+            MeshGuid = meshGuid;
+            Color = color;
+            HideOriginalMesh = hideOriginalMesh;
+            MaterialReplacement = materialReplacement;
+        }
+
         internal Vector3i TetherPoint { get; }
 
         internal Vector3 Positioning { get; }
@@ -60,6 +80,62 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal DecorationEditSnapshot Copy() =>
             new DecorationEditSnapshot(this);
+
+        /// <summary>
+        /// Creates a data-only snapshot for portable preset, array, and repair plans.
+        /// Runtime identity (manager and UniqueId) is deliberately not part of a
+        /// decoration snapshot and is assigned by FTD when the result is placed.
+        /// </summary>
+        internal static bool TryCreatePortable(
+            Vector3i tetherPoint,
+            Vector3 positioning,
+            Vector3 scaling,
+            Vector3 orientation,
+            Guid meshGuid,
+            int color,
+            bool hideOriginalMesh,
+            Guid materialReplacement,
+            out DecorationEditSnapshot snapshot,
+            out string message)
+        {
+            snapshot = null;
+            if (!DecorationEditMath.IsFinite(positioning) ||
+                !DecorationEditMath.IsFinite(scaling) ||
+                !DecorationEditMath.IsFinite(orientation))
+            {
+                message = "Decoration snapshot contains NaN or infinity.";
+                return false;
+            }
+            if (!DecorationEditMath.IsWithinPositionLimit(positioning))
+            {
+                message = "Decoration snapshot positioning exceeds FTD's +/-10 metre tether limit.";
+                return false;
+            }
+            if (Math.Abs(scaling.x) < 0.00001f ||
+                Math.Abs(scaling.y) < 0.00001f ||
+                Math.Abs(scaling.z) < 0.00001f)
+            {
+                message = "Decoration snapshot scale contains a zero-sized axis.";
+                return false;
+            }
+            if (color < 0 || color > 31)
+            {
+                message = "Decoration snapshot color must be between 0 and 31.";
+                return false;
+            }
+
+            snapshot = new DecorationEditSnapshot(
+                tetherPoint,
+                positioning,
+                scaling,
+                orientation,
+                meshGuid,
+                color,
+                hideOriginalMesh,
+                materialReplacement);
+            message = "Decoration snapshot is valid.";
+            return true;
+        }
 
         internal void Restore(Decoration decoration)
         {

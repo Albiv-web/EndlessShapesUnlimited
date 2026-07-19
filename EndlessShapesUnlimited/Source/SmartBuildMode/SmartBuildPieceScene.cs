@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using BrilliantSkies.Core.Types;
 using BrilliantSkies.Ftd.Avatar.Build;
@@ -68,9 +69,11 @@ namespace DecoLimitLifter.SmartBuildMode
                 Array.Empty<SmartBuildVolume>());
     }
 
-    internal sealed class SmartBuildPieceScene
+    internal sealed partial class SmartBuildPieceScene
     {
+        internal const int MaximumScenePieces = SmartBuildLimits.MaximumSceneNodes;
         private readonly List<SmartBuildPiece> _pieces = new List<SmartBuildPiece>();
+        private readonly HashSet<int> _selectedPieceIds = new HashSet<int>();
 
         internal SmartBuildPieceScene(AllConstruct construct)
         {
@@ -83,23 +86,67 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal SmartBuildPiece SelectedPiece { get; private set; }
 
+        internal IReadOnlyList<SmartBuildPiece> SelectedPieces =>
+            _pieces.Where(piece => piece != null && _selectedPieceIds.Contains(piece.Id)).ToArray();
+
+        internal IReadOnlyList<int> SelectedPieceIds =>
+            _pieces
+                .Where(piece => piece != null && _selectedPieceIds.Contains(piece.Id))
+                .Select(piece => piece.Id)
+                .ToArray();
+
+        internal int SelectionCount => _selectedPieceIds.Count;
+
         internal int Count => _pieces.Count;
 
         internal bool HasSelection => SelectedPiece != null;
 
+        internal bool IsSelected(int id) => _selectedPieceIds.Contains(id);
+
         internal bool HasDownSlope =>
-            _pieces.Any(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope);
+            Nodes
+                .Where(node => node != null)
+                .SelectMany(node => node.SourcePieces)
+                .Any(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope);
 
         internal bool HasFixedGeometry =>
-            _pieces.Any(piece => piece.IsFixedGeometry);
+            Nodes
+                .Where(node => node != null)
+                .SelectMany(node => node.SourcePieces)
+                .Any(piece => piece.IsFixedGeometry);
 
-        internal void Add(SmartBuildPiece piece)
+        internal bool CanAddPieces(int additionalCount, out string reason)
+        {
+            if (additionalCount < 0)
+            {
+                reason = "The requested Smart Builder piece count is invalid.";
+                return false;
+            }
+
+            if (_pieces.Count > MaximumScenePieces ||
+                (long)_pieces.Count + additionalCount > MaximumScenePieces)
+            {
+                reason =
+                    "The operation would exceed the Smart Builder scene cap of " +
+                    MaximumScenePieces + " pieces.";
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
+
+        internal bool Add(SmartBuildPiece piece)
         {
             if (piece == null)
-                return;
+                return false;
+            if (!CanAddPieces(1, out _))
+                return false;
 
             _pieces.Add(piece);
-            SelectedPiece = piece;
+            MarkGeometryChanged();
+            Select(piece.Id);
+            return true;
         }
 
         internal bool Select(int id)
@@ -108,21 +155,279 @@ namespace DecoLimitLifter.SmartBuildMode
             if (piece == null)
                 return false;
 
+            _selectedPieceIds.Clear();
+            _selectedPieceIds.Add(piece.Id);
             SelectedPiece = piece;
+            MarkSelectionChanged();
             return true;
         }
 
-        internal void ClearSelection() =>
+        internal bool AddToSelection(int id, bool makePrimary = true)
+        {
+            SmartBuildPiece piece = _pieces.FirstOrDefault(candidate => candidate.Id == id);
+            if (piece == null)
+                return false;
+
+            _selectedPieceIds.Add(piece.Id);
+            if (makePrimary || SelectedPiece == null)
+                SelectedPiece = piece;
+            MarkSelectionChanged();
+            return true;
+        }
+
+        internal bool ToggleSelection(int id)
+        {
+            SmartBuildPiece piece = _pieces.FirstOrDefault(candidate => candidate.Id == id);
+            if (piece == null)
+                return false;
+
+            if (!_selectedPieceIds.Remove(id))
+            {
+                _selectedPieceIds.Add(id);
+                SelectedPiece = piece;
+                MarkSelectionChanged();
+                return true;
+            }
+
+            if (ReferenceEquals(SelectedPiece, piece))
+            {
+                SelectedPiece = _pieces.LastOrDefault(
+                    candidate => candidate != null && _selectedPieceIds.Contains(candidate.Id));
+            }
+            MarkSelectionChanged();
+            return true;
+        }
+
+        internal bool SelectRange(int anchorId, int targetId, bool additive)
+        {
+            int anchorIndex = _pieces.FindIndex(piece => piece != null && piece.Id == anchorId);
+            int targetIndex = _pieces.FindIndex(piece => piece != null && piece.Id == targetId);
+            if (anchorIndex < 0 || targetIndex < 0)
+                return false;
+
+            if (!additive)
+                _selectedPieceIds.Clear();
+
+            int start = Math.Min(anchorIndex, targetIndex);
+            int end = Math.Max(anchorIndex, targetIndex);
+            for (int index = start; index <= end; index++)
+            {
+                SmartBuildPiece piece = _pieces[index];
+                if (piece != null)
+                    _selectedPieceIds.Add(piece.Id);
+            }
+
+            SelectedPiece = _pieces[targetIndex];
+            MarkSelectionChanged();
+            return true;
+        }
+
+        internal void SetSelection(IEnumerable<int> selectedIds, int primaryId)
+        {
+            var liveIds = new HashSet<int>(_pieces.Where(piece => piece != null).Select(piece => piece.Id));
+            _selectedPieceIds.Clear();
+            foreach (int id in selectedIds ?? Array.Empty<int>())
+            {
+                if (liveIds.Contains(id))
+                    _selectedPieceIds.Add(id);
+            }
+
+            SelectedPiece = _pieces.FirstOrDefault(
+                piece => piece != null && piece.Id == primaryId && _selectedPieceIds.Contains(piece.Id));
+            if (SelectedPiece == null)
+            {
+                SelectedPiece = _pieces.LastOrDefault(
+                    piece => piece != null && _selectedPieceIds.Contains(piece.Id));
+            }
+            MarkSelectionChanged();
+        }
+
+        internal void ClearSelection()
+        {
+            _selectedPieceIds.Clear();
             SelectedPiece = null;
+            MarkSelectionChanged();
+        }
 
         internal SmartBuildPiece DuplicateSelected(Vector3i offset)
         {
-            if (SelectedPiece == null)
+            if (SelectedPiece == null || !CanAddPieces(1, out _))
                 return null;
 
             SmartBuildPiece duplicate = SelectedPiece.Duplicate(offset);
-            Add(duplicate);
+            if (!Add(duplicate))
+                return null;
             return duplicate;
+        }
+
+        internal IReadOnlyList<SmartBuildPiece> DuplicateSelection(Vector3i offset)
+        {
+            return TryDuplicateSelection(offset, out IReadOnlyList<SmartBuildPiece> copies, out _)
+                ? copies
+                : Array.Empty<SmartBuildPiece>();
+        }
+
+        internal bool TryDuplicateSelection(
+            Vector3i offset,
+            out IReadOnlyList<SmartBuildPiece> copies,
+            out string reason)
+        {
+            copies = Array.Empty<SmartBuildPiece>();
+            SmartBuildPiece[] sources = SelectedPieces.ToArray();
+            if (sources.Length == 0)
+            {
+                reason = "Select at least one Smart Builder piece to duplicate.";
+                return false;
+            }
+            if (!CanAddPieces(sources.Length, out reason))
+                return false;
+
+            int primaryId = SelectedPiece?.Id ?? -1;
+            var staged = new List<SmartBuildPiece>(sources.Length);
+            SmartBuildPiece primaryDuplicate = null;
+            try
+            {
+                for (int index = 0; index < sources.Length; index++)
+                {
+                    SmartBuildPiece duplicate = sources[index].Duplicate(offset);
+                    staged.Add(duplicate);
+                    if (sources[index].Id == primaryId)
+                        primaryDuplicate = duplicate;
+                }
+            }
+            catch (Exception exception)
+            {
+                reason = "The selected pieces could not be duplicated: " + exception.Message;
+                return false;
+            }
+
+            // Commit only after every copy has been created successfully.
+            _pieces.AddRange(staged);
+            MarkGeometryChanged();
+            SetSelection(
+                staged.Select(piece => piece.Id),
+                primaryDuplicate?.Id ?? staged[staged.Count - 1].Id);
+            copies = staged;
+            reason = null;
+            return true;
+        }
+
+        internal IReadOnlyList<SmartBuildPiece> DuplicateSelectionArray(
+            Vector3i step,
+            int copyCount)
+        {
+            return TryDuplicateSelectionArray(
+                    step,
+                    copyCount,
+                    out IReadOnlyList<SmartBuildPiece> copies,
+                    out _)
+                ? copies
+                : Array.Empty<SmartBuildPiece>();
+        }
+
+        internal bool TryDuplicateSelectionArray(
+            Vector3i step,
+            int copyCount,
+            out IReadOnlyList<SmartBuildPiece> copies,
+            out string reason)
+        {
+            copies = Array.Empty<SmartBuildPiece>();
+            SmartBuildPiece[] sources = SelectedPieces.ToArray();
+            if (sources.Length == 0)
+            {
+                reason = "Select at least one Smart Builder piece to array.";
+                return false;
+            }
+            if (copyCount < 1 || copyCount > 64)
+            {
+                reason = "Smart Builder arrays require between 1 and 64 complete copy layers.";
+                return false;
+            }
+            if (step.x == 0 && step.y == 0 && step.z == 0)
+            {
+                reason = "Smart Builder array spacing cannot be zero.";
+                return false;
+            }
+            long requestedCount = (long)sources.Length * copyCount;
+            if (requestedCount > int.MaxValue)
+            {
+                reason = "The requested Smart Builder array is too large.";
+                return false;
+            }
+            if (!CanAddPieces((int)requestedCount, out reason))
+                return false;
+
+            int primarySourceId = SelectedPiece?.Id ?? sources[sources.Length - 1].Id;
+            var staged = new List<SmartBuildPiece>((int)requestedCount);
+            SmartBuildPiece primaryDuplicate = null;
+            try
+            {
+                for (int copy = 1; copy <= copyCount; copy++)
+                {
+                    Vector3i offset = new Vector3i(
+                        step.x * copy,
+                        step.y * copy,
+                        step.z * copy);
+                    foreach (SmartBuildPiece source in sources)
+                    {
+                        SmartBuildPiece duplicate = source.Duplicate(offset);
+                        staged.Add(duplicate);
+                        if (source.Id == primarySourceId)
+                            primaryDuplicate = duplicate;
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                reason = "The complete Smart Builder array could not be created: " + exception.Message;
+                return false;
+            }
+
+            // Never commit a truncated array: all requested layers are staged first.
+            _pieces.AddRange(staged);
+            MarkGeometryChanged();
+            SetSelection(
+                sources.Select(piece => piece.Id).Concat(staged.Select(piece => piece.Id)),
+                primaryDuplicate?.Id ?? staged[staged.Count - 1].Id);
+            copies = staged;
+            reason = null;
+            return true;
+        }
+
+        internal bool TryConvertSelectionTo(
+            SmartBuildShapeDescriptor descriptor,
+            int selectedLength,
+            out int convertedCount,
+            out string reason)
+        {
+            convertedCount = 0;
+            SmartBuildPiece[] selected = SelectedPieces.ToArray();
+            if (selected.Length == 0)
+            {
+                reason = "Select at least one Smart Builder piece to convert.";
+                return false;
+            }
+
+            var staged = new List<SmartBuildPiece>(selected.Length);
+            for (int index = 0; index < selected.Length; index++)
+            {
+                SmartBuildPiece converted = selected[index].Clone();
+                if (!converted.TryConvertTo(descriptor, selectedLength, out reason))
+                {
+                    convertedCount = 0;
+                    return false;
+                }
+                staged.Add(converted);
+            }
+
+            // Applying CopyFrom cannot fail after every conversion has passed on a clone.
+            for (int index = 0; index < selected.Length; index++)
+                selected[index].CopyFrom(staged[index]);
+            MarkGeometryChanged();
+
+            convertedCount = selected.Length;
+            reason = null;
+            return true;
         }
 
         internal bool DeleteSelected()
@@ -134,87 +439,176 @@ namespace DecoLimitLifter.SmartBuildMode
             if (index < 0)
                 return false;
 
+            int deletedId = SelectedPiece.Id;
             _pieces.RemoveAt(index);
+            RemoveEditableNode(deletedId);
+            MarkGeometryChanged();
+            _selectedPieceIds.Remove(deletedId);
             if (_pieces.Count == 0)
             {
-                SelectedPiece = null;
+                ClearSelection();
                 return true;
             }
 
-            SelectedPiece = _pieces[Math.Min(index, _pieces.Count - 1)];
+            SelectedPiece = _pieces.LastOrDefault(
+                piece => piece != null && _selectedPieceIds.Contains(piece.Id));
+            if (SelectedPiece == null)
+                Select(_pieces[Math.Min(index, _pieces.Count - 1)].Id);
             return true;
+        }
+
+        internal int DeleteSelection()
+        {
+            if (_selectedPieceIds.Count == 0)
+                return 0;
+
+            int fallbackIndex = _pieces.FindIndex(
+                piece => piece != null && _selectedPieceIds.Contains(piece.Id));
+            int removed = _pieces.RemoveAll(
+                piece => piece != null && _selectedPieceIds.Contains(piece.Id));
+            foreach (int removedId in _selectedPieceIds.ToArray())
+                RemoveEditableNode(removedId);
+            if (removed > 0)
+                MarkGeometryChanged();
+            _selectedPieceIds.Clear();
+            if (_pieces.Count == 0)
+            {
+                SelectedPiece = null;
+                return removed;
+            }
+
+            fallbackIndex = Math.Max(0, Math.Min(fallbackIndex, _pieces.Count - 1));
+            Select(_pieces[fallbackIndex].Id);
+            return removed;
         }
 
         internal void Clear()
         {
             _pieces.Clear();
-            SelectedPiece = null;
+            ClearEditableNodes();
+            MarkGeometryChanged();
+            ClearSelection();
         }
 
         internal void ReplaceWith(
             IEnumerable<SmartBuildPiece> pieces,
             int selectedId)
         {
+            ReplaceWith(
+                pieces,
+                selectedId >= 0 ? new[] { selectedId } : Array.Empty<int>(),
+                selectedId);
+            if (selectedId >= 0 && SelectedPiece == null && _pieces.Count > 0)
+                Select(_pieces[_pieces.Count - 1].Id);
+        }
+
+        internal void ReplaceWith(
+            IEnumerable<SmartBuildPiece> pieces,
+            IEnumerable<int> selectedIds,
+            int primarySelectedId)
+        {
             _pieces.Clear();
+            ClearEditableNodes();
             foreach (SmartBuildPiece piece in pieces ?? Array.Empty<SmartBuildPiece>())
             {
                 if (piece != null)
                     _pieces.Add(piece);
             }
 
-            SelectedPiece = selectedId >= 0
-                ? _pieces.FirstOrDefault(piece => piece.Id == selectedId) ??
-                  _pieces.LastOrDefault()
-                : null;
+            MarkGeometryChanged();
+            SetSelection(selectedIds, primarySelectedId);
         }
 
         internal SmartBuildPreviewSnapshot BuildPreview(SmartBuildSource source = null)
         {
-            if (Construct == null || _pieces.Count == 0)
-                return SmartBuildPreviewSnapshot.Empty;
+            TryBuildPreviewWithSources(
+                _ => source,
+                out SmartBuildPreviewSnapshot preview,
+                out _);
+            return preview;
+        }
 
-            var allCells = new Dictionary<string, Vector3i>();
+        internal SmartBuildPreviewSnapshot BuildPreviewWithSources(
+            Func<SmartBuildPiece, SmartBuildSource> sourceForPiece)
+        {
+            TryBuildPreviewWithSources(sourceForPiece, out SmartBuildPreviewSnapshot preview, out _);
+            return preview;
+        }
+
+        private bool TryBuildPreviewWithSources(
+            Func<SmartBuildPiece, SmartBuildSource> sourceForPiece,
+            out SmartBuildPreviewSnapshot preview,
+            out string reason)
+        {
+            preview = SmartBuildPreviewSnapshot.Empty;
+            reason = null;
+            if (Construct == null || _pieces.Count == 0)
+                return true;
+            if (!TryExpandSceneNodes(
+                    out IReadOnlyList<SmartBuildPiece> previewPieces,
+                    out _,
+                    out reason))
+            {
+                return false;
+            }
+
+            var allCells = new HashSet<Vector3i>();
             var sets = new List<IReadOnlyList<Vector3i>>();
             var volumes = new List<SmartBuildVolume>();
-            var seenSets = new HashSet<string>();
+            var seenSets = new List<HashSet<Vector3i>>();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
-                Vector3i[] cells = _pieces
-                    .SelectMany(piece => piece.EnumeratePreviewCells(source))
-                    .Select(variant.Mirror)
-                    .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
-                    .Select(group => group.First())
+                var variantCells = new HashSet<Vector3i>();
+                foreach (SmartBuildPiece piece in previewPieces)
+                {
+                    SmartBuildSource source = sourceForPiece?.Invoke(piece);
+                    foreach (Vector3i baseCell in piece.EnumeratePreviewCells(source))
+                    {
+                        Vector3i cell = variant.Mirror(baseCell);
+                        if (!variantCells.Add(cell) || allCells.Contains(cell))
+                            continue;
+                        if (allCells.Count >= SmartBuildLimits.MaximumPlannerInputCells)
+                        {
+                            reason =
+                                "Symmetry expansion exceeds the " +
+                                SmartBuildLimits.MaximumPlannerInputCells.ToString("N0", CultureInfo.InvariantCulture) +
+                                "-cell bounded planning limit; reduce the scene or symmetry planes.";
+                            preview = SmartBuildPreviewSnapshot.Empty;
+                            return false;
+                        }
+                        allCells.Add(cell);
+                    }
+                }
+
+                if (variantCells.Count == 0 ||
+                    seenSets.Any(seen => seen.SetEquals(variantCells)))
+                {
+                    continue;
+                }
+
+                seenSets.Add(variantCells);
+                Vector3i[] cells = variantCells
                     .OrderBy(cell => cell.x)
                     .ThenBy(cell => cell.y)
                     .ThenBy(cell => cell.z)
                     .ToArray();
-                if (cells.Length == 0)
-                    continue;
-
-                string signature = string.Join(
-                    "|",
-                    cells.Select(DecoLimitLifter.EsuSymmetry.CellKey).ToArray());
-                if (!seenSets.Add(signature))
-                    continue;
-
                 sets.Add(cells);
-                foreach (Vector3i cell in cells)
-                    allCells[DecoLimitLifter.EsuSymmetry.CellKey(cell)] = cell;
 
                 SmartBuildVolume volume = VolumeFromCells(Construct, cells);
                 if (volume != null)
                     volumes.Add(volume);
             }
 
-            return new SmartBuildPreviewSnapshot(
-                allCells.Values
+            preview = new SmartBuildPreviewSnapshot(
+                allCells
                     .OrderBy(cell => cell.x)
                     .ThenBy(cell => cell.y)
                     .ThenBy(cell => cell.z)
                     .ToArray(),
                 sets,
                 volumes);
+            return true;
         }
 
         internal SmartBuildPlan BuildPlan(
@@ -223,7 +617,13 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildPlannerOptions options,
             out SmartBuildPreviewSnapshot preview)
         {
-            preview = BuildPreview(source);
+            if (!TryBuildPreviewWithSources(
+                    _ => source,
+                    out preview,
+                    out string previewFailure))
+            {
+                return Failed(previewFailure, preview);
+            }
             options ??= new SmartBuildPlannerOptions();
             if (Construct == null && !options.AllowNullConstructForVerification)
                 return Failed("No valid construct is available.", preview);
@@ -236,45 +636,80 @@ namespace DecoLimitLifter.SmartBuildMode
                     source.Family?.UnsupportedReason ??
                     "The selected material cannot be used by Smart Block Builder.",
                     preview);
-            if (HasDownSlope &&
-                !source.HasDownSlopeLength(_pieces.Where(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope)
+            if (!TryExpandSceneNodes(
+                    out IReadOnlyList<SmartBuildPiece> planningPieces,
+                    out IReadOnlyDictionary<int, SmartBuildNodeProvenance> provenanceByPieceId,
+                    out IReadOnlyList<string> nodeWarnings,
+                    out string expansionReason))
+            {
+                return Failed(expansionReason, preview);
+            }
+            bool planningHasDownSlope =
+                planningPieces.Any(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope);
+            if (planningHasDownSlope &&
+                !source.HasDownSlopeLength(planningPieces.Where(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope)
                     .Select(piece => piece.SlopeLength)))
             {
                 return Failed("One or more down slope sizes are unavailable for this material.", preview);
             }
 
-            if (HasDownSlope &&
-                DecoLimitLifter.EsuSymmetry.ActivePlanes.Keys.Any(axis => axis == DecorationEditAxis.Y))
-            {
-                return Failed("Down slope previews cannot be mirrored across Y in this first slope pass.", preview);
-            }
-
-            string collision = FirstBaseCollision(source);
+            string collision = FirstBaseCollision(planningPieces, source);
             if (!string.IsNullOrWhiteSpace(collision))
                 return Failed(collision, preview);
 
             var fixedPlacements = new List<SmartBuildPlacement>();
             var cuboidCells = new Dictionary<string, Vector3i>();
+            var packingGroups = new Dictionary<string, CuboidPackingGroup>(StringComparer.Ordinal);
             var skipped = new List<Vector3i>();
-            var patternWarnings = new List<string>();
+            var patternWarnings = new List<string>(nodeWarnings);
             var targetKeys = new HashSet<string>();
             var fixedSignatures = new HashSet<string>();
             foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
                      DecoLimitLifter.EsuSymmetry.Variants())
             {
-                foreach (SmartBuildPiece piece in _pieces)
+                foreach (SmartBuildPiece piece in planningPieces)
                 {
                     SmartBuildPatternResult result = PatternFor(piece).Build(piece, source);
                     if (!result.Success)
                         return Failed(result.FailureReason, preview);
                     patternWarnings.AddRange(result.Warnings);
 
+                    SmartBuildVolume pieceVolume = piece.ShapeKind == SmartBuildShapeKind.Cuboid
+                        ? piece.ToVolume()
+                        : null;
+                    bool directionLocked = pieceVolume != null &&
+                                           piece.ForwardAxis == pieceVolume.GrainAxis;
+                    SmartBuildAxis packingAxis = directionLocked
+                        ? piece.ForwardAxis
+                        : SmartBuildAxis.Z;
+                    int packingSign = directionLocked ? piece.ForwardSign : 1;
+                    if (directionLocked &&
+                        variant.Axes.Any(axis => ToSmartAxis(axis) == packingAxis))
+                    {
+                        packingSign *= -1;
+                    }
+                    string packingKey = directionLocked
+                        ? packingAxis + ":" + (packingSign >= 0 ? "+" : "-")
+                        : "auto";
+                    if (!packingGroups.TryGetValue(packingKey, out CuboidPackingGroup packingGroup))
+                    {
+                        packingGroup = new CuboidPackingGroup(
+                            packingKey,
+                            directionLocked,
+                            packingAxis,
+                            packingSign);
+                        packingGroups.Add(packingKey, packingGroup);
+                    }
+
                     foreach (Vector3i cell in result.CuboidCells)
                     {
                         Vector3i mirrored = variant.Mirror(cell);
                         string key = DecoLimitLifter.EsuSymmetry.CellKey(mirrored);
                         if (targetKeys.Add(key))
+                        {
                             cuboidCells[key] = mirrored;
+                            packingGroup.Cells[key] = mirrored;
+                        }
                     }
 
                     foreach (SmartBuildPlacement placement in result.FixedPlacements)
@@ -297,10 +732,12 @@ namespace DecoLimitLifter.SmartBuildMode
                             .ToArray();
                         if (occupied.Length > 0)
                         {
-                            skipped.AddRange(occupied);
-                            if (!options.SkipOccupiedCells)
+                            if (!options.AllowOccupiedCells)
+                                skipped.AddRange(occupied);
+                            if (!options.AllowOccupiedCells && !options.SkipOccupiedCells)
                                 return Failed("The preview intersects existing blocks.", preview, skipped);
-                            continue;
+                            if (!options.AllowOccupiedCells)
+                                continue;
                         }
 
                         bool duplicate = false;
@@ -334,33 +771,53 @@ namespace DecoLimitLifter.SmartBuildMode
                     ? preview.Cells
                     : supportCells.Concat(fixedPlacements.SelectMany(placement => placement.CoveredCells())).ToArray());
 
-            if (supportCells.Count > 0)
+            foreach (CuboidPackingGroup packingGroup in
+                     packingGroups.Values.OrderBy(group => group.Key, StringComparer.Ordinal))
             {
-                SmartBuildVolume supportVolume = VolumeFromCells(Construct, supportCells);
-                if (supportVolume != null)
-                {
-                    SmartBuildPlan supportPlan = SmartBuildPlanner.BuildPlanFromCells(
-                        supportVolume,
-                        supportCells,
-                        supportVolume.GrainAxis,
-                        source.Family,
-                        isOccupied,
-                        options);
-                    skipped.AddRange(supportPlan.SkippedCells);
-                    if (!supportPlan.CanCommit)
-                    {
-                        return new SmartBuildPlan(
-                            Construct,
-                            referenceVolume,
-                            Array.Empty<SmartBuildPlacement>(),
-                            skipped,
-                            supportPlan.Warnings,
-                            canCommit: false,
-                            failureReason: supportPlan.FailureReason);
-                    }
+                Vector3i[] groupCells = packingGroup.Cells.Values
+                    .OrderBy(cell => cell.x)
+                    .ThenBy(cell => cell.y)
+                    .ThenBy(cell => cell.z)
+                    .ToArray();
+                if (groupCells.Length == 0)
+                    continue;
 
-                    placements.AddRange(supportPlan.Placements);
+                SmartBuildVolume supportVolume = VolumeFromCells(Construct, groupCells);
+                if (supportVolume == null)
+                    continue;
+
+                SmartBuildPlan supportPlan = SmartBuildPlanner.BuildPlanFromCells(
+                    supportVolume,
+                    groupCells,
+                    packingGroup.DirectionLocked ? packingGroup.Axis : supportVolume.GrainAxis,
+                    packingGroup.DirectionLocked ? packingGroup.Sign : 1,
+                    source.Family,
+                    isOccupied,
+                    options);
+                skipped.AddRange(supportPlan.SkippedCells);
+                patternWarnings.AddRange(supportPlan.Warnings);
+                if (!supportPlan.CanCommit)
+                {
+                    bool emptySkippedGroup = options.SkipOccupiedCells &&
+                                             supportPlan.Placements.Count == 0 &&
+                                             string.Equals(
+                                                 supportPlan.FailureReason,
+                                                 "No empty cells are available in the preview.",
+                                                 StringComparison.Ordinal);
+                    if (emptySkippedGroup)
+                        continue;
+
+                    return new SmartBuildPlan(
+                        Construct,
+                        referenceVolume,
+                        Array.Empty<SmartBuildPlacement>(),
+                        skipped,
+                        supportPlan.Warnings,
+                        canCommit: false,
+                        failureReason: supportPlan.FailureReason);
                 }
+
+                placements.AddRange(supportPlan.Placements);
             }
 
             if (placements.Count == 0)
@@ -399,15 +856,208 @@ namespace DecoLimitLifter.SmartBuildMode
                 failureReason: null);
         }
 
-        private string FirstBaseCollision(SmartBuildSource source)
+        internal SmartBuildPlan BuildPlanWithSources(
+            Func<SmartBuildPiece, SmartBuildSource> sourceForPiece,
+            Func<Vector3i, bool> isOccupied,
+            SmartBuildPlannerOptions options,
+            out SmartBuildPreviewSnapshot preview)
+        {
+            if (!TryBuildPreviewWithSources(
+                    sourceForPiece,
+                    out preview,
+                    out string previewFailure))
+            {
+                return Failed(previewFailure, preview);
+            }
+            options ??= new SmartBuildPlannerOptions();
+            if (Construct == null && !options.AllowNullConstructForVerification)
+                return Failed("No valid construct is available.", preview);
+            if (_pieces.Count == 0)
+                return Failed("No preview piece is active.", preview);
+
+            if (!TryExpandSceneNodes(
+                    out IReadOnlyList<SmartBuildPiece> planningPieces,
+                    out IReadOnlyDictionary<int, SmartBuildNodeProvenance> provenanceByPieceId,
+                    out IReadOnlyList<string> nodeWarnings,
+                    out string expansionReason))
+            {
+                return Failed(expansionReason, preview);
+            }
+            bool planningHasDownSlope =
+                planningPieces.Any(piece => piece.ShapeKind == SmartBuildShapeKind.DownSlope);
+
+            string collision = FirstBaseCollisionWithSources(planningPieces, sourceForPiece);
+            if (!string.IsNullOrWhiteSpace(collision))
+                return Failed(collision, preview);
+
+            var groups = new Dictionary<SmartBuildSource, List<SmartBuildPiece>>();
+            var cellProvenance = new Dictionary<string, SmartBuildNodeProvenance>(StringComparer.Ordinal);
+            foreach (SmartBuildPiece piece in planningPieces)
+            {
+                SmartBuildSource source = sourceForPiece?.Invoke(piece);
+                if (source?.Family == null || !source.Family.IsSupported)
+                {
+                    return Failed(
+                        source?.Family?.UnsupportedReason ??
+                        "One or more Smart Builder piece materials are unavailable.",
+                        preview);
+                }
+
+                if (piece.ShapeKind == SmartBuildShapeKind.DownSlope &&
+                    !source.HasDownSlopeLength(new[] { piece.SlopeLength }))
+                {
+                    return Failed(
+                        piece.SlopeLength.ToString(CultureInfo.InvariantCulture) +
+                        "m down slopes are unavailable for " + source.DisplayName + ".",
+                        preview);
+                }
+
+                if (provenanceByPieceId.TryGetValue(
+                        piece.Id,
+                        out SmartBuildNodeProvenance pieceProvenance))
+                {
+                    foreach (DecoLimitLifter.EsuSymmetry.SymmetryVariant variant in
+                             DecoLimitLifter.EsuSymmetry.Variants())
+                    {
+                        foreach (Vector3i cell in piece.EnumeratePreviewCells(source).Select(variant.Mirror))
+                        {
+                            string cellKey = DecoLimitLifter.EsuSymmetry.CellKey(cell);
+                            if (!cellProvenance.ContainsKey(cellKey))
+                                cellProvenance[cellKey] = pieceProvenance;
+                        }
+                    }
+                }
+
+                if (!groups.TryGetValue(source, out List<SmartBuildPiece> pieces))
+                {
+                    pieces = new List<SmartBuildPiece>();
+                    groups[source] = pieces;
+                }
+                pieces.Add(piece);
+            }
+
+            var placements = new List<SmartBuildPlacement>();
+            var skipped = new List<Vector3i>();
+            var warnings = new List<string>(nodeWarnings);
+            var occupiedByPlan = new HashSet<string>();
+            foreach (KeyValuePair<SmartBuildSource, List<SmartBuildPiece>> group in groups)
+            {
+                var subScene = new SmartBuildPieceScene(Construct);
+                subScene.ReplaceWith(group.Value, -1);
+                SmartBuildPlan subPlan = subScene.BuildPlan(
+                    group.Key,
+                    isOccupied,
+                    options,
+                    out _);
+                skipped.AddRange(subPlan.SkippedCells);
+                warnings.AddRange(subPlan.Warnings);
+                if (!subPlan.CanCommit)
+                {
+                    bool emptySkippedGroup = options.SkipOccupiedCells &&
+                                             subPlan.Placements.Count == 0 &&
+                                             string.Equals(
+                                                 subPlan.FailureReason,
+                                                 "No empty cells are available in the preview.",
+                                                 StringComparison.Ordinal);
+                    if (emptySkippedGroup)
+                        continue;
+                    return Failed(subPlan.FailureReason, preview, skipped);
+                }
+
+                foreach (SmartBuildPlacement placement in subPlan.Placements)
+                {
+                    SmartBuildNodeProvenance placementProvenance = default;
+                    bool hasPlacementProvenance = false;
+                    foreach (Vector3i cell in placement.CoveredCells())
+                    {
+                        if (!hasPlacementProvenance &&
+                            cellProvenance.TryGetValue(
+                                DecoLimitLifter.EsuSymmetry.CellKey(cell),
+                                out placementProvenance))
+                        {
+                            hasPlacementProvenance = true;
+                        }
+                        if (!occupiedByPlan.Add(DecoLimitLifter.EsuSymmetry.CellKey(cell)))
+                            return Failed("Smart Builder preview pieces overlap each other.", preview, skipped);
+                    }
+                    if (hasPlacementProvenance)
+                    {
+                        placement.WithProvenance(
+                            placementProvenance.NodeId,
+                            placementProvenance.PatternInstanceId);
+                    }
+                    placements.Add(placement);
+                }
+            }
+
+            if (placements.Count == 0)
+                return Failed("No empty cells are available in the preview.", preview, skipped)
+                    .WithCellProvenance(cellProvenance);
+
+            warnings = warnings
+                .Where(warning => !string.IsNullOrWhiteSpace(warning))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (placements.Count > options.HardPlacementCap)
+            {
+                return new SmartBuildPlan(
+                    Construct,
+                    VolumeFromCells(Construct, preview.Cells),
+                    placements,
+                    skipped,
+                    warnings,
+                    canCommit: false,
+                    failureReason:
+                    $"The plan needs {placements.Count:N0} placements, above the {options.HardPlacementCap:N0} hard cap.")
+                    .WithCellProvenance(cellProvenance);
+            }
+            if (placements.Count > options.WarningPlacementCap)
+                warnings.Add($"Large plan: {placements.Count:N0} placements. Commit may hitch.");
+
+            return new SmartBuildPlan(
+                Construct,
+                VolumeFromCells(Construct, preview.Cells),
+                placements,
+                skipped
+                    .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
+                    .Select(group => group.First())
+                    .ToArray(),
+                warnings,
+                canCommit: true,
+                failureReason: null)
+                .WithCellProvenance(cellProvenance);
+        }
+
+        private static string FirstBaseCollisionWithSources(
+            IEnumerable<SmartBuildPiece> pieces,
+            Func<SmartBuildPiece, SmartBuildSource> sourceForPiece)
         {
             var seen = new Dictionary<string, int>();
-            foreach (SmartBuildPiece piece in _pieces)
+            foreach (SmartBuildPiece piece in pieces ?? Array.Empty<SmartBuildPiece>())
+            {
+                foreach (Vector3i cell in piece.EnumeratePreviewCells(sourceForPiece?.Invoke(piece)))
+                {
+                    string key = DecoLimitLifter.EsuSymmetry.CellKey(cell);
+                    if (seen.ContainsKey(key))
+                        return "Smart Builder preview pieces overlap each other.";
+                    seen[key] = piece.Id;
+                }
+            }
+
+            return null;
+        }
+
+        private static string FirstBaseCollision(
+            IEnumerable<SmartBuildPiece> pieces,
+            SmartBuildSource source)
+        {
+            var seen = new Dictionary<string, int>();
+            foreach (SmartBuildPiece piece in pieces ?? Array.Empty<SmartBuildPiece>())
             {
                 foreach (Vector3i cell in piece.EnumeratePreviewCells(source))
                 {
                     string key = DecoLimitLifter.EsuSymmetry.CellKey(cell);
-                    if (seen.TryGetValue(key, out int otherId) && otherId != piece.Id)
+                    if (seen.ContainsKey(key))
                         return "Smart Builder preview pieces overlap each other.";
                     seen[key] = piece.Id;
                 }
@@ -438,6 +1088,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 case SmartBuildShapeKind.GeneratedCircle:
                 case SmartBuildShapeKind.GeneratedPolygon:
                 case SmartBuildShapeKind.GeneratedSphere:
+                case SmartBuildShapeKind.GeneratedArc:
+                case SmartBuildShapeKind.GeneratedCone:
+                case SmartBuildShapeKind.GeneratedFrustum:
+                case SmartBuildShapeKind.GeneratedTube:
                     return GeneratedPattern.Instance;
                 default:
                     if (piece.IsFixedGeometry)
@@ -476,7 +1130,8 @@ namespace DecoLimitLifter.SmartBuildMode
                 sign,
                 MirrorRotation(placement.Rotation, variant),
                 placement.CoveredCells().Select(variant.Mirror),
-                candidate.DisplayName);
+                candidate.DisplayName)
+                .WithProvenance(placement.NodeId, placement.PatternInstanceId);
         }
 
         private static SmartBlockCandidate MirrorCandidate(
@@ -661,6 +1316,32 @@ namespace DecoLimitLifter.SmartBuildMode
             }
 
             return SmartBuildVolume.FromBounds(construct, min, max);
+        }
+
+        private sealed class CuboidPackingGroup
+        {
+            internal CuboidPackingGroup(
+                string key,
+                bool directionLocked,
+                SmartBuildAxis axis,
+                int sign)
+            {
+                Key = key;
+                DirectionLocked = directionLocked;
+                Axis = axis;
+                Sign = sign >= 0 ? 1 : -1;
+            }
+
+            internal string Key { get; }
+
+            internal bool DirectionLocked { get; }
+
+            internal SmartBuildAxis Axis { get; }
+
+            internal int Sign { get; }
+
+            internal Dictionary<string, Vector3i> Cells { get; } =
+                new Dictionary<string, Vector3i>(StringComparer.Ordinal);
         }
 
         private sealed class CuboidPattern : ISmartBuildPattern

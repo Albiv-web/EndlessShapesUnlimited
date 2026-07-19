@@ -332,7 +332,7 @@ namespace DecoLimitLifter.DecorationEditMode
             left.z == right.z;
     }
 
-    internal sealed class SurfaceDraft
+    internal sealed partial class SurfaceDraft
     {
         private const float TypedCoordinateResolutionMetres = 0.001f;
         private const float TypedGeometryEpsilon = 0.000001f;

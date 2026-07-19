@@ -120,6 +120,10 @@ namespace DecoLimitLifter.SmartBuildMode
                 {
                     if (_session != null && _session.DismissOpenPopup())
                         return;
+                    if (_session != null && _session.TryHandleEditablePatternGestureEscape())
+                        return;
+                    if (_session != null && _session.TryHandlePrecisionEscapeShortcut())
+                        return;
 
                     DecoLimitLifter.EsuEscapeCloseGuard.Arm();
                     Close("Escape pressed");

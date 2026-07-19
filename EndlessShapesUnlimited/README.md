@@ -1,4 +1,4 @@
-[b]Mod latest version 1.0.10[/b]
+[b]Mod latest version 1.2.0[/b]
 
 [h1]EndlessShapes Unlimited[/h1]
 
@@ -17,6 +17,8 @@ https://discord.gg/6Us9UamUPx
 
 [b]Decoration Edit Mode[/b]
 Move, rotate, scale, paint, retether, select, and edit decorations directly on your craft. The paint tool can also drag a screen selection across decorations and blocks.
+New workspace tools add portable group presets, bulk selection and exact settings sampling, alignment/distribution, linear and radial arrays, snapping and measurements, plus named layers and folders with visibility, isolation, tags, and edit locks.
+Craft Audit scans decorations, tethers, references, transforms, meshes, duplicates, unused layers, capacity, and serialization risk. It can copy/save a deterministic report and preview conservative repairs before an explicit atomic apply.
 The Block Palette (formerly Mesh Palette) has a default-off Build toggle. With Build off, choices create decorations as before. Turn it on to select real native inventory block definitions with left or right click; FtD's full-size native marker follows the mouse and validates the exact one-metre-grid target before left-click placement. Right-click a block on the craft to sample its type and rotation. Locked or construct-incompatible items and invalid world targets are rejected safely, and native multi-cell block footprints are preserved. Simple Build Mode's Shift+LMB replacement gesture and distance-scaled attachment indicators are disabled in this cursor-following mode so neither can disagree with the full-size preview.
 
 Decoration X-ray defaults off, so viewport selection cannot grab decoration centers hidden behind craft or subobject blocks. Turn X-ray on to select through blocks; list selection remains available either way. To keep very dense craft responsive, an X-ray-off box with more than 512 projected decoration centers is rejected before visibility checks or paint changes.
@@ -24,9 +26,10 @@ Decoration X-ray defaults off, so viewport selection cannot grab decoration cent
 [b]Surface Builder[/b]
 Create decoration surfaces, paths, circles, quads, polygons, tubes, cones, spheres, partial shapes, and other generated decoration layouts. Draft lists, Coordinates, Extra Tools, and paint palettes resize with their panels.
 Extra Tools Preview draws the selected decoration mesh with the same transform, paint, material override, anchoring, and symmetry that Place will use; cyan guides and edit handles remain visible on top.
+Surface modeling now includes extrude, inset, subdivide, weld, hole fill, smoothing, face reversal, and smooth Bezier paths. Presets/recovery and profile-local source metadata let ESU-created surfaces be reopened for editing after reload.
 
 [b]Smart Block Builder[/b]
-Preview block shapes before placing them. Move, rotate, scale, change materials, and apply when ready.
+Preview block shapes before placing them. Multi-select and edit groups with craft-local numeric transforms, exact quarter turns, alignment, equal-gap distribution, measurements, standard clipboard shortcuts, and pointed-cell paste. Linear, grid, radial, and polyline tools now remain editable pattern nodes; change their steps, copies, pivot, angle, orientation, or path, Apply them directly, Dissolve back to their source, or Bake them into independent pieces. Rectangle, wall, plane, brush, and flood tools use compact editable region masks instead of filling the scene list with one row per cell. Mix per-piece materials, convert shapes while retaining exact grid transforms, switch between solid/hollow output, or generate arcs, tubes, cones, and frustums. A pinned per-cell legend distinguishes valid, skipped, overlap, craft collision, disconnected, removal, replacement, and unsupported output; Next Issue selects and pulses the responsible cell without moving the camera. The craft eyedropper captures the exact supported 1-4 m cardinal block definition, size, material, and rotation. Transactional Replace and Erase work with complete touched block items, while conditional replacement can match material, shape, both, or the exact sampled definition before one undoable Apply. Version-2 scene presets and per-craft crash recovery preserve editable patterns and regions, migrate older scenes, and can relocate unfinished work to a selected preview piece or pointed craft block.
 
 [b]OBJ Tools[/b]
 Import OBJ models and convert mesh groups into FtD decorations.

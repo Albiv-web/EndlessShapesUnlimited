@@ -15,6 +15,7 @@ using BrilliantSkies.Modding;
 using BrilliantSkies.Modding.Types;
 using BrilliantSkies.PlayerProfiles;
 using BrilliantSkies.Ui.Special.InfoStore;
+using DecoLimitLifter.Presets;
 using DecoLimitLifter.SerializationHud;
 using EndlessShapes2;
 using EndlessShapes2.Polygon;
@@ -72,6 +73,7 @@ namespace DecoLimitLifter.DecorationEditMode
             PasteSettings,
             Duplicate,
             ToggleAnchorMesh,
+            ReopenSurfaceSource,
             Delete
         }
 
@@ -82,6 +84,8 @@ namespace DecoLimitLifter.DecorationEditMode
             SelectedDecoration,
             SelectedAnchor
         }
+
+        private delegate bool SurfaceModelingOperation(out string message);
 
         private const float SelectionRadiusPixels = 28f;
         private const float BoxSelectionClickThresholdPixels = 6f;
@@ -115,6 +119,13 @@ namespace DecoLimitLifter.DecorationEditMode
         private const float AnchorFollowMaximumDistance = 10f;
         private const int AnchorFollowMaximumSearchRadius = 8;
         private const float SymmetryCounterpartCenterTolerance = 0.075f;
+        private const float SurfaceModelingExtrusionMetres = 0.25f;
+        private const float SurfaceModelingInsetFraction = 0.25f;
+        private const float SurfaceModelingSmoothingStrength = 0.35f;
+        private const int SurfaceBezierDefaultSubdivisions = 8;
+        private const float SurfaceBezierDefaultTension = 1f;
+        private const string SurfaceDraftRecoverySlot = "surface-builder-draft";
+        private const string GeneratorDraftRecoverySlot = "surface-generator-draft";
         private const string SurfaceCoordinateTextControlPrefix = "ESU.SurfaceCoordinate.";
         private const float LeftStackDefaultBottomRatio = 0.34f;
         private const float RightStackDefaultBottomRatio = 0.38f;
@@ -453,6 +464,17 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool _showGeneratorMeshPicker;
         private bool _showGeneratorMaterialPicker = true;
         private bool _showSurfaceDraftList = s_showSurfaceDraftList;
+        private bool _showSurfacePresetLibrary;
+        private bool _surfacePresetEntriesLoaded;
+        private SurfaceDraftActionTarget _surfacePresetTarget = SurfaceDraftActionTarget.Surface;
+        private string _surfacePresetName = string.Empty;
+        private string _surfacePresetMessage = string.Empty;
+        private bool _pendingSurfacePresetTargetPick;
+        private AllConstruct _surfacePresetPlacementConstruct;
+        private Vector3i? _surfacePresetPlacementAnchor;
+        private Vector2 _surfacePresetScroll;
+        private IReadOnlyList<EsuPresetEntry> _surfacePresetEntries =
+            Array.Empty<EsuPresetEntry>();
         private bool _showGeneratorColorPicker = s_showGeneratorColorPicker;
         private Vector2 _materialScroll;
         private Vector2 _generatorMeshScroll;
@@ -542,6 +564,16 @@ namespace DecoLimitLifter.DecorationEditMode
 
         internal bool DismissOpenPrompt()
         {
+            if (_pendingSurfacePresetTargetPick)
+            {
+                _pendingSurfacePresetTargetPick = false;
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                DecoLimitLifter.EsuEscapeCloseGuard.Arm();
+                InfoStore.Add("Surface preset target pick cancelled.");
+                return true;
+            }
+
             if (ForegroundContextMenuOpen())
             {
                 CloseSurfacePointContextMenu();
@@ -764,6 +796,7 @@ namespace DecoLimitLifter.DecorationEditMode
             }
             finally
             {
+                DecorationLayerVisibilityBridge.RestoreAll();
                 SetNativeBlockPaletteMode(false, notify: false);
                 DecoLimitLifter.EsuPanelUiHitTestRegistry.Unregister(this);
                 DecorationEditorInputScope.End();
@@ -806,6 +839,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 ClearSharedAnchorDragState();
                 _pendingSurfaceSharedAnchorPick = false;
                 _pendingGeneratorSharedAnchorPick = false;
+                _pendingSurfacePresetTargetPick = false;
+                _surfacePresetPlacementConstruct = null;
+                _surfacePresetPlacementAnchor = null;
                 if (!preserveSharedHud)
                     DecorationEditorOverlay.Clear();
                 _viewModeMenuOpen = false;
@@ -834,12 +870,14 @@ namespace DecoLimitLifter.DecorationEditMode
                 _materialByGuid.Clear();
                 _forecast = null;
                 _lastUsage = null;
+                ResetDecorationAuditState();
             }
         }
 
         internal void SuspendForModeSwitchHandoff()
         {
             FinalizeSurfaceCoordinateLiveInteraction();
+            DecorationLayerVisibilityBridge.RestoreAll();
             SetNativeBlockPaletteMode(false, notify: false);
             DecoLimitLifter.EsuPanelUiHitTestRegistry.Unregister(this);
             DecorationEditorInputScope.End();
@@ -885,6 +923,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 DecorationEditorInputScope.ClaimMouseWheelInputForFrames();
             }
             RefreshDecorationCache(force: false);
+            RefreshWorkspaceLayerVisibility(force: false);
             RefreshForecast(force: false);
             RefreshSelectionFocusLock();
             if (_nativeBlockPaletteMode)
@@ -1302,6 +1341,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _mouseOverWindow = toolbarRect.Contains(mouse) ||
                                EsuConsoleWindow.ContainsMouse(mouse) ||
                                EsuHudNotifications.ContainsMouse(mouse) ||
+                               DecorationAuditContainsMouse(mouse) ||
                                (_unappliedClosePromptOpen && UnappliedClosePromptRect().Contains(mouse)) ||
                                (_viewModeMenuOpen && ViewModeMenuRect(toolbarRect).Contains(mouse)) ||
                                (_anchorMenuOpen && AnchorMenuRect().Contains(mouse)) ||
@@ -1381,6 +1421,8 @@ namespace DecoLimitLifter.DecorationEditMode
             GUILayout.BeginArea(bottomInner);
             DrawBottomPanel(bottomInner.width);
             GUILayout.EndArea();
+
+            DrawDecorationAuditWindow(interactive);
 
             // Keep expanded notifications above every editor panel while leaving
             // world/context menus and the console as the final modal foregrounds.
@@ -1989,7 +2031,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 EsuHudLayout.CalculateCenteredToolbarFrame(toolbarRect);
             EsuHudLayout.ToolbarBudget budget = frame.Budget;
             int leftControlCount = IsSurfaceMode ? 10 : 12;
-            int rightControlCount = IsSurfaceMode ? 7 : 9;
+            int rightControlCount = IsSurfaceMode ? 8 : 10;
             _toolbarLeftControlWidth = EsuHudLayout.ToolbarControlWidth(
                 budget.LeftRailWidth,
                 leftControlCount,
@@ -2052,6 +2094,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 PanelToggle("settings", "Insp", ref _showInspectorPanel, "Show or hide the selected decoration inspector.");
                 PanelToggle("anchor", "Anch", ref _showAnchorPanel, "Show or hide decorations sharing the selected anchor.");
             }
+            DrawDecorationAuditToolbarButton();
             if (IconButton(
                     "undo",
                     "Z",
@@ -3721,12 +3764,17 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.Label("No decoration selected.", DecorationEditorTheme.Body);
                 GUILayout.Label("Use Select in the viewport or choose a decoration row in the outliner.", DecorationEditorTheme.Mini);
                 DrawDecorationClipboardRows();
+                DrawDecorationWorkspaceTools();
                 GUILayout.EndScrollView();
                 return;
             }
 
             GUILayout.Label(MeshName(_selected.MeshGuid.Us), DecorationEditorTheme.BodyWrap);
             DrawDecorationClipboardRows();
+            DrawDecorationWorkspaceTools();
+            bool workspacePreviousEnabled = GUI.enabled;
+            if (WorkspaceHasLockedSelection())
+                GUI.enabled = false;
             DecorationEditorTheme.Separator();
             DrawColorEditor(availableWidth);
             DrawMaterialEditor();
@@ -3737,6 +3785,7 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_showTetherPins || _tool == DecorationEditorTool.Anchor)
                 LabelRow("Tether", FormatTether(_selected.TetherPoint.Us));
             LabelRow("Material", MaterialDisplayName(_selected.MaterialReplacement.Us));
+            GUI.enabled = workspacePreviousEnabled;
             GUILayout.EndScrollView();
         }
 
@@ -4991,6 +5040,8 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_surfacePlan != null && _surfacePlan.Warnings.Count > 0)
                 GUILayout.Label(_surfacePlan.Warnings[0], DecorationEditorTheme.Warning);
 
+            DrawSurfacePresetLibrary();
+
             GUILayout.BeginHorizontal();
             GUILayout.Label("Draft", DecorationEditorTheme.SubHeader, GUILayout.ExpandWidth(true));
             if (GUILayout.Button(
@@ -5043,6 +5094,632 @@ namespace DecoLimitLifter.DecorationEditMode
                 GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
+
+        private void DrawSurfacePresetLibrary()
+        {
+            DecorationEditorTheme.Separator();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Draft presets", DecorationEditorTheme.SubHeader, GUILayout.ExpandWidth(true));
+            if (_showSurfacePresetLibrary &&
+                GUILayout.Button(
+                    new GUIContent("Refresh", "Reload profile presets from disk."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(62f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                RefreshSurfacePresetEntries(notify: true);
+            }
+            if (GUILayout.Button(
+                    new GUIContent(
+                        _showSurfacePresetLibrary ? "Hide" : "Show",
+                        "Save, restore, and delete reusable Surface Builder drafts."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.Width(EsuHudLayout.Scale(56f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _showSurfacePresetLibrary = !_showSurfacePresetLibrary;
+                if (_showSurfacePresetLibrary)
+                {
+                    _surfacePresetTarget = ActiveSurfaceDraftActionTarget();
+                    EnsureSurfacePresetEntries();
+                }
+            }
+            GUILayout.EndHorizontal();
+            if (!_showSurfacePresetLibrary)
+                return;
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                    new GUIContent("Surface", "Manage freeform surface draft presets."),
+                    DecorationEditorTheme.ToolButton(
+                        _surfacePresetTarget == SurfaceDraftActionTarget.Surface),
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _surfacePresetTarget = SurfaceDraftActionTarget.Surface;
+            }
+            if (GUILayout.Button(
+                    new GUIContent("Generator", "Manage Extra Tools generator draft presets."),
+                    DecorationEditorTheme.ToolButton(
+                        _surfacePresetTarget == SurfaceDraftActionTarget.Generator),
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                _surfacePresetTarget = SurfaceDraftActionTarget.Generator;
+            }
+            GUILayout.EndHorizontal();
+
+            EnsureSurfacePresetEntries();
+            GUILayout.BeginHorizontal();
+            _surfacePresetName = GUILayout.TextField(
+                _surfacePresetName ?? string.Empty,
+                EsuPresetLibrary.MaximumNameLength,
+                DecorationEditorTheme.TextField,
+                GUILayout.ExpandWidth(true),
+                GUILayout.Height(EsuHudLayout.Scale(24f)));
+            EsuCursorTooltip.RegisterLast("Preset name. Saving an existing name updates it atomically.");
+            bool previous = GUI.enabled;
+            bool hasDraft = _surfacePresetTarget == SurfaceDraftActionTarget.Surface
+                ? _surfaceDraft.HasDraft
+                : _generatorDraft.HasDraft;
+            GUI.enabled = previous && hasDraft;
+            if (GUILayout.Button(
+                    new GUIContent("Save", "Save or update the named draft preset."),
+                    hasDraft ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(54f)),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SaveSurfaceBuilderPreset(_surfacePresetTarget);
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+
+            DrawSurfacePresetPlacementTarget();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(
+                    new GUIContent("Recover autosave", "Restore the latest automatic recovery snapshot for this draft mode."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                RestoreDraftRecovery(_surfacePresetTarget);
+            }
+            if (GUILayout.Button(
+                    new GUIContent("Clear recovery", "Clear this draft mode's automatic recovery slot."),
+                    DecorationEditorTheme.Button,
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                ClearDraftRecovery(RecoverySlot(_surfacePresetTarget), notify: true);
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label(
+                "Recovery updates after each undoable draft edit.",
+                DecorationEditorTheme.MiniWrap);
+
+            EsuPresetKind kind = PresetKind(_surfacePresetTarget);
+            EsuPresetEntry[] rows = (_surfacePresetEntries ?? Array.Empty<EsuPresetEntry>())
+                .Where(entry => entry != null && entry.Kind == kind && !entry.IsRecovery)
+                .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (rows.Length == 0)
+            {
+                GUILayout.Label("No saved presets for this draft mode.", DecorationEditorTheme.MiniWrap);
+            }
+            else
+            {
+                float rowHeight = EsuHudLayout.Scale(26f);
+                float listHeight = Mathf.Min(
+                    EsuHudLayout.Scale(132f),
+                    Mathf.Max(rowHeight, rows.Length * rowHeight));
+                _surfacePresetScroll = GUILayout.BeginScrollView(
+                    _surfacePresetScroll,
+                    alwaysShowHorizontal: false,
+                    alwaysShowVertical: rows.Length * rowHeight > listHeight,
+                    GUILayout.Height(listHeight));
+                for (int index = 0; index < rows.Length; index++)
+                {
+                    EsuPresetEntry entry = rows[index];
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(entry.Name, DecorationEditorTheme.Mini, GUILayout.ExpandWidth(true));
+                    if (GUILayout.Button(
+                            new GUIContent("Load", "Replace the current draft at the chosen placement target, or its saved reference when no target is set; Undo restores it."),
+                            DecorationEditorTheme.Button,
+                            GUILayout.Width(EsuHudLayout.Scale(48f)),
+                            GUILayout.Height(EsuHudLayout.Scale(22f))))
+                    {
+                        LoadSurfaceBuilderPreset(entry);
+                    }
+                    if (GUILayout.Button(
+                            new GUIContent("Delete", "Delete this named preset from the profile library."),
+                            DecorationEditorTheme.Button,
+                            GUILayout.Width(EsuHudLayout.Scale(54f)),
+                            GUILayout.Height(EsuHudLayout.Scale(22f))))
+                    {
+                        DeleteSurfaceBuilderPreset(entry);
+                    }
+                    GUILayout.EndHorizontal();
+                }
+                GUILayout.EndScrollView();
+            }
+
+            if (!string.IsNullOrEmpty(_surfacePresetMessage))
+                GUILayout.Label(_surfacePresetMessage, DecorationEditorTheme.MiniWrap);
+            DecorationEditorTheme.Separator();
+        }
+
+        private void DrawSurfacePresetPlacementTarget()
+        {
+            GUILayout.Label(
+                _surfacePresetPlacementAnchor.HasValue
+                    ? "Placement target " + FormatTether(_surfacePresetPlacementAnchor.Value)
+                    : "Placement target: saved reference",
+                DecorationEditorTheme.MiniWrap);
+            GUILayout.BeginHorizontal();
+            bool previous = GUI.enabled;
+            GUI.enabled = previous && _selected != null &&
+                          !_selected.IsDeleted && _selectedConstruct != null;
+            if (GUILayout.Button(
+                    new GUIContent(
+                        "Use selection",
+                        "Relocate loaded Surface/Generator presets so their reference lands on the selected decoration anchor."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                _surfacePresetPlacementConstruct = _selectedConstruct;
+                _surfacePresetPlacementAnchor = _selected.TetherPoint.Us;
+                _pendingSurfacePresetTargetPick = false;
+                SetSurfacePresetMessage("Preset placement target set to the selected decoration anchor.", notify: true);
+            }
+            GUI.enabled = previous;
+            if (GUILayout.Button(
+                    new GUIContent(
+                        _pendingSurfacePresetTargetPick ? "Picking..." : "Pick block",
+                        "Arm a world pick, then click a craft block to set the preset placement reference."),
+                    DecorationEditorTheme.ToolButton(_pendingSurfacePresetTargetPick),
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                _pendingSurfacePresetTargetPick = !_pendingSurfacePresetTargetPick;
+                if (_pendingSurfacePresetTargetPick)
+                    SetSurfacePresetMessage("Click a craft block to set the preset placement target.", notify: true);
+            }
+            GUI.enabled = previous && _surfacePresetPlacementAnchor.HasValue;
+            if (GUILayout.Button(
+                    new GUIContent("Saved", "Load presets at their saved local reference coordinates."),
+                    GUI.enabled ? DecorationEditorTheme.Button : DecorationEditorTheme.DisabledButton,
+                    GUILayout.Width(EsuHudLayout.Scale(54f)),
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                _surfacePresetPlacementConstruct = null;
+                _surfacePresetPlacementAnchor = null;
+                _pendingSurfacePresetTargetPick = false;
+                SetSurfacePresetMessage("Presets will load at their saved local reference.", notify: true);
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+        }
+
+        private void EnsureSurfacePresetEntries()
+        {
+            if (!_surfacePresetEntriesLoaded)
+                RefreshSurfacePresetEntries(notify: false);
+        }
+
+        private bool RefreshSurfacePresetEntries(bool notify)
+        {
+            try
+            {
+                if (!EsuPresetLibrary.Default.TryList(
+                        out IReadOnlyList<EsuPresetEntry> entries,
+                        out string message))
+                {
+                    _surfacePresetEntries = Array.Empty<EsuPresetEntry>();
+                    _surfacePresetEntriesLoaded = false;
+                    SetSurfacePresetMessage(message, notify);
+                    return false;
+                }
+
+                _surfacePresetEntries = entries ?? Array.Empty<EsuPresetEntry>();
+                _surfacePresetEntriesLoaded = true;
+                if (notify)
+                    SetSurfacePresetMessage(message, notify: true);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                _surfacePresetEntries = Array.Empty<EsuPresetEntry>();
+                _surfacePresetEntriesLoaded = false;
+                SetSurfacePresetMessage(
+                    "Preset library is unavailable: " + exception.Message,
+                    notify);
+                return false;
+            }
+        }
+
+        private void SaveSurfaceBuilderPreset(SurfaceDraftActionTarget target)
+        {
+            try
+            {
+                bool saved;
+                string message;
+                if (target == SurfaceDraftActionTarget.Surface)
+                {
+                    if (!_surfaceDraft.HasDraft)
+                    {
+                        SetSurfacePresetMessage("Create a surface draft before saving a preset.", notify: true);
+                        return;
+                    }
+                    EsuSurfaceDraftPresetPayload payload =
+                        EsuSurfaceDraftPresetPayload.Capture(_surfaceDraft, preserveSelection: false);
+                    saved = EsuPresetLibrary.Default.TrySave(
+                        _surfacePresetName,
+                        EsuPresetKind.SurfaceDraft,
+                        payload,
+                        overwrite: true,
+                        out EsuPresetEntry _,
+                        out message,
+                        "Reusable ESU freeform surface draft.",
+                        new[] { "surface-builder" });
+                }
+                else
+                {
+                    if (!_generatorDraft.HasDraft)
+                    {
+                        SetSurfacePresetMessage("Create a generator draft before saving a preset.", notify: true);
+                        return;
+                    }
+                    EsuGeneratorDraftPresetPayload payload =
+                        EsuGeneratorDraftPresetPayload.Capture(
+                            _generatorDraft,
+                            _generatorSettings,
+                            preserveSelection: false);
+                    saved = EsuPresetLibrary.Default.TrySave(
+                        _surfacePresetName,
+                        EsuPresetKind.GeneratorDraft,
+                        payload,
+                        overwrite: true,
+                        out EsuPresetEntry _,
+                        out message,
+                        "Reusable ESU Extra Tools generator draft.",
+                        new[] { "surface-builder", "generator" });
+                }
+
+                if (saved)
+                {
+                    RefreshSurfacePresetEntries(notify: false);
+                    SaveDraftRecovery(target, notify: false);
+                }
+                SetSurfacePresetMessage(message, notify: true);
+            }
+            catch (Exception exception)
+            {
+                SetSurfacePresetMessage("Preset save failed: " + exception.Message, notify: true);
+            }
+        }
+
+        private void LoadSurfaceBuilderPreset(EsuPresetEntry entry)
+        {
+            if (entry == null)
+                return;
+
+            try
+            {
+                if (entry.Kind == EsuPresetKind.SurfaceDraft)
+                {
+                    if (!EsuPresetLibrary.Default.TryRead(
+                            entry.Id,
+                            out EsuSurfaceDraftPresetPayload payload,
+                            out EsuPresetEntry loaded,
+                            out string message) ||
+                        payload == null)
+                    {
+                        SetSurfacePresetMessage(message, notify: true);
+                        return;
+                    }
+                    if (!TryResolveSurfacePresetPlacement(
+                            SurfaceDraftActionTarget.Surface,
+                            payload.Reference.ToVector3(),
+                            out AllConstruct construct,
+                            out Vector3 targetReference,
+                            out message) ||
+                        !payload.TryCreateSnapshot(
+                            construct,
+                            targetReference,
+                            out SurfaceDraftSnapshot snapshot,
+                            out message))
+                    {
+                        SetSurfacePresetMessage(message, notify: true);
+                        return;
+                    }
+
+                    SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+                    TryRestoreSurfaceDraftHistory(snapshot, "Surface preset loaded");
+                    RecordSurfaceEdit("Load surface draft preset", before);
+                    SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+                    _surfacePresetTarget = SurfaceDraftActionTarget.Surface;
+                    _surfacePresetName = loaded.Name;
+                    SetSurfacePresetMessage("Loaded preset '" + loaded.Name + "'.", notify: true);
+                    return;
+                }
+
+                if (entry.Kind == EsuPresetKind.GeneratorDraft)
+                {
+                    if (!EsuPresetLibrary.Default.TryRead(
+                            entry.Id,
+                            out EsuGeneratorDraftPresetPayload payload,
+                            out EsuPresetEntry loaded,
+                            out string message) ||
+                        payload == null)
+                    {
+                        SetSurfacePresetMessage(message, notify: true);
+                        return;
+                    }
+                    if (!TryResolveSurfacePresetPlacement(
+                            SurfaceDraftActionTarget.Generator,
+                            payload.Reference.ToVector3(),
+                            out AllConstruct construct,
+                            out Vector3 targetReference,
+                            out message) ||
+                        !payload.TryCreateSnapshot(
+                            construct,
+                            targetReference,
+                            out DecorationGeneratorEditSnapshot snapshot,
+                            out message))
+                    {
+                        SetSurfacePresetMessage(message, notify: true);
+                        return;
+                    }
+
+                    DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+                    TryRestoreGeneratorDraftHistory(snapshot, "Generator preset loaded");
+                    RecordGeneratorEdit("Load generator draft preset", before);
+                    _surfacePresetTarget = SurfaceDraftActionTarget.Generator;
+                    _surfacePresetName = loaded.Name;
+                    SetSurfacePresetMessage("Loaded preset '" + loaded.Name + "'.", notify: true);
+                    return;
+                }
+
+                SetSurfacePresetMessage("The selected entry is not a Surface Builder draft preset.", notify: true);
+            }
+            catch (Exception exception)
+            {
+                SetSurfacePresetMessage("Preset load failed: " + exception.Message, notify: true);
+            }
+        }
+
+        private void DeleteSurfaceBuilderPreset(EsuPresetEntry entry)
+        {
+            if (entry == null)
+                return;
+
+            try
+            {
+                bool deleted = EsuPresetLibrary.Default.TryDelete(entry.Id, out string message);
+                if (deleted)
+                    RefreshSurfacePresetEntries(notify: false);
+                SetSurfacePresetMessage(message, notify: true);
+            }
+            catch (Exception exception)
+            {
+                SetSurfacePresetMessage("Preset delete failed: " + exception.Message, notify: true);
+            }
+        }
+
+        private void RestoreDraftRecovery(SurfaceDraftActionTarget target)
+        {
+            try
+            {
+                string slot = RecoverySlot(target);
+                if (target == SurfaceDraftActionTarget.Surface)
+                {
+                    if (!EsuPresetLibrary.Default.TryReadRecovery(
+                            slot,
+                            out EsuSurfaceDraftPresetPayload payload,
+                            out EsuPresetEntry entry,
+                            out string message) ||
+                        payload == null)
+                    {
+                        SetSurfacePresetMessage(message, notify: true);
+                        return;
+                    }
+                    if (entry.Kind != EsuPresetKind.SurfaceDraft ||
+                        !TryPresetTargetConstruct(target, out AllConstruct construct, out message) ||
+                        !payload.TryCreateSnapshot(
+                            construct,
+                            payload.Reference.ToVector3(),
+                            out SurfaceDraftSnapshot snapshot,
+                            out message))
+                    {
+                        SetSurfacePresetMessage(
+                            entry.Kind != EsuPresetKind.SurfaceDraft
+                                ? "Surface recovery slot contains the wrong draft kind."
+                                : message,
+                            notify: true);
+                        return;
+                    }
+
+                    SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+                    TryRestoreSurfaceDraftHistory(snapshot, "Surface recovery restored");
+                    RecordSurfaceEdit("Restore surface draft recovery", before);
+                    SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+                    SetSurfacePresetMessage("Surface draft recovery restored.", notify: true);
+                    return;
+                }
+
+                if (!EsuPresetLibrary.Default.TryReadRecovery(
+                        slot,
+                        out EsuGeneratorDraftPresetPayload generatorPayload,
+                        out EsuPresetEntry generatorEntry,
+                        out string generatorMessage) ||
+                    generatorPayload == null)
+                {
+                    SetSurfacePresetMessage(generatorMessage, notify: true);
+                    return;
+                }
+                if (generatorEntry.Kind != EsuPresetKind.GeneratorDraft ||
+                    !TryPresetTargetConstruct(target, out AllConstruct generatorConstruct, out generatorMessage) ||
+                    !generatorPayload.TryCreateSnapshot(
+                        generatorConstruct,
+                        generatorPayload.Reference.ToVector3(),
+                        out DecorationGeneratorEditSnapshot generatorSnapshot,
+                        out generatorMessage))
+                {
+                    SetSurfacePresetMessage(
+                        generatorEntry.Kind != EsuPresetKind.GeneratorDraft
+                            ? "Generator recovery slot contains the wrong draft kind."
+                            : generatorMessage,
+                        notify: true);
+                    return;
+                }
+
+                DecorationGeneratorEditSnapshot generatorBefore = CaptureGeneratorEditSnapshot();
+                TryRestoreGeneratorDraftHistory(generatorSnapshot, "Generator recovery restored");
+                RecordGeneratorEdit("Restore generator draft recovery", generatorBefore);
+                SetSurfacePresetMessage("Generator draft recovery restored.", notify: true);
+            }
+            catch (Exception exception)
+            {
+                SetSurfacePresetMessage("Recovery restore failed: " + exception.Message, notify: true);
+            }
+        }
+
+        private void SaveDraftRecovery(SurfaceDraftActionTarget target, bool notify)
+        {
+            try
+            {
+                string message;
+                bool saved;
+                if (target == SurfaceDraftActionTarget.Surface)
+                {
+                    if (!_surfaceDraft.HasDraft)
+                    {
+                        ClearDraftRecovery(SurfaceDraftRecoverySlot, notify);
+                        return;
+                    }
+                    saved = EsuPresetLibrary.Default.TrySaveRecovery(
+                        SurfaceDraftRecoverySlot,
+                        EsuPresetKind.SurfaceDraft,
+                        EsuSurfaceDraftPresetPayload.Capture(_surfaceDraft, preserveSelection: true),
+                        out message);
+                }
+                else
+                {
+                    if (!_generatorDraft.HasDraft)
+                    {
+                        ClearDraftRecovery(GeneratorDraftRecoverySlot, notify);
+                        return;
+                    }
+                    saved = EsuPresetLibrary.Default.TrySaveRecovery(
+                        GeneratorDraftRecoverySlot,
+                        EsuPresetKind.GeneratorDraft,
+                        EsuGeneratorDraftPresetPayload.Capture(
+                            _generatorDraft,
+                            _generatorSettings,
+                            preserveSelection: true),
+                        out message);
+                }
+
+                if (!saved || notify)
+                    SetSurfacePresetMessage(message, notify);
+            }
+            catch (Exception exception)
+            {
+                SetSurfacePresetMessage("Draft recovery save failed: " + exception.Message, notify);
+            }
+        }
+
+        private void ClearDraftRecovery(string slot, bool notify)
+        {
+            try
+            {
+                EsuPresetLibrary.Default.TryClearRecovery(slot, out string message);
+                if (notify)
+                    SetSurfacePresetMessage(message, notify: true);
+            }
+            catch (Exception exception)
+            {
+                if (notify)
+                    SetSurfacePresetMessage("Recovery clear failed: " + exception.Message, notify: true);
+            }
+        }
+
+        private bool TryCaptureSurfacePresetPlacementTarget()
+        {
+            if (!_pointerProbe.TryProbe(out DecorationPointerHit hit) || hit?.Construct == null)
+            {
+                SetSurfacePresetMessage("Point at a craft block for the preset placement target.", notify: true);
+                return false;
+            }
+
+            _surfacePresetPlacementConstruct = hit.Construct;
+            _surfacePresetPlacementAnchor = hit.Anchor;
+            _pendingSurfacePresetTargetPick = false;
+            SetSurfacePresetMessage(
+                "Preset placement target set to " + FormatTether(hit.Anchor) + ".",
+                notify: true);
+            return true;
+        }
+
+        private bool TryResolveSurfacePresetPlacement(
+            SurfaceDraftActionTarget target,
+            Vector3 savedReference,
+            out AllConstruct construct,
+            out Vector3 targetReference,
+            out string message)
+        {
+            if (_surfacePresetPlacementConstruct != null &&
+                _surfacePresetPlacementAnchor.HasValue)
+            {
+                construct = _surfacePresetPlacementConstruct;
+                Vector3i anchor = _surfacePresetPlacementAnchor.Value;
+                targetReference = new Vector3(anchor.x, anchor.y, anchor.z);
+                message = null;
+                return true;
+            }
+
+            targetReference = savedReference;
+            return TryPresetTargetConstruct(target, out construct, out message);
+        }
+
+        private bool TryPresetTargetConstruct(
+            SurfaceDraftActionTarget target,
+            out AllConstruct construct,
+            out string message)
+        {
+            construct = target == SurfaceDraftActionTarget.Surface
+                ? _surfaceDraft.Construct ?? _generatorDraft.Construct ?? PaintPreviewConstruct()
+                : _generatorDraft.Construct ?? _surfaceDraft.Construct ?? PaintPreviewConstruct();
+            if (construct == null)
+            {
+                message = "Focus a construct before loading a Surface Builder preset.";
+                return false;
+            }
+
+            message = null;
+            return true;
+        }
+
+        private void SetSurfacePresetMessage(string message, bool notify)
+        {
+            _surfacePresetMessage = string.IsNullOrWhiteSpace(message)
+                ? "Preset operation completed."
+                : message;
+            if (notify)
+                InfoStore.Add(_surfacePresetMessage);
+        }
+
+        private static EsuPresetKind PresetKind(SurfaceDraftActionTarget target) =>
+            target == SurfaceDraftActionTarget.Surface
+                ? EsuPresetKind.SurfaceDraft
+                : EsuPresetKind.GeneratorDraft;
+
+        private static string RecoverySlot(SurfaceDraftActionTarget target) =>
+            target == SurfaceDraftActionTarget.Surface
+                ? SurfaceDraftRecoverySlot
+                : GeneratorDraftRecoverySlot;
 
         private void DrawSurfaceSettingsShelf(Rect settingsRect, bool scrollable)
         {
@@ -6350,6 +7027,8 @@ namespace DecoLimitLifter.DecorationEditMode
 
             DecorationEditorTheme.Separator();
             GUILayout.Label("Shape", DecorationEditorTheme.SubHeader);
+            if (DecorationGeneratorDraft.UsesPath(_surfaceExtraTool))
+                DrawGeneratorBezierControl();
             DrawGeneratorNumberField("Strut dia", ref _generatorDiameterText, ApplyGeneratorDiameterText, EsuHudLayout.Scale(58f));
             DrawGeneratorDiameterPresets();
             if (_surfaceExtraTool == SurfaceExtraTool.Quad)
@@ -6558,6 +7237,42 @@ namespace DecoLimitLifter.DecorationEditMode
             DrawGeneratorToolButton(SurfaceExtraTool.Polygon, "Polygon", "Generate a regular closed frame with 3 through 12 sides.");
             DrawGeneratorToolButton(SurfaceExtraTool.Tube, "Tube", "Sweep configurable rings and rails along a clicked path.");
             GUILayout.EndHorizontal();
+        }
+
+        private void DrawGeneratorBezierControl()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Path curve", DecorationEditorTheme.Mini, GUILayout.Width(EsuHudLayout.Scale(66f)));
+            bool previous = GUI.enabled;
+            bool canSmooth = _generatorDraft.SmoothBezierPath ||
+                             _generatorDraft.PathPoints.Count >= SurfaceBezierPath.MinimumKnots;
+            GUI.enabled = previous && canSmooth;
+            if (GUILayout.Button(
+                    new GUIContent(
+                        _generatorDraft.SmoothBezierPath ? "Smooth Bezier: on" : "Enable smooth Bezier",
+                        "Toggle continuously tangent cubic Bezier sampling while keeping every clicked point as an editable knot."),
+                    DecorationEditorTheme.ToolButton(_generatorDraft.SmoothBezierPath, canSmooth),
+                    GUILayout.Height(EsuHudLayout.Scale(23f))))
+            {
+                ToggleGeneratorBezierPath();
+            }
+            GUI.enabled = previous;
+            GUILayout.EndHorizontal();
+            if (_generatorDraft.SmoothBezierPath)
+            {
+                GUILayout.Label(
+                    _generatorDraft.BezierSubdivisions.ToString(CultureInfo.InvariantCulture) +
+                    " samples/segment | tension " +
+                    _generatorDraft.BezierTension.ToString("0.##", CultureInfo.InvariantCulture) +
+                    " | edit the original path points to reshape",
+                    DecorationEditorTheme.MiniWrap);
+            }
+            else if (!canSmooth)
+            {
+                GUILayout.Label(
+                    "Place at least three path points to enable smooth Bezier.",
+                    DecorationEditorTheme.MiniWrap);
+            }
         }
 
         private void DrawSurfaceDrawToolButton()
@@ -10094,6 +10809,22 @@ namespace DecoLimitLifter.DecorationEditMode
             if (HandleNativeBlockPaletteSceneInput())
                 return;
 
+            if (_pendingSurfacePresetTargetPick)
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
+                if (Input.GetMouseButtonDown(1))
+                {
+                    _pendingSurfacePresetTargetPick = false;
+                    SetSurfacePresetMessage("Surface preset target pick cancelled.", notify: true);
+                    return;
+                }
+
+                if (Input.GetMouseButtonDown(0))
+                    TryCaptureSurfacePresetPlacementTarget();
+                return;
+            }
+
             if (DecoLimitLifter.EsuSymmetry.PendingAxis != DecorationEditAxis.None)
             {
                 if (Input.GetMouseButtonDown(1))
@@ -10211,6 +10942,16 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (TryHandleWorkspacePrecisionSnapInput())
+                return;
+
+            if (WorkspaceHasLockedSelection() && _tool != DecorationEditorTool.Select)
+            {
+                if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
+                    InfoStore.Add("The selected decoration or layer is locked. Unlock it in Workspace tools before editing.");
+                return;
+            }
+
             if (_dragAxis != DecorationEditAxis.None)
             {
                 if (!Input.GetMouseButton(0))
@@ -10317,6 +11058,16 @@ namespace DecoLimitLifter.DecorationEditMode
                 _transactions.TrackEdit(_selected, _anchorDragSnapshotStart);
                 _anchorDragSymmetryFollow = BeginSymmetryFollow(_anchorDragSnapshotStart, reportSkipped: true);
                 TryUpdateAnchorDrag(Vector2.zero);
+                return;
+            }
+
+            if ((_tool == DecorationEditorTool.Move ||
+                 _tool == DecorationEditorTool.Rotate ||
+                 _tool == DecorationEditorTool.Scale) &&
+                RejectCrossConstructSpatialTransform("Spatial transform"))
+            {
+                DecorationEditorInputScope.ClaimBuildInputForFrames();
+                DecorationEditorInputScope.ClaimCameraInputForFrames();
                 return;
             }
 
@@ -10978,6 +11729,19 @@ namespace DecoLimitLifter.DecorationEditMode
         private bool HasMultiSelectionForTransform() =>
             CurrentPrimarySelectionDecorations().Count > 1;
 
+        private bool RejectCrossConstructSpatialTransform(string operation)
+        {
+            if (!WorkspaceSelectionSpansConstructs())
+                return false;
+
+            ClearMultiTransformState();
+            InfoStore.Add(
+                operation +
+                " is paused because the selection spans multiple construct-local coordinate frames. " +
+                "Narrow the Outliner selection to one construct first.");
+            return true;
+        }
+
         private List<Decoration> CurrentPrimarySelectionDecorations()
         {
             var decorations = new List<Decoration>();
@@ -11118,6 +11882,9 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             pivot = Vector3.zero;
             ClearMultiTransformState();
+
+            if (WorkspaceSelectionSpansConstructs())
+                return false;
 
             List<Decoration> decorations = CurrentPrimarySelectionDecorations();
             if (decorations.Count <= 1)
@@ -13047,7 +13814,10 @@ namespace DecoLimitLifter.DecorationEditMode
         private int DecorationContextButtonCount()
         {
             bool multiple = CurrentPrimarySelectionDecorations().Count > 1;
-            return multiple ? 9 : 11;
+            int count = multiple ? 9 : 11;
+            if (CanReopenDecorationSurfaceSource())
+                count++;
+            return count;
         }
 
         private Rect DecorationContextRect(int buttonCount)
@@ -13157,6 +13927,18 @@ namespace DecoLimitLifter.DecorationEditMode
                     action = DecorationContextAction.ToggleAnchorMesh;
             }
 
+            if (CanReopenDecorationSurfaceSource() &&
+                DrawDecorationContextButton(
+                    contentRect,
+                    ref y,
+                    rowHeight,
+                    rowGap,
+                    "Reopen ESU source",
+                    "Load this placed ESU surface's persistent source as an editable draft. The placed copy remains unchanged."))
+            {
+                action = DecorationContextAction.ReopenSurfaceSource;
+            }
+
             if (DrawDecorationContextButton(
                     contentRect,
                     ref y,
@@ -13261,6 +14043,10 @@ namespace DecoLimitLifter.DecorationEditMode
                     ToggleSelectedOriginalMeshVisibility();
                     CloseDecorationContextMenu();
                     break;
+                case DecorationContextAction.ReopenSurfaceSource:
+                    ReopenDecorationSurfaceSource();
+                    CloseDecorationContextMenu();
+                    break;
                 case DecorationContextAction.Delete:
                     SelectDecorationContextTarget(
                         notify: false,
@@ -13347,6 +14133,49 @@ namespace DecoLimitLifter.DecorationEditMode
             _decorationContextConstruct = null;
             _decorationContextRect = Rect.zero;
             _decorationContextPreserveSelection = false;
+        }
+
+        private bool CanReopenDecorationSurfaceSource() =>
+            SurfaceDraftSourceRegistry.TryGet(
+                _decorationContextTarget,
+                _decorationContextConstruct,
+                out SurfaceDraftSnapshot _);
+
+        private void ReopenDecorationSurfaceSource()
+        {
+            if (!SurfaceDraftSourceRegistry.TryGet(
+                    _decorationContextTarget,
+                    _decorationContextConstruct,
+                    out SurfaceDraftSnapshot source))
+            {
+                InfoStore.Add(
+                    "This decoration has no reconstructable persistent ESU surface source.");
+                return;
+            }
+
+            SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+            if (!TryRestoreSurfaceDraftHistory(source, "Placed ESU surface source reopened"))
+            {
+                InfoStore.Add("The placed ESU surface source could not be reopened.");
+                return;
+            }
+
+            RecordSurfaceEdit("Reopen placed ESU surface source", before);
+            SetSurfaceBuilderTool(SurfaceBuilderTool.Draw);
+            if (TrySwitchToSurfaceBuilder(out string reason))
+            {
+                _surfaceMessage =
+                    "Placed ESU surface source reopened as an editable draft; the placed copy remains unchanged.";
+            }
+            else
+            {
+                _surfaceMessage =
+                    "ESU surface source reopened as a draft; the placed copy remains unchanged. " +
+                    (string.IsNullOrEmpty(reason)
+                        ? "Switch to Surface Builder when ready."
+                        : reason);
+            }
+            InfoStore.Add(_surfaceMessage);
         }
 
         private Decoration[] CapturePaintHistorySelection()
@@ -13996,6 +14825,12 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
             }
 
+            if (WorkspaceHasLockedSelection())
+            {
+                InfoStore.Add("Unlock the selection before duplicating it.");
+                return;
+            }
+
             if (_selectionFocusLocked)
             {
                 InfoStore.Add("Disable Focus deco before duplicating in place so the new result can be selected.");
@@ -14064,6 +14899,12 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void PasteDecorationSettings()
         {
+            if (WorkspaceHasLockedSelection())
+            {
+                InfoStore.Add("Unlock the selection before pasting settings.");
+                return;
+            }
+
             if (!CanUseDecorationClipboard(
                     wholeSelection: false,
                     requireSelection: true,
@@ -14449,6 +15290,12 @@ namespace DecoLimitLifter.DecorationEditMode
             if (_selected == null || _selected.IsDeleted || _selectedConstruct == null)
             {
                 InfoStore.Add("Select a decoration before deleting it.");
+                return;
+            }
+
+            if (WorkspaceHasLockedSelection())
+            {
+                InfoStore.Add("Unlock the selected decoration or layer before deleting it.");
                 return;
             }
 
@@ -16490,7 +17337,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceContextTargetKind = SurfaceContextTargetKind.SurfacePointSelection;
             _surfaceContextIndex = -1;
             _surfaceContextEdge = new SurfaceEdge(-1, -1);
-            _surfaceContextRect = SurfaceContextRect(buttonCount: _surfaceDraft.ManualFaceSelectionCount == 3 ? 2 : 2);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 4);
             _surfaceMessage = _surfaceDraft.ManualFaceSelectionCount == 3
                 ? "Selected points ready for a face."
                 : "Selected points ready to connect.";
@@ -16507,7 +17354,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceContextTargetKind = SurfaceContextTargetKind.SurfacePoint;
             _surfaceContextIndex = pointIndex;
             _surfaceContextEdge = new SurfaceEdge(-1, -1);
-            _surfaceContextRect = SurfaceContextRect(buttonCount: 3);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 4);
             _surfaceMessage = "Surface point selected.";
             return true;
         }
@@ -16522,7 +17369,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceContextTargetKind = SurfaceContextTargetKind.SurfaceEdge;
             _surfaceContextIndex = -1;
             _surfaceContextEdge = edge;
-            _surfaceContextRect = SurfaceContextRect(buttonCount: 4);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 7);
             _surfaceMessage = "Surface edge selected. Click a new point to extend.";
             return true;
         }
@@ -16538,7 +17385,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceContextTargetKind = SurfaceContextTargetKind.SurfaceFace;
             _surfaceContextIndex = faceIndex;
             _surfaceContextEdge = new SurfaceEdge(-1, -1);
-            _surfaceContextRect = SurfaceContextRect(buttonCount: 3);
+            _surfaceContextRect = SurfaceContextRect(buttonCount: 8);
             _surfaceMessage = "Surface face selected.";
             return true;
         }
@@ -16554,7 +17401,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceContextIndex = pointIndex;
             _surfaceContextEdge = new SurfaceEdge(-1, -1);
             _surfaceContextRect = SurfaceContextRect(
-                _generatorDraft.UsesCenterTool ? 5 : 3);
+                _generatorDraft.UsesCenterTool ? 5 : 4);
             _generatorMessage = _generatorDraft.UsesCenterTool
                 ? "Generator shape center selected."
                 : GeneratorToolDisplayName(_generatorDraft.Tool) + " point selected.";
@@ -16647,6 +17494,25 @@ namespace DecoLimitLifter.DecorationEditMode
                     }
                 }
 
+                if (GUILayout.Button(new GUIContent("Weld points", "Merge the selected points at their average position as one undoable edit."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    RunSurfaceModelingOperation(
+                        "Weld surface points",
+                        _surfaceDraft.TryWeldSelectedPoints);
+                }
+
+                if (GUILayout.Button(new GUIContent("Smooth points", "Smooth the selected points toward their connected neighbors as one undoable edit."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    RunSurfaceModelingOperation(
+                        "Smooth surface points",
+                        delegate (out string operationMessage)
+                        {
+                            return _surfaceDraft.TrySmoothSelectedPoints(
+                                SurfaceModelingSmoothingStrength,
+                                out operationMessage);
+                        });
+                }
+
                 if (GUILayout.Button(new GUIContent("Clear", "Clear the selected point set."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
                 {
                     _surfaceDraft.ClearSelection();
@@ -16665,6 +17531,48 @@ namespace DecoLimitLifter.DecorationEditMode
 
             if (!pointSelection && surfaceEdge)
             {
+                if (GUILayout.Button(new GUIContent("Extrude 0.25m", "Extrude this open edge outward by 0.25 metres."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Extrude surface edge",
+                        delegate (out string operationMessage)
+                        {
+                            return _surfaceDraft.TryExtrudeSelectedEdge(
+                                SurfaceModelingExtrusionMetres,
+                                out operationMessage);
+                        });
+                }
+
+                if (GUILayout.Button(new GUIContent("Fill boundary", "Fill the closed open boundary containing this edge."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Fill surface boundary",
+                        _surfaceDraft.TryFillSelectedBoundary);
+                }
+
+                if (GUILayout.Button(new GUIContent("Weld endpoints", "Merge this edge's endpoints at their average position."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Weld surface edge endpoints",
+                        _surfaceDraft.TryWeldSelectedPoints);
+                }
+
+                if (GUILayout.Button(new GUIContent("Smooth endpoints", "Smooth this edge's endpoints toward their connected neighbors."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Smooth surface edge endpoints",
+                        delegate (out string operationMessage)
+                        {
+                            return _surfaceDraft.TrySmoothSelectedPoints(
+                                SurfaceModelingSmoothingStrength,
+                                out operationMessage);
+                        });
+                }
+
                 bool previous = GUI.enabled;
                 bool canBridge = _surfaceDraft.BridgeEdgeSelection.Count == 2;
                 GUI.enabled = previous && canBridge;
@@ -16672,6 +17580,101 @@ namespace DecoLimitLifter.DecorationEditMode
                 {
                     BridgeSurfaceEdges();
                     CloseSurfacePointContextMenu();
+                }
+                GUI.enabled = previous;
+            }
+
+            if (!pointSelection && surfaceFace)
+            {
+                if (GUILayout.Button(new GUIContent("Extrude 0.25m", "Extrude this face along its normal by 0.25 metres."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Extrude surface face",
+                        delegate (out string operationMessage)
+                        {
+                            return _surfaceDraft.TryExtrudeSelectedFace(
+                                SurfaceModelingExtrusionMetres,
+                                out operationMessage);
+                        });
+                }
+
+                if (GUILayout.Button(new GUIContent("Inset 25%", "Inset this triangular face by 25 percent."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Inset surface face",
+                        delegate (out string operationMessage)
+                        {
+                            return _surfaceDraft.TryInsetSelectedFace(
+                                SurfaceModelingInsetFraction,
+                                out operationMessage);
+                        });
+                }
+
+                if (GUILayout.Button(new GUIContent("Subdivide", "Split this triangle into four conforming triangles."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Subdivide surface face",
+                        _surfaceDraft.TrySubdivideSelectedFace);
+                }
+
+                if (GUILayout.Button(new GUIContent("Smooth corners", "Smooth this face's three corners toward their connected neighbors."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Smooth surface face corners",
+                        delegate (out string operationMessage)
+                        {
+                            return _surfaceDraft.TrySmoothSelectedPoints(
+                                SurfaceModelingSmoothingStrength,
+                                out operationMessage);
+                        });
+                }
+
+                if (GUILayout.Button(new GUIContent("Flip normal", "Reverse this face's winding and normal."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    SelectSurfaceContextTarget();
+                    RunSurfaceModelingOperation(
+                        "Flip surface face normal",
+                        _surfaceDraft.TryFlipSelectedFaceNormal);
+                }
+            }
+
+            if (!pointSelection && !surfaceEdge && !surfaceFace && !generator &&
+                GUILayout.Button(new GUIContent("Smooth", "Smooth this point toward its connected neighbors."), DecorationEditorTheme.Button, GUILayout.Height(EsuHudLayout.Scale(24f))))
+            {
+                SelectSurfaceContextTarget();
+                RunSurfaceModelingOperation(
+                    "Smooth surface point",
+                    delegate (out string operationMessage)
+                    {
+                        return _surfaceDraft.TrySmoothSelectedPoints(
+                            SurfaceModelingSmoothingStrength,
+                            out operationMessage);
+                    });
+            }
+
+            if (!pointSelection && generator && !radial)
+            {
+                bool previous = GUI.enabled;
+                bool canSmooth = _generatorDraft.SmoothBezierPath ||
+                                 _generatorDraft.PathPoints.Count >= SurfaceBezierPath.MinimumKnots;
+                GUI.enabled = previous && canSmooth;
+                string label = _generatorDraft.SmoothBezierPath
+                    ? "Use linear path"
+                    : "Smooth Bezier";
+                if (GUILayout.Button(
+                        new GUIContent(
+                            label,
+                            _generatorDraft.SmoothBezierPath
+                                ? "Disable smooth cubic Bezier sampling while preserving every editable path knot."
+                                : "Build a continuously tangent cubic Bezier path through the editable path points."),
+                        DecorationEditorTheme.ToolButton(_generatorDraft.SmoothBezierPath, canSmooth),
+                        GUILayout.Height(EsuHudLayout.Scale(24f))))
+                {
+                    ToggleGeneratorBezierPath();
                 }
                 GUI.enabled = previous;
             }
@@ -16702,6 +17705,30 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             GUILayout.EndArea();
+        }
+
+        private void ToggleGeneratorBezierPath()
+        {
+            DecorationGeneratorEditSnapshot before = CaptureGeneratorEditSnapshot();
+            if (!_generatorDraft.TrySetSmoothBezierPath(
+                    !_generatorDraft.SmoothBezierPath,
+                    SurfaceBezierDefaultSubdivisions,
+                    SurfaceBezierDefaultTension,
+                    out _generatorMessage))
+            {
+                InfoStore.Add(_generatorMessage);
+                CloseSurfacePointContextMenu();
+                return;
+            }
+
+            InvalidateGeneratorPlan(_generatorMessage);
+            RecordGeneratorEdit(
+                _generatorDraft.SmoothBezierPath
+                    ? "Enable smooth Bezier generator path"
+                    : "Disable smooth Bezier generator path",
+                before);
+            InfoStore.Add(_generatorMessage);
+            CloseSurfacePointContextMenu();
         }
 
         private void ConnectSelectedSurfacePoints()
@@ -17689,6 +18716,7 @@ namespace DecoLimitLifter.DecorationEditMode
 
         private void PlaceSurfacePlan()
         {
+            SurfaceDraftSnapshot placedSource = CaptureSurfaceSnapshot();
             if (!TryBuildSurfacePlan(out SurfaceDecorationPlan plan, out string message) ||
                 plan == null)
             {
@@ -17766,7 +18794,9 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             int placed = created.Count;
+            SurfaceDraftSourceRegistry.Register(construct, created, placedSource);
             ClearSurfaceDraft(notify: false);
+            ClearDraftRecovery(SurfaceDraftRecoverySlot, notify: false);
             FinishCreatedDecorations(
                 construct,
                 created,
@@ -17855,6 +18885,7 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationMeshCatalogEntry mesh = null;
             _meshByGuid.TryGetValue(_generatorSettings.MeshGuid, out mesh);
             ClearGeneratorDraft(notify: false);
+            ClearDraftRecovery(GeneratorDraftRecoverySlot, notify: false);
             FinishCreatedDecorations(
                 construct,
                 created,
@@ -17947,6 +18978,26 @@ namespace DecoLimitLifter.DecorationEditMode
             InfoStore.Add(_surfaceMessage);
         }
 
+        private void RunSurfaceModelingOperation(
+            string historyLabel,
+            SurfaceModelingOperation operation)
+        {
+            SurfaceDraftSnapshot before = CaptureSurfaceSnapshot();
+            if (operation == null || !operation(out _surfaceMessage))
+            {
+                if (string.IsNullOrEmpty(_surfaceMessage))
+                    _surfaceMessage = "Surface modeling operation was unavailable.";
+                InfoStore.Add(_surfaceMessage);
+                CloseSurfacePointContextMenu();
+                return;
+            }
+
+            InvalidateSurfacePlan(_surfaceMessage);
+            CloseSurfacePointContextMenu();
+            RecordSurfaceEdit(historyLabel, before);
+            InfoStore.Add(_surfaceMessage);
+        }
+
         private void InvalidateSurfacePlan(string message)
         {
             _surfacePlan = null;
@@ -17969,6 +19020,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             _history.Record(new SurfaceDraftHistoryCommand(label, before, after));
+            SaveDraftRecovery(SurfaceDraftActionTarget.Surface, notify: false);
         }
 
         private void RecordGeneratorEdit(string label, DecorationGeneratorEditSnapshot before)
@@ -17978,6 +19030,7 @@ namespace DecoLimitLifter.DecorationEditMode
                 return;
 
             _history.Record(new GeneratorDraftHistoryCommand(label, before, after));
+            SaveDraftRecovery(SurfaceDraftActionTarget.Generator, notify: false);
         }
 
         private void RecordSurfaceBuilderStyleEdit(
@@ -17998,6 +19051,10 @@ namespace DecoLimitLifter.DecorationEditMode
                 surfaceAfter,
                 generatorBefore,
                 generatorAfter));
+            if (surfaceChanged)
+                SaveDraftRecovery(SurfaceDraftActionTarget.Surface, notify: false);
+            if (generatorChanged)
+                SaveDraftRecovery(SurfaceDraftActionTarget.Generator, notify: false);
         }
 
         internal bool TryRestoreSurfaceDraftHistory(SurfaceDraftSnapshot snapshot, string context)
@@ -18017,6 +19074,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _surfaceMessage = string.IsNullOrEmpty(context)
                 ? "Surface draft restored."
                 : context + ".";
+            SaveDraftRecovery(SurfaceDraftActionTarget.Surface, notify: false);
             return true;
         }
 
@@ -18055,6 +19113,7 @@ namespace DecoLimitLifter.DecorationEditMode
             _generatorMessage = string.IsNullOrEmpty(context)
                 ? "Generator draft restored."
                 : context + ".";
+            SaveDraftRecovery(SurfaceDraftActionTarget.Generator, notify: false);
             return true;
         }
 
@@ -18085,6 +19144,8 @@ namespace DecoLimitLifter.DecorationEditMode
                 : context + ".";
             _surfaceMessage = message;
             _generatorMessage = message;
+            SaveDraftRecovery(SurfaceDraftActionTarget.Surface, notify: false);
+            SaveDraftRecovery(SurfaceDraftActionTarget.Generator, notify: false);
             return true;
         }
 
@@ -18591,17 +19652,33 @@ namespace DecoLimitLifter.DecorationEditMode
             Decoration[] decorations,
             DecorationEditSnapshot[] snapshots,
             int primaryIndex,
+            string context) =>
+            TryRestoreHistorySnapshots(
+                Enumerable.Repeat(construct, decorations?.Length ?? 0).ToArray(),
+                decorations,
+                snapshots,
+                primaryIndex,
+                context);
+
+        internal bool TryRestoreHistorySnapshots(
+            AllConstruct[] constructs,
+            Decoration[] decorations,
+            DecorationEditSnapshot[] snapshots,
+            int primaryIndex,
             string context)
         {
-            if (decorations == null ||
+            if (constructs == null ||
+                decorations == null ||
                 snapshots == null ||
                 decorations.Length == 0 ||
+                constructs.Length != decorations.Length ||
                 decorations.Length != snapshots.Length)
             {
                 InfoStore.Add($"{context}: mirrored edit history is incomplete.");
                 return false;
             }
 
+            var resolvedConstructs = new AllConstruct[decorations.Length];
             var rollback = new DecorationEditSnapshot[decorations.Length];
             try
             {
@@ -18611,6 +19688,15 @@ namespace DecoLimitLifter.DecorationEditMode
                     if (decoration == null || decoration.IsDeleted || snapshots[index] == null)
                     {
                         InfoStore.Add($"{context}: a mirrored decoration no longer exists.");
+                        return false;
+                    }
+
+                    resolvedConstructs[index] = ResolveHistoryConstruct(
+                        decoration,
+                        constructs[index]);
+                    if (resolvedConstructs[index] == null)
+                    {
+                        InfoStore.Add($"{context}: a decoration's construct could not be resolved safely.");
                         return false;
                     }
 
@@ -18664,8 +19750,76 @@ namespace DecoLimitLifter.DecorationEditMode
             }
 
             int selectedIndex = Mathf.Clamp(primaryIndex, 0, decorations.Length - 1);
-            SelectFromHistory(decorations[selectedIndex], construct, createdInSession: false);
+            SelectFromHistory(
+                decorations[selectedIndex],
+                resolvedConstructs[selectedIndex],
+                createdInSession: false);
             return true;
+        }
+
+        private AllConstruct ResolveHistoryConstruct(
+            Decoration decoration,
+            AllConstruct preferred)
+        {
+            if (HistoryConstructOwnsDecoration(preferred, decoration))
+                return preferred;
+
+            for (int index = 0; index < _selectionOccluderConstructs.Count; index++)
+            {
+                AllConstruct candidate = _selectionOccluderConstructs[index];
+                if (HistoryConstructOwnsDecoration(candidate, decoration))
+                    return candidate;
+            }
+
+            MainConstruct main;
+            try
+            {
+                main = _build.GetCC();
+            }
+            catch
+            {
+                main = null;
+            }
+
+            if (main == null)
+                return null;
+
+            var constructs = new List<AllConstruct>();
+            try
+            {
+                main.AllBasicsRestricted.GetAllConstructsBelowUsAndIncludingUs(constructs);
+            }
+            catch
+            {
+                constructs.Clear();
+                constructs.Add(main);
+            }
+
+            for (int index = 0; index < constructs.Count; index++)
+            {
+                if (HistoryConstructOwnsDecoration(constructs[index], decoration))
+                    return constructs[index];
+            }
+
+            return null;
+        }
+
+        private static bool HistoryConstructOwnsDecoration(
+            AllConstruct construct,
+            Decoration decoration)
+        {
+            if (construct == null || decoration == null || decoration.IsDeleted)
+                return false;
+
+            try
+            {
+                return decoration.OurManager != null &&
+                       ReferenceEquals(construct.Decorations, decoration.OurManager);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         internal bool TryUndoCreatedDecoration(
@@ -19312,6 +20466,8 @@ namespace DecoLimitLifter.DecorationEditMode
             Decoration decoration,
             int depth)
         {
+            if (!WorkspaceDecorationVisible(decoration, construct))
+                return;
             string meshName = MeshName(decoration.MeshGuid.Us);
             string guidPrefix = decoration.MeshGuid.Us.ToString("N").Substring(0, 8);
             string detail = $"c{decoration.Color.Us} | {guidPrefix}";
@@ -19320,7 +20476,9 @@ namespace DecoLimitLifter.DecorationEditMode
                 decoration,
                 meshName,
                 detail,
-                $"{constructLabel} {tether} {meshName} {decoration.MeshGuid.Us:D} {decoration.Color.Us} {decoration.MaterialReplacement.Us:D}",
+                $"{constructLabel} {tether} {meshName} {decoration.MeshGuid.Us:D} {decoration.Color.Us} {decoration.MaterialReplacement.Us:D} " +
+                _workspaceLayers.LayerFor(DecorationWorkspaceObjectIdentity.Key(construct, decoration)) + " " +
+                string.Join(" ", _workspaceLayers.TagsFor(DecorationWorkspaceObjectIdentity.Key(construct, decoration))),
                 depth));
         }
 
@@ -19328,6 +20486,8 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             foreach (Decoration decoration in decorations)
             {
+                if (!WorkspaceDecorationVisible(decoration, construct))
+                    continue;
                 Vector3 local = GetDecorationLocalCenter(decoration);
                 if (!TryProject(construct, local, out Vector2 screenPoint))
                     continue;
@@ -19402,6 +20562,14 @@ namespace DecoLimitLifter.DecorationEditMode
             DecorationEditorOverlay.Line(anchorWorld, centerWorld, new Color(1f, 0.35f, 1f, 1f), selectedWidth);
             DecorationEditorOverlay.Circle(centerWorld, 0.24f * selectedScale, Color.yellow, Vector3.up, selectedWidth, 24);
             DecorationEditorOverlay.Cross(centerWorld, 0.32f * selectedScale, Color.yellow, selectedWidth);
+
+            if ((_tool == DecorationEditorTool.Move ||
+                 _tool == DecorationEditorTool.Rotate ||
+                 _tool == DecorationEditorTool.Scale) &&
+                WorkspaceSelectionSpansConstructs())
+            {
+                return;
+            }
 
             bool multiTransform = TryGetMultiSelectionPivot(out Vector3 multiPivot);
             Vector3 gizmoCenterLocal = multiTransform ? multiPivot : centerLocal;
@@ -21956,6 +23124,12 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (_selected == null || _selected.IsDeleted)
                 return;
+            if (RejectCrossConstructSpatialTransform("Inspector position"))
+            {
+                if (syncText)
+                    SetVectorText(_positionText, _selected.Positioning.Us);
+                return;
+            }
             if (!DecorationEditMath.IsWithinPositionLimit(value))
             {
                 InfoStore.Add("Position must be finite and within +/-10m on every axis.");
@@ -22016,6 +23190,12 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (_selected == null || _selected.IsDeleted)
                 return;
+            if (RejectCrossConstructSpatialTransform("Inspector scale"))
+            {
+                if (syncText)
+                    SetVectorText(_scaleText, Vector3.one);
+                return;
+            }
             if (HasMultiSelectionForTransform())
             {
                 ApplyMultiScaleFromInspector(value, syncText);
@@ -22095,6 +23275,12 @@ namespace DecoLimitLifter.DecorationEditMode
         {
             if (_selected == null || _selected.IsDeleted)
                 return;
+            if (RejectCrossConstructSpatialTransform("Inspector rotation"))
+            {
+                if (syncText)
+                    SetVectorText(_orientationText, _selected.Orientation.Us);
+                return;
+            }
             if (!DecorationEditMath.IsFinite(value))
             {
                 InfoStore.Add("Rotation must be finite.");

@@ -100,6 +100,12 @@ namespace DecoLimitLifter.SmartBuildMode
                 if (Definition?.SizeInfo != null &&
                     Definition.SizeInfo.ArrayPositionsUsed > 0)
                 {
+                    if (Definition.SizeInfo.ArrayPositionsUsed >
+                        SmartBuildLimits.MaximumConditionalFootprintCells)
+                    {
+                        return Array.Empty<Vector3i>();
+                    }
+
                     var seen = new HashSet<string>();
                     for (int index = 0; index < Definition.SizeInfo.ArrayPositionsUsed; index++)
                     {
@@ -119,7 +125,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
             SmartBuildAxis axis = SmartBuildAxisHelper.FromLargestComponent(rotation * Vector3.forward, out int sign);
             int direction = sign >= 0 ? 1 : -1;
-            for (int index = 0; index < Math.Max(1, Length); index++)
+            int fallbackLength = Math.Max(1, Length);
+            if (fallbackLength > SmartBuildLimits.MaximumConditionalFootprintCells)
+                return Array.Empty<Vector3i>();
+            for (int index = 0; index < fallbackLength; index++)
                 cells.Add(position + SmartBuildAxisHelper.ToVector3i(axis, index * direction));
 
             return cells;
@@ -166,13 +175,24 @@ namespace DecoLimitLifter.SmartBuildMode
             new SmartBlockFamily(displayName, Array.Empty<SmartBlockCandidate>(), reason);
     }
 
+    internal enum SmartBuildCommitOperation
+    {
+        Place,
+        Replace,
+        Erase
+    }
+
     internal sealed class SmartBuildPlannerOptions
     {
         internal bool SkipOccupiedCells { get; set; }
 
-        internal int WarningPlacementCap { get; set; } = 1_000;
+        internal bool AllowOccupiedCells { get; set; }
 
-        internal int HardPlacementCap { get; set; } = 10_000;
+        internal int WarningPlacementCap { get; set; } =
+            SmartBuildLimits.WarningPlacementCount;
+
+        internal int HardPlacementCap { get; set; } =
+            SmartBuildLimits.HardPlacementCount;
 
         internal bool AllowNullConstructForVerification { get; set; }
     }
@@ -241,6 +261,10 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal string DisplayName { get; }
 
+        internal int NodeId { get; private set; } = -1;
+
+        internal int PatternInstanceId { get; private set; } = -1;
+
         internal int Length => _coveredCells.Length;
 
         internal static Quaternion RotationForAxis(SmartBuildAxis axis, int sign = 1)
@@ -265,6 +289,13 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal IReadOnlyList<Vector3i> CoveredCells() => _coveredCells;
 
+        internal SmartBuildPlacement WithProvenance(int nodeId, int patternInstanceId)
+        {
+            NodeId = nodeId;
+            PatternInstanceId = patternInstanceId;
+            return this;
+        }
+
         private static IEnumerable<Vector3i> EnumerateLine(
             Vector3i position,
             SmartBuildAxis axis,
@@ -279,6 +310,9 @@ namespace DecoLimitLifter.SmartBuildMode
 
     internal sealed class SmartBuildPlan
     {
+        private IReadOnlyList<SmartBuildCellDiagnostic> _diagnostics;
+        private IReadOnlyDictionary<string, SmartBuildNodeProvenance> _cellProvenance =
+            new Dictionary<string, SmartBuildNodeProvenance>(StringComparer.Ordinal);
         internal SmartBuildPlan(
             SmartBuildVolume volume,
             IReadOnlyList<SmartBuildPlacement> placements,
@@ -289,6 +323,7 @@ namespace DecoLimitLifter.SmartBuildMode
         {
             Volume = volume;
             Construct = volume?.Construct;
+            ConstructToken = SmartBuildConstructToken.Capture(Construct);
             Placements = placements ?? Array.Empty<SmartBuildPlacement>();
             SkippedCells = skippedCells ?? Array.Empty<Vector3i>();
             Warnings = warnings ?? Array.Empty<string>();
@@ -306,6 +341,7 @@ namespace DecoLimitLifter.SmartBuildMode
             string failureReason)
         {
             Construct = construct ?? volume?.Construct;
+            ConstructToken = SmartBuildConstructToken.Capture(Construct);
             Volume = volume;
             Placements = placements ?? Array.Empty<SmartBuildPlacement>();
             SkippedCells = skippedCells ?? Array.Empty<Vector3i>();
@@ -316,6 +352,8 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal AllConstruct Construct { get; }
 
+        internal SmartBuildConstructToken ConstructToken { get; private set; }
+
         internal SmartBuildVolume Volume { get; }
 
         internal IReadOnlyList<SmartBuildPlacement> Placements { get; }
@@ -324,13 +362,129 @@ namespace DecoLimitLifter.SmartBuildMode
 
         internal IReadOnlyList<string> Warnings { get; }
 
-        internal bool CanCommit { get; }
+        internal IReadOnlyList<SmartBuildCellDiagnostic> Diagnostics =>
+            _diagnostics ??= SmartBuildDiagnosticBuilder.FromPlan(this);
 
-        internal string FailureReason { get; }
+        internal SmartBuildPlan WithCellProvenance(
+            IReadOnlyDictionary<string, SmartBuildNodeProvenance> provenance)
+        {
+            _cellProvenance = provenance ??
+                new Dictionary<string, SmartBuildNodeProvenance>(StringComparer.Ordinal);
+            _diagnostics = null;
+            return this;
+        }
 
-        internal int EstimatedBlockCount => Placements.Count;
+        internal SmartBuildPlan WithConstructToken(SmartBuildConstructToken token)
+        {
+            ConstructToken = token ?? SmartBuildConstructToken.Capture(Construct);
+            return this;
+        }
 
-        internal int CoveredCellCount => Placements.Sum(placement => placement.Length);
+        internal bool TryGetCellProvenance(
+            Vector3i cell,
+            out SmartBuildNodeProvenance provenance) =>
+            _cellProvenance.TryGetValue(
+                DecoLimitLifter.EsuSymmetry.CellKey(cell),
+                out provenance);
+
+        internal SmartBuildCommitOperation CommitOperation { get; private set; } =
+            SmartBuildCommitOperation.Place;
+
+        internal IReadOnlyList<Vector3i> RemovalCells { get; private set; } =
+            Array.Empty<Vector3i>();
+
+        internal IReadOnlyList<Vector3i> RemovalTouchedCells { get; private set; } =
+            Array.Empty<Vector3i>();
+
+        internal IReadOnlyList<Vector3i> RemovalFootprintCells { get; private set; } =
+            Array.Empty<Vector3i>();
+
+        internal IReadOnlyList<SmartBuildRemovalItem> RemovalItems { get; private set; } =
+            Array.Empty<SmartBuildRemovalItem>();
+
+        internal bool CanCommit { get; private set; }
+
+        internal string FailureReason { get; private set; }
+
+        internal int EstimatedBlockCount =>
+            CommitOperation == SmartBuildCommitOperation.Erase
+                ? RemovalItems.Count
+                : Placements.Count;
+
+        internal int CoveredCellCount =>
+            CommitOperation == SmartBuildCommitOperation.Erase
+                ? RemovalFootprintCells.Count
+                : Placements.Sum(placement => placement.Length);
+
+        internal SmartBuildPlan WithCommitOperation(
+            SmartBuildCommitOperation operation,
+            IEnumerable<Vector3i> removalCells)
+        {
+            _diagnostics = null;
+            Vector3i[] touched = DistinctSorted(removalCells);
+            if (operation == SmartBuildCommitOperation.Place)
+                return WithCommitOperation(operation, Array.Empty<SmartBuildRemovalItem>());
+
+            if (Construct != null)
+            {
+                if (!SmartBuildRemovalPlanner.TryResolveRemovalItems(
+                        Construct,
+                        touched,
+                        out IReadOnlyList<SmartBuildRemovalItem> resolved,
+                        out string reason))
+                {
+                    CommitOperation = operation;
+                    RemovalTouchedCells = touched;
+                    RemovalCells = Array.Empty<Vector3i>();
+                    RemovalFootprintCells = Array.Empty<Vector3i>();
+                    RemovalItems = Array.Empty<SmartBuildRemovalItem>();
+                    CanCommit = false;
+                    FailureReason = reason ??
+                        "The complete craft-item removal footprints could not be resolved.";
+                    return this;
+                }
+
+                return WithCommitOperation(operation, resolved);
+            }
+
+            // Pure planner verification has no live craft. Preserve the legacy
+            // single-cell interpretation while still exposing complete item data.
+            return WithCommitOperation(
+                operation,
+                touched.Select(SmartBuildRemovalPlanner.ForUnresolvedVerificationCell));
+        }
+
+        internal SmartBuildPlan WithCommitOperation(
+            SmartBuildCommitOperation operation,
+            IEnumerable<SmartBuildRemovalItem> removalItems)
+        {
+            _diagnostics = null;
+            CommitOperation = operation;
+            SmartBuildRemovalItem[] items = (removalItems ?? Array.Empty<SmartBuildRemovalItem>())
+                .Where(item => item?.Item != null)
+                .GroupBy(item => item.Item.ItemKey, StringComparer.Ordinal)
+                .Select(group => new SmartBuildRemovalItem(
+                    group.First().Item,
+                    group.SelectMany(item => item.TouchedCells)))
+                .OrderBy(item => item.CommandCell.x)
+                .ThenBy(item => item.CommandCell.y)
+                .ThenBy(item => item.CommandCell.z)
+                .ToArray();
+            RemovalItems = items;
+            RemovalCells = items.Select(item => item.CommandCell).ToArray();
+            RemovalTouchedCells = DistinctSorted(items.SelectMany(item => item.TouchedCells));
+            RemovalFootprintCells = DistinctSorted(items.SelectMany(item => item.FootprintCells));
+            return this;
+        }
+
+        private static Vector3i[] DistinctSorted(IEnumerable<Vector3i> cells) =>
+            (cells ?? Array.Empty<Vector3i>())
+            .GroupBy(DecoLimitLifter.EsuSymmetry.CellKey)
+            .Select(group => group.First())
+            .OrderBy(cell => cell.x)
+            .ThenBy(cell => cell.y)
+            .ThenBy(cell => cell.z)
+            .ToArray();
 
         internal static SmartBuildPlan Failed(
             SmartBuildVolume volume,
@@ -357,6 +511,17 @@ namespace DecoLimitLifter.SmartBuildMode
             options ??= new SmartBuildPlannerOptions();
             if (volume == null)
                 return SmartBuildPlan.Failed(null, "No preview volume is active.");
+            if (!SmartBuildLimits.TryProductWithinLimit(
+                    volume.LengthU,
+                    volume.LengthV,
+                    volume.Thickness,
+                    SmartBuildLimits.MaximumPlannerInputCells,
+                    out _))
+            {
+                return SmartBuildPlan.Failed(
+                    volume,
+                    PlannerInputLimitReason());
+            }
 
             return BuildPlanFromCells(
                 volume,
@@ -373,9 +538,27 @@ namespace DecoLimitLifter.SmartBuildMode
             SmartBuildAxis grain,
             SmartBlockFamily family,
             Func<Vector3i, bool> isOccupied,
+            SmartBuildPlannerOptions options = null) =>
+            BuildPlanFromCells(
+                referenceVolume,
+                cells,
+                grain,
+                1,
+                family,
+                isOccupied,
+                options);
+
+        internal static SmartBuildPlan BuildPlanFromCells(
+            SmartBuildVolume referenceVolume,
+            IEnumerable<Vector3i> cells,
+            SmartBuildAxis grain,
+            int grainSign,
+            SmartBlockFamily family,
+            Func<Vector3i, bool> isOccupied,
             SmartBuildPlannerOptions options = null)
         {
             options ??= new SmartBuildPlannerOptions();
+            grainSign = grainSign >= 0 ? 1 : -1;
             if (referenceVolume == null)
                 return SmartBuildPlan.Failed(null, "No preview volume is active.");
             if (family == null || !family.IsSupported)
@@ -387,12 +570,47 @@ namespace DecoLimitLifter.SmartBuildMode
                     referenceVolume,
                     "The selected family has no 1m fallback block.");
 
+            int hardPlacementCap = SmartBuildLimits.BoundedPositiveLimit(
+                options.HardPlacementCap,
+                SmartBuildLimits.HardPlacementCount);
+            int warningPlacementCap = Math.Min(
+                hardPlacementCap,
+                SmartBuildLimits.BoundedPositiveLimit(
+                    options.WarningPlacementCap,
+                    SmartBuildLimits.WarningPlacementCount));
+
+            Vector3i[] boundedCells;
+            try
+            {
+                if (!SmartBuildLimits.TryMaterializeBounded(
+                        cells,
+                        SmartBuildLimits.MaximumPlannerInputCells,
+                        out boundedCells,
+                        out _))
+                {
+                    return SmartBuildPlan.Failed(
+                        referenceVolume,
+                        PlannerInputLimitReason());
+                }
+            }
+            catch (Exception exception)
+            {
+                return SmartBuildPlan.Failed(
+                    referenceVolume,
+                    "The preview cells could not be enumerated safely: " + exception.Message);
+            }
+
             var target = new HashSet<Vector3i>();
             var skipped = new List<Vector3i>();
-            foreach (Vector3i cell in cells ?? Array.Empty<Vector3i>())
+            foreach (Vector3i cell in boundedCells)
             {
                 if (isOccupied != null && isOccupied(cell))
                 {
+                    if (options.AllowOccupiedCells)
+                    {
+                        target.Add(cell);
+                        continue;
+                    }
                     if (!options.SkipOccupiedCells)
                         return SmartBuildPlan.Failed(
                             referenceVolume,
@@ -414,11 +632,13 @@ namespace DecoLimitLifter.SmartBuildMode
             var placements = new List<SmartBuildPlacement>();
             var covered = new HashSet<Vector3i>();
             SmartBlockCandidate[] candidates = family.Candidates
-                .Where(candidate => candidate.Length >= 1)
+                .Where(candidate =>
+                    candidate.Length >= 1 &&
+                    candidate.Length <= SmartBuildLimits.MaximumNativeBlockLength)
                 .OrderByDescending(candidate => candidate.Length)
                 .ToArray();
 
-            foreach (Vector3i cell in SortForPacking(target, grain))
+            foreach (Vector3i cell in SortForPacking(target, grain, grainSign))
             {
                 if (covered.Contains(cell))
                     continue;
@@ -426,7 +646,7 @@ namespace DecoLimitLifter.SmartBuildMode
                 SmartBlockCandidate chosen = null;
                 foreach (SmartBlockCandidate candidate in candidates)
                 {
-                    if (CanCover(cell, grain, candidate.Length, target, covered))
+                    if (CanCover(cell, grain, grainSign, candidate.Length, target, covered))
                     {
                         chosen = candidate;
                         break;
@@ -439,24 +659,25 @@ namespace DecoLimitLifter.SmartBuildMode
                         "The planner could not cover every target cell with legal blocks.",
                         skipped);
 
-                var placement = new SmartBuildPlacement(cell, chosen, grain);
+                var placement = new SmartBuildPlacement(cell, chosen, grain, grainSign);
                 placements.Add(placement);
+                if (placements.Count > hardPlacementCap)
+                {
+                    return new SmartBuildPlan(
+                        referenceVolume,
+                        placements,
+                        skipped,
+                        Array.Empty<string>(),
+                        canCommit: false,
+                        failureReason:
+                        $"The plan needs more than {hardPlacementCap:N0} placements, above the hard cap.");
+                }
                 foreach (Vector3i coveredCell in placement.CoveredCells())
                     covered.Add(coveredCell);
             }
 
             var warnings = new List<string>();
-            if (placements.Count > options.HardPlacementCap)
-                return new SmartBuildPlan(
-                    referenceVolume,
-                    placements,
-                    skipped,
-                    warnings,
-                    canCommit: false,
-                    failureReason:
-                    $"The plan needs {placements.Count:N0} placements, above the {options.HardPlacementCap:N0} hard cap.");
-
-            if (placements.Count > options.WarningPlacementCap)
+            if (placements.Count > warningPlacementCap)
                 warnings.Add(
                     $"Large plan: {placements.Count:N0} placements. Commit may hitch.");
 
@@ -469,40 +690,45 @@ namespace DecoLimitLifter.SmartBuildMode
                 failureReason: null);
         }
 
+        private static string PlannerInputLimitReason() =>
+            "The preview contains more than " +
+            SmartBuildLimits.MaximumPlannerInputCells.ToString("N0") +
+            " cells, above the bounded planning limit.";
+
         private static IEnumerable<Vector3i> SortForPacking(
             IEnumerable<Vector3i> cells,
-            SmartBuildAxis grain)
+            SmartBuildAxis grain,
+            int grainSign)
         {
             switch (grain)
             {
                 case SmartBuildAxis.X:
-                    return cells
-                        .OrderBy(cell => cell.y)
-                        .ThenBy(cell => cell.z)
-                        .ThenBy(cell => cell.x);
+                    return grainSign >= 0
+                        ? cells.OrderBy(cell => cell.y).ThenBy(cell => cell.z).ThenBy(cell => cell.x)
+                        : cells.OrderBy(cell => cell.y).ThenBy(cell => cell.z).ThenByDescending(cell => cell.x);
                 case SmartBuildAxis.Y:
-                    return cells
-                        .OrderBy(cell => cell.x)
-                        .ThenBy(cell => cell.z)
-                        .ThenBy(cell => cell.y);
+                    return grainSign >= 0
+                        ? cells.OrderBy(cell => cell.x).ThenBy(cell => cell.z).ThenBy(cell => cell.y)
+                        : cells.OrderBy(cell => cell.x).ThenBy(cell => cell.z).ThenByDescending(cell => cell.y);
                 default:
-                    return cells
-                        .OrderBy(cell => cell.x)
-                        .ThenBy(cell => cell.y)
-                        .ThenBy(cell => cell.z);
+                    return grainSign >= 0
+                        ? cells.OrderBy(cell => cell.x).ThenBy(cell => cell.y).ThenBy(cell => cell.z)
+                        : cells.OrderBy(cell => cell.x).ThenBy(cell => cell.y).ThenByDescending(cell => cell.z);
             }
         }
 
         private static bool CanCover(
             Vector3i start,
             SmartBuildAxis axis,
+            int axisSign,
             int length,
             HashSet<Vector3i> target,
             HashSet<Vector3i> covered)
         {
+            int direction = axisSign >= 0 ? 1 : -1;
             for (int index = 0; index < length; index++)
             {
-                Vector3i cell = start + SmartBuildAxisHelper.ToVector3i(axis, index);
+                Vector3i cell = start + SmartBuildAxisHelper.ToVector3i(axis, index * direction);
                 if (!target.Contains(cell) || covered.Contains(cell))
                     return false;
             }

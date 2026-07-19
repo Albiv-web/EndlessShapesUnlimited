@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Assets.Scripts.Persistence;
@@ -84,6 +85,7 @@ internal static partial class Program
         var harmony = new Harmony(Owner);
         try
         {
+            VerifySuperLoaderBulkPatchCompatibilityMetadata();
             ApplySerializerPatches(harmony);
             VerifyPatchInstallation();
             VerifyVanillaLegacyCompatibility(vanillaLegacyFixture);
@@ -147,6 +149,19 @@ internal static partial class Program
             VerifyEditorKeyMapCompatibility();
             VerifySurfaceDecorationBuilder();
             VerifySmartBlockBuilder();
+            VerifySmartBuildAdvancedFeatures();
+            VerifySmartBuildToolPlanner();
+            VerifySmartBuildReplacementTransactions();
+            Console.WriteLine(SmartBuildSafetyVerification.Run());
+            _passed++;
+            Console.WriteLine(SmartBuildNodePersistenceVerification.Run());
+            _passed++;
+            Console.WriteLine(SmartBuildEditableNodeVerification.Run());
+            _passed++;
+            VerifySmartBuildCommitterReliability();
+            VerifySmartBuildPrecisionWorkflow();
+            VerifyPresetLibrary();
+            VerifyWorkspaceTools();
             VerifyPackageIdentityAndAssets();
 
             Console.WriteLine($"PASS: {_passed} verification checks completed.");
@@ -185,6 +200,19 @@ internal static partial class Program
             Type patchType = modAssembly.GetType(patchTypeName, throwOnError: true);
             harmony.CreateClassProcessor(patchType).Patch();
         }
+    }
+
+    private static void VerifySuperLoaderBulkPatchCompatibilityMetadata()
+    {
+        CustomAttributeData[] attributes = typeof(SuperLoader_Deserialise_All_Patch)
+            .GetCustomAttributesData()
+            .Where(attribute => attribute.AttributeType == typeof(HarmonyPatch))
+            .ToArray();
+
+        Assert(attributes.Length == 1 &&
+               attributes[0].ConstructorArguments.Count == 0 &&
+               attributes[0].NamedArguments.Count == 0,
+            "SuperLoader's bulk target resolver uses only HarmonyTargetMethods, avoiding the Harmony 2.1.x target-selector conflict.");
     }
 
     private static void VerifyPatchInstallation()
@@ -1521,8 +1549,8 @@ f 0 2 3
         Assert(changelogSource.Contains("Steam Workshop update notifier") &&
                changelogSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
                releaseChannelsSource.Contains("[b]Mod latest version X.Y.Z[/b]") &&
-               releaseChannelsSource.Contains("[b]Mod latest version 1.0.10[/b]") &&
-               steamReadmeSource.Contains("[b]Mod latest version 1.0.10[/b]"),
+               releaseChannelsSource.Contains("[b]Mod latest version 1.2.0[/b]") &&
+               steamReadmeSource.Contains("[b]Mod latest version 1.2.0[/b]"),
             "Changelog and release-channel workflow document the Steam Workshop update version line.");
     }
 
@@ -12171,6 +12199,12 @@ f 0 2 3
             "Source",
             "SmartBuildMode",
             "SmartBuildCommitter.cs"));
+        string commandAbstractionsSource = File.ReadAllText(Path.Combine(
+            root,
+            "EndlessShapesUnlimited",
+            "Source",
+            "SmartBuildMode",
+            "SmartBuildCommitAbstractions.cs"));
         string itemPreviewRendererSource = File.ReadAllText(Path.Combine(
             root,
             "EndlessShapesUnlimited",
@@ -12237,7 +12271,9 @@ f 0 2 3
                catalogSource.Contains("descriptor.IsGenerator") &&
                catalogSource.Contains("DiscoverStructuralFamilies") &&
                catalogSource.Contains("DownSlopeFromMaterial") &&
-               catalogSource.Contains("AddItemDefinitions(container?.Components") &&
+               catalogSource.Contains("AddItemDefinitions(components") &&
+               catalogSource.Contains("BeginModeActivationCatalogSnapshot") &&
+               catalogSource.Contains("DefinitionReferenceCountFingerprint") &&
                catalogSource.Contains("m_AllCorrespondingItems") &&
                catalogSource.Contains("MatchesMaterial") &&
                catalogSource.Contains("ItemMaterialCode") &&
@@ -12261,8 +12297,9 @@ f 0 2 3
                descriptorSource.Contains("generated-polygon") &&
                descriptorSource.Contains("generated-sphere") &&
                descriptorSource.Contains("generatorSidesPreset") &&
-               committerSource.Contains("PlaceBlockCommand") &&
-               committerSource.Contains("MirrorInfo.none") &&
+               commandAbstractionsSource.Contains("PlaceBlockCommand") &&
+               commandAbstractionsSource.Contains("MirrorInfo.none") &&
+               committerSource.Contains("ISmartBuildCommandFactory") &&
                committerSource.Contains("plan.Construct"),
             "Smart Block Builder has an internal 8-material picker, resolves FtD item definitions and structural geometry metadata, and commits vanilla block commands.");
         Assert(itemPreviewRendererSource.Contains("Definition?.GetMesh()") &&
@@ -12458,7 +12495,7 @@ f 0 2 3
                    "piece.IsGeneratedShape",
                    "piece.IsFixedGeometry") &&
                drawPiecePreviewSource.Contains("DrawGeneratedPieceHull(") &&
-               drawVoxelOuterHullSource.Contains("GetGeneratedHullPreview(rawCells, null)") &&
+               drawVoxelOuterHullSource.Contains("GetGeneratedHullPreview(rawCells, default)") &&
                sessionSource.Contains("_generatedHullPreviewCache") &&
                sessionSource.Contains("GeneratedPreviewCacheLimit") &&
                sessionSource.Contains("MaxGeneratedPreviewWireEdges") &&
@@ -12950,34 +12987,20 @@ f 0 2 3
         string root = FindRepositoryRoot();
         string package = Path.Combine(root, "EndlessShapesUnlimited");
         string manifest = File.ReadAllText(Path.Combine(package, "plugin.json"));
-        string deployScript = File.ReadAllText(Path.Combine(
-            root,
-            "tools",
-            "Deploy-EndlessShapesUnlimited.ps1"));
+        Version runtimeVersion = new DecoLimitLifter.Plugin().version;
+        Version assemblyVersion = typeof(DecoLimitLifter.Plugin).Assembly.GetName().Version;
+        Assert(runtimeVersion == new Version(1, 2, 0, 0) &&
+               assemblyVersion == new Version(1, 2, 0, 0),
+            "Plugin runtime and assembly versions both match the 1.2.0 package identity.");
         Assert(manifest.Contains("\"name\": \"EndlessShapes Unlimited\"") &&
-               manifest.Contains("\"version\": \"1.0.10\"") &&
+               manifest.Contains("\"version\": \"1.2.0\"") &&
                manifest.Contains("\"workshop_id\": 3755667314") &&
                manifest.Contains("EndlessShapesUnlimited.dll") &&
                manifest.Contains("\"DecoLimitLifter\"") &&
                manifest.Contains("\"EndlessShapes2\""),
             "Package manifest has the combined identity and standalone-mod conflicts.");
-        Assert(deployScript.Contains("Remove-Item -LiteralPath $destinationFull -Recurse -Force") &&
-               deployScript.Contains("'EndlessShapesUnlimited.dll'") &&
-               deployScript.Contains("'0Harmony.dll'") &&
-               deployScript.Contains("'Assets'") &&
-               deployScript.Contains("'Character Items'") &&
-               deployScript.Contains("'Items'") &&
-               deployScript.Contains("'Meshes'") &&
-               deployScript.Contains("[Environment]::GetFolderPath('MyDocuments')") &&
-               deployScript.Contains("OneDrive\\Dokumenter\\From The Depths\\Mods") &&
-               deployScript.Contains("Deploy-ToModsRoot") &&
-               deployScript.Contains("Get-ChildItem -LiteralPath $destinationFull -Recurse -Filter '*.dll'") &&
-               deployScript.Contains("Get-FileHash -Algorithm SHA256") &&
-               deployScript.Contains("plugin.json version") &&
-               deployScript.Contains("All deployed EndlessShapesUnlimited runtime folders match.") &&
-               deployScript.Contains("$esuDlls.Count -ne 1") &&
-               deployScript.Contains("Clean runtime deploy must not contain the development Source folder"),
-            "Clean deployment replaces every discovered ESU Mods runtime folder, detects OneDrive duplicate roots, hash-checks deployed DLLs, and rejects nested or unexpected DLLs.");
+        VerifyDeploymentBehavior(root, package);
+        VerifyRemovedAutomationFootprint(package);
         var workshopHeader = new FileInfo(Path.Combine(package, "header.jpg"));
         Assert(workshopHeader.Exists &&
                workshopHeader.Length > 0 &&
@@ -13019,6 +13042,567 @@ f 0 2 3
                dataSource.Contains("public class DecorationBuilderData") &&
                tetherSource.Contains("public class DecorationTetherMove"),
             "Legacy EndlessShapes2 public type declarations remain available.");
+    }
+
+    private static void VerifyDeploymentBehavior(string root, string package)
+    {
+        string buildScriptSource = File.ReadAllText(Path.Combine(root, "build.ps1"));
+        int verifierRestore = buildScriptSource.IndexOf(
+            "dotnet restore $verification",
+            StringComparison.Ordinal);
+        int verifierNoRestoreFormat = buildScriptSource.IndexOf(
+            "dotnet format $verification --verify-no-changes --no-restore",
+            StringComparison.Ordinal);
+        Assert(verifierRestore >= 0 && verifierNoRestoreFormat > verifierRestore,
+            "Release builds restore the verifier before its no-restore formatting gate, including on a cold checkout.");
+
+        string temporaryRoot = Path.Combine(
+            Path.GetTempPath(),
+            "esu-deployment-verification-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temporaryRoot);
+        try
+        {
+            string deployScript = Path.Combine(
+                root,
+                "tools",
+                "Deploy-EndlessShapesUnlimited.ps1");
+            string licenceSource = Path.Combine(temporaryRoot, "licence-source");
+            CopyRequiredDeploymentLicences(Path.Combine(root, "LICENSES"), licenceSource);
+
+            string mismatchSource = Path.Combine(temporaryRoot, "mismatch-source");
+            CreateDeploymentSourceFixture(package, mismatchSource);
+            JObject mismatchManifest = JObject.Parse(File.ReadAllText(
+                Path.Combine(mismatchSource, "plugin.json")));
+            mismatchManifest["version"] = "9.9.9";
+            File.WriteAllText(
+                Path.Combine(mismatchSource, "plugin.json"),
+                mismatchManifest.ToString(Formatting.Indented));
+            string mismatchMods = Path.Combine(temporaryRoot, "mismatch-mods");
+            string mismatchExisting = CreateExistingRuntimeSentinel(mismatchMods, "mismatch-old");
+            string[] mismatchSnapshot = CaptureDirectorySnapshot(mismatchExisting);
+            DeploymentProcessResult mismatchResult = RunDeploymentScript(
+                deployScript,
+                mismatchSource,
+                licenceSource,
+                mismatchMods);
+            Assert(mismatchResult.ExitCode != 0 &&
+                   mismatchResult.CombinedOutput.IndexOf(
+                       "does not match plugin.json version",
+                       StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   mismatchSnapshot.SequenceEqual(
+                       CaptureDirectorySnapshot(mismatchExisting),
+                       StringComparer.Ordinal),
+                "Deployment rejects a manifest/DLL version mismatch before changing an existing install.");
+
+            string missingSource = Path.Combine(temporaryRoot, "missing-source");
+            CreateDeploymentSourceFixture(package, missingSource);
+            File.Delete(Path.Combine(missingSource, "README.md"));
+            string missingMods = Path.Combine(temporaryRoot, "missing-mods");
+            string missingExisting = CreateExistingRuntimeSentinel(missingMods, "missing-old");
+            string[] missingSnapshot = CaptureDirectorySnapshot(missingExisting);
+            DeploymentProcessResult missingResult = RunDeploymentScript(
+                deployScript,
+                missingSource,
+                licenceSource,
+                missingMods);
+            Assert(missingResult.ExitCode != 0 &&
+                   missingResult.CombinedOutput.IndexOf(
+                       "Missing runtime file",
+                       StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   missingSnapshot.SequenceEqual(
+                       CaptureDirectorySnapshot(missingExisting),
+                       StringComparer.Ordinal),
+                "Deployment validates every required source file before changing an existing install.");
+
+            string successSource = Path.Combine(temporaryRoot, "success-source");
+            CreateDeploymentSourceFixture(package, successSource);
+            string primaryMods = Path.Combine(temporaryRoot, "primary-mods");
+            string primaryExisting = CreateExistingRuntimeSentinel(
+                primaryMods,
+                "primary-must-be-replaced");
+            string secondaryMods = Path.Combine(temporaryRoot, "secondary-mods");
+            string secondaryExisting = CreateExistingRuntimeSentinel(
+                secondaryMods,
+                "secondary-must-stay");
+            string[] secondarySnapshot = CaptureDirectorySnapshot(secondaryExisting);
+            DeploymentProcessResult successResult = RunDeploymentScript(
+                deployScript,
+                successSource,
+                licenceSource,
+                primaryMods,
+                secondaryMods);
+            string deployed = Path.Combine(primaryMods, "EndlessShapesUnlimited");
+            Assert(successResult.ExitCode == 0 &&
+                   Directory.Exists(deployed) &&
+                   !File.Exists(Path.Combine(primaryExisting, "sentinel.txt")) &&
+                   secondarySnapshot.SequenceEqual(
+                       CaptureDirectorySnapshot(secondaryExisting),
+                       StringComparer.Ordinal) &&
+                   Directory.GetDirectories(
+                           temporaryRoot,
+                           ".*EndlessShapesUnlimited*",
+                           SearchOption.TopDirectoryOnly)
+                       .Length == 0,
+                "OnlyModsRoot atomically replaces exactly the requested runtime, ignores additional roots, and leaves no transaction debris.");
+
+            string atomicPrimaryMods = Path.Combine(temporaryRoot, "atomic-primary-mods");
+            string atomicPrimaryExisting = CreateExistingRuntimeSentinel(
+                atomicPrimaryMods,
+                "atomic-primary-must-be-restored");
+            string[] atomicPrimarySnapshot = CaptureDirectorySnapshot(atomicPrimaryExisting);
+            string atomicSecondaryMods = Path.Combine(temporaryRoot, "atomic-secondary-mods");
+            string atomicSecondaryExisting = CreateExistingRuntimeSentinel(
+                atomicSecondaryMods,
+                "atomic-secondary-must-be-restored");
+            string[] atomicSecondarySnapshot = CaptureDirectorySnapshot(atomicSecondaryExisting);
+            DeploymentProcessResult atomicFailureResult;
+            using (var blocker = new FileStream(
+                       Path.Combine(atomicSecondaryExisting, "sentinel.txt"),
+                       FileMode.Open,
+                       FileAccess.Read,
+                       FileShare.None))
+            {
+                atomicFailureResult = RunDeploymentScript(
+                    deployScript,
+                    successSource,
+                    licenceSource,
+                    atomicPrimaryMods,
+                    atomicSecondaryMods,
+                    onlyModsRoot: false,
+                    onlyConfiguredRoots: true);
+            }
+            Assert(atomicFailureResult.ExitCode != 0 &&
+                   atomicFailureResult.CombinedOutput.IndexOf(
+                       "all selected runtimes were restored",
+                       StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   atomicPrimarySnapshot.SequenceEqual(
+                       CaptureDirectorySnapshot(atomicPrimaryExisting),
+                       StringComparer.Ordinal) &&
+                   atomicSecondarySnapshot.SequenceEqual(
+                       CaptureDirectorySnapshot(atomicSecondaryExisting),
+                       StringComparer.Ordinal) &&
+                   Directory.GetDirectories(
+                           temporaryRoot,
+                           ".*EndlessShapesUnlimited*",
+                           SearchOption.TopDirectoryOnly)
+                       .Length == 0,
+                "A later-root commit failure rolls back every previously committed runtime and leaves no transaction debris.");
+
+            string[] expectedFiles = ExpectedDeploymentFiles(successSource, licenceSource);
+            string[] actualFiles = Directory.GetFiles(
+                    deployed,
+                    "*",
+                    SearchOption.AllDirectories)
+                .Select(path => RelativePath(deployed, path))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            string[] deployedDlls = actualFiles
+                .Where(path => string.Equals(
+                    Path.GetExtension(path),
+                    ".dll",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            Assert(expectedFiles.SequenceEqual(actualFiles, StringComparer.OrdinalIgnoreCase) &&
+                   deployedDlls.Length == 2 &&
+                   deployedDlls.Contains(
+                       "EndlessShapesUnlimited.dll",
+                       StringComparer.OrdinalIgnoreCase) &&
+                   deployedDlls.Contains(
+                       "0Harmony.dll",
+                       StringComparer.OrdinalIgnoreCase) &&
+                   !Directory.Exists(Path.Combine(deployed, "Source")),
+                "Successful deployment publishes exactly the allowlisted runtime files and DLLs.");
+
+            Assert(DeploymentFilesMatchSourceHashes(
+                       deployed,
+                       successSource,
+                       licenceSource) &&
+                   File.Exists(Path.Combine(
+                       deployed,
+                       "LICENSES",
+                       "EndlessShapes2-MIT.txt")) &&
+                   File.Exists(Path.Combine(
+                       deployed,
+                       "LICENSES",
+                       "Harmony-MIT.txt")),
+                "Successful deployment copies the required third-party licences and verifies every published file hash.");
+
+            string sourceDll = Path.Combine(successSource, "EndlessShapesUnlimited.dll");
+            string deployedDll = Path.Combine(deployed, "EndlessShapesUnlimited.dll");
+            string deployedVersion = (string)JObject.Parse(File.ReadAllText(
+                Path.Combine(deployed, "plugin.json")))["version"];
+            Version deployedAssemblyVersion = AssemblyName.GetAssemblyName(deployedDll).Version;
+            Assert(FileSha256(sourceDll) == FileSha256(deployedDll) &&
+                   deployedAssemblyVersion != null &&
+                   deployedAssemblyVersion.Revision == 0 &&
+                   string.Equals(
+                       deployedVersion,
+                       string.Format(
+                           CultureInfo.InvariantCulture,
+                           "{0}.{1}.{2}",
+                           deployedAssemblyVersion.Major,
+                           deployedAssemblyVersion.Minor,
+                           deployedAssemblyVersion.Build),
+                       StringComparison.Ordinal) &&
+                   successResult.CombinedOutput.Contains(
+                       "dll_sha256=" + FileSha256(sourceDll)),
+                "Successful deployment preserves the Release DLL hash and enforces manifest/assembly version identity.");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(temporaryRoot, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static void VerifyRemovedAutomationFootprint(string package)
+    {
+        Assembly runtimeAssembly = typeof(Plugin).Assembly;
+        string packageDll = Path.Combine(package, "EndlessShapesUnlimited.dll");
+        byte[] packageBytes = File.ReadAllBytes(packageDll);
+        Assert(!GetLoadableTypes(runtimeAssembly).Any(type =>
+                   (type.FullName ?? string.Empty).IndexOf(
+                       "AutomationBuilder",
+                       StringComparison.OrdinalIgnoreCase) >= 0) &&
+               !ContainsByteSequence(
+                   packageBytes,
+                   Encoding.UTF8.GetBytes("AutomationBuilder")) &&
+               !ContainsByteSequence(
+                   packageBytes,
+                   Encoding.Unicode.GetBytes("AutomationBuilder")),
+            "The built and packaged assembly contains no Automation Builder types or strings.");
+        Assert(!runtimeAssembly.GetReferencedAssemblies().Any(reference =>
+                   string.Equals(
+                       reference.Name,
+                       "Breadboards",
+                       StringComparison.OrdinalIgnoreCase)) &&
+               !ContainsByteSequence(
+                   packageBytes,
+                   Encoding.UTF8.GetBytes("Breadboards")) &&
+               !ContainsByteSequence(
+                   packageBytes,
+                   Encoding.Unicode.GetBytes("Breadboards")),
+            "The built and packaged assembly has no Breadboards assembly reference or embedded name.");
+
+        string source = Path.Combine(package, "Source");
+        string[] sourceFiles = Directory.GetFiles(source, "*", SearchOption.AllDirectories);
+        bool namedFootprint = sourceFiles.Any(path =>
+            path.IndexOf("AutomationBuilder", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            path.IndexOf("Breadboards", StringComparison.OrdinalIgnoreCase) >= 0);
+        bool textualFootprint = sourceFiles
+            .Where(path =>
+                string.Equals(Path.GetExtension(path), ".cs", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetExtension(path), ".csproj", StringComparison.OrdinalIgnoreCase))
+            .Any(path =>
+            {
+                string text = File.ReadAllText(path);
+                return text.IndexOf("AutomationBuilder", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       text.IndexOf("Breadboards", StringComparison.OrdinalIgnoreCase) >= 0;
+            });
+        Assert(!namedFootprint && !textualFootprint,
+            "The current source footprint contains no Automation Builder or Breadboards files or references.");
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            return exception.Types.Where(type => type != null);
+        }
+    }
+
+    private static readonly string[] DeploymentRuntimeFiles =
+    {
+        "EndlessShapesUnlimited.dll",
+        "0Harmony.dll",
+        "plugin.json",
+        "header.header",
+        "header.jpg",
+        "LICENSE",
+        "README.md",
+        "releases",
+        "THIRD_PARTY_NOTICES.md"
+    };
+
+    private static readonly string[] DeploymentRuntimeDirectories =
+    {
+        "Assets",
+        "Character Items",
+        "Items",
+        "Meshes"
+    };
+
+    private static readonly string[] DeploymentLicenceFiles =
+    {
+        "EndlessShapes2-MIT.txt",
+        "Harmony-MIT.txt"
+    };
+
+    private sealed class DeploymentProcessResult
+    {
+        public int ExitCode;
+        public string CombinedOutput;
+    }
+
+    private static DeploymentProcessResult RunDeploymentScript(
+        string script,
+        string source,
+        string licences,
+        string modsRoot,
+        string additionalModsRoot = null,
+        bool onlyModsRoot = true,
+        bool onlyConfiguredRoots = false)
+    {
+        string powerShell = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe");
+        var arguments = new List<string>
+        {
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script,
+            "-SourceRoot",
+            source,
+            "-LicensesRoot",
+            licences,
+            "-ModsRoot",
+            modsRoot
+        };
+        if (onlyModsRoot)
+            arguments.Add("-OnlyModsRoot");
+        if (onlyConfiguredRoots)
+            arguments.Add("-OnlyConfiguredRoots");
+        if (!string.IsNullOrWhiteSpace(additionalModsRoot))
+        {
+            arguments.Add("-AdditionalModsRoots");
+            arguments.Add(additionalModsRoot);
+        }
+
+        var start = new ProcessStartInfo
+        {
+            FileName = powerShell,
+            Arguments = string.Join(" ", arguments.Select(QuoteProcessArgument)),
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        using (var process = Process.Start(start))
+        {
+            if (process == null)
+                throw new InvalidOperationException("Could not start PowerShell deployment verification.");
+
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(120000))
+            {
+                process.Kill();
+                throw new TimeoutException("Deployment verification exceeded 120 seconds.");
+            }
+
+            System.Threading.Tasks.Task.WaitAll(output, error);
+            return new DeploymentProcessResult
+            {
+                ExitCode = process.ExitCode,
+                CombinedOutput = output.Result + Environment.NewLine + error.Result
+            };
+        }
+    }
+
+    private static string QuoteProcessArgument(string value) =>
+        "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+
+    private static void CreateDeploymentSourceFixture(string package, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (string relative in DeploymentRuntimeFiles)
+        {
+            File.Copy(
+                Path.Combine(package, relative),
+                Path.Combine(destination, relative),
+                overwrite: true);
+        }
+        foreach (string relative in DeploymentRuntimeDirectories)
+        {
+            CopyDirectory(
+                Path.Combine(package, relative),
+                Path.Combine(destination, relative));
+        }
+    }
+
+    private static void CopyRequiredDeploymentLicences(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (string relative in DeploymentLicenceFiles)
+        {
+            File.Copy(
+                Path.Combine(source, relative),
+                Path.Combine(destination, relative),
+                overwrite: true);
+        }
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (string file in Directory.GetFiles(source))
+        {
+            File.Copy(
+                file,
+                Path.Combine(destination, Path.GetFileName(file)),
+                overwrite: true);
+        }
+        foreach (string directory in Directory.GetDirectories(source))
+        {
+            CopyDirectory(
+                directory,
+                Path.Combine(destination, Path.GetFileName(directory)));
+        }
+    }
+
+    private static string CreateExistingRuntimeSentinel(string modsRoot, string value)
+    {
+        string destination = Path.Combine(modsRoot, "EndlessShapesUnlimited");
+        string nested = Path.Combine(destination, "preserved", "nested");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(destination, "sentinel.txt"), value);
+        File.WriteAllText(Path.Combine(nested, "state.bin"), value + "-nested");
+        return destination;
+    }
+
+    private static string[] CaptureDirectorySnapshot(string directory)
+    {
+        var entries = new List<string>();
+        foreach (string child in Directory.GetDirectories(
+                     directory,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            entries.Add("D:" + RelativePath(directory, child));
+        }
+        foreach (string file in Directory.GetFiles(
+                     directory,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            entries.Add("F:" + RelativePath(directory, file) + ":" + FileSha256(file));
+        }
+        return entries.OrderBy(entry => entry, StringComparer.Ordinal).ToArray();
+    }
+
+    private static string[] ExpectedDeploymentFiles(string source, string licences)
+    {
+        var expected = new List<string>(DeploymentRuntimeFiles);
+        foreach (string directory in DeploymentRuntimeDirectories)
+        {
+            string directoryRoot = Path.Combine(source, directory);
+            expected.AddRange(Directory.GetFiles(
+                    directoryRoot,
+                    "*",
+                    SearchOption.AllDirectories)
+                .Select(file => Path.Combine(
+                    directory,
+                    RelativePath(directoryRoot, file))));
+        }
+        expected.AddRange(DeploymentLicenceFiles.Select(file =>
+            Path.Combine("LICENSES", file)));
+        return expected.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool DeploymentFilesMatchSourceHashes(
+        string deployed,
+        string source,
+        string licences)
+    {
+        foreach (string relative in DeploymentRuntimeFiles)
+        {
+            if (FileSha256(Path.Combine(source, relative)) !=
+                FileSha256(Path.Combine(deployed, relative)))
+            {
+                return false;
+            }
+        }
+        foreach (string directory in DeploymentRuntimeDirectories)
+        {
+            string directoryRoot = Path.Combine(source, directory);
+            foreach (string file in Directory.GetFiles(
+                         directoryRoot,
+                         "*",
+                         SearchOption.AllDirectories))
+            {
+                string relative = Path.Combine(
+                    directory,
+                    RelativePath(directoryRoot, file));
+                if (FileSha256(file) != FileSha256(Path.Combine(deployed, relative)))
+                    return false;
+            }
+        }
+        foreach (string relative in DeploymentLicenceFiles)
+        {
+            if (FileSha256(Path.Combine(licences, relative)) !=
+                FileSha256(Path.Combine(deployed, "LICENSES", relative)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static string RelativePath(string root, string path)
+    {
+        string rootPrefix = Path.GetFullPath(root).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string fullPath = Path.GetFullPath(path);
+        if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Path is outside expected root: " + fullPath);
+        return fullPath.Substring(rootPrefix.Length);
+    }
+
+    private static string FileSha256(string path)
+    {
+        using (var stream = File.OpenRead(path))
+        using (var sha256 = SHA256.Create())
+            return BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", string.Empty);
+    }
+
+    private static bool ContainsByteSequence(byte[] haystack, byte[] needle)
+    {
+        if (haystack == null || needle == null || needle.Length == 0 ||
+            needle.Length > haystack.Length)
+        {
+            return false;
+        }
+
+        for (int index = 0; index <= haystack.Length - needle.Length; index++)
+        {
+            bool match = true;
+            for (int offset = 0; offset < needle.Length; offset++)
+            {
+                if (haystack[index + offset] == needle[offset])
+                    continue;
+                match = false;
+                break;
+            }
+            if (match)
+                return true;
+        }
+        return false;
     }
 
     private static int[][] Face(params int[] indexes) =>
